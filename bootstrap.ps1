@@ -4,6 +4,7 @@
 
 $ErrorActionPreference = "Stop"
 $PrivateInstaller = "https://raw.githubusercontent.com/Kabuki94/mios/main/install.ps1"
+$EnvFile = Join-Path $env:APPDATA "MiOS\mios-build.env"
 
 function Read-Secret {
     param([string]$Prompt)
@@ -26,11 +27,66 @@ function Read-WithDefault {
     return $val
 }
 
+function Import-EnvFile {
+    param([string]$Path)
+    Get-Content $Path | Where-Object { $_ -match '^\s*[^#]' -and $_ -match '=' } | ForEach-Object {
+        $idx = $_.IndexOf('=')
+        if ($idx -gt 0) {
+            $k = $_.Substring(0, $idx).Trim()
+            $v = $_.Substring($idx + 1).Trim()
+            [System.Environment]::SetEnvironmentVariable($k, $v, "Process")
+        }
+    }
+}
+
+function Export-EnvFile {
+    param([string]$Path)
+    $dir = Split-Path $Path -Parent
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+
+    $lines = @(
+        "# MiOS Build Configuration"
+        "# Generated: $([System.DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+        "GHCR_TOKEN=$env:GHCR_TOKEN"
+        "MIOS_USER=$env:MIOS_USER"
+        "MIOS_PASSWORD=$env:MIOS_PASSWORD"
+        "MIOS_HOSTNAME=$env:MIOS_HOSTNAME"
+    )
+    if ($env:MIOS_GHCR_USER)       { $lines += "MIOS_GHCR_USER=$env:MIOS_GHCR_USER" }
+    if ($env:MIOS_GHCR_PUSH_TOKEN) { $lines += "MIOS_GHCR_PUSH_TOKEN=$env:MIOS_GHCR_PUSH_TOKEN" }
+    $lines | Set-Content $Path -Encoding UTF8
+
+    # Restrict file to current user only
+    try {
+        $acl = Get-Acl $Path
+        $acl.SetAccessRuleProtection($true, $false)
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
+            "FullControl", "Allow"
+        )
+        $acl.AddAccessRule($rule)
+        Set-Acl $Path $acl
+    } catch {
+        Write-Host "  [!] Could not restrict env file permissions: $_" -ForegroundColor DarkGray
+    }
+}
+
 Write-Host ""
 Write-Host "  +==============================================================+" -ForegroundColor Cyan
 Write-Host "  |  MiOS -- Local Build Configuration                          |" -ForegroundColor Cyan
 Write-Host "  +==============================================================+" -ForegroundColor Cyan
 Write-Host ""
+
+# ── Load saved build config ───────────────────────────────────────────────
+if (Test-Path $EnvFile) {
+    Write-Host "  Found saved config: $EnvFile" -ForegroundColor DarkGray
+    $loadOk = Read-Host "  Load previous build variables? [Y/n]"
+    if (-not $loadOk -or $loadOk.ToLower() -ne "n") {
+        Import-EnvFile $EnvFile
+        Write-Host "  [OK] Loaded." -ForegroundColor Green
+        Write-Host ""
+    }
+}
 
 # ── GitHub PAT (required for private repo access) ───────────────────────────
 if (-not $env:GHCR_TOKEN) {
@@ -97,9 +153,14 @@ Write-Host ("    {0,-20} {1}" -f "Admin password:", "(masked)")
 Write-Host ("    {0,-20} {1}" -f "Hostname:",       $env:MIOS_HOSTNAME)
 $pushStr = if ($env:MIOS_GHCR_USER) { $env:MIOS_GHCR_USER } else { "none (local build only)" }
 Write-Host ("    {0,-20} {1}" -f "Registry push:",  $pushStr)
+Write-Host ("    {0,-20} {1}" -f "Config saved to:", $EnvFile)
 Write-Host ""
 $ok = Read-Host "  Proceed? [Y/n]"
 if ($ok -and $ok.ToLower() -eq "n") { Write-Host "  Aborted."; exit 0 }
+
+# ── Save build config ─────────────────────────────────────────────────────────
+Export-EnvFile $EnvFile
+Write-Host "  [OK] Build config saved -> $EnvFile" -ForegroundColor Green
 
 # ── Fetch and execute private installer ───────────────────────────────────────
 $env:MIOS_AUTOINSTALL = "1"
