@@ -51,11 +51,11 @@ fi
 export MIOS_PASSWORD
 
 # ── Hostname ───────────────────────────────────────────────────────────────
-# Produces <base>-<5-digit> e.g. "kabu-ws-83427" — unique per build
+# Suffix is generated first so the user sees the full hostname in the prompt.
 if [[ -z "${MIOS_HOSTNAME:-}" ]]; then
-    read -rp "  Hostname base ${_dim}[mios]${_r} (5-digit suffix appended): " _hbase
-    _hbase="${_hbase:-mios}"
     _suf=$(shuf -i 10000-99999 -n1 2>/dev/null || printf '%05d' $(( RANDOM % 90000 + 10000 )))
+    read -rp "  Hostname base ${_dim}[mios]${_r} (suffix -${_suf} is pre-generated -> mios-${_suf}): " _hbase
+    _hbase="${_hbase:-mios}"
     export MIOS_HOSTNAME="${_hbase}-${_suf}"
 else
     echo "  Hostname: ${MIOS_HOSTNAME}  ${_dim}(env)${_r}"

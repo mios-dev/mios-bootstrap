@@ -65,10 +65,14 @@ if (-not $env:MIOS_PASSWORD) {
 }
 
 # ── Hostname ──────────────────────────────────────────────────────────────────
-# Produces <base>-<5-digit> e.g. "kabu-ws-83427" -- unique per build
+# Suffix is generated first so the user sees the full hostname in the prompt.
 if (-not $env:MIOS_HOSTNAME) {
-    $hbase = Read-WithDefault "Hostname base (5-digit suffix appended):" "mios"
     $suffix = '{0:D5}' -f (Get-Random -Minimum 10000 -Maximum 99999)
+    Write-Host "  Hostname base " -NoNewline -ForegroundColor White
+    Write-Host "[mios] " -NoNewline -ForegroundColor DarkGray
+    Write-Host "(suffix -$suffix is pre-generated -> mios-$suffix): " -NoNewline -ForegroundColor DarkGray
+    $hbase = Read-Host
+    if ([string]::IsNullOrWhiteSpace($hbase)) { $hbase = "mios" }
     $env:MIOS_HOSTNAME = "$hbase-$suffix"
 } else {
     Write-Host "  Hostname: $($env:MIOS_HOSTNAME)  (env)" -ForegroundColor DarkGray
