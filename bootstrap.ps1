@@ -3,8 +3,22 @@
 # Usage: irm https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/bootstrap.ps1 | iex
 
 $ErrorActionPreference = "Stop"
+
+$MiosAppDir = Join-Path $env:LOCALAPPDATA "MiOS"
+$MiosDocsDir = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "MiOS"
+
+$MiosConfigDir = Join-Path $MiosAppDir "configs"
+$MiosEnvDir = Join-Path $MiosAppDir ".env"
+$MiosRepoDir = Join-Path $MiosAppDir "repo"
+$MiosBuildsDir = Join-Path $MiosAppDir "builds"
+
+$MiosDeployDir = Join-Path $MiosDocsDir "deployments"
+$MiosManifestsDir = Join-Path $MiosDocsDir "manifests"
+$MiosImagesDir = Join-Path $MiosDocsDir "images"
+
 $PrivateInstaller = "https://raw.githubusercontent.com/Kabuki94/mios/main/install.ps1"
-$EnvFile = Join-Path $env:APPDATA "MiOS\mios-build.env"
+$EnvFile = Join-Path $MiosEnvDir "mios-build.env"
+$SecretsFile = Join-Path $env:TEMP "mios-secrets.env"
 
 function Read-Secret {
     param([string]$Prompt)
@@ -47,27 +61,31 @@ function Export-EnvFile {
     $lines = @(
         "# MiOS Build Configuration"
         "# Generated: $([System.DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))"
-        "GHCR_TOKEN=$env:GHCR_TOKEN"
         "MIOS_USER=$env:MIOS_USER"
-        "MIOS_PASSWORD=$env:MIOS_PASSWORD"
         "MIOS_HOSTNAME=$env:MIOS_HOSTNAME"
     )
     if ($env:MIOS_GHCR_USER)       { $lines += "MIOS_GHCR_USER=$env:MIOS_GHCR_USER" }
-    if ($env:MIOS_GHCR_PUSH_TOKEN) { $lines += "MIOS_GHCR_PUSH_TOKEN=$env:MIOS_GHCR_PUSH_TOKEN" }
     $lines | Set-Content $Path -Encoding UTF8
 
-    # Restrict file to current user only
+    $secretLines = @(
+        "GHCR_TOKEN=$env:GHCR_TOKEN"
+        "MIOS_PASSWORD=$env:MIOS_PASSWORD"
+    )
+    if ($env:MIOS_GHCR_PUSH_TOKEN) { $secretLines += "MIOS_GHCR_PUSH_TOKEN=$env:MIOS_GHCR_PUSH_TOKEN" }
+    $secretLines | Set-Content $SecretsFile -Encoding UTF8
+
+    # Restrict secrets file to current user only
     try {
-        $acl = Get-Acl $Path
+        $acl = Get-Acl $SecretsFile
         $acl.SetAccessRuleProtection($true, $false)
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
             [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
             "FullControl", "Allow"
         )
         $acl.AddAccessRule($rule)
-        Set-Acl $Path $acl
+        Set-Acl $SecretsFile $acl
     } catch {
-        Write-Host "  [!] Could not restrict env file permissions: $_" -ForegroundColor DarkGray
+        Write-Host "  [!] Could not restrict secrets file permissions: $_" -ForegroundColor DarkGray
     }
 }
 
@@ -77,12 +95,54 @@ Write-Host "  |  MiOS -- Local Build Configuration                          |" -
 Write-Host "  +==============================================================+" -ForegroundColor Cyan
 Write-Host ""
 
+# ── Stage Directories ──────────────────────────────────────────────────────
+Write-Host "  Staging MiOS environment..." -ForegroundColor Gray
+foreach ($d in @($MiosConfigDir, $MiosEnvDir, $MiosRepoDir, $MiosBuildsDir, $MiosDeployDir, $MiosManifestsDir, $MiosImagesDir)) {
+    if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+}
+
+# ── Configure Windows Subsystem for Linux (.wslconfig) ───────────────────
+Write-Host "  Configuring WSL2 for MiOS..." -ForegroundColor Gray
+try {
+    $wslConfigPath = Join-Path $env:USERPROFILE ".wslconfig"
+    $totalRAM = (Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum
+    $wslRAM = [Math]::Max(16, [Math]::Floor($totalRAM / 1GB * 0.80))
+    $wslCPUs = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+    $wslLines = @(
+        "# MiOS v2.1.0 — WSL2 Configuration",
+        "[wsl2]",
+        "memory=${wslRAM}GB",
+        "processors=${wslCPUs}",
+        "swap=8GB",
+        "localhostForwarding=true",
+        "nestedVirtualization=true",
+        "vmIdleTimeout=-1",
+        "systemd=true",
+        "",
+        "[experimental]",
+        "networkingMode=mirrored",
+        "dnsTunneling=true",
+        "autoProxy=true"
+    )
+    $wslConfig = $wslLines -join "`r`n"
+    if (Test-Path $wslConfigPath) {
+        $backup = "${wslConfigPath}.bak.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Copy-Item $wslConfigPath $backup -Force
+        Write-Host "  Backed up existing .wslconfig to $backup" -ForegroundColor DarkGray
+    }
+    $wslConfig | Set-Content $wslConfigPath -Encoding UTF8
+    Write-Host "  [OK] .wslconfig generated: ${wslRAM}GB RAM, $wslCPUs CPUs" -ForegroundColor Green
+} catch {
+    Write-Host "  [!] Failed to configure .wslconfig: $_" -ForegroundColor DarkGray
+}
+
 # ── Load saved build config ───────────────────────────────────────────────
 if (Test-Path $EnvFile) {
     Write-Host "  Found saved config: $EnvFile" -ForegroundColor DarkGray
     $loadOk = Read-Host "  Load previous build variables? [Y/n]"
     if (-not $loadOk -or $loadOk.ToLower() -ne "n") {
         Import-EnvFile $EnvFile
+        if (Test-Path $SecretsFile) { Import-EnvFile $SecretsFile }
         Write-Host "  [OK] Loaded." -ForegroundColor Green
         Write-Host ""
     }
@@ -164,6 +224,8 @@ Write-Host "  [OK] Build config saved -> $EnvFile" -ForegroundColor Green
 
 # ── Fetch and execute private installer ───────────────────────────────────────
 $env:MIOS_AUTOINSTALL = "1"
+$env:MIOS_DIR = $MiosRepoDir
+$env:MIOS_BUILDS_DIR = $MiosBuildsDir
 $target = "$env:TEMP\mios-install-$(Get-Random).ps1"
 $headers = @{ Authorization = "token $($env:GHCR_TOKEN)" }
 
