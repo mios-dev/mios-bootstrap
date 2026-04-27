@@ -1,6 +1,6 @@
 {
   "mios_version": "MiOSv0.1.2",
-  "generated_at": "2026-04-27T18:21:23Z",
+  "generated_at": "2026-04-27T18:29:15Z",
   "architecture": "linux-filesystem-native",
   "description": "Unified artifacts, logs, snapshots, and wiki in native Linux FS structure",
   
