@@ -1,0 +1,23 @@
+# MiOS
+> AI Ingestion Index (Snapshot v0.1.3)
+> Single Source of Truth: https://github.com/Kabuki94/MiOS-bootstrap/blob/main/INDEX.md
+
+MiOS is a bootc-based, self-building, immutable workstation OS on Fedora Rawhide. It uses a Unified Knowledge Base (UKB) for RAG and is optimized for OpenAI API standard ingestion.
+
+## 🏛️ Essential Context (Seed)
+- [AI-Agent-Hub](https://github.com/Kabuki94/MiOS-bootstrap/blob/main/INDEX.md): Mandatory laws, directory map, and instruction patterns.
+- [Repository-Map](https://github.com/Kabuki94/MiOS-bootstrap/blob/main/ai-context.json): Machine-readable manifest of all project resources.
+- [RAG-Snapshot](https://github.com/Kabuki94/MiOS-bootstrap/blob/main/artifacts/repo-rag-snapshot.json.gz): Full redacted repository state for immediate ingestion.
+- [Unified-Environment](https://github.com/Kabuki94/MiOS-bootstrap/blob/main/.env.mios): Consolidated user-adjustable variables.
+
+## 🧠 Shared Memory
+- [Chronological-Journal](https://github.com/Kabuki94/MiOS-bootstrap/blob/main/.ai/foundation/memories/journal.md): Shared chronological brain for all agents.
+
+## 🛠️ Engineering
+- [Package-Manifest](https://github.com/Kabuki94/MiOS-bootstrap/blob/main/specs/engineering/2026-04-26-Artifact-ENG-001-Packages.md): SSOT for all system components.
+- [Build-Pipeline](https://github.com/Kabuki94/MiOS-bootstrap/blob/main/Containerfile): The OCI build process and stage logic.
+
+## 🔬 Research Presets
+- [Bootc-Advances](https://github.com/Kabuki94/MiOS-bootstrap/blob/main/specs/knowledge/research/2026-04-26-Artifact-KBX-01-bootc-ecosystem-advances-2025-2026.md)
+- [GPU-Passthrough](https://github.com/Kabuki94/MiOS-bootstrap/blob/main/specs/knowledge/research/2026-04-26-Artifact-KBX-10-vfio-gpu-passthrough-fedora-2025.md)
+- [OpenAI-Ingestion](https://github.com/Kabuki94/MiOS-bootstrap/blob/main/specs/knowledge/research/2026-04-26-Artifact-KBX-024-OpenAI-Integration.md)

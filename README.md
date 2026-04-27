@@ -1,6 +1,6 @@
 # MiOS Bootstrap Repository
 
-**Version:** MiOSv0.1.2  
+**Version:** MiOSv0.1.3  
 **Architecture:** Linux Filesystem Native  
 **Updated:** 2026-04-27
 
@@ -12,18 +12,18 @@ This repository follows standard Linux Filesystem Hierarchy Standard (FHS 3.0) w
 MiOS-bootstrap/
 ├── var/
 │   ├── log/mios/              # Build logs and runtime logs
-│   │   └── builds/MiOSv0.1.2/
+│   │   └── builds/MiOSv0.1.3/
 │   │       └── latest.log
 │   └── lib/mios/              # State data
-│       ├── artifacts/MiOSv0.1.2/     # Compressed packages
+│       ├── artifacts/MiOSv0.1.3/     # Compressed packages
 │       │   ├── mios-complete-rag-*.tar.xz (509 KB)
 │       │   └── mios-knowledge-complete-*.tar.xz (4.2 KB)
-│       └── snapshots/MiOSv0.1.2/     # Repository snapshots
+│       └── snapshots/MiOSv0.1.3/     # Repository snapshots
 │           ├── repo-rag-snapshot.json.xz (588 KB)
 │           └── manifest.json.xz (588 KB)
 ├── usr/
 │   └── share/
-│       ├── doc/mios/MiOSv0.1.2/      # Documentation (wiki content)
+│       ├── doc/mios/MiOSv0.1.3/      # Documentation (wiki content)
 │       │   ├── INDEX.md
 │       │   ├── README.md
 │       │   ├── AI-AGENT-GUIDE.md
@@ -46,8 +46,8 @@ All artifacts follow **FOSS AI APIs protocol**:
 - **Discovery:** Check `/usr/share/doc/mios` for documentation (wiki content)
 - **Knowledge Base:** `/usr/share/mios/knowledge/mios-knowledge-graph.json`
 - **Configuration:** `/etc/mios/rag-manifest.yaml`
-- **Artifacts:** `/var/lib/mios/artifacts/MiOSv0.1.2/`
-- **Build Logs:** `/var/log/mios/builds/MiOSv0.1.2/latest.log`
+- **Artifacts:** `/var/lib/mios/artifacts/MiOSv0.1.3/`
+- **Build Logs:** `/var/log/mios/builds/MiOSv0.1.3/latest.log`
 
 ### Supported APIs
 - Ollama (http://localhost:11434)
@@ -61,7 +61,7 @@ All artifacts follow **FOSS AI APIs protocol**:
 
 ```bash
 # Navigate to artifacts
-cd var/lib/mios/artifacts/MiOSv0.1.2
+cd var/lib/mios/artifacts/MiOSv0.1.3
 
 # Extract XZ-compressed package (509 KB, 99.95% compression)
 tar -xJf mios-complete-rag-*.tar.xz -C ~/mios
@@ -83,13 +83,13 @@ cat usr/share/mios/knowledge/mios-knowledge-graph.json | \
 
 ```bash
 # All documentation in standard location
-ls usr/share/doc/mios/MiOSv0.1.2/
+ls usr/share/doc/mios/MiOSv0.1.3/
 
 # AI integration guides
-ls usr/share/doc/mios/MiOSv0.1.2/ai-integration/
+ls usr/share/doc/mios/MiOSv0.1.3/ai-integration/
 
 # Engineering specs
-ls usr/share/doc/mios/MiOSv0.1.2/engineering/
+ls usr/share/doc/mios/MiOSv0.1.3/engineering/
 ```
 
 ## 📊 Statistics
@@ -104,9 +104,9 @@ ls usr/share/doc/mios/MiOSv0.1.2/engineering/
 
 All documentation follows standard Linux conventions:
 
-- **Main Docs:** `/usr/share/doc/mios/MiOSv0.1.2/`
-- **AI Integration:** `/usr/share/doc/mios/MiOSv0.1.2/ai-integration/`
-- **Engineering Specs:** `/usr/share/doc/mios/MiOSv0.1.2/engineering/`
+- **Main Docs:** `/usr/share/doc/mios/MiOSv0.1.3/`
+- **AI Integration:** `/usr/share/doc/mios/MiOSv0.1.3/ai-integration/`
+- **Engineering Specs:** `/usr/share/doc/mios/MiOSv0.1.3/engineering/`
 
 ## 🔄 Updates
 
@@ -133,11 +133,11 @@ Contains:
 
 ## 🔗 References
 
-- **Main Repository:** https://github.com/mios-project/mios
-- **Bootstrap (this repo):** https://github.com/mios-project/MiOS-bootstrap
+- **Main Repository:** https://github.com/Kabuki94/MiOS-bootstrap
+- **Bootstrap (this repo):** https://github.com/Kabuki94/MiOS-bootstrap
 - **FHS 3.0:** https://refspecs.linuxfoundation.org/FHS_3.0/fhs-3.0.html
 
 ---
 
 **Architecture:** Linux Filesystem Native  
-**License:** Personal Property - MiOS Project
+**License:** Personal Property - MiOS-DEV
