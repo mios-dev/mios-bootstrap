@@ -1,0 +1,234 @@
+{
+  "automation_scripts": [
+    {
+      "name": "01-repos.sh",
+      "path": "automation/01-repos.sh",
+      "purpose": "MiOS v0.1.1 — 01-repos: Fedora 44 overlay on ucore (base kernel preserved)"
+    },
+    {
+      "name": "02-kernel.sh",
+      "path": "automation/02-kernel.sh",
+      "purpose": "MiOS v0.1.1 — 02-kernel: Kernel extras + development headers"
+    },
+    {
+      "name": "05-enable-external-repos.sh",
+      "path": "automation/05-enable-external-repos.sh",
+      "purpose": "============================================================================"
+    },
+    {
+      "name": "08-system-files-overlay.sh",
+      "path": "automation/08-system-files-overlay.sh",
+      "purpose": "============================================================================"
+    },
+    {
+      "name": "10-gnome.sh",
+      "path": "automation/10-gnome.sh",
+      "purpose": "MiOS v0.1.1 — 10-gnome: GNOME 50 desktop — PURE BUILD-UP"
+    },
+    {
+      "name": "11-hardware.sh",
+      "path": "automation/11-hardware.sh",
+      "purpose": "MiOS v0.1.1 — 11-hardware: GPU drivers (Mesa + AMD ROCm + Intel + NVIDIA)"
+    },
+    {
+      "name": "12-virt.sh",
+      "path": "automation/12-virt.sh",
+      "purpose": "MiOS v0.1.1 — 12-virt: Virtualization, containers, orchestration, gaming"
+    },
+    {
+      "name": "13-ceph-k3s.sh",
+      "path": "automation/13-ceph-k3s.sh",
+      "purpose": "MiOS v0.1.1 — 13-ceph-k3s: Ceph distributed storage + K3s Kubernetes"
+    },
+    {
+      "name": "18-apply-boot-fixes.sh",
+      "path": "automation/18-apply-boot-fixes.sh",
+      "purpose": "─────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "name": "19-k3s-selinux.sh",
+      "path": "automation/19-k3s-selinux.sh",
+      "purpose": "shellcheck source=lib/common.sh"
+    },
+    {
+      "name": "20-fapolicyd-trust.sh",
+      "path": "automation/20-fapolicyd-trust.sh",
+      "purpose": "shellcheck source=lib/common.sh"
+    },
+    {
+      "name": "20-services.sh",
+      "path": "automation/20-services.sh",
+      "purpose": "MiOS v0.1.1 — 20-services: Enable systemd services + bare-metal/VM gating"
+    },
+    {
+      "name": "21-moby-engine.sh",
+      "path": "automation/21-moby-engine.sh",
+      "purpose": "Normalize to LF line endings (fixes SC1017)"
+    },
+    {
+      "name": "22-freeipa-client.sh",
+      "path": "automation/22-freeipa-client.sh",
+      "purpose": "22-freeipa-client.sh — install FreeIPA/SSSD client + arm zero-touch enrollment."
+    },
+    {
+      "name": "23-uki-render.sh",
+      "path": "automation/23-uki-render.sh",
+      "purpose": "shellcheck source=lib/common.sh"
+    },
+    {
+      "name": "25-firewall-ports.sh",
+      "path": "automation/25-firewall-ports.sh",
+      "purpose": "During an OCI container build, the firewalld daemon is not running."
+    },
+    {
+      "name": "26-gnome-remote-desktop.sh",
+      "path": "automation/26-gnome-remote-desktop.sh",
+      "purpose": "Pre-emptively disable/mask legacy xrdp services just in case they bleed in from a base image"
+    },
+    {
+      "name": "30-locale-theme.sh",
+      "path": "automation/30-locale-theme.sh",
+      "purpose": "MiOS v0.1.1 — 30-locale-theme: Unified dark theme for EVERY window type"
+    },
+    {
+      "name": "31-user.sh",
+      "path": "automation/31-user.sh",
+      "purpose": "MiOS v0.1.1 — 31-user: PAM, user creation, groups, sudoers"
+    },
+    {
+      "name": "32-hostname.sh",
+      "path": "automation/32-hostname.sh",
+      "purpose": "MiOS v0.1.1 — 32-hostname: Unique per-instance hostname"
+    },
+    {
+      "name": "33-firewall.sh",
+      "path": "automation/33-firewall.sh",
+      "purpose": "MiOS v0.1.1 — 33-firewall: Firewall configuration script"
+    },
+    {
+      "name": "34-gpu-detect.sh",
+      "path": "automation/34-gpu-detect.sh",
+      "purpose": "MiOS v0.1.1 — 34-gpu-detect: Bridge to GPU detection service"
+    },
+    {
+      "name": "35-gpu-passthrough.sh",
+      "path": "automation/35-gpu-passthrough.sh",
+      "purpose": "============================================================================"
+    },
+    {
+      "name": "35-gpu-pv-shim.sh",
+      "path": "automation/35-gpu-pv-shim.sh",
+      "purpose": "automation/35-gpu-pv-shim.sh - MiOS v0.1.1"
+    },
+    {
+      "name": "35-init-service.sh",
+      "path": "automation/35-init-service.sh",
+      "purpose": "MiOS v0.1.1 — 35-init-service: Bridge to Unified Role Engine"
+    },
+    {
+      "name": "36-akmod-guards.sh",
+      "path": "automation/36-akmod-guards.sh",
+      "purpose": "============================================================================"
+    },
+    {
+      "name": "36-tools.sh",
+      "path": "automation/36-tools.sh",
+      "purpose": "MiOS v0.1.1 — 36-tools: CLI tools and consolidated mios command"
+    },
+    {
+      "name": "37-aichat.sh",
+      "path": "automation/37-aichat.sh",
+      "purpose": "🌐 MiOS"
+    },
+    {
+      "name": "37-ollama-prep.sh",
+      "path": "automation/37-ollama-prep.sh",
+      "purpose": "🌐 MiOS"
+    },
+    {
+      "name": "37-selinux.sh",
+      "path": "automation/37-selinux.sh",
+      "purpose": "MiOS v0.1.1 — 37-selinux: Build-time SELinux policy fixes"
+    },
+    {
+      "name": "38-vm-gating.sh",
+      "path": "automation/38-vm-gating.sh",
+      "purpose": "MiOS v0.1.1 — 38-vm-gating: VM service gating + Hyper-V Enhanced Session"
+    },
+    {
+      "name": "39-desktop-polish.sh",
+      "path": "automation/39-desktop-polish.sh",
+      "purpose": "MiOS v0.1.1 — 39-desktop-polish: Desktop entries, Cockpit webapp, MOTD"
+    },
+    {
+      "name": "40-composefs-verity.sh",
+      "path": "automation/40-composefs-verity.sh",
+      "purpose": "40-composefs-verity.sh - promote composefs from default (yes) to verity mode"
+    },
+    {
+      "name": "42-cosign-policy.sh",
+      "path": "automation/42-cosign-policy.sh",
+      "purpose": "============================================================================"
+    },
+    {
+      "name": "43-uupd-installer.sh",
+      "path": "automation/43-uupd-installer.sh",
+      "purpose": "43-uupd-installer.sh - install uupd + greenboot (from PACKAGES.md"
+    },
+    {
+      "name": "44-podman-machine-compat.sh",
+      "path": "automation/44-podman-machine-compat.sh",
+      "purpose": "44-podman-machine-compat.sh - Podman-machine backend compatibility."
+    },
+    {
+      "name": "45-nvidia-cdi-refresh.sh",
+      "path": "automation/45-nvidia-cdi-refresh.sh",
+      "purpose": "45-nvidia-cdi-refresh.sh - wire up NVIDIA CDI auto-refresh services."
+    },
+    {
+      "name": "46-greenboot.sh",
+      "path": "automation/46-greenboot.sh",
+      "purpose": "46-greenboot.sh - wire greenboot services; package installs via PACKAGES.md"
+    },
+    {
+      "name": "47-hardening.sh",
+      "path": "automation/47-hardening.sh",
+      "purpose": "47-hardening.sh - enable hardening services (USBGuard, auditd)."
+    },
+    {
+      "name": "49-finalize.sh",
+      "path": "automation/49-finalize.sh",
+      "purpose": "49-finalize.sh - final cleanup, systemd preset application, image linting"
+    },
+    {
+      "name": "50-enable-log-copy-service.sh",
+      "path": "automation/50-enable-log-copy-service.sh",
+      "purpose": "No description"
+    },
+    {
+      "name": "52-bake-kvmfr.sh",
+      "path": "automation/52-bake-kvmfr.sh",
+      "purpose": "52-bake-kvmfr.sh - compile Looking Glass kvmfr kmod against the ucore-hci"
+    },
+    {
+      "name": "53-bake-lookingglass-client.sh",
+      "path": "automation/53-bake-lookingglass-client.sh",
+      "purpose": "53-bake-lookingglass-client.sh - git clone Looking Glass B7, cmake/make,"
+    },
+    {
+      "name": "98-boot-config.sh",
+      "path": "automation/98-boot-config.sh",
+      "purpose": "MiOS v0.1.1 — 98-boot-config: Boot console + service configuration"
+    },
+    {
+      "name": "99-cleanup.sh",
+      "path": "automation/99-cleanup.sh",
+      "purpose": "MiOS v0.1.1 — 99-cleanup: Final image cleanup (mirrors ucore/cleanup.sh)"
+    },
+    {
+      "name": "99-postcheck.sh",
+      "path": "automation/99-postcheck.sh",
+      "purpose": "99-postcheck.sh - build-time technical invariant validation"
+    }
+  ]
+}

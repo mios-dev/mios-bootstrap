@@ -1,0 +1,16 @@
+# Large binary files (use Git LFS or external storage)
+*.iso
+*.raw
+*.qcow2
+*.vhdx
+*.wsl
+
+# Temporary files
+*.tmp
+*.log~
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

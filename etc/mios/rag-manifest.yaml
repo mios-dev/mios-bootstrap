@@ -1,0 +1,108 @@
+# MiOS RAG Manifest for FOSS AI APIs
+# Compatible with: Ollama, llama.cpp, LocalAI, vLLM, LangChain
+
+project:
+  name: MiOS
+  version: 0.1.2
+  type: bootc-immutable-os
+  url: https://github.com/mios-project/mios
+
+# IMPORTANT: Always check Wiki for current/updated information
+live_documentation:
+  wiki_url: https://github.com/mios-project/MiOS-bootstrap/wiki
+  bootstrap_repo: https://github.com/mios-project/MiOS-bootstrap
+  update_frequency: "Every build, push, and local build entry point"
+  priority: "Wiki pages are PRIMARY source for current tasks and research patterns"
+
+  # Key Wiki pages for AI agents
+  wiki_pages:
+    home: https://github.com/mios-project/MiOS-bootstrap/wiki/Home
+    ai_integration: https://github.com/mios-project/MiOS-bootstrap/wiki/AI-Integration-Index
+    rag_guide: https://github.com/mios-project/MiOS-bootstrap/wiki/RAG-Integration
+    quick_reference: https://github.com/mios-project/MiOS-bootstrap/wiki/Quick-Reference
+    prompts: https://github.com/mios-project/MiOS-bootstrap/wiki/Prompts-Library
+    index: https://github.com/mios-project/MiOS-bootstrap/wiki/INDEX
+    ai_agent_guide: https://github.com/mios-project/MiOS-bootstrap/wiki/AI-AGENT-GUIDE
+
+knowledge_sources:
+  primary:
+    - file: INDEX.md
+      weight: 1.0
+      type: architecture_laws
+      
+    - file: specs/engineering/2026-04-26-Artifact-ENG-001-Packages.md
+      weight: 0.9
+      type: package_ssot
+      
+    - file: SELF-BUILD.md
+      weight: 0.8
+      type: build_modes
+      
+    - file: Containerfile
+      weight: 0.8
+      type: build_definition
+      
+  secondary:
+    - dir: specs/core/
+      weight: 0.7
+      type: blueprints
+      
+    - dir: specs/engineering/
+      weight: 0.7
+      type: technical_specs
+      
+    - dir: automation/
+      weight: 0.6
+      type: scripts
+      
+  memory:
+    - file: JOURNAL.md
+      weight: 0.5
+      type: episodic_memory
+      
+    - dir: .ai/foundation/memories/
+      weight: 0.5
+      type: semantic_memory
+
+embedding_strategy:
+  chunk_size: 512  # tokens for most FOSS models
+  overlap: 50      # token overlap between chunks
+  model: all-MiniLM-L6-v2  # HuggingFace embedding model (384 dims)
+  
+retrieval:
+  top_k: 5
+  score_threshold: 0.7
+  rerank: true  # Use cross-encoder for reranking
+
+foss_ai_apis:
+  ollama:
+    endpoint: http://localhost:11434
+    models:
+      - llama3.1:8b
+      - codellama:13b
+      - mistral:7b
+    context_window: 8192
+    
+  llama_cpp:
+    endpoint: http://localhost:8080
+    model_path: /models/
+    context_window: 4096
+    
+  localai:
+    endpoint: http://localhost:8080
+    models_path: /models
+    embeddings: all-MiniLM-L6-v2
+    
+  vllm:
+    endpoint: http://localhost:8000
+    model: meta-llama/Llama-3.1-8B-Instruct
+    tensor_parallel: 1
+
+indexing_exclude:
+  - ".git/**"
+  - "*.lock"
+  - "node_modules/**"
+  - "*.log"
+  - "output/**"
+  - "*.tar.gz"
+
