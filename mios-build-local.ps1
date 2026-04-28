@@ -92,6 +92,60 @@ if (Test-Path $MiosSecretsFile) {
 }
 
 # ============================================================================
+# Repository Setup
+# ============================================================================
+
+$MiosRepoDir = Join-Path $env:LOCALAPPDATA "MiOS\repo"
+$MiosRepoUrl = "https://github.com/Kabuki94/MiOS.git"
+
+if (-not (Test-Path $MiosRepoDir)) {
+    Write-Log "Cloning MiOS repository..." "INFO"
+    Write-Host "  Cloning MiOS repository to $MiosRepoDir..." -ForegroundColor Yellow
+
+    $parentDir = Split-Path $MiosRepoDir -Parent
+    if (-not (Test-Path $parentDir)) {
+        New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+    }
+
+    try {
+        git clone $MiosRepoUrl $MiosRepoDir 2>&1 | Tee-Object -Append -FilePath $BuildLog
+        if ($LASTEXITCODE -ne 0) {
+            throw "Git clone failed with exit code $LASTEXITCODE"
+        }
+        Write-Log "Repository cloned successfully" "OK"
+    } catch {
+        Write-Log "Failed to clone repository: $_" "FAIL"
+        Write-Host "  [FAIL] Could not clone MiOS repository" -ForegroundColor Red
+        Write-Host "  Error: $_" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Log "Repository already exists at $MiosRepoDir" "INFO"
+    Write-Host "  Repository found at $MiosRepoDir" -ForegroundColor Gray
+
+    # Optional: pull latest changes
+    Write-Log "Updating repository..." "INFO"
+    Push-Location $MiosRepoDir
+    try {
+        git pull 2>&1 | Tee-Object -Append -FilePath $BuildLog
+        Write-Log "Repository updated" "OK"
+    } catch {
+        Write-Log "Warning: Could not update repository: $_" "WARN"
+    }
+    Pop-Location
+}
+
+# Verify Containerfile exists
+$containerfile = Join-Path $MiosRepoDir "Containerfile"
+if (-not (Test-Path $containerfile)) {
+    Write-Log "ERROR: Containerfile not found at $containerfile" "FAIL"
+    Write-Host "  [FAIL] Containerfile not found in repository" -ForegroundColor Red
+    exit 1
+}
+
+Write-Log "Containerfile verified at $containerfile" "OK"
+
+# ============================================================================
 # Podman Build
 # ============================================================================
 
@@ -109,7 +163,8 @@ $buildArgs = @(
     "--build-arg", "BASE_IMAGE=$IMG_BASE",
     "-t", "localhost/mios:latest",
     "-t", "localhost/mios:$MIOS_VERSION",
-    "."
+    "-f", $containerfile,
+    $MiosRepoDir
 )
 
 Write-Log "Starting podman build..." "INFO"
@@ -178,7 +233,7 @@ Write-Host "  1. Test the image:" -ForegroundColor White
 Write-Host "     podman run -it localhost/mios:latest" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  2. Export to ISO (requires bootc-image-builder):" -ForegroundColor White
-Write-Host "     # (Run from main MiOS repo)" -ForegroundColor Gray
+Write-Host "     cd $MiosRepoDir" -ForegroundColor Gray
 Write-Host "     just iso" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  3. Push to registry:" -ForegroundColor White
