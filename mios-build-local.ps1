@@ -82,10 +82,23 @@ Write-Log "Hostname: $MIOS_HOSTNAME" "INFO"
 Write-Log "Flatpaks: $($MIOS_FLATPAKS.Split(',').Count) apps" "INFO"
 Write-Log "Base Image: $IMG_BASE" "INFO"
 
-# Load password hash from secrets
+# Load password hash and GitHub credentials from secrets
 if (Test-Path $MiosSecretsFile) {
     $secrets = Get-Content $MiosSecretsFile
     $MIOS_PASSWORD_HASH = ($secrets | Select-String "MIOS_PASSWORD_HASH=").ToString().Split('=')[1]
+
+    # Extract GitHub credentials for private repo access
+    $githubUserLine = $secrets | Select-String "GITHUB_USER="
+    $githubTokenLine = $secrets | Select-String "GITHUB_TOKEN="
+
+    if ($githubUserLine -and $githubTokenLine) {
+        $GITHUB_USER = $githubUserLine.ToString().Split('=')[1]
+        $GITHUB_TOKEN = $githubTokenLine.ToString().Split('=')[1]
+    } else {
+        Write-Log "ERROR: GitHub credentials not found in secrets.env" "FAIL"
+        Write-Host "  [FAIL] GitHub credentials required to clone private MiOS repository" -ForegroundColor Red
+        exit 1
+    }
 } else {
     Write-Log "ERROR: secrets.env not found" "FAIL"
     exit 1
@@ -96,7 +109,8 @@ if (Test-Path $MiosSecretsFile) {
 # ============================================================================
 
 $MiosRepoDir = Join-Path $env:LOCALAPPDATA "MiOS\repo"
-$MiosRepoUrl = "https://github.com/Kabuki94/MiOS.git"
+# Use authenticated URL for private repository
+$MiosRepoUrl = "https://$($GITHUB_USER):$($GITHUB_TOKEN)@github.com/Kabuki94/MiOS.git"
 
 if (-not (Test-Path $MiosRepoDir)) {
     Write-Log "Cloning MiOS repository..." "INFO"
@@ -108,7 +122,14 @@ if (-not (Test-Path $MiosRepoDir)) {
     }
 
     try {
-        git clone $MiosRepoUrl $MiosRepoDir 2>&1 | Tee-Object -Append -FilePath $BuildLog
+        # Clone with authentication (output will not show token)
+        git clone $MiosRepoUrl $MiosRepoDir 2>&1 | ForEach-Object {
+            $line = $_.ToString()
+            # Redact token from logs
+            $line = $line -replace $GITHUB_TOKEN, "***TOKEN***"
+            Write-Host $line
+            Add-Content -Path $BuildLog -Value $line
+        }
         if ($LASTEXITCODE -ne 0) {
             throw "Git clone failed with exit code $LASTEXITCODE"
         }
@@ -117,6 +138,11 @@ if (-not (Test-Path $MiosRepoDir)) {
         Write-Log "Failed to clone repository: $_" "FAIL"
         Write-Host "  [FAIL] Could not clone MiOS repository" -ForegroundColor Red
         Write-Host "  Error: $_" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "  Troubleshooting:" -ForegroundColor Yellow
+        Write-Host "    1. Verify GitHub credentials are correct" -ForegroundColor Gray
+        Write-Host "    2. Ensure PAT has 'repo' scope" -ForegroundColor Gray
+        Write-Host "    3. Check network connectivity to GitHub" -ForegroundColor Gray
         exit 1
     }
 } else {
@@ -127,7 +153,14 @@ if (-not (Test-Path $MiosRepoDir)) {
     Write-Log "Updating repository..." "INFO"
     Push-Location $MiosRepoDir
     try {
-        git pull 2>&1 | Tee-Object -Append -FilePath $BuildLog
+        # Set remote URL with authentication
+        git remote set-url origin $MiosRepoUrl 2>&1 | Out-Null
+        git pull 2>&1 | ForEach-Object {
+            $line = $_.ToString()
+            # Redact token from logs
+            $line = $line -replace $GITHUB_TOKEN, "***TOKEN***"
+            Add-Content -Path $BuildLog -Value $line
+        }
         Write-Log "Repository updated" "OK"
     } catch {
         Write-Log "Warning: Could not update repository: $_" "WARN"

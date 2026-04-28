@@ -180,6 +180,24 @@ Write-Host "    Full hostname: $MIOS_HOSTNAME" -ForegroundColor DarkGray
 Write-Host "  └───────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
+# GitHub Access (for private MiOS repository)
+Write-Host "  ┌─ GitHub Access ───────────────────────────────────────────────┐" -ForegroundColor Cyan
+Write-Host "  " -NoNewline
+Write-Host "MiOS is a private repository - GitHub credentials required" -ForegroundColor Yellow
+Write-Host ""
+$GITHUB_USER = Read-Host "  GitHub username"
+if ([string]::IsNullOrWhiteSpace($GITHUB_USER)) {
+    Write-Host "  [!] GitHub username is required to clone MiOS repository." -ForegroundColor Red
+    exit 1
+}
+$GITHUB_TOKEN = Read-Secret "GitHub PAT (with repo scope):"
+if ([string]::IsNullOrWhiteSpace($GITHUB_TOKEN)) {
+    Write-Host "  [!] GitHub token is required to clone MiOS repository." -ForegroundColor Red
+    exit 1
+}
+Write-Host "  └───────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
+Write-Host ""
+
 # Flatpak Selection
 Write-Host "  ┌─ Flatpak Applications ────────────────────────────────────────┐" -ForegroundColor Cyan
 Write-Host "  " -NoNewline
@@ -227,6 +245,7 @@ Write-Host ""
 Write-Host "    Admin User:       $MIOS_USER"
 Write-Host "    Password Hash:    $($MIOS_PASSWORD_HASH.Substring(0,20))... (SHA-512)"
 Write-Host "    Hostname:         $MIOS_HOSTNAME"
+Write-Host "    GitHub User:      $GITHUB_USER (for private repo access)"
 Write-Host "    Flatpaks:         $($MIOS_FLATPAKS.Count) apps"
 if ($GHCR_USER) {
     Write-Host "    Registry Push:    $GHCR_USER (enabled)"
@@ -332,6 +351,8 @@ $secretsContent = @"
 #           Permissions are restricted to current user + Administrators.
 
 MIOS_PASSWORD_HASH=$MIOS_PASSWORD_HASH
+GITHUB_USER=$GITHUB_USER
+GITHUB_TOKEN=$GITHUB_TOKEN
 "@
 
 if ($GHCR_TOKEN) {
