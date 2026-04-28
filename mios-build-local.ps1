@@ -189,6 +189,7 @@ Write-Host "  +=================================================================
 Write-Host ""
 
 $buildArgs = @(
+    "--progress=plain",
     "--build-arg", "MIOS_USER=$MIOS_USER",
     "--build-arg", "MIOS_HOSTNAME=$MIOS_HOSTNAME",
     "--build-arg", "MIOS_PASSWORD_HASH=$MIOS_PASSWORD_HASH",
@@ -202,12 +203,19 @@ $buildArgs = @(
 
 Write-Log "Starting podman build..." "INFO"
 Write-Log "Build arguments: MIOS_USER, MIOS_HOSTNAME, MIOS_PASSWORD_HASH, MIOS_FLATPAKS, BASE_IMAGE" "INFO"
+Write-Host ""
+Write-Host "  Build output (live stream):" -ForegroundColor Yellow
+Write-Host "  ────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host ""
 
 try {
-    $buildOutput = & podman build @buildArgs 2>&1
-    $buildOutput | ForEach-Object {
-        Write-Host $_
-        Add-Content -Path $BuildLog -Value $_
+    # Stream output in real-time with tee to log file
+    & podman build @buildArgs 2>&1 | ForEach-Object {
+        $line = $_.ToString()
+        # Display to console
+        Write-Host $line
+        # Write to log file
+        Add-Content -Path $BuildLog -Value $line
     }
 
     if ($LASTEXITCODE -eq 0) {
