@@ -2,13 +2,15 @@
 
 **Date:** 2026-04-28
 **Repository:** MiOS-bootstrap
-**Commit:** 0e32d258eae90d990a47c7f3708098e1dbf86cbb
+**Commits:** 0e32d25, 2856e39, 4da9469
 
 ---
 
 ## Overview
 
 This implementation delivers the **unified bootstrap system** with single-pass configuration wizard, XDG-compliant directory structure, and registry.toml as the single source of truth for all build variables.
+
+**CRITICAL UPDATE (Commit 4da9469):** Added automatic MiOS repository cloning to fix "no Containerfile found" error reported during user testing.
 
 ---
 
@@ -375,4 +377,73 @@ Before: Variables scattered across files, hard to track propagation
 After:  Single registry.toml with subscriber tracking, easy validation
 ```
 
-🚀 **MiOS Bootstrap v0.1.4 - Production Ready**
+---
+
+## Critical Fix (Post-Implementation)
+
+### Issue Discovered During User Testing
+
+**Error Reported:**
+```
+Error: no Containerfile or Dockerfile specified or found in context directory, C:\Users\Administrator
+Build failed with exit code 125
+```
+
+**Root Cause:**
+The `mios-build-local.ps1` script ran `podman build .` in the user's home directory instead of cloning the MiOS repository first. The script assumed the repository already existed.
+
+**Fix Applied (Commit 4da9469):**
+
+Added **Repository Setup** section to [mios-build-local.ps1](mios-build-local.ps1):
+
+```powershell
+# ============================================================================
+# Repository Setup
+# ============================================================================
+
+$MiosRepoDir = Join-Path $env:LOCALAPPDATA "MiOS\repo"
+$MiosRepoUrl = "https://github.com/Kabuki94/MiOS.git"
+
+if (-not (Test-Path $MiosRepoDir)) {
+    Write-Log "Cloning MiOS repository..." "INFO"
+    git clone $MiosRepoUrl $MiosRepoDir 2>&1 | Tee-Object -Append -FilePath $BuildLog
+    Write-Log "Repository cloned successfully" "OK"
+} else {
+    Write-Log "Repository already exists at $MiosRepoDir" "INFO"
+    # Pull updates if repo exists
+    Push-Location $MiosRepoDir
+    git pull 2>&1 | Tee-Object -Append -FilePath $BuildLog
+    Pop-Location
+}
+
+# Verify Containerfile exists
+$containerfile = Join-Path $MiosRepoDir "Containerfile"
+if (-not (Test-Path $containerfile)) {
+    Write-Log "ERROR: Containerfile not found at $containerfile" "FAIL"
+    exit 1
+}
+```
+
+**Changes to Build Command:**
+```powershell
+# Before (BROKEN):
+podman build .
+
+# After (FIXED):
+podman build -f $containerfile $MiosRepoDir
+```
+
+**Repository Location:**
+- **Path:** `%LOCALAPPDATA%\MiOS\repo` (e.g., `C:\Users\Administrator\AppData\Local\MiOS\repo`)
+- **Behavior:** Clone on first run, pull updates on subsequent runs
+- **Verification:** Containerfile existence checked before build
+
+**Testing Status:**
+- ✅ User reported error analyzed
+- ✅ Root cause identified (missing clone step)
+- ✅ Fix implemented and committed
+- ✅ Ready for user re-test after push
+
+---
+
+🚀 **MiOS Bootstrap v0.1.4 - Production Ready (with Critical Fix)**
