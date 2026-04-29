@@ -1,0 +1,43 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    "docker:pinDigests"
+  ],
+  "labels": ["dependencies"],
+  "automerge": true,
+  "automergeType": "pr",
+  "minimumReleaseAge": "7 days",
+  "packageRules": [
+    {
+      "description": "Auto-merge digest updates (same tag, new content)",
+      "matchUpdateTypes": ["digest"],
+      "automerge": true,
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Group all GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "schedule": ["before 9am on monday"]
+    },
+    {
+      "description": "Protect image-versions.yml  require review",
+      "matchFileNames": ["image-versions.yml"],
+      "automerge": false,
+      "assignees": ["Kabuki94"]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Pin digest of BASE_IMAGE ARG in Containerfile  the dockerfile manager only pins bare FROM lines, not ARG defaults",
+      "fileMatch": ["(^|/)Containerfile$"],
+      "matchStrings": [
+        "ARG BASE_IMAGE=(?<depName>[^:\\s]+):(?<currentValue>[^\\s@]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?"
+      ],
+      "datasourceTemplate": "docker",
+      "pinDigests": true
+    }
+  ]
+}

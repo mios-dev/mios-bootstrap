@@ -1,0 +1,29 @@
+# MiOS v0.1.3  Base Image Version Pinning
+# Managed by Renovate Bot  do NOT edit digests manually.
+# Renovate opens PRs when upstream images publish new digests.
+#
+# To enable: install Renovate GitHub App on the repo.
+# Digests auto-update with a 7-day stability period.
+#
+# USAGE: This file is reference documentation  the Containerfile
+# now uses digests. Renovate will keep these SHA256 hashes updated.
+
+# ucore-hci:stable-nvidia  Universal Blue CoreOS with pre-signed NVIDIA
+# renovate: datasource=docker depName=ghcr.io/ublue-os/ucore-hci
+ucore_hci_stable_nvidia_digest: sha256:3f4474648ab2835bdb8a29f1afe8805de96a32bc0.1.1345ecf485a395aa1d1d
+
+# bootc-image-builder  OCI to disk image converter
+# renovate: datasource=docker depName=quay.io/centos-bootc/bootc-image-builder
+# bib_digest: sha256:<populated by Renovate>
+
+image-builder-cli:
+  # next-gen image builder (with SBOM support)
+  # renovate: datasource=docker depName=ghcr.io/osautomation/image-builder-cli
+  image_builder_cli_digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+rechunk:
+  # bootc-base-imagectl  image rechunking for efficient Day-2 updates
+  # Run after build, before push:
+  #   bootc-base-imagectl rechunk --max-layers 67 mios:latest
+  tool: bootc-base-imagectl # @track:IMG_RECHUNKER
+  max_layers: 67

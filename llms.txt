@@ -1,0 +1,54 @@
+# Kabuki94/MiOS-bootstrap
+
+> Build-infrastructure repo for MiOS, an immutable bootc-native workstation OS.
+> Snapshot v0.1.5. Single source of truth: INDEX.md.
+> Deployed root overlay: https://github.com/Kabuki94/MiOS
+
+MiOS is a self-building, immutable workstation OS on Fedora bootc with the
+Universal Blue ucore-hci base. The deployed system is OpenAI-API native: any
+client speaking the OpenAI REST protocol targets a MiOS host at
+http://localhost:8080/v1, served by LocalAI (FOSS) with on-disk discovery
+under /v1/ and stateful model storage at /srv/ai/.
+
+## Architecture
+
+- INDEX.md - Single source of truth for build-time architecture and conventions
+- AGENTS.md - In-image agent contract (lives in MiOS, not bootstrap)
+- VERSION  - Canonical release tag
+
+## Repository layout
+
+- automation/ - Build orchestration (master runner + numbered phase scripts)
+- tools/ - Build helpers, push scripts, init utilities
+- usr/, etc/, home/ - System file overlays consumed by the Containerfile
+- config/ - bootc-image-builder configs, ignition definitions
+- specs/ - Architectural research and engineering docs
+
+## OpenAI-API client integration (FOSS only)
+
+Any FOSS implementation of the OpenAI REST protocol works against MiOS
+without code changes:
+
+- LocalAI       - reference backend, ships in the deployed image as a Quadlet
+- Ollama        - drop-in via the same /v1 endpoint
+- vLLM          - high-throughput backend for larger models
+- llama.cpp     - direct GGUF execution
+- MCP servers   - registered under /v1/mcp, discoverable via filesystem or HTTP
+
+No vendor-specific SDK, IDE plugin, agent framework, or cloud provider is
+required or assumed.
+
+## Standards alignment
+
+- OpenAI REST API (open spec, multi-vendor implementations)
+- Model Context Protocol (MCP, open spec)
+- Linux Filesystem Hierarchy Standard (FHS 3.0)
+- XDG Base Directory specification
+- systemd unit + Quadlet conventions
+- bootc / OCI image format
+- SLSA / Sigstore (cosign keyless signing)
+
+## License
+
+Apache-2.0. Source: https://github.com/Kabuki94/MiOS-bootstrap
+Deployments: ghcr.io/kabuki94/mios:latest
