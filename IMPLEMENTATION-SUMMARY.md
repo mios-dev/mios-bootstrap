@@ -117,7 +117,7 @@ $buildArgs = @(
 ### 3. README.md (UPDATED - 32 changes)
 
 **Changes:**
-- Updated version from MiOSv0.1.3 to MiOSv0.1.4 (all occurrences)
+- Updated version from MiOSv0.1.4 to MiOSv0.1.4 (all occurrences)
 - Updated date from 2026-04-27 to 2026-04-28
 - Updated all path references throughout:
   - `/var/lib/mios/artifacts/MiOSv0.1.4/`
@@ -238,7 +238,7 @@ RUN echo "${MIOS_USER}:${MIOS_PASSWORD_HASH}" | chpasswd -e
 **After:** Canonical names (bootstrap.ps1, build.sh) - no version suffixes on scripts
 
 ### 5. Versioning Sync (FIXED)
-**Before:** Bootstrap repo showed v0.1.3
+**Before:** Bootstrap repo showed v0.1.4
 **After:** Synced with mainline MiOS v0.1.4
 
 ---
@@ -288,7 +288,7 @@ Ref: BOOTSTRAP-V2-IMPLEMENTATION.md
 1. **Run unified bootstrap:**
    ```powershell
    # Download and run
-   irm https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/bootstrap.ps1 | iex
+   irm https://raw.githubusercontent.com/MiOS-FSS/MiOS-bootstrap/main/bootstrap.ps1 | iex
    ```
 
 2. **Single-pass wizard:**
@@ -345,8 +345,8 @@ Ref: BOOTSTRAP-V2-IMPLEMENTATION.md
 
 ## References
 
-- **Main Repo:** https://github.com/MiOS-DEV/MiOS
-- **Bootstrap Repo:** https://github.com/MiOS-DEV/MiOS-bootstrap
+- **Main Repo:** https://github.com/mios-fss/MiOS
+- **Bootstrap Repo:** https://github.com/mios-fss/MiOS-bootstrap
 - **Specification:** BOOTSTRAP-V2-IMPLEMENTATION.md (in main repo)
 - **Related Fixes:** DEPLOYMENT-FIXES-SUMMARY.md (locale, cockpit)
 
@@ -402,7 +402,7 @@ Added **Repository Setup** section to [mios-build-local.ps1](mios-build-local.ps
 # ============================================================================
 
 $MiosRepoDir = Join-Path $env:LOCALAPPDATA "MiOS\repo"
-$MiosRepoUrl = "https://github.com/MiOS-DEV/MiOS.git"
+$MiosRepoUrl = "https://github.com/mios-fss/MiOS.git"
 
 if (-not (Test-Path $MiosRepoDir)) {
     Write-Log "Cloning MiOS repository..." "INFO"

@@ -1,8 +1,8 @@
-# MiOS-DEV/MiOS-bootstrap
+# MiOS-FSS/MiOS-bootstrap
 
 > Interactive ignition installer for MiOS. User-facing entry point.
-> Snapshot v0.2.0. The system layer (Containerfile, FHS overlay, build infra)
-> lives in https://github.com/MiOS-DEV/MiOS.
+> Snapshot v0.1.4. The system layer (Containerfile, FHS overlay, build infra)
+> lives in https://github.com/mios-fss/MiOS.
 
 MiOS is an immutable, bootc-native workstation OS on Fedora. This repository
 contains only the bootstrap installer -- the script users run as root to
@@ -24,7 +24,7 @@ clone-and-FHS-overlay for non-bootc Fedora).
 ## Install command
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/install.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-FSS/MiOS-bootstrap/main/install.sh)"
 ```
 
 ## Defaults convention

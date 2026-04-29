@@ -1,7 +1,7 @@
 # VARIABLES.md
 
 > Every prompt the bootstrap installer asks, with defaults and notes.
-> Snapshot v0.2.0.
+> Snapshot v0.1.4.
 
 ## Defaults convention
 
@@ -18,7 +18,7 @@ override. Pressing Enter at any prompt accepts the default.
 | Password | (none -- prompt twice) | Hashed via `chpasswd`. Never written to disk in plaintext. |
 | SSH key | generate ed25519 | Choices: `g` generate / `e` use existing path / `s` skip. |
 | GitHub PAT | skip | If provided, configures `credential.helper store` for the user. |
-| Image tag (bootc hosts) | `ghcr.io/kabuki94/mios:latest` | Passed to `bootc switch`. |
+| Image tag (bootc hosts) | `ghcr.io/mios-fss/mios:latest` | Passed to `bootc switch`. |
 | Build vs FHS (non-bootc) | FHS | Choose between local build and FHS overlay install. |
 
 ## Persisted profile

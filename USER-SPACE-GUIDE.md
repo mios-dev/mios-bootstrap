@@ -1,13 +1,13 @@
 # MiOS User-Space Configuration Guide
 
-**Version:** MiOS v0.1.3
+**Version:** MiOS v0.1.4
 **Date:** 2026-04-27
 
 ---
 
 ##  Overview
 
-MiOS v0.1.3 introduces **user-space separation** following the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html). This separates mutable user configuration from the immutable system repository, enabling:
+MiOS v0.1.4 introduces **user-space separation** following the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html). This separates mutable user configuration from the immutable system repository, enabling:
 
 [OK] **Environment-independent configuration** - Move between machines without conflicts
 [OK] **Secure credential management** - Credentials never committed to git
@@ -23,7 +23,7 @@ MiOS v0.1.3 introduces **user-space separation** following the [XDG Base Directo
 
 ```bash
 # Clone MiOS repository
-git clone https://github.com/MiOS-DEV/MiOS-bootstrap.git
+git clone https://github.com/mios-fss/MiOS-bootstrap.git
 cd mios
 
 # Initialize your user-space configuration
@@ -141,7 +141,7 @@ Location: `~/.config/mios/env.toml`
 
 ```toml
 [mios]
-version = "v0.1.3"
+version = "v0.1.4"
 user = "your-username"
 hostname = "your-hostname"
 
@@ -178,7 +178,7 @@ image = "quay.io/centos-bootc/bootc-image-builder:latest"
 
 [output]
 name = "localhost/mios"
-tags = ["latest", "v0.1.3"]
+tags = ["latest", "v0.1.4"]
 registry = "ghcr.io"
 repository = "your-username/mios"
 
@@ -542,5 +542,5 @@ chmod 600 ~/.config/mios/credentials/*
 ---
 
 **Generated:** 2026-04-27
-**MiOS Version:** v0.1.3
-**License:** Personal Property - MiOS-DEV
+**MiOS Version:** v0.1.4
+**License:** Personal Property - MiOS-FSS

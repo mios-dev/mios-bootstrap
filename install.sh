@@ -3,7 +3,7 @@
 # MiOS Bootstrap -- Interactive Ignition Installer
 #
 # Usage:
-#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/install.sh)"
+#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-FSS/MiOS-bootstrap/main/install.sh)"
 #   # or after cloning:
 #   sudo /path/to/MiOS-bootstrap/install.sh
 #
@@ -26,7 +26,7 @@
 #         - git credential helper for GitHub PAT
 #         - persist non-secret profile to /etc/mios/install.env
 #   4. Trigger the MiOS root install:
-#         - bootc host: `bootc switch ghcr.io/kabuki94/mios:latest`
+#         - bootc host: `bootc switch ghcr.io/mios-fss/mios:latest`
 #         - FHS host:   git clone MiOS, run mios/install.sh
 #         - build mode: git clone MiOS, run mios/build-mios.sh
 #   5. Reboot prompt.
@@ -44,11 +44,11 @@ DEFAULT_USER_FULLNAME="MiOS User"
 DEFAULT_USER_SHELL="/bin/bash"
 DEFAULT_USER_GROUPS="wheel,libvirt,kvm,video,render,input,dialout"
 DEFAULT_SSH_KEY_TYPE="ed25519"
-DEFAULT_IMAGE="ghcr.io/kabuki94/mios:latest"
+DEFAULT_IMAGE="ghcr.io/mios-fss/mios:latest"
 DEFAULT_BRANCH="main"
 
-MIOS_REPO="https://github.com/MiOS-DEV/MiOS.git"
-BOOTSTRAP_REPO="https://github.com/MiOS-DEV/MiOS-bootstrap.git"
+MIOS_REPO="https://github.com/mios-fss/MiOS.git"
+BOOTSTRAP_REPO="https://github.com/mios-fss/MiOS-bootstrap.git"
 PROFILE_DIR="/etc/mios"
 PROFILE_FILE="${PROFILE_DIR}/install.env"
 LOG_FILE="/var/log/mios-bootstrap.log"
@@ -287,7 +287,7 @@ deploy_system_prompt() {
 
     local src_local prompt_url
     src_local="$(dirname "${BASH_SOURCE[0]}")/system-prompt.md"
-    prompt_url="https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/${DEFAULT_BRANCH}/system-prompt.md"
+    prompt_url="https://raw.githubusercontent.com/MiOS-FSS/MiOS-bootstrap/${DEFAULT_BRANCH}/system-prompt.md"
 
     if [[ -f "$src_local" ]]; then
         log_info "Using local system-prompt.md from ${src_local}"
