@@ -6,15 +6,15 @@ This file provides guidance to AI coding agents when working with code in this r
 
 **IMPORTANT:** This guide is a snapshot. **ALWAYS check the Wiki for current/updated information:**
 
-- **Wiki:** https://github.com/Kabuki94/MiOS-bootstrap/wiki
+- **Wiki:** https://github.com/MiOS-DEV/MiOS-bootstrap/wiki
 - **Updates:** Every build, push, and local build entry point
 - **Wiki Discovery Guide:** [specs/ai-integration/2026-04-27-Artifact-AI-005-Wiki-Discovery.md](specs/ai-integration/2026-04-27-Artifact-AI-005-Wiki-Discovery.md)
 
 **Essential Wiki Pages:**
-- [Home](https://github.com/Kabuki94/MiOS-bootstrap/wiki/Home) — Latest version, artifacts
-- [AI Agent Guide](https://github.com/Kabuki94/MiOS-bootstrap/wiki/AI-AGENT-GUIDE) — This file (Wiki version)
-- [Quick Reference](https://github.com/Kabuki94/MiOS-bootstrap/wiki/Quick-Reference) — Current commands
-- [Build Logs](https://github.com/Kabuki94/MiOS-bootstrap/tree/main/build-logs) — Recent build outputs
+- [Home](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Home) — Latest version, artifacts
+- [AI Agent Guide](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/AI-AGENT-GUIDE) — This file (Wiki version)
+- [Quick Reference](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Quick-Reference) — Current commands
+- [Build Logs](https://github.com/MiOS-DEV/MiOS-bootstrap/tree/main/build-logs) — Recent build outputs
 
 **Workflow:**
 1. Check Wiki for latest procedures and patterns
@@ -33,9 +33,9 @@ MiOS-DEV implements an autonomous documentation cycle on every build entry point
 2. **Log Generation**: `automation/build.sh` captures technical output.
 3. **Repo Snapshot**: Refreshes UKB, RAG snapshot, and manifests.
 4. **Artifacting**: Packs intelligence into `artifacts/`.
-5. **Wiki Push**: Documentation and research are automatically pushed to the [Repository Wiki](https://github.com/Kabuki94/MiOS-bootstrap/wiki) for real-time retrieval.
+5. **Wiki Push**: Documentation and research are automatically pushed to the [Repository Wiki](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki) for real-time retrieval.
 
-**Source Tracking:** https://github.com/Kabuki94/MiOS-bootstrap (Build Log & History)
+**Source Tracking:** https://github.com/MiOS-DEV/MiOS-bootstrap (Build Log & History)
 
 ## Commands
 

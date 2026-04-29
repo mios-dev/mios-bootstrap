@@ -1,4 +1,4 @@
-<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/Kabuki94/MiOS-bootstrap -->
+<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/MiOS-DEV/MiOS-bootstrap -->
 # 🌐 MiOS
 ```json:knowledge
 {
@@ -47,7 +47,7 @@ MiOS v0.1.3 (running) → builds → MiOS v0.1.4 (OCI image)
 If you are starting from a fresh Linux installation (Fedora/Debian/Ubuntu), you can bootstrap the entire MiOS build environment with a single command:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/install.sh | sudo bash
+curl -sL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/install.sh | sudo bash
 ```
 
 This will:
@@ -115,7 +115,7 @@ Boot into a running MiOS system and build from source:
 
 ```bash
 # Clone the repo
-git clone https://github.com/Kabuki94/MiOS-bootstrap.git
+git clone https://github.com/MiOS-DEV/MiOS-bootstrap.git
 cd MiOS
 
 # Build the OCI image (rootful Podman required)
@@ -216,7 +216,7 @@ The build process downloads ~2-4 GB of RPM packages from Fedora repos, RPM Fusio
 - **Core:** [containers/bootc](https://github.com/containers/bootc) | [bootc-image-builder](https://github.com/osautomation/bootc-image-builder) | [bootc.pages.dev](https://bootc.pages.dev/)
 - **Upstream:** [Fedora Bootc](https://github.com/fedora-cloud/fedora-bootc) | [CentOS Bootc](https://gitlab.com/CentOS/bootc) | [ublue-os/main](https://github.com/ublue-os/main)
 - **Tools:** [uupd](https://github.com/ublue-os/uupd) | [rechunk](https://github.com/hhd-dev/rechunk) | [cosign](https://github.com/sigstore/cosign)
-- **Project Repository:** [Kabuki94/MiOS-bootstrap](https://github.com/Kabuki94/MiOS-bootstrap)
+- **Project Repository:** [MiOS-DEV/MiOS-bootstrap](https://github.com/MiOS-DEV/MiOS-bootstrap)
 - **Sole Proprietor:** MiOS-DEV
 ---
 <!-- ⚖️ MiOS Proprietary Artifact | Copyright (c) 2026 MiOS-DEV -->

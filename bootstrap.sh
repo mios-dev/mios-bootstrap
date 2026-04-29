@@ -1,10 +1,10 @@
 #!/bin/bash
 # MiOS Public Bootstrap — Linux / WSL2
-# Repository: Kabuki94/MiOS-bootstrap
-# Usage: curl -fsSL https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/bootstrap.sh | bash
+# Repository: MiOS-DEV/MiOS-bootstrap
+# Usage: curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/bootstrap.sh | bash
 set -euo pipefail
 
-PRIVATE_INSTALLER="https://raw.githubusercontent.com/Kabuki94/mios/main/install.sh"
+PRIVATE_INSTALLER="https://raw.githubusercontent.com/MiOS-DEV/mios/main/install.sh"
 _ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/mios/mios-build.env"
 
 _r=$'\033[0m'; _b=$'\033[1m'; _dim=$'\033[2m'; _c=$'\033[36m'; _g=$'\033[32m'; _red=$'\033[31m'; _y=$'\033[33m'

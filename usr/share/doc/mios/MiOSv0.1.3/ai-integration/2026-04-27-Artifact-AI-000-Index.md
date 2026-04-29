@@ -1,4 +1,4 @@
-<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/Kabuki94/MiOS-bootstrap -->
+<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/MiOS-DEV/MiOS-bootstrap -->
 # 🌐 MiOS AI Integration
 
 ```json:knowledge
@@ -111,7 +111,7 @@ Located in: `artifacts/ai-rag/`
 
 ### 1. Extract Context Bundle
 ```bash
-cd /home/corey_dl_taylor/mios/artifacts/ai-rag
+cd /home/mios-user/mios/artifacts/ai-rag
 tar -xzf mios-context-*.tar.gz -C ~/mios-rag
 ```
 
@@ -223,7 +223,7 @@ distance: cosine          # Similarity metric
 
 All AI RAG artifacts are logged to the MiOS-bootstrap repository for distribution:
 
-**Repository:** https://github.com/Kabuki94/MiOS-bootstrap  
+**Repository:** https://github.com/MiOS-DEV/MiOS-bootstrap  
 **Artifact Path:** `ai-rag-packages/mios-v0.1.3/`  
 
 ### Logged Artifacts:

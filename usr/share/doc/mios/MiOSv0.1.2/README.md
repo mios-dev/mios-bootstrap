@@ -56,13 +56,13 @@ Depending on your environment, use one of the following primary entry points to 
 ### 🐧 Linux / WSL2 (One-Liner)
 Bootstraps the environment, clones the latest repository, and initiates the build process.
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/bootstrap.sh | bash
 ```
 
 ### 🪟 Windows 11 (One-Liner)
 One-click repository fetch and max-resource environment setup. **Run as Administrator.**
 ```powershell
-irm https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/bootstrap.ps1 | iex
+irm https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/bootstrap.ps1 | iex
 ```
 
 ### 🐚 [Justfile](Justfile) (Unified Runner)

@@ -288,7 +288,7 @@ Ref: BOOTSTRAP-V2-IMPLEMENTATION.md
 1. **Run unified bootstrap:**
    ```powershell
    # Download and run
-   irm https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/bootstrap.ps1 | iex
+   irm https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/bootstrap.ps1 | iex
    ```
 
 2. **Single-pass wizard:**
@@ -345,8 +345,8 @@ Ref: BOOTSTRAP-V2-IMPLEMENTATION.md
 
 ## References
 
-- **Main Repo:** https://github.com/Kabuki94/MiOS
-- **Bootstrap Repo:** https://github.com/Kabuki94/MiOS-bootstrap
+- **Main Repo:** https://github.com/MiOS-DEV/MiOS
+- **Bootstrap Repo:** https://github.com/MiOS-DEV/MiOS-bootstrap
 - **Specification:** BOOTSTRAP-V2-IMPLEMENTATION.md (in main repo)
 - **Related Fixes:** DEPLOYMENT-FIXES-SUMMARY.md (locale, cockpit)
 
@@ -402,7 +402,7 @@ Added **Repository Setup** section to [mios-build-local.ps1](mios-build-local.ps
 # ============================================================================
 
 $MiosRepoDir = Join-Path $env:LOCALAPPDATA "MiOS\repo"
-$MiosRepoUrl = "https://github.com/Kabuki94/MiOS.git"
+$MiosRepoUrl = "https://github.com/MiOS-DEV/MiOS.git"
 
 if (-not (Test-Path $MiosRepoDir)) {
     Write-Log "Cloning MiOS repository..." "INFO"

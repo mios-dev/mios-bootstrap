@@ -1,7 +1,7 @@
 # MiOS Unified Bootstrap v2 - Windows (PowerShell 5.1+)
-# Repository: Kabuki94/MiOS-bootstrap
+# Repository: MiOS-DEV/MiOS-bootstrap
 # Single-pass configuration wizard - ALL variables collected upfront
-# Usage: irm https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/bootstrap-v2.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/bootstrap-v2.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
@@ -20,7 +20,7 @@ $MiosLogsDir = Join-Path $XDG_STATE_HOME "logs"
 $MiosBuildDir = Join-Path $XDG_CACHE_HOME "builds"
 $MiosRepoDir = Join-Path $XDG_DATA_HOME "repo"
 
-$PublicInstaller = "https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/mios-build-local.ps1"
+$PublicInstaller = "https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/mios-build-local.ps1"
 
 # ============================================================================
 # Helper Functions
@@ -435,7 +435,7 @@ try {
     Write-Host "    3. Review logs at: $MiosLogsDir" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  Manual build:" -ForegroundColor Yellow
-    Write-Host "    git clone https://github.com/Kabuki94/MiOS-bootstrap.git" -ForegroundColor Gray
+    Write-Host "    git clone https://github.com/MiOS-DEV/MiOS-bootstrap.git" -ForegroundColor Gray
     Write-Host "    cd MiOS-bootstrap" -ForegroundColor Gray
     Write-Host "    .\mios-build-local.ps1" -ForegroundColor Gray
     exit 1

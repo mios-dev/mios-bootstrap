@@ -243,11 +243,11 @@ context_window: 4096      # Model context size (adjust per model)
 MiOS implements an agnostic API layer to prevent provider lock-in. All agents should target the local proxy or use the standardized environment variables.
 
 ### Agnostic Targets
-| Agnostic Target | Standard Protocol | Redirect (Gemini) | Redirect (Claude) |
+| Agnostic Target | Standard Protocol | Redirect (Native) | Redirect (Generic) |
 |-----------------|-------------------|-------------------|-------------------|
-| `http://localhost:8080/v1` | OpenAI v1 (Local) | Vertex AI API | Anthropic API |
-| `MIOS_AI_KEY` | - | `GOOGLE_API_KEY` | `ANTHROPIC_API_KEY` |
-| `MIOS_AI_MODEL` | - | `gemini-2.0-pro` | `claude-3-5-sonnet` |
+| `http://localhost:8080/v1` | OpenAI v1 (Local) | Cloud-Compute AI API | Vendor-X API |
+| `MIOS_AI_KEY` | - | `Legacy-Cloud_API_KEY` | `Vendor-X_API_KEY` |
+| `MIOS_AI_MODEL` | - | `Native-2.0-pro` | `Generic-3-5-sonnet` |
 
 ### FHS Paths for AI Config
 - **User:** `${XDG_CONFIG_HOME:-$HOME/.config}/mios/ai/`

@@ -1,4 +1,4 @@
-<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/Kabuki94/MiOS-bootstrap -->
+<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/MiOS-DEV/MiOS-bootstrap -->
 # 🌐 MiOS
 
 ```json:knowledge
@@ -45,7 +45,7 @@ MiOS deploys as a **native Linux application** on minimal Fedora Server:
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/Kabuki94/MiOS-bootstrap.git
+git clone https://github.com/MiOS-DEV/MiOS-bootstrap.git
 cd mios
 
 # 2. Install to system directories (FHS-compliant)
@@ -86,13 +86,13 @@ Depending on your environment, use one of the following primary entry points to 
 ### 🐧 Linux / WSL2 (One-Liner)
 Bootstraps the environment, clones the latest repository, and initiates the build process.
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/bootstrap.sh | bash
 ```
 
 ### 🪟 Windows 11 (One-Liner)
 One-click repository fetch and max-resource environment setup. **Run as Administrator.**
 ```powershell
-irm https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/bootstrap.ps1 | iex
+irm https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/bootstrap.ps1 | iex
 ```
 
 ### 🐚 [Justfile](Justfile) (Unified Runner)
@@ -134,7 +134,7 @@ MiOS is optimized for development:
 MiOS-DEV implements an autonomous documentation cycle on every build entry point:
 `build >> log >> snapshot >> artifact >> repo wiki push`
 
-Documentation, task lists, and research results are automatically pushed to the [Repository Wiki](https://github.com/Kabuki94/MiOS-bootstrap/wiki) for real-time AI retrieval.
+Documentation, task lists, and research results are automatically pushed to the [Repository Wiki](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki) for real-time AI retrieval.
 
 ---
 
@@ -155,7 +155,7 @@ just test
 - **Core:** [containers/bootc](https://github.com/containers/bootc) | [bootc-image-builder](https://github.com/osautomation/bootc-image-builder) | [bootc.pages.dev](https://bootc.pages.dev/)
 - **Upstream:** [Fedora Bootc](https://github.com/fedora-cloud/fedora-bootc) | [CentOS Bootc](https://gitlab.com/CentOS/bootc) | [ublue-os/main](https://github.com/ublue-os/main)
 - **Tools:** [uupd](https://github.com/ublue-os/uupd) | [rechunk](https://github.com/hhd-dev/rechunk) | [cosign](https://github.com/sigstore/cosign)
-- **Project Repository:** [Kabuki94/MiOS-bootstrap](https://github.com/Kabuki94/MiOS-bootstrap)
+- **Project Repository:** [MiOS-DEV/MiOS-bootstrap](https://github.com/MiOS-DEV/MiOS-bootstrap)
 - **Sole Proprietor:** MiOS-DEV
 ---
 <!-- ⚖️ MiOS Proprietary Artifact | Copyright (c) 2026 MiOS-DEV -->

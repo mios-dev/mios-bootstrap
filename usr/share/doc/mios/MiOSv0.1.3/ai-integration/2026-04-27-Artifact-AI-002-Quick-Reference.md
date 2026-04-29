@@ -76,7 +76,7 @@ systemd-detect-virt  # Returns: none, microsoft, wsl, kvm, container-*
 3. Check kargs.d TOML (no [kargs] section!)
 
 ## Key URLs
-- Repo: https://github.com/Kabuki94/MiOS-bootstrap
+- Repo: https://github.com/MiOS-DEV/MiOS-bootstrap
 - Image: ghcr.io/kabuki94/mios:latest
 - Docs: INDEX.md (in repo)
 

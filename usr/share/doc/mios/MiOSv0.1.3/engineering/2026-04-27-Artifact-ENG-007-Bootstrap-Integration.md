@@ -1,4 +1,4 @@
-<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/Kabuki94/MiOS-bootstrap -->
+<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/MiOS-DEV/MiOS-bootstrap -->
 # MiOS Bootstrap Repository Integration
 
 ```json:knowledge
@@ -28,7 +28,7 @@
 }
 ```
 
-> **Repository:** https://github.com/Kabuki94/MiOS-bootstrap
+> **Repository:** https://github.com/MiOS-DEV/MiOS-bootstrap
 > **Purpose:** Home of fully compiled artifacts every build, push, local build entry point
 > **Auto-Update:** Wiki automatically updates with every artifacts-as-logs/build-logs to bootstrap repo
 
@@ -98,10 +98,10 @@ MiOS-bootstrap/
 
 ```bash
 # Clone the bootstrap repository
-git clone https://github.com/Kabuki94/MiOS-bootstrap ~/MiOS-bootstrap
+git clone https://github.com/MiOS-DEV/MiOS-bootstrap ~/MiOS-bootstrap
 
 # Clone the Wiki repository (for auto-updates)
-git clone https://github.com/Kabuki94/MiOS-bootstrap.wiki ~/MiOS-bootstrap.wiki
+git clone https://github.com/MiOS-DEV/MiOS-bootstrap.wiki ~/MiOS-bootstrap.wiki
 ```
 
 ### 2. Set Environment Variable (Optional)
@@ -169,8 +169,8 @@ Add to `.github/workflows/build-sign.yml`:
 ```yaml
 - name: Log artifacts to bootstrap
   run: |
-    git clone https://github.com/Kabuki94/MiOS-bootstrap /tmp/bootstrap
-    git clone https://github.com/Kabuki94/MiOS-bootstrap.wiki /tmp/bootstrap.wiki
+    git clone https://github.com/MiOS-DEV/MiOS-bootstrap /tmp/bootstrap
+    git clone https://github.com/MiOS-DEV/MiOS-bootstrap.wiki /tmp/bootstrap.wiki
     BOOTSTRAP_REPO=/tmp/bootstrap ./tools/log-to-bootstrap.sh
 
 - name: Push bootstrap updates
@@ -203,7 +203,7 @@ if (Test-Path "$env:USERPROFILE\MiOS-bootstrap\.git") {
     Write-Host "✓ Artifacts logged to bootstrap" -ForegroundColor Green
 } else {
     Write-Warning "MiOS-bootstrap repository not found. Clone it first:"
-    Write-Host "  git clone https://github.com/Kabuki94/MiOS-bootstrap $env:USERPROFILE\MiOS-bootstrap"
+    Write-Host "  git clone https://github.com/MiOS-DEV/MiOS-bootstrap $env:USERPROFILE\MiOS-bootstrap"
 }
 ```
 
@@ -395,7 +395,7 @@ git log -1
 
 ```bash
 # Clone it
-git clone https://github.com/Kabuki94/MiOS-bootstrap ~/MiOS-bootstrap
+git clone https://github.com/MiOS-DEV/MiOS-bootstrap ~/MiOS-bootstrap
 
 # Or set custom location
 export BOOTSTRAP_REPO=/path/to/MiOS-bootstrap
@@ -405,7 +405,7 @@ export BOOTSTRAP_REPO=/path/to/MiOS-bootstrap
 
 ```bash
 # Clone it
-git clone https://github.com/Kabuki94/MiOS-bootstrap.wiki ~/MiOS-bootstrap.wiki
+git clone https://github.com/MiOS-DEV/MiOS-bootstrap.wiki ~/MiOS-bootstrap.wiki
 
 # Or adjust path in script (default: ${BOOTSTRAP_REPO}/../MiOS-bootstrap.wiki)
 ```
@@ -496,9 +496,9 @@ git push
 
 ## References
 
-- **Main Repository:** https://github.com/Kabuki94/MiOS-bootstrap
-- **Bootstrap Repository:** https://github.com/Kabuki94/MiOS-bootstrap
-- **Wiki:** https://github.com/Kabuki94/MiOS-bootstrap/wiki
+- **Main Repository:** https://github.com/MiOS-DEV/MiOS-bootstrap
+- **Bootstrap Repository:** https://github.com/MiOS-DEV/MiOS-bootstrap
+- **Wiki:** https://github.com/MiOS-DEV/MiOS-bootstrap/wiki
 - **Script:** [tools/log-to-bootstrap.sh](../../tools/log-to-bootstrap.sh)
 - **Justfile Targets:** [Justfile](../../Justfile) (lines 99-108)
 - **Compression Summary:** [artifacts/COMPRESSION-SUMMARY.md](../../artifacts/COMPRESSION-SUMMARY.md)

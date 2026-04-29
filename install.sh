@@ -3,7 +3,7 @@
 # MiOS Bootstrap -- Interactive Ignition Installer
 #
 # Usage:
-#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/install.sh)"
+#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/install.sh)"
 #   # or after cloning:
 #   sudo /path/to/MiOS-bootstrap/install.sh
 #
@@ -47,8 +47,8 @@ DEFAULT_SSH_KEY_TYPE="ed25519"
 DEFAULT_IMAGE="ghcr.io/kabuki94/mios:latest"
 DEFAULT_BRANCH="main"
 
-MIOS_REPO="https://github.com/Kabuki94/MiOS.git"
-BOOTSTRAP_REPO="https://github.com/Kabuki94/MiOS-bootstrap.git"
+MIOS_REPO="https://github.com/MiOS-DEV/MiOS.git"
+BOOTSTRAP_REPO="https://github.com/MiOS-DEV/MiOS-bootstrap.git"
 PROFILE_DIR="/etc/mios"
 PROFILE_FILE="${PROFILE_DIR}/install.env"
 LOG_FILE="/var/log/mios-bootstrap.log"
@@ -287,7 +287,7 @@ deploy_system_prompt() {
 
     local src_local prompt_url
     src_local="$(dirname "${BASH_SOURCE[0]}")/system-prompt.md"
-    prompt_url="https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/${DEFAULT_BRANCH}/system-prompt.md"
+    prompt_url="https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/${DEFAULT_BRANCH}/system-prompt.md"
 
     if [[ -f "$src_local" ]]; then
         log_info "Using local system-prompt.md from ${src_local}"

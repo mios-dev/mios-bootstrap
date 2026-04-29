@@ -23,7 +23,7 @@ MiOS v0.1.3 introduces **user-space separation** following the [XDG Base Directo
 
 ```bash
 # Clone MiOS repository
-git clone https://github.com/Kabuki94/MiOS-bootstrap.git
+git clone https://github.com/MiOS-DEV/MiOS-bootstrap.git
 cd mios
 
 # Initialize your user-space configuration

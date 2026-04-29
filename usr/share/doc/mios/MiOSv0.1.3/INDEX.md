@@ -1,4 +1,4 @@
-<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/Kabuki94/MiOS-bootstrap -->
+<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/MiOS-DEV/MiOS-bootstrap -->
 # INDEX.md — MiOS Universal Agent Hub
 
 ```json:knowledge
@@ -31,28 +31,28 @@
 }
 ```
 
-> **Single source of truth** for every AI agent, LLM, copilot, and API operating in this repository.
+> **Single source of truth** for every AI agent, LLM, Assistant, and API operating in this repository.
 > All provider entry files (`INDEX.md`, `INDEX.md`, `INDEX.md`, `.cursorrules`, `.windsurfrules`,
-> `.clinerules`, `.github/copilot-instructions.md`) defer to this file for architecture laws and conventions.
+> `.clinerules`, `.github/Assistant-instructions.md`) defer to this file for architecture laws and conventions.
 
 ## 🌐 Live Documentation (CHECK FIRST)
 
 **IMPORTANT:** This INDEX.md is a snapshot. **ALWAYS check the Wiki for current/updated information:**
 
-- **Wiki Home:** https://github.com/Kabuki94/MiOS-bootstrap/wiki
+- **Wiki Home:** https://github.com/MiOS-DEV/MiOS-bootstrap/wiki
 - **Update Frequency:** Every build, push, and local build entry point
 - **Purpose:** PRIMARY source for current tasks, research patterns, artifacts, and build logs
 
 **Key Wiki Pages:**
-- [Home](https://github.com/Kabuki94/MiOS-bootstrap/wiki/Home) — Latest version, quick start
-- [AI Integration](https://github.com/Kabuki94/MiOS-bootstrap/wiki/AI-Integration-Index) — Current AI patterns
-- [Quick Reference](https://github.com/Kabuki94/MiOS-bootstrap/wiki/Quick-Reference) — Essential commands
-- [AI Agent Guide](https://github.com/Kabuki94/MiOS-bootstrap/wiki/AI-AGENT-GUIDE) — Hard rules, protected files
-- [INDEX](https://github.com/Kabuki94/MiOS-bootstrap/wiki/INDEX) — This file (Wiki version)
+- [Home](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Home) — Latest version, quick start
+- [AI Integration](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/AI-Integration-Index) — Current AI patterns
+- [Quick Reference](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Quick-Reference) — Essential commands
+- [AI Agent Guide](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/AI-AGENT-GUIDE) — Hard rules, protected files
+- [INDEX](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/INDEX) — This file (Wiki version)
 
-**Bootstrap Repository:** https://github.com/Kabuki94/MiOS-bootstrap
-- Artifacts: https://github.com/Kabuki94/MiOS-bootstrap/tree/main/ai-rag-packages
-- Build Logs: https://github.com/Kabuki94/MiOS-bootstrap/tree/main/build-logs
+**Bootstrap Repository:** https://github.com/MiOS-DEV/MiOS-bootstrap
+- Artifacts: https://github.com/MiOS-DEV/MiOS-bootstrap/tree/main/ai-rag-packages
+- Build Logs: https://github.com/MiOS-DEV/MiOS-bootstrap/tree/main/build-logs
 
 **Workflow for New Tasks:**
 1. Check Wiki for latest documentation and patterns
@@ -125,9 +125,9 @@ MiOS-DEV implements an autonomous documentation and artifact cycle triggered on 
 2. **Log Generation**: The master build runner (`automation/build.sh`) captures a deep technical log.
 3. **Repo Snapshot**: The `artifact` target refreshes the UKB, RAG snapshot, and machine-readable manifests.
 4. **Artifacting**: All build-time intelligence is packed into `.json.gz` and `.tar.gz` blobs in `artifacts/`.
-5. **Wiki Push**: Documentation, task lists, and research results are automatically pushed to the [Repository Wiki](https://github.com/Kabuki94/MiOS-bootstrap/wiki) for real-time AI retrieval.
+5. **Wiki Push**: Documentation, task lists, and research results are automatically pushed to the [Repository Wiki](https://github.com/MiOS-DEV/MiOS-bootstrap/wiki) for real-time AI retrieval.
 
-**Source Tracking:** https://github.com/Kabuki94/MiOS-bootstrap (Build Log & History)
+**Source Tracking:** https://github.com/MiOS-DEV/MiOS-bootstrap (Build Log & History)
 
 ---
 
@@ -192,7 +192,7 @@ These are absolute. Any violation causes state drift, CI failure, or broken depl
 6. **NOVA-CORE-BLACKLIST** — On Fedora 44+ (kernel 6.15+), blacklist both `nouveau` **and** `nova_core`. The `nova_core` module was introduced in kernel 6.15 and conflicts with the proprietary NVIDIA driver if not blacklisted.
 7. **BOOTC-CONTAINER-LINT** — `RUN bootc container lint` must be the final instruction in every Containerfile. Since v1.1.6 it enforces: single kernel present, valid kargs.d syntax, `/var` content has `tmpfiles.d` backing, correct kernel path, and other hygiene checks.
 8. **NO-DNF-UPGRADE-UNCONDITIONAL** — Never `RUN dnf -y upgrade` without specifying package names. Use targeted `dnf install` or `dnf upgrade <package>` to maintain build reproducibility.
-9. **UNIFIED-AI-REDIRECTS** — AI API integration MUST use agnostic environment variables (`MIOS_AI_KEY`, `MIOS_AI_MODEL`) and target the local proxy at `http://localhost:8080/v1` (FOSS-priority). Gemini and Claude specific patterns are supported via standard redirects documented in `specs/ai-integration/`.
+9. **UNIFIED-AI-REDIRECTS** — AI API integration MUST use agnostic environment variables (`MIOS_AI_KEY`, `MIOS_AI_MODEL`) and target the local proxy at `http://localhost:8080/v1` (FOSS-priority). Native and Generic specific patterns are supported via standard redirects documented in `specs/ai-integration/`.
 
 ## Hard Rules (build-breaking violations)
 
@@ -310,7 +310,7 @@ Complete replacement files only — no patches, no diffs, no "paste this into X"
 |---|---|---|
 | System Code (Foundation) | `INDEX.md` | Auto-loaded at session start |
 | Agent CLI (Cloud) | `INDEX.md` | `@./` import chain |
-| GitHub Copilot | `.github/copilot-instructions.md` | System prompt injection |
+| GitHub Assistant | `.github/Assistant-instructions.md` | System prompt injection |
 | Cursor | `.cursorrules` | Context injection |
 | Windsurf (Codeium) | `.windsurfrules` | Context injection |
 | Cline (VS Code) | `.clinerules` | Context injection |

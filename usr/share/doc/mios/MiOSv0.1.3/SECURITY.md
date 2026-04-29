@@ -1,4 +1,4 @@
-<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/Kabuki94/MiOS-bootstrap -->
+<!-- 🌐 MiOS Artifact | Proprietor: MiOS-DEV | https://github.com/MiOS-DEV/MiOS-bootstrap -->
 # 🌐 MiOS
 ```json:knowledge
 {
@@ -200,7 +200,7 @@ MiOS images are signed with cosign via GitHub Actions OIDC (keyless signing). Ve
 
 ```bash
 cosign verify \
-  --certificate-identity-regexp="https://github.com/Kabuki94/MiOS-bootstrap" \
+  --certificate-identity-regexp="https://github.com/MiOS-DEV/MiOS-bootstrap" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
   ghcr.io/kabuki94/mios:latest
 ```
@@ -226,7 +226,7 @@ To report a security vulnerability, use GitHub's private vulnerability reporting
 - **Core:** [containers/bootc](https://github.com/containers/bootc) | [bootc-image-builder](https://github.com/osautomation/bootc-image-builder) | [bootc.pages.dev](https://bootc.pages.dev/)
 - **Upstream:** [Fedora Bootc](https://github.com/fedora-cloud/fedora-bootc) | [CentOS Bootc](https://gitlab.com/CentOS/bootc) | [ublue-os/main](https://github.com/ublue-os/main)
 - **Tools:** [uupd](https://github.com/ublue-os/uupd) | [rechunk](https://github.com/hhd-dev/rechunk) | [cosign](https://github.com/sigstore/cosign)
-- **Project Repository:** [Kabuki94/MiOS-bootstrap](https://github.com/Kabuki94/MiOS-bootstrap)
+- **Project Repository:** [MiOS-DEV/MiOS-bootstrap](https://github.com/MiOS-DEV/MiOS-bootstrap)
 - **Sole Proprietor:** MiOS-DEV
 ---
 <!-- ⚖️ MiOS Proprietary Artifact | Copyright (c) 2026 MiOS-DEV -->

@@ -3,7 +3,7 @@
 > Interactive ignition installer for MiOS. The user-facing entry point.
 
 **Version:** v0.2.0
-**System repo:** https://github.com/Kabuki94/MiOS
+**System repo:** https://github.com/MiOS-DEV/MiOS
 
 ---
 
@@ -28,7 +28,7 @@ interact with directly. It contains:
 
 - Not the OS image. Pre-built images live at `ghcr.io/kabuki94/mios:latest`.
 - Not the build infrastructure. Containerfile, Justfile, build scripts, and
-  the FHS overlay all live in https://github.com/Kabuki94/MiOS.
+  the FHS overlay all live in https://github.com/MiOS-DEV/MiOS.
 - Not a Docker / OCI thing. Bootstrap runs on a target Fedora host, not in
   a container.
 
@@ -37,7 +37,7 @@ interact with directly. It contains:
 On a fresh Fedora bootc-capable host (Fedora Server 41+ or Fedora bootc):
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/install.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/install.sh)"
 ```
 
 Bootstrap prompts for installation profile, applies it, then either:

@@ -7,7 +7,7 @@
   "future": "MiOS-NXT (Hummingbird, SBOM, minimal variants)",
 
   "live_documentation": {
-    "wiki": "https://github.com/Kabuki94/MiOS-bootstrap/wiki",
+    "wiki": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki",
     "update_frequency": "Every build, push, and local build entry point",
     "purpose": "ALWAYS check Wiki for current tasks, research patterns, artifacts, and build logs",
     "primary_source": "Wiki pages reflect latest state - use for current/new tasks",
@@ -15,24 +15,24 @@
   },
 
   "wiki_pages": {
-    "home": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/Home",
-    "ai_integration": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/AI-Integration-Index",
-    "rag_guide": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/RAG-Integration",
-    "quick_reference": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/Quick-Reference",
-    "prompts": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/Prompts-Library",
-    "knowledge_graph": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/Knowledge-Graph",
-    "index": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/INDEX",
-    "readme": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/README",
-    "ai_agent_guide": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/AI-AGENT-GUIDE",
-    "self_build": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/SELF-BUILD",
-    "security": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/SECURITY",
-    "fhs_compliance": "https://github.com/Kabuki94/MiOS-bootstrap/wiki/engineering/2026-04-27-Artifact-ENG-006-FHS-Compliance-Audit"
+    "home": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Home",
+    "ai_integration": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/AI-Integration-Index",
+    "rag_guide": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/RAG-Integration",
+    "quick_reference": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Quick-Reference",
+    "prompts": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Prompts-Library",
+    "knowledge_graph": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Knowledge-Graph",
+    "index": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/INDEX",
+    "readme": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/README",
+    "ai_agent_guide": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/AI-AGENT-GUIDE",
+    "self_build": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/SELF-BUILD",
+    "security": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/SECURITY",
+    "fhs_compliance": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/engineering/2026-04-27-Artifact-ENG-006-FHS-Compliance-Audit"
   },
 
   "artifact_locations": {
-    "bootstrap_repo": "https://github.com/Kabuki94/MiOS-bootstrap",
-    "ai_rag_packages": "https://github.com/Kabuki94/MiOS-bootstrap/tree/main/ai-rag-packages",
-    "build_logs": "https://github.com/Kabuki94/MiOS-bootstrap/tree/main/build-logs",
+    "bootstrap_repo": "https://github.com/MiOS-DEV/MiOS-bootstrap",
+    "ai_rag_packages": "https://github.com/MiOS-DEV/MiOS-bootstrap/tree/main/ai-rag-packages",
+    "build_logs": "https://github.com/MiOS-DEV/MiOS-bootstrap/tree/main/build-logs",
     "compressed_artifacts": "509 KB XZ (primary) + 814 KB GZ (legacy)",
     "update_mechanism": "Automatic via tools/log-to-bootstrap.sh on every build"
   },

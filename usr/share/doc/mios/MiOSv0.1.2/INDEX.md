@@ -31,9 +31,9 @@
 }
 ```
 
-> **Single source of truth** for every AI agent, LLM, copilot, and API operating in this repository.
+> **Single source of truth** for every AI agent, LLM, Assistant, and API operating in this repository.
 > All provider entry files (`INDEX.md`, `INDEX.md`, `INDEX.md`, `.cursorrules`, `.windsurfrules`,
-> `.clinerules`, `.github/copilot-instructions.md`) defer to this file for architecture laws and conventions.
+> `.clinerules`, `.github/Assistant-instructions.md`) defer to this file for architecture laws and conventions.
 
 ## 🌐 Live Documentation (CHECK FIRST)
 
@@ -293,7 +293,7 @@ Complete replacement files only — no patches, no diffs, no "paste this into X"
 |---|---|---|
 | System Code (Foundation) | `INDEX.md` | Auto-loaded at session start |
 | Agent CLI (Cloud) | `INDEX.md` | `@./` import chain |
-| GitHub Copilot | `.github/copilot-instructions.md` | System prompt injection |
+| GitHub Assistant | `.github/Assistant-instructions.md` | System prompt injection |
 | Cursor | `.cursorrules` | Context injection |
 | Windsurf (Codeium) | `.windsurfrules` | Context injection |
 | Cline (VS Code) | `.clinerules` | Context injection |
