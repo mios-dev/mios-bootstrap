@@ -15,6 +15,10 @@ interact with directly. It contains:
 - `install.sh` -- the interactive installer (run as root). Prompts for
   Linux username, hostname, password, SSH key, GitHub PAT, and image tag --
   everything defaults to `mios` until the user overrides.
+- `system-prompt.md` -- the **SSOT for AI behavior** on every MiOS host.
+  Bootstrap deploys this to `/etc/mios/ai/system-prompt.md` during install,
+  where LocalAI loads it as the system prompt for all chat completions.
+  Customize per host (edit the deployed file) or fleet-wide (fork bootstrap).
 - User-space env templates (`.env.mios`, `identity.env.example`)
 - User-facing docs (`USER-SPACE-GUIDE.md`, `VARIABLES.md`)
 - A `profile/` skeleton for dotfiles and per-user systemd units (populate

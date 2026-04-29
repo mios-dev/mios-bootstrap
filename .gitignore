@@ -9,6 +9,7 @@
 !VERSION
 !install.sh
 !install.ps1
+!system-prompt.md
 
 # User-space env templates and identity examples
 !.env

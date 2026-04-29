@@ -279,6 +279,36 @@ EOF
 }
 
 # ============================================================================
+# Phase 4b: deploy AI system prompt (the SSOT for resident-LLM behavior)
+# ============================================================================
+deploy_system_prompt() {
+    log_phase "Deploy AI system prompt"
+    install -d -m 0755 /etc/mios/ai
+
+    local src_local prompt_url
+    src_local="$(dirname "${BASH_SOURCE[0]}")/system-prompt.md"
+    prompt_url="https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/${DEFAULT_BRANCH}/system-prompt.md"
+
+    if [[ -f "$src_local" ]]; then
+        log_info "Using local system-prompt.md from ${src_local}"
+        install -m 0644 "$src_local" /etc/mios/ai/system-prompt.md
+    else
+        log_info "Fetching system prompt from ${prompt_url}"
+        if curl -fsSL --max-time 30 "$prompt_url" -o /etc/mios/ai/system-prompt.md.new; then
+            mv /etc/mios/ai/system-prompt.md.new /etc/mios/ai/system-prompt.md
+            chmod 0644 /etc/mios/ai/system-prompt.md
+        else
+            rm -f /etc/mios/ai/system-prompt.md.new
+            log_warn "Could not fetch system prompt; LocalAI will run with backend default"
+            return 0
+        fi
+    fi
+    log_ok "System prompt deployed: /etc/mios/ai/system-prompt.md"
+    log_info "Customize on this host:  sudo \$EDITOR /etc/mios/ai/system-prompt.md"
+    log_info "Customize fleet-wide:    fork MiOS-bootstrap, edit, re-run install"
+}
+
+# ============================================================================
 # Phase 5: trigger MiOS root install
 # ============================================================================
 trigger_mios_install() {
@@ -360,6 +390,7 @@ main() {
     gather_user_choices
     print_summary
     apply_user_profile
+    deploy_system_prompt
     trigger_mios_install
     reboot_prompt
 }

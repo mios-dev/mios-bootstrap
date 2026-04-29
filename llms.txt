@@ -13,6 +13,7 @@ clone-and-FHS-overlay for non-bootc Fedora).
 ## Files
 
 - install.sh - Interactive installer (the user entry point)
+- system-prompt.md - SSOT for AI behavior on every MiOS host (deployed to /etc/mios/ai/)
 - README.md  - User-facing overview
 - VARIABLES.md - Documentation of every prompt and default
 - USER-SPACE-GUIDE.md - User-side environment notes
