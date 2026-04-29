@@ -1,89 +1,39 @@
-# Build outputs
-artifacts/*.json
-!artifacts/*.json.gz
-mios-deploy-out/
-output/
-*.raw
-*.vhdx
-*.vhd
-*.iso
-*.tar
-*.qcow2
+# MiOS-bootstrap allow-list. Bootstrap is a small, focused installer repo --
+# only a handful of files belong here. Ignore everything, allow-list what
+# bootstrap owns.
+/*
+.*
 
-# Podman / Container
-*.log
+!README.md
+!LICENSE
+!VERSION
+!install.sh
+!install.ps1
 
-# OS
-.DS_Store
-Thumbs.db
-Desktop.ini
+# User-space env templates and identity examples
+!.env
+!.env.mios
+!identity.env.example
+!image-versions.yml
 
-# Editor
-*.swp
-*.swo
-*~
-.idea/
+# Repo hygiene
+!.editorconfig
+!.gitattributes
+!.gitignore
+!.github/
+!.github/**
 
-# --- Build output ---
-output/
-*.qcow2
-*.vhdx
-*.vhd
-*.iso
-*.raw
-*.img
-smoke-serial.log
-bootc-lint.log
+# Documentation (user-facing)
+!USER-SPACE-GUIDE.md
+!VARIABLES.md
+!llms.txt
 
-# --- Temp / backups ---
-*.bak
-*.orig
-*.tmp
-*~
-.DS_Store
-Thumbs.db
+# Profile skeleton (dotfiles, per-user systemd units, etc.)
+!profile/
+!profile/**
 
-
-
-
-# User-specific identity (legacy)
-user/identity.env
-
-# ============================================================================
-# User-Space Configuration (XDG Compliant)
-# ============================================================================
-# User configuration belongs in $HOME/.config/mios/ (NOT in repository)
-# These files may exist in repository root for legacy reasons but should NOT be committed
-
-# Legacy .env file (replaced by $HOME/.config/mios/env.toml)
-/.env
-/.env.local
-/.env.*
-!/.env.example
-
-# User-specific logs (should be in $XDG_STATE_HOME/mios/logs/)
-/logs/
-*.log
-
-# User credentials (should be in $HOME/.config/mios/credentials/)
-*.token
-*.key
-*.pem
-*.p12
-*.pfx
-*password*
-*secret*
-*credential*
-auth.json
-registry-auth.json
-
-# User cache (should be in $XDG_CACHE_HOME/mios/)
-/.cache/
-/cache/
-
-# User data (should be in $XDG_DATA_HOME/mios/)
-/.local/
-
-# Note: If you see files matching these patterns in your working directory,
-# run: just init-user-space
-# This will set up proper XDG-compliant user configuration directories.
+# Re-ignore noise
+**/__pycache__/
+**/*.pyc
+**/.DS_Store
+**/Thumbs.db

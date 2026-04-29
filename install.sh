@@ -1,203 +1,367 @@
-#!/bin/bash
-# MiOS Bootstrap Installer
-# Deploys the MiOS repository as a Linux filesystem-native integrated build environment
-# Supports curl-to-bash bootstrapping.
+#!/usr/bin/env bash
 #
-# Usage: curl -sL https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/install.sh | sudo bash
+# MiOS Bootstrap -- Interactive Ignition Installer
+#
+# Usage:
+#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/install.sh)"
+#   # or after cloning:
+#   sudo /path/to/MiOS-bootstrap/install.sh
+#
+# Bootstrap's job:
+#   1. Detect host kind (bootc-managed Fedora vs FHS Fedora vs unsupported).
+#   2. Interactively gather installation profile -- everything defaults to
+#      "mios" until the user overrides. Prompts:
+#         - Linux username        (default: mios)
+#         - Hostname              (default: mios)
+#         - Full name (GECOS)     (default: "MiOS User")
+#         - Password              (no default; prompt twice for confirm)
+#         - SSH key handling      (default: generate ed25519)
+#         - GitHub PAT            (default: skip)
+#         - MiOS image / mode     (default: prebuilt bootc image)
+#   3. Apply the profile to the host:
+#         - hostnamectl set-hostname
+#         - useradd -m -G wheel,libvirt,kvm,video,render,input,dialout
+#         - chpasswd
+#         - ssh-keygen + ~/.ssh/authorized_keys staging
+#         - git credential helper for GitHub PAT
+#         - persist non-secret profile to /etc/mios/install.env
+#   4. Trigger the MiOS root install:
+#         - bootc host: `bootc switch ghcr.io/kabuki94/mios:latest`
+#         - FHS host:   git clone MiOS, run mios/install.sh
+#         - build mode: git clone MiOS, run mios/build-mios.sh
+#   5. Reboot prompt.
+#
+# Idempotent: re-running with the same answers updates rather than duplicates.
 
 set -euo pipefail
 
-# Refuse to run on a host already managed by bootc -- /usr is read-only composefs
-# and the FHS overlay we lay down here would be discarded on next boot. Use
-# `bootc switch` against ghcr.io/kabuki94/mios:latest instead.
-if command -v bootc >/dev/null 2>&1 && bootc status --format=json 2>/dev/null | grep -q '"booted"'; then
-    echo "[FAIL] This host is bootc-managed. install.sh is for non-bootc Fedora Server hosts." >&2
-    echo "       Use 'sudo bootc switch ghcr.io/kabuki94/mios:latest' instead." >&2
-    exit 1
-fi
+# ============================================================================
+# Defaults -- the "mios everywhere" convention. User overrides via prompts.
+# ============================================================================
+DEFAULT_USER="mios"
+DEFAULT_HOST="mios"
+DEFAULT_USER_FULLNAME="MiOS User"
+DEFAULT_USER_SHELL="/bin/bash"
+DEFAULT_USER_GROUPS="wheel,libvirt,kvm,video,render,input,dialout"
+DEFAULT_SSH_KEY_TYPE="ed25519"
+DEFAULT_IMAGE="ghcr.io/kabuki94/mios:latest"
+DEFAULT_BRANCH="main"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+MIOS_REPO="https://github.com/Kabuki94/MiOS.git"
+BOOTSTRAP_REPO="https://github.com/Kabuki94/MiOS-bootstrap.git"
+PROFILE_DIR="/etc/mios"
+PROFILE_FILE="${PROFILE_DIR}/install.env"
+LOG_FILE="/var/log/mios-bootstrap.log"
+MIOS_CHECKOUT="/var/cache/mios-bootstrap/mios"
 
-# Installation paths (FHS 3.0)
-INSTALL_PREFIX="/usr"
-MIOS_SRC_DIR="${INSTALL_PREFIX}/src/mios"
-MIOS_SHARE_DIR="${INSTALL_PREFIX}/share/mios"
-MIOS_ETC_DIR="/etc/mios"
-MIOS_VAR_LIB_DIR="/var/lib/mios"
-MIOS_VAR_LOG_DIR="/var/log/mios"
-MIOS_BIN_DIR="/usr/local/bin"
-MIOS_TMPFILES_DIR="/etc/tmpfiles.d"
+# ============================================================================
+# Logging
+# ============================================================================
+_BOLD=$(tput bold 2>/dev/null || echo "")
+_RED=$(tput setaf 1 2>/dev/null || echo "")
+_GREEN=$(tput setaf 2 2>/dev/null || echo "")
+_YELLOW=$(tput setaf 3 2>/dev/null || echo "")
+_CYAN=$(tput setaf 6 2>/dev/null || echo "")
+_DIM=$(tput dim 2>/dev/null || echo "")
+_RESET=$(tput sgr0 2>/dev/null || echo "")
 
-info() { echo -e "${BLUE}  ${NC}$*"; }
-success() { echo -e "${GREEN}[OK]${NC} $*"; }
-warn() { echo -e "${YELLOW}[WARN]  ${NC}$*"; }
-error() { echo -e "${RED}[FAIL]${NC} $*" >&2; }
+log_info()  { printf '%s[INFO]%s %s\n' "${_CYAN}" "${_RESET}" "$*"; }
+log_ok()    { printf '%s[ OK ]%s %s\n' "${_GREEN}" "${_RESET}" "$*"; }
+log_warn()  { printf '%s[WARN]%s %s\n' "${_YELLOW}" "${_RESET}" "$*" >&2; }
+log_err()   { printf '%s[ERR ]%s %s\n' "${_RED}" "${_RESET}" "$*" >&2; }
+log_phase() { printf '\n%s%s== %s ==%s\n\n' "${_BOLD}" "${_CYAN}" "$*" "${_RESET}"; }
 
-check_root() {
+# ============================================================================
+# Preflight
+# ============================================================================
+require_root() {
     if [[ $EUID -ne 0 ]]; then
-        error "This script must be run as root (use sudo)"
+        log_err "Bootstrap must run as root. Re-invoke with sudo:"
+        log_err "  sudo $0"
         exit 1
     fi
 }
 
-run_preflight() {
-    info "Running preflight checks..."
-    # If mios-preflight exists in source, run it. Otherwise, assume pre-installed.
-    if [[ -f "${MIOS_SRC_DIR}/tools/preflight.sh" ]]; then
-        bash "${MIOS_SRC_DIR}/tools/preflight.sh"
-    elif command -v mios-preflight &>/dev/null; then
-        mios-preflight
-    fi
-}
-
-bootstrap_source() {
-    # Skip bootstrap if --no-clone is passed or if we are already in the target dir
-    if [[ "${NO_CLONE:-false}" == "true" ]]; then
-        info "Skipping source bootstrap (--no-clone active)."
-        return
-    fi
-
-    if [[ ! -d "${MIOS_SRC_DIR}/.git" ]]; then
-        info "Bootstrapping MiOS source to ${MIOS_SRC_DIR}..."
-        mkdir -p "$(dirname "${MIOS_SRC_DIR}")"
-        # Ensure git is present for initial clone
-        command -v git >/dev/null 2>&1 || {
-            info "Installing git for initial bootstrap..."
-            if command -v dnf &>/dev/null; then dnf install -y git; elif command -v apt-get &>/dev/null; then apt-get update && apt-get install -y git; fi
-        }
-        git clone https://github.com/Kabuki94/MiOS-bootstrap.git "${MIOS_SRC_DIR}"
+detect_host_kind() {
+    if command -v bootc >/dev/null 2>&1 && bootc status --format=json 2>/dev/null | grep -q '"booted"'; then
+        echo "bootc"
+    elif [[ -f /etc/os-release ]] && grep -qE '^ID(_LIKE)?=.*fedora' /etc/os-release; then
+        echo "fhs-fedora"
     else
-        info "MiOS source already exists, updating..."
-        cd "${MIOS_SRC_DIR}" && git pull
+        echo "unsupported"
     fi
 }
 
-install_mios() {
-    echo ""
-    echo "+==============================================================+"
-    echo "           MiOS Bootstrap Installer (FHS Native)             "
-    echo "+==============================================================+"
-    echo ""
-
-    bootstrap_source
-    run_preflight
-
-    info "Creating FHS directory structure..."
-    mkdir -p "${MIOS_SHARE_DIR}" "${MIOS_ETC_DIR}" "${MIOS_BIN_DIR}" "${MIOS_TMPFILES_DIR}"
-    success "Created system directories"
-
-    info "Syncing system files..."
-    # Symlink share to src for live updates
-    ln -sfn "${MIOS_SRC_DIR}" "${MIOS_SHARE_DIR}"
-    
-    # Install templates
-    mkdir -p "${MIOS_ETC_DIR}/templates"
-    cp -r "${MIOS_SRC_DIR}/etc/mios/templates/"* "${MIOS_ETC_DIR}/templates/"
-    
-    cat > "${MIOS_ETC_DIR}/manifest.json" <<EOF
-{
-  "mios_version": "$(cat "${MIOS_SRC_DIR}/VERSION" 2>/dev/null || echo 'v0.1.3')",
-  "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "paths": {
-    "src": "${MIOS_SRC_DIR}",
-    "share": "${MIOS_SHARE_DIR}",
-    "etc": "${MIOS_ETC_DIR}",
-    "var_lib": "${MIOS_VAR_LIB_DIR}",
-    "var_log": "${MIOS_VAR_LOG_DIR}"
-  }
-}
-EOF
-    success "Installed system configuration"
-
-    info "Creating tmpfiles.d configuration..."
-    cat > "${MIOS_TMPFILES_DIR}/mios.conf" <<EOF
-# MiOS Unified State Folders (USR-OVER-ETC)
-d /usr/lib/mios/artifacts  0755 root root -
-d /usr/lib/mios/backups    0700 root root -
-d /usr/lib/mios/snapshots  0755 root root -
-d /usr/lib/mios/logs       0755 root root -
-
-d /var/lib/mios            0755 root root -
-L+ /var/lib/mios/artifacts - - - - /usr/lib/mios/artifacts
-L+ /var/lib/mios/backups   - - - - /usr/lib/mios/backups
-L+ /var/lib/mios/snapshots - - - - /usr/lib/mios/snapshots
-d /var/log/mios            0755 root root -
-L+ /var/log/mios/builds    - - - - /usr/lib/mios/logs
-EOF
-    systemd-tmpfiles --create "${MIOS_TMPFILES_DIR}/mios.conf"
-    success "Created /var directories"
-
-    info "Installing mios command..."
-    cat > "${MIOS_BIN_DIR}/mios" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-# Refuse to run on a host already managed by bootc -- /usr is read-only composefs
-# and the FHS overlay we lay down here would be discarded on next boot. Use
-# `bootc switch` against ghcr.io/kabuki94/mios:latest instead.
-if command -v bootc >/dev/null 2>&1 && bootc status --format=json 2>/dev/null | grep -q '"booted"'; then
-    echo "[FAIL] This host is bootc-managed. install.sh is for non-bootc Fedora Server hosts." >&2
-    echo "       Use 'sudo bootc switch ghcr.io/kabuki94/mios:latest' instead." >&2
-    exit 1
-fi
-
-MIOS_SRC_DIR="/usr/src/mios"
-if [[ ! -d "$MIOS_SRC_DIR" ]]; then
-    echo "[FAIL] MiOS source not found at $MIOS_SRC_DIR" >&2
-    exit 1
-fi
-# Always ensure we are in the source dir for just
-cd "$MIOS_SRC_DIR"
-exec /usr/bin/just "$@"
-EOF
-    chmod +x "${MIOS_BIN_DIR}/mios"
-    
-    # Also link the unified CLI
-    ln -sf "${MIOS_SRC_DIR}/usr/bin/mios" "${MIOS_BIN_DIR}/mios-cli"
-    
-    success "Installed mios command"
-
-    echo ""
-    echo "+==============================================================+"
-    echo "              [OK] MiOS Installation Complete                   "
-    echo "+==============================================================+"
-    echo ""
-    info "Next steps:"
-    echo "  1. Initialize user-space: ${CYAN}mios user${NC}"
-    echo "  2. Build your OS image:  ${CYAN}mios build${NC}"
-    echo ""
-}
-
-uninstall_mios() {
-    warn "This will remove MiOS from system directories."
-    read -p "Continue? [y/N] " -n 1 -r
-    echo
-    [[ ! $REPLY =~ ^[Yy]$ ]] && exit 0
-
-    [[ -d "${MIOS_SRC_DIR}" ]] && rm -rf "${MIOS_SRC_DIR}" && success "Removed ${MIOS_SRC_DIR}"
-    [[ -L "${MIOS_SHARE_DIR}" ]] && rm -f "${MIOS_SHARE_DIR}" && success "Removed ${MIOS_SHARE_DIR}"
-    [[ -d "${MIOS_ETC_DIR}" ]] && rm -rf "${MIOS_ETC_DIR}" && success "Removed ${MIOS_ETC_DIR}"
-    [[ -f "${MIOS_BIN_DIR}/mios" ]] && rm -f "${MIOS_BIN_DIR}/mios" && success "Removed mios command"
-    [[ -f "${MIOS_BIN_DIR}/mios-cli" ]] && rm -f "${MIOS_BIN_DIR}/mios-cli" && success "Removed mios-cli command"
-    [[ -f "${MIOS_TMPFILES_DIR}/mios.conf" ]] && rm -f "${MIOS_TMPFILES_DIR}/mios.conf"
-    success "MiOS uninstalled"
-}
-
-main() {
-    NO_CLONE=false
-    for arg in "$@"; do
-        case $arg in
-            --uninstall) check_root; uninstall_mios; exit 0 ;;
-            --no-clone)  NO_CLONE=true ;;
-        esac
+check_network() {
+    local host
+    for host in github.com ghcr.io; do
+        if ! curl -fsSL --max-time 5 -o /dev/null "https://${host}/" 2>/dev/null; then
+            log_err "No network reachability to ${host}. Check your network and re-run."
+            exit 1
+        fi
     done
-    check_root
-    install_mios
+    log_ok "Network reachability verified"
+}
+
+# ============================================================================
+# Prompts -- the "mios" defaults are baked in; user just hits Enter to accept.
+# ============================================================================
+prompt_default() {
+    local question="$1" default="$2" answer
+    read -r -p "$(printf '%s%s%s [%s%s%s]: ' "${_BOLD}" "${question}" "${_RESET}" "${_DIM}" "${default}" "${_RESET}")" answer
+    echo "${answer:-$default}"
+}
+
+prompt_password() {
+    local prompt="$1" pw1 pw2
+    while :; do
+        printf '%s%s%s: ' "${_BOLD}" "${prompt}" "${_RESET}" >&2
+        read -rs pw1; echo >&2
+        printf '%sConfirm:%s ' "${_BOLD}" "${_RESET}" >&2
+        read -rs pw2; echo >&2
+        if [[ "$pw1" == "$pw2" ]]; then
+            if [[ -z "$pw1" ]]; then
+                log_warn "Empty password not allowed."
+                continue
+            fi
+            echo "$pw1"
+            return 0
+        fi
+        log_warn "Passwords don't match, please try again."
+    done
+}
+
+prompt_yesno() {
+    local question="$1" default="${2:-y}" answer hint
+    if [[ "$default" == "y" ]]; then hint="[Y/n]"; else hint="[y/N]"; fi
+    read -r -p "$(printf '%s%s%s %s: ' "${_BOLD}" "${question}" "${_RESET}" "${hint}")" answer
+    answer="${answer:-$default}"
+    case "${answer,,}" in
+        y|yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# ============================================================================
+# Phase 2: gather installation profile
+# ============================================================================
+gather_user_choices() {
+    log_phase "Installation profile"
+    log_info "Press Enter to accept defaults (everything defaults to MiOS)."
+    echo
+
+    LINUX_USER="$(prompt_default 'Linux username' "${DEFAULT_USER}")"
+    HOSTNAME_VAL="$(prompt_default 'Hostname' "${DEFAULT_HOST}")"
+    USER_FULLNAME="$(prompt_default 'Full name (GECOS)' "${DEFAULT_USER_FULLNAME}")"
+
+    log_info "Setting password for '${LINUX_USER}' (will be a sudoer):"
+    USER_PASSWORD="$(prompt_password 'Password')"
+
+    SSH_CHOICE="$(prompt_default 'SSH key: (g)enerate ed25519 / (e)xisting path / (s)kip' 'g')"
+    case "${SSH_CHOICE,,}" in
+        e|existing) SSH_KEY_PATH="$(prompt_default 'Existing private key path' "/root/.ssh/id_${DEFAULT_SSH_KEY_TYPE}")" ;;
+        s|skip)     SSH_KEY_PATH="" ;;
+        *)          SSH_KEY_PATH="generate" ;;
+    esac
+
+    if prompt_yesno 'Configure GitHub PAT for git credential helper?' n; then
+        printf '%sGitHub PAT (input hidden):%s ' "${_BOLD}" "${_RESET}"
+        read -rs GH_TOKEN; echo
+    else
+        GH_TOKEN=""
+    fi
+
+    local hostkind
+    hostkind="$(detect_host_kind)"
+    if [[ "$hostkind" == "bootc" ]]; then
+        IMAGE_TAG="$(prompt_default 'MiOS bootc image' "${DEFAULT_IMAGE}")"
+        INSTALL_MODE="bootc"
+    else
+        if prompt_yesno 'Build MiOS locally instead of using prebuilt image?' n; then
+            INSTALL_MODE="build"
+            IMAGE_TAG=""
+        else
+            INSTALL_MODE="fhs"
+            IMAGE_TAG=""
+        fi
+    fi
+}
+
+# ============================================================================
+# Phase 3: confirm before applying
+# ============================================================================
+print_summary() {
+    log_phase "Review profile"
+    cat <<EOF
+  ${_BOLD}Linux user${_RESET}     : ${LINUX_USER}  (full name: ${USER_FULLNAME})
+  ${_BOLD}Sudo groups${_RESET}    : ${DEFAULT_USER_GROUPS}
+  ${_BOLD}Hostname${_RESET}       : ${HOSTNAME_VAL}
+  ${_BOLD}Password${_RESET}       : (set, hidden)
+  ${_BOLD}SSH key${_RESET}        : ${SSH_KEY_PATH:-skip}
+  ${_BOLD}GitHub PAT${_RESET}     : $([ -n "${GH_TOKEN:-}" ] && echo 'configured' || echo 'skip')
+  ${_BOLD}Install mode${_RESET}   : ${INSTALL_MODE}$([ "$INSTALL_MODE" = bootc ] && echo "  (image: ${IMAGE_TAG})")
+
+EOF
+    if ! prompt_yesno 'Proceed with these settings?' y; then
+        log_info "Aborted by user. No changes made."
+        exit 0
+    fi
+}
+
+# ============================================================================
+# Phase 4: apply profile to host
+# ============================================================================
+apply_user_profile() {
+    log_phase "Apply profile to host"
+    mkdir -p "${PROFILE_DIR}"
+    chmod 0750 "${PROFILE_DIR}"
+
+    log_info "Setting hostname -> ${HOSTNAME_VAL}"
+    hostnamectl set-hostname "${HOSTNAME_VAL}"
+
+    if id -u "${LINUX_USER}" >/dev/null 2>&1; then
+        log_info "User '${LINUX_USER}' exists; updating groups + password"
+        usermod -aG "${DEFAULT_USER_GROUPS}" "${LINUX_USER}"
+        usermod -c "${USER_FULLNAME}" "${LINUX_USER}"
+    else
+        log_info "Creating '${LINUX_USER}' (groups: ${DEFAULT_USER_GROUPS})"
+        useradd -m -G "${DEFAULT_USER_GROUPS}" -s "${DEFAULT_USER_SHELL}" -c "${USER_FULLNAME}" "${LINUX_USER}"
+    fi
+    echo "${LINUX_USER}:${USER_PASSWORD}" | chpasswd
+    log_ok "User '${LINUX_USER}' configured"
+
+    local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
+    if [[ "$SSH_KEY_PATH" == "generate" ]]; then
+        log_info "Generating ${DEFAULT_SSH_KEY_TYPE} key for ${LINUX_USER}"
+        sudo -u "${LINUX_USER}" mkdir -p "${home}/.ssh"
+        chmod 0700 "${home}/.ssh"
+        sudo -u "${LINUX_USER}" ssh-keygen -q -t "${DEFAULT_SSH_KEY_TYPE}" -N '' \
+            -C "mios@${HOSTNAME_VAL}" \
+            -f "${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE}"
+        log_ok "SSH key generated: ${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE}"
+    elif [[ -n "$SSH_KEY_PATH" ]]; then
+        if [[ ! -f "$SSH_KEY_PATH" ]]; then
+            log_warn "SSH key path not found: ${SSH_KEY_PATH} -- skipping"
+        else
+            log_info "Installing SSH key from ${SSH_KEY_PATH}"
+            sudo -u "${LINUX_USER}" mkdir -p "${home}/.ssh"
+            cp "${SSH_KEY_PATH}" "${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE}"
+            cp "${SSH_KEY_PATH}.pub" "${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE}.pub" 2>/dev/null || true
+            chown "${LINUX_USER}:${LINUX_USER}" "${home}/.ssh"/*
+            chmod 0600 "${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE}"
+            log_ok "SSH key installed"
+        fi
+    fi
+
+    if [[ -n "${GH_TOKEN:-}" ]]; then
+        sudo -u "${LINUX_USER}" mkdir -p "${home}/.config/git"
+        sudo -u "${LINUX_USER}" git config --file "${home}/.config/git/config" credential.helper store
+        echo "https://${LINUX_USER}:${GH_TOKEN}@github.com" > "${home}/.git-credentials"
+        chmod 0600 "${home}/.git-credentials"
+        chown "${LINUX_USER}:${LINUX_USER}" "${home}/.git-credentials"
+        log_ok "GitHub credential helper configured"
+    fi
+
+    cat > "${PROFILE_FILE}" <<EOF
+# MiOS install profile -- written by mios-bootstrap install.sh
+# Non-secret installation metadata. Passwords/tokens are NOT stored here.
+MIOS_LINUX_USER="${LINUX_USER}"
+MIOS_HOSTNAME="${HOSTNAME_VAL}"
+MIOS_USER_FULLNAME="${USER_FULLNAME}"
+MIOS_USER_GROUPS="${DEFAULT_USER_GROUPS}"
+MIOS_INSTALL_MODE="${INSTALL_MODE}"
+MIOS_IMAGE_TAG="${IMAGE_TAG}"
+MIOS_INSTALLED_AT="$(date -u --iso-8601=seconds)"
+MIOS_BOOTSTRAP_VERSION="0.2.0"
+EOF
+    chmod 0640 "${PROFILE_FILE}"
+    log_ok "Profile written: ${PROFILE_FILE}"
+}
+
+# ============================================================================
+# Phase 5: trigger MiOS root install
+# ============================================================================
+trigger_mios_install() {
+    log_phase "Trigger MiOS root install"
+    case "${INSTALL_MODE}" in
+        bootc)
+            log_info "Switching bootc deployment to ${IMAGE_TAG}"
+            bootc switch "${IMAGE_TAG}"
+            log_ok "bootc deployment staged"
+            ;;
+        fhs)
+            log_info "Cloning MiOS to ${MIOS_CHECKOUT}"
+            mkdir -p "$(dirname "${MIOS_CHECKOUT}")"
+            if [[ -d "${MIOS_CHECKOUT}/.git" ]]; then
+                git -C "${MIOS_CHECKOUT}" fetch --depth=1 origin "${DEFAULT_BRANCH}"
+                git -C "${MIOS_CHECKOUT}" reset --hard "origin/${DEFAULT_BRANCH}"
+            else
+                git clone --depth=1 -b "${DEFAULT_BRANCH}" "${MIOS_REPO}" "${MIOS_CHECKOUT}"
+            fi
+            if [[ -x "${MIOS_CHECKOUT}/install.sh" ]]; then
+                log_info "Running MiOS system installer (FHS overlay)"
+                bash "${MIOS_CHECKOUT}/install.sh"
+                log_ok "MiOS FHS overlay applied"
+            else
+                log_err "MiOS install.sh not found at ${MIOS_CHECKOUT}/install.sh"
+                exit 1
+            fi
+            ;;
+        build)
+            log_info "Cloning MiOS to ${MIOS_CHECKOUT}"
+            mkdir -p "$(dirname "${MIOS_CHECKOUT}")"
+            if [[ -d "${MIOS_CHECKOUT}/.git" ]]; then
+                git -C "${MIOS_CHECKOUT}" fetch --depth=1 origin "${DEFAULT_BRANCH}"
+                git -C "${MIOS_CHECKOUT}" reset --hard "origin/${DEFAULT_BRANCH}"
+            else
+                git clone --depth=1 -b "${DEFAULT_BRANCH}" "${MIOS_REPO}" "${MIOS_CHECKOUT}"
+            fi
+            if [[ -x "${MIOS_CHECKOUT}/build-mios.sh" ]]; then
+                log_info "Running MiOS local build (long; output streamed)"
+                bash "${MIOS_CHECKOUT}/build-mios.sh"
+            else
+                log_err "MiOS build-mios.sh not found at ${MIOS_CHECKOUT}/build-mios.sh"
+                exit 1
+            fi
+            ;;
+    esac
+}
+
+# ============================================================================
+# Phase 6: reboot prompt
+# ============================================================================
+reboot_prompt() {
+    log_phase "Reboot"
+    if prompt_yesno 'Reboot now to activate MiOS?' y; then
+        log_info "Rebooting in 3s..."
+        sleep 3
+        systemctl reboot
+    else
+        log_info "Skipping reboot. Run 'sudo systemctl reboot' when ready."
+    fi
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+main() {
+    require_root
+    log_phase "MiOS Bootstrap Installer"
+
+    local hostkind
+    hostkind="$(detect_host_kind)"
+    if [[ "$hostkind" == "unsupported" ]]; then
+        log_err "Host is not Fedora-bootc nor FHS Fedora. Aborting."
+        exit 1
+    fi
+    log_info "Detected host: ${hostkind}"
+
+    check_network
+    gather_user_choices
+    print_summary
+    apply_user_profile
+    trigger_mios_install
+    reboot_prompt
 }
 
 main "$@"

@@ -1,54 +1,46 @@
 # Kabuki94/MiOS-bootstrap
 
-> Build-infrastructure repo for MiOS, an immutable bootc-native workstation OS.
-> Snapshot v0.1.5. Single source of truth: INDEX.md.
-> Deployed root overlay: https://github.com/Kabuki94/MiOS
+> Interactive ignition installer for MiOS. User-facing entry point.
+> Snapshot v0.2.0. The system layer (Containerfile, FHS overlay, build infra)
+> lives in https://github.com/Kabuki94/MiOS.
 
-MiOS is a self-building, immutable workstation OS on Fedora bootc with the
-Universal Blue ucore-hci base. The deployed system is OpenAI-API native: any
-client speaking the OpenAI REST protocol targets a MiOS host at
-http://localhost:8080/v1, served by LocalAI (FOSS) with on-disk discovery
-under /v1/ and stateful model storage at /srv/ai/.
+MiOS is an immutable, bootc-native workstation OS on Fedora. This repository
+contains only the bootstrap installer -- the script users run as root to
+create their MiOS account, set hostname/password, install an SSH key, and
+trigger the system install (either `bootc switch` for bootc hosts or a
+clone-and-FHS-overlay for non-bootc Fedora).
 
-## Architecture
+## Files
 
-- INDEX.md - Single source of truth for build-time architecture and conventions
-- AGENTS.md - In-image agent contract (lives in MiOS, not bootstrap)
-- VERSION  - Canonical release tag
+- install.sh - Interactive installer (the user entry point)
+- README.md  - User-facing overview
+- VARIABLES.md - Documentation of every prompt and default
+- USER-SPACE-GUIDE.md - User-side environment notes
+- .env.mios - User-runtime defaults
+- identity.env.example - Identity template
+- image-versions.yml - Pinned image references
 
-## Repository layout
+## Install command
 
-- automation/ - Build orchestration (master runner + numbered phase scripts)
-- tools/ - Build helpers, push scripts, init utilities
-- usr/, etc/, home/ - System file overlays consumed by the Containerfile
-- config/ - bootc-image-builder configs, ignition definitions
-- specs/ - Architectural research and engineering docs
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Kabuki94/MiOS-bootstrap/main/install.sh)"
+```
 
-## OpenAI-API client integration (FOSS only)
+## Defaults convention
 
-Any FOSS implementation of the OpenAI REST protocol works against MiOS
-without code changes:
-
-- LocalAI       - reference backend, ships in the deployed image as a Quadlet
-- Ollama        - drop-in via the same /v1 endpoint
-- vLLM          - high-throughput backend for larger models
-- llama.cpp     - direct GGUF execution
-- MCP servers   - registered under /v1/mcp, discoverable via filesystem or HTTP
-
-No vendor-specific SDK, IDE plugin, agent framework, or cloud provider is
-required or assumed.
+Everything defaults to `mios` -- username, hostname, full name -- until the
+user overrides at the prompt. This is intentional: a vanilla MiOS install
+produces a host named `mios` with a sudoer named `mios`. The user only
+types when they want something different.
 
 ## Standards alignment
 
-- OpenAI REST API (open spec, multi-vendor implementations)
-- Model Context Protocol (MCP, open spec)
+- OpenAI REST API (open spec, multi-vendor)
 - Linux Filesystem Hierarchy Standard (FHS 3.0)
 - XDG Base Directory specification
-- systemd unit + Quadlet conventions
+- systemd / Quadlet
 - bootc / OCI image format
-- SLSA / Sigstore (cosign keyless signing)
 
 ## License
 
-Apache-2.0. Source: https://github.com/Kabuki94/MiOS-bootstrap
-Deployments: ghcr.io/kabuki94/mios:latest
+Apache-2.0.
