@@ -1,0 +1,360 @@
+section,package,classification,purpose,notes
+packages-repos,rpmfusion-free-release-rawhide,repo-config,Enable RPM Fusion Free,
+packages-repos,rpmfusion-nonfree-release-rawhide,repo-config,Enable RPM Fusion Nonfree (NVIDIA + multimedia),
+packages-repos,fedora-workstation-repositories,repo-config,Enable Fedora Workstation 3rd-party repos,
+packages-repos,dnf-plugins-core,repo-config,DNF plugin framework,
+packages-repos,dnf5-plugins,repo-config,DNF5 plugin framework (versionlock etc),
+packages-kernel,kernel-modules-extra,kernel-extra,Extra kernel modules,Base kernel inherited from ucore-hci - NEVER upgrade in container
+packages-kernel,kernel-devel,kernel-extra,Kernel development headers for akmod/DKMS,
+packages-kernel,kernel-headers,kernel-extra,Kernel userspace headers,
+packages-kernel,kernel-tools,kernel-extra,perf, cpupower etc,
+packages-kernel,glibc-headers,build-dep,glibc dev headers,
+packages-kernel,glibc-devel,build-dep,glibc dev libs,
+packages-kernel,python3,runtime,Python 3 interpreter,Required by validate-kargs.py and mios CLI
+packages-gnome,gnome-shell,critical-gnome,GNOME shell core,Auto-pulls mutter/gjs/gtk4/libadwaita/dconf/pipewire/polkit
+packages-gnome,gnome-session-wayland-session,critical-gnome,Wayland-only session,GNOME 50 X11 removed
+packages-gnome,gnome-control-center,critical-gnome,Settings UI,
+packages-gnome,gnome-keyring,critical-gnome,Secret service daemon,
+packages-gnome,gdm,critical-gnome,Display manager,
+packages-gnome,ptyxis,desktop-app,Default GNOME terminal,
+packages-gnome,nautilus,desktop-app,File manager,
+packages-gnome,gnome-software,desktop-app,Flatpak manager (immutable systems),Kept - manages Flatpaks
+packages-gnome,gnome-remote-desktop,desktop-app,RDP server (Wayland-native),
+packages-gnome,gnome-backgrounds,desktop-app,Default wallpapers,
+packages-gnome,gnome-shell-extension-appindicator,extension,SysTray support,
+packages-gnome,gnome-shell-extension-dash-to-dock,extension,Dock,
+packages-gnome,xdg-user-dirs,portal,User dirs,
+packages-gnome,xdg-utils,portal,xdg-open etc,
+packages-gnome,xdg-desktop-portal,portal,Portal core,
+packages-gnome,xdg-desktop-portal-gnome,portal,GNOME backend,
+packages-gnome,xdg-desktop-portal-gtk,portal,GTK backend,
+packages-gnome,pipewire-alsa,audio,ALSA compat,
+packages-gnome,pipewire-pulseaudio,audio,PulseAudio compat,
+packages-gnome,wireplumber,audio,Session manager,
+packages-gnome,gstreamer1,abi-fix,GStreamer 1.x core,Mandatory ABI fix - F43 base ships older GStreamer that crashes GNOME 50
+packages-gnome,gstreamer1-plugins-base,abi-fix,GStreamer base plugins,
+packages-gnome,gstreamer1-plugins-good,abi-fix,GStreamer good plugins,
+packages-gnome,upower,hardware,Power management,
+packages-gnome,gnome-bluetooth,hardware,Bluetooth UI,
+packages-gnome,bluez,hardware,Bluetooth stack,
+packages-gnome,bluez-tools,hardware,Bluetooth CLI,
+packages-gnome,flatpak,runtime,Flatpak runtime,
+packages-gnome,gvfs,filesystem,Virtual FS,
+packages-gnome,gvfs-smb,filesystem,SMB mount,
+packages-gnome,gvfs-mtp,filesystem,MTP mount,
+packages-gnome,NetworkManager-wifi,network,WiFi support,
+packages-gnome,NetworkManager-openvpn-gnome,network,OpenVPN GUI,
+packages-gnome,nm-connection-editor,network,Connection editor,
+packages-gnome,glibc-langpack-en,locale,en_US locale,
+packages-gnome,qt6-qtbase-gui,qt-parity,Qt6 GUI,
+packages-gnome,qt6-qtwayland,qt-parity,Qt6 Wayland,
+packages-gnome,qadwaitadecorations-qt5,qt-parity,Qt5 Adwaita decorations,
+packages-gnome,adw-gtk3-theme,qt-parity,GTK3 Adwaita theme,
+packages-gpu-mesa,mesa-vulkan-drivers,gpu-driver,Mesa Vulkan,
+packages-gpu-mesa,mesa-dri-drivers,gpu-driver,Mesa DRI,
+packages-gpu-mesa,mesa-va-drivers-freeworld,gpu-driver,Mesa VAAPI freeworld,
+packages-gpu-mesa,vulkan-loader,gpu-driver,Vulkan loader,
+packages-gpu-mesa,vulkan-tools,gpu-driver,vulkaninfo etc,
+packages-gpu-mesa,libva-utils,gpu-driver,VAAPI tools,
+packages-gpu-mesa,linux-firmware,firmware,All vendor firmware blobs,
+packages-gpu-amd-compute,rocm-opencl,gpu-compute,AMD ROCm OpenCL,
+packages-gpu-amd-compute,rocm-hip,gpu-compute,AMD HIP,
+packages-gpu-amd-compute,rocm-runtime,gpu-compute,AMD compute runtime,
+packages-gpu-amd-compute,rocm-smi,gpu-compute,AMD GPU monitoring,
+packages-gpu-amd-compute,rocminfo,gpu-compute,AMD GPU info,
+packages-gpu-intel-compute,intel-compute-runtime,gpu-compute,Intel GPU compute (OpenCL/Level Zero),
+packages-gpu-intel-compute,intel-media-driver,gpu-driver,Intel VAAPI,
+packages-gpu-nvidia,akmod-nvidia,gpu-driver,NVIDIA akmod (RPMFusion),Note - on ucore-hci-stable-nvidia base, kmod-nvidia-open is pre-signed; akmod-guards script prevents conflict
+packages-gpu-nvidia,xorg-x11-drv-nvidia-cuda,gpu-driver,CUDA support libs,
+packages-gpu-nvidia,nvidia-container-toolkit,gpu-driver,Container GPU support (CDI),Required version >= 1.17.8 (CVE-2025-23266/23267); 1.19+ uses CDI by default
+packages-gpu-nvidia,nvidia-persistenced,gpu-driver,GPU low-latency state,
+packages-gpu-nvidia,nvidia-settings,gpu-driver,NVIDIA control panel,
+packages-gpu-nvidia,xorg-x11-drv-nvidia-power,gpu-driver,GPU power management,
+packages-gpu-nvidia,nvidia-container-selinux,gpu-driver,SELinux policy for nvidia-container-toolkit,
+packages-virt,cockpit,virt,Cockpit web UI,
+packages-virt,qemu-kvm,virt,KVM/QEMU,
+packages-virt,libvirt,virt,libvirt daemon,
+packages-virt,libvirt-daemon,virt,libvirt daemon (extra),
+packages-virt,virt-install,virt,VM provisioning CLI,
+packages-virt,virt-manager,virt,VM management GUI,
+packages-virt,edk2-ovmf,virt,UEFI firmware for VMs,
+packages-virt,swtpm,virt,Software TPM,
+packages-virt,swtpm-tools,virt,swtpm helpers,
+packages-virt,dnsmasq,virt,libvirt default network DNS,
+packages-virt,mdevctl,virt,SR-IOV/mediated devices,
+packages-virt,libguestfs-tools,virt,Guest disk inspection,
+packages-virt,virt-viewer,virt,SPICE/VNC viewer,
+packages-virt,virt-v2v,virt,V2V conversion,
+packages-virt,qemu-device-display-virtio-gpu,virt,VirtIO-GPU device model,
+packages-virt,dracut-live,virt,Dracut live image support,
+packages-virt,virt-firmware,virt,Firmware management,
+packages-virt,python3-cryptography,virt,Crypto for virt-firmware,
+packages-containers,podman,critical-container,Podman runtime,
+packages-containers,podman-compose,container,Compose support,
+packages-containers,buildah,container,Image build tool,
+packages-containers,skopeo,container,Image inspection/copy,
+packages-containers,bootc,critical-container,bootc runtime,
+packages-containers,osbuild,container,Image builder framework,
+packages-containers,osbuild-composer,container,Image composer service,
+packages-containers,osbuild-selinux,container,osbuild SELinux policy,
+packages-containers,composer-cli,container,Image-builder CLI,
+packages-containers,rpm-ostree,container,rpm-ostree (legacy compat),
+packages-containers,crun,container,OCI runtime,
+packages-containers,netavark,container,Container networking,
+packages-containers,aardvark-dns,container,Container DNS,
+packages-containers,slirp4netns,container,Rootless networking,
+packages-containers,composefs,container,Composefs verified FS,
+packages-containers,container-selinux,container,Container SELinux policy,
+packages-containers,qemu-img,container,Image format conversion,
+packages-containers,image-builder,container,Image-builder framework,
+packages-containers,bootc-image-builder,container,BIB binary,
+packages-containers,squashfs-tools,container,Squashfs tools,
+packages-containers,selinux-policy-devel,build-dep,SELinux module compile,For 19-k3s-selinux.sh and 37-selinux.sh
+packages-containers,containers-common,container,Common container config,
+packages-containers,toolbox,container,Toolbox CLI,
+packages-containers,kubectl,k8s-client,kubectl CLI,
+packages-containers,helm,k8s-client,Helm CLI,
+packages-containers,make,build-dep,GNU Make,For Looking Glass + KVMFR build
+packages-containers,gcc,build-dep,GCC,
+packages-containers,gcc-c++,build-dep,GCC C++,
+packages-containers,cmake,build-dep,CMake,
+packages-containers,golang,build-dep,Go toolchain,For uupd compile if needed
+packages-containers,podman-plugins,container,Podman plugins,
+packages-containers,cosign,security-supply-chain,Sigstore cosign,Pinned to v2.x runtime by 42-cosign-policy.sh
+packages-self-build,bootc-base-imagectl,build-tool,Rechunker for OCI layers,
+packages-self-build,konflux-image-tools,build-tool,Konflux image tools,
+packages-boot,bootupd,boot,Unified bootloader updater (F44 phase 1),
+packages-boot,dnf5-plugins,boot,DNF5 plugins (versionlock),
+packages-boot,systemd-boot-unsigned,boot,systemd-boot (UKI prep),
+packages-boot,efibootmgr,boot,UEFI boot manager,
+packages-boot,systemd-ukify,boot,UKI generation,
+packages-boot,binutils,boot,objcopy etc for UKI,
+packages-boot,efitools,boot,EFI signing tools,
+packages-boot,sbsigntools,boot,Secure Boot signing,
+packages-boot,tpm2-tss,boot,TPM2 stack,
+packages-cockpit,cockpit,cockpit,Cockpit core,
+packages-cockpit,cockpit-system,cockpit,System plugin,
+packages-cockpit,cockpit-ws,cockpit,Web socket frontend,
+packages-cockpit,cockpit-bridge,cockpit,DBus bridge (PCP native >= 326),
+packages-cockpit,cockpit-storaged,cockpit,Storage plugin,
+packages-cockpit,cockpit-networkmanager,cockpit,Network plugin,
+packages-cockpit,cockpit-podman,cockpit,Podman plugin,
+packages-cockpit,cockpit-machines,cockpit,VM plugin,
+packages-cockpit,cockpit-ostree,cockpit,OSTree/bootc plugin,
+packages-cockpit,cockpit-selinux,cockpit,SELinux plugin,
+packages-cockpit,cockpit-files,cockpit,Files browser,
+packages-cockpit,pcp,cockpit,Performance Co-Pilot,
+packages-cockpit,pcp-system-tools,cockpit,PCP CLI,
+packages-wintools,hyperv-tools,interop,Hyper-V tools,
+packages-wintools,samba,interop,Samba server/client,
+packages-wintools,samba-client,interop,Samba client,
+packages-wintools,cifs-utils,interop,CIFS mount helpers,
+packages-wintools,freerdp,interop,FreeRDP client,
+packages-wintools,freerdp-libs,interop,FreeRDP libs,
+packages-security,crowdsec,security,CrowdSec IPS (offline mode),
+packages-security,crowdsec-firewall-bouncer-nftables,security,CrowdSec nftables bouncer,
+packages-security,firewalld,security-critical,firewalld,
+packages-security,fapolicyd,security,Application whitelisting (deny-by-default),Custom rules in 90-mios-deny.rules
+packages-security,fapolicyd-selinux,security,fapolicyd SELinux policy,
+packages-security,usbguard,security,USB device control,
+packages-security,setroubleshoot-server,security,SELinux denial analyzer,
+packages-security,policycoreutils-python-utils,security,SELinux Python utilities,
+packages-security,audit,security,auditd,
+packages-security,tpm2-tools,security,TPM2 user CLI,
+packages-security,clevis,security,Clevis automated decryption,
+packages-security,clevis-luks,security,Clevis LUKS unlock (TPM2/Tang),
+packages-security,aide,security-compliance,File integrity (AIDE),
+packages-security,openscap-scanner,security-compliance,OpenSCAP scanner,
+packages-security,scap-security-guide,security-compliance,SCAP profiles,
+packages-security,libpwquality,security,Password quality library,
+packages-security,nftables,security,nftables (modern firewall),
+packages-security,policycoreutils,security,SELinux core utils,
+packages-security,setools-console,security,SELinux policy analysis,
+packages-security,cosign,security-supply-chain,Sigstore cosign (RPM build),
+packages-security,iptables-legacy,security-compat,Legacy iptables for WSL2,WSL2 kernel has no nftables; coexists with nftables on bare metal
+packages-gaming,steam,gaming-proprietary,Steam client,User must accept SSA on first launch
+packages-gaming,gamescope,gaming,Gamescope compositor,SteamOS-mode GDM session baked via system_files
+packages-gaming,gnome-shell-extension-gamemode,gaming,Gamemode shell extension,
+packages-gaming,wine,gaming,Wine,
+packages-gaming,wine-mono,gaming,Mono for Wine,
+packages-gaming,wine-dxvk,gaming,DXVK for Wine,Explicit add - no longer auto-pulled as weak dep
+packages-gaming,winetricks,gaming,Wine helper,
+packages-gaming,lutris,gaming,Lutris,
+packages-gaming,gamemode,gaming,Performance daemon,
+packages-gaming,mangohud,gaming,Performance overlay,
+packages-gaming,vulkan-tools,gaming,Vulkan tools (also in mesa),
+packages-gaming,dosbox-staging,gaming,DOSBox,
+packages-gaming,protontricks,gaming,Proton helper,
+packages-gaming,steam-devices,gaming,Steam controller udev rules,
+packages-guests,qemu-guest-agent,guest,QEMU guest agent,
+packages-guests,hyperv-daemons,guest,Hyper-V integration,
+packages-guests,open-vm-tools,guest,VMware Tools,
+packages-guests,spice-vdagent,guest,SPICE agent,
+packages-guests,spice-webdavd,guest,SPICE WebDAV agent,
+packages-guests,libvirt-nss,guest,libvirt NSS module,
+packages-storage,nfs-utils,storage,NFS userspace,
+packages-storage,rpcbind,storage,RPC for NFS,
+packages-storage,glusterfs,storage,GlusterFS,
+packages-storage,glusterfs-fuse,storage,GlusterFS FUSE client,
+packages-storage,glusterfs-server,storage,GlusterFS server,
+packages-storage,ceph-common,storage,Ceph CLI/clients,
+packages-storage,iscsi-initiator-utils,storage,iSCSI initiator,
+packages-storage,targetcli,storage,LIO target CLI,
+packages-storage,device-mapper-multipath,storage,Multipath,
+packages-storage,sg3_utils,storage,SCSI generic tools,
+packages-storage,lvm2,storage,LVM2,
+packages-storage,stratis-cli,storage,Stratis CLI,
+packages-storage,stratisd,storage,Stratis daemon,
+packages-storage,xfsprogs,storage,XFS tools,
+packages-storage,btrfs-progs,storage,Btrfs tools,
+packages-storage,e2fsprogs,storage,ext2/3/4 tools,
+packages-storage,mdadm,storage,Software RAID,
+packages-storage,ntfs-3g,storage,NTFS user FS,
+packages-ceph,ceph-common,storage-ceph,Ceph clients,
+packages-ceph,cephadm,storage-ceph,Cephadm orchestrator,All Ceph daemons run as Podman containers
+packages-ceph,ceph-fuse,storage-ceph,CephFS FUSE client,
+packages-ceph,ceph-selinux,storage-ceph,Ceph SELinux policy,
+packages-k3s,container-selinux,k8s,Container SELinux policy,K3s binary itself downloaded by 13-ceph-k3s.sh + sha256-verified
+packages-ha,pacemaker,ha,Pacemaker cluster RM,
+packages-ha,corosync,ha,Corosync messaging,
+packages-ha,pcs,ha,Pacemaker config CLI,
+packages-ha,fence-agents-all,ha,All fence agents,
+packages-ha,fence-virt,ha,VM fence agent,
+packages-ha,resource-agents,ha,Resource agents,
+packages-ha,sbd,ha,Storage-based death,
+packages-ha,booth,ha,Multi-site arbitrator,
+packages-ha,booth-core,ha,booth core,
+packages-ha,booth-test,ha,booth tests,
+packages-ha,dlm,ha,Distributed lock manager,
+packages-ha,corosync-qdevice,ha,Corosync QDevice,
+packages-ha,corosync-qnetd,ha,Corosync QNetD,
+packages-ha,libqb,ha,QB IPC library,
+packages-ha,libibverbs,ha,InfiniBand verbs,
+packages-utils,git,util,Git VCS,
+packages-utils,tmux,util,Terminal multiplexer,
+packages-utils,vim-enhanced,util,vim editor,
+packages-utils,wget2-wget,util,wget2,
+packages-utils,curl,util,curl,
+packages-utils,btop,util,Process monitor (replaces htop),
+packages-utils,nvtop,util,GPU monitor,
+packages-utils,fastfetch,util,System info,
+packages-utils,lm_sensors,util,Hardware sensors,
+packages-utils,smartmontools,util,SMART disk monitoring,
+packages-utils,tuned,util,Tuned daemon,
+packages-utils,tuned-ppd,util,power-profiles-daemon shim,
+packages-utils,fuse,util,FUSE,
+packages-utils,fuse3,util,FUSE3,
+packages-utils,7zip-standalone,util,7zip,
+packages-utils,unzip,util,unzip,
+packages-utils,zstd,util,Zstandard,
+packages-utils,rsync,util,rsync,
+packages-utils,tree,util,tree,
+packages-utils,jq,util,JSON processor,
+packages-utils,yq,util,YAML processor,
+packages-utils,bc,util,bc calculator,
+packages-utils,patch,util,patch utility,
+packages-utils,openssl,util,OpenSSL CLI,
+packages-utils,distrobox,util,Distrobox,
+packages-utils,just,util,Just command runner,
+packages-utils,driverctl,util,Driver override CLI,
+packages-utils,tmt,util,Test management tool,
+packages-utils,ansible-core,util,Ansible,
+packages-utils,wslu,util,WSL utilities,
+packages-utils,python3-pip,util,Python pip,
+packages-utils,cloud-init,util,cloud-init for VM/Podman-machine init,
+packages-utils,libei,util,Emulated input library,
+packages-utils,strace,util,System call tracer,
+packages-utils,lsof,util,lsof,
+packages-utils,iotop,util,I/O monitor,
+packages-utils,socat,util,socat,
+packages-utils,syft,util,SBOM CLI,
+packages-utils,oras-cli,util,OCI Registry As Storage CLI,
+packages-android,waydroid,android,Android container runtime,NVIDIA lacks full 3D acceleration in Waydroid - Mesa/AMD/Intel only
+packages-looking-glass-build,cmake,looking-glass-build,CMake,Removed after compilation
+packages-looking-glass-build,gcc,looking-glass-build,GCC,Removed after compilation
+packages-looking-glass-build,gcc-c++,looking-glass-build,GCC C++,Removed after compilation
+packages-looking-glass-build,make,looking-glass-build,Make,Removed after compilation
+packages-looking-glass-build,binutils,looking-glass-build,objcopy etc,Removed after compilation
+packages-looking-glass-build,pkgconf-pkg-config,looking-glass-build,pkg-config,Removed after compilation
+packages-looking-glass-build,libglvnd-devel,looking-glass-build,GL vendor neutral devel,Removed after compilation
+packages-looking-glass-build,fontconfig,looking-glass-build,Font config,Removed after compilation
+packages-looking-glass-build,fontconfig-devel,looking-glass-build,Font config devel,Removed after compilation
+packages-looking-glass-build,spice-protocol,looking-glass-build,SPICE protocol headers,Removed after compilation
+packages-looking-glass-build,nettle-devel,looking-glass-build,Nettle devel,Removed after compilation
+packages-looking-glass-build,gnutls-devel,looking-glass-build,GnuTLS devel,Removed after compilation
+packages-looking-glass-build,libXi-devel,looking-glass-build,X Input devel,Removed after compilation
+packages-looking-glass-build,libXinerama-devel,looking-glass-build,Xinerama devel,Removed after compilation
+packages-looking-glass-build,libXcursor-devel,looking-glass-build,X Cursor devel,Removed after compilation
+packages-looking-glass-build,libXpresent-devel,looking-glass-build,X Present devel,Removed after compilation
+packages-looking-glass-build,libXScrnSaver-devel,looking-glass-build,X ScreenSaver devel,Removed after compilation
+packages-looking-glass-build,libxkbcommon-x11-devel,looking-glass-build,xkbcommon X11 devel,Removed after compilation
+packages-looking-glass-build,wayland-devel,looking-glass-build,Wayland devel,Removed after compilation
+packages-looking-glass-build,wayland-protocols-devel,looking-glass-build,Wayland protocols devel,Removed after compilation
+packages-looking-glass-build,libdecor-devel,looking-glass-build,libdecor devel (Wayland CSD),Removed after compilation
+packages-looking-glass-build,pipewire-devel,looking-glass-build,PipeWire devel,Removed after compilation
+packages-looking-glass-build,libsamplerate-devel,looking-glass-build,Sample rate converter devel,Removed after compilation
+packages-cockpit-plugins-build,npm,build-dep,npm for Cockpit plugins,
+packages-cockpit-plugins-build,gettext,build-dep,gettext for Cockpit plugins,
+packages-network-discovery,avahi,network-discovery,Avahi mDNS daemon,
+packages-network-discovery,avahi-tools,network-discovery,avahi-browse etc,
+packages-network-discovery,nss-mdns,network-discovery,NSS .local resolver,
+packages-phosh,phosh,mobile,Phosh shell,
+packages-phosh,phoc,mobile,Phoc compositor,
+packages-phosh,gnome-calls,mobile,Calls UI,
+packages-phosh,feedbackd,mobile,Haptic feedback daemon,
+packages-updater,uupd,updater,Universal Blue updater (replaces 3 timers),
+packages-updater,greenboot,updater,Greenboot health-check rollback,
+packages-updater,greenboot-default-health-checks,updater,Default health checks,
+packages-freeipa,freeipa-client,identity,FreeIPA client,
+packages-freeipa,sssd,identity,SSSD daemon,
+packages-freeipa,sssd-tools,identity,SSSD CLI,
+packages-freeipa,libsss_nss_idmap,identity,SSSD NSS ID mapping,Fixes sssd dep resolution on F44
+packages-ai,aichat,ai-cli,Rust LLM CLI,
+packages-ai,aichat-ng,ai-cli,Rust LLM CLI (next-gen),
+packages-critical,gnome-shell,critical-validation,Required in final image,
+packages-critical,gdm,critical-validation,Required in final image,
+packages-critical,podman,critical-validation,Required in final image,
+packages-critical,bootc,critical-validation,Required in final image,
+packages-critical,libvirt,critical-validation,Required in final image,
+packages-critical,kernel,critical-validation,Required in final image,
+packages-critical,firewalld,critical-validation,Required in final image,
+packages-critical,cockpit,critical-validation,Required in final image,
+packages-critical,NetworkManager,critical-validation,Required in final image,
+packages-critical,pipewire,critical-validation,Required in final image,
+packages-critical,tuned,critical-validation,Required in final image,
+packages-critical,chrony,critical-validation,Required in final image,
+packages-critical,openssh-server,critical-validation,Required in final image,
+packages-bloat,malcontent-control,REMOVED,UI for parental controls,SAFE to remove (control/pam/tools); malcontent-libs MUST stay
+packages-bloat,malcontent-pam,REMOVED,PAM module for parental controls,SAFE to remove
+packages-bloat,malcontent-tools,REMOVED,CLI for parental controls,SAFE to remove
+packages-bloat,gnome-tour,REMOVED,Welcome tour,SAFE to remove (or hide via NoDisplay)
+packages-bloat,gnome-initial-setup,REMOVED,First-run wizard,SAFE to remove (or hide via NoDisplay)
+packages-bloat,PackageKit,REMOVED,PackageKit (rpm-ostree replaces),
+packages-bloat,PackageKit-command-not-found,REMOVED,PackageKit CNF helper,
+packages-nut,nut,distrobox,Network UPS Tools server,Managed via Distrobox - decouple HW from immutable core
+packages-nut,nut-client,distrobox,NUT client,
+packages-nut,nut-xml,distrobox,NUT XML/UPS,
+packages-nut,usbutils,distrobox,USB tools (lsusb),
+external-binary,k3s,external,K3s server/agent binary,Downloaded directly from github.com/k3s-io/k3s with sha256 verification by 13-ceph-k3s.sh
+external-binary,cosign-v2,external,cosign v2 static binary,Downloaded by 42-cosign-policy.sh - pinned v2.x (NOT v3 - breaks rpm-ostree OCI 1.1)
+from-source,looking-glass-client,from-source,Looking Glass B7 client,Built by 53-bake-lookingglass-client.sh from upstream sources
+from-source,kvmfr,from-source,KVMFR kernel module,Built by 52-bake-kvmfr.sh - signed with MOK key - 128 MB shmem default
+from-source,k3s-selinux,from-source,K3s SELinux policy,Compiled by 19-k3s-selinux.sh - no Fedora package available
+from-source,mios_portabled,from-source,SELinux module,systemd-portabled D-Bus access for sysext/confext (systemd 258+)
+from-source,mios_kvmfr,from-source,SELinux module,Looking Glass shmem device access for VMs
+from-source,mios_cdi,from-source,SELinux module,NVIDIA CDI spec generation fcontext
+from-source,mios_quadlet,from-source,SELinux module,Podman Quadlet container management
+from-source,mios_sysext,from-source,SELinux module,systemd-sysext extension activation
+external-image,quay.io/centos-bootc/bootc-image-builder:latest,oci-image,BIB - OCI to disk image,Used by Justfile/PS1 for raw/iso/vhd/wsl targets
+external-image,docker.io/localai/localai:v2.20.0,oci-image,LocalAI inference backend,Quadlet sidecar - mios-ai.container - port 8080
+external-image,quay.io/ceph/ceph:latest,oci-image,Ceph monitor sidecar,Quadlet sidecar - mios-ceph.container
+external-image,docker.io/rancher/k3s:v1.32.1-k3s1,oci-image,K3s server sidecar (Quadlet variant),Quadlet sidecar - mios-k3s.container
+external-image,anchore/syft:latest,oci-image,Syft SBOM CLI image,Used by just sbom target
+external-image,quay.io/centos-bootc/centos-bootc:stream10,oci-image,Rechunker fallback,Used when self-build rechunk fails
+base-image,ghcr.io/ublue-os/ucore-hci:stable-nvidia,oci-base,Universal Blue ucore-hci with pre-signed NVIDIA,Primary base image - kernel inherited - F44 overlay applied via 01-repos.sh
+base-image,ghcr.io/ublue-os/ucore-hci:stable,oci-base-alt,Universal Blue ucore-hci (no NVIDIA),Selectable in build-mios.sh interactive prompt
+base-image,ghcr.io/ublue-os/ucore:stable,oci-base-alt,Universal Blue ucore (minimal),Selectable in build-mios.sh interactive prompt
+flatpak-default,org.gnome.Epiphany,flatpak,Epiphany browser (handles documents/photos/media),Per .env.mios MIOS_FLATPAKS default
+flatpak-default,com.github.tchx84.Flatseal,flatpak,Flatpak permission editor,Per .env.mios MIOS_FLATPAKS default
+flatpak-default,io.github.kolunmi.Bazaar,flatpak,Bazaar Flatpak frontend,Per .env.mios MIOS_FLATPAKS default
+flatpak-default,com.mattjakeman.ExtensionManager,flatpak,GNOME Extension Manager,Per .env.mios MIOS_FLATPAKS default
