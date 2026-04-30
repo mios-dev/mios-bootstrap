@@ -2,7 +2,7 @@
 
 > Interactive ignition installer for MiOS. The user-facing entry point.
 
-**Version:** v0.1.4
+**Version:** v0.2.0
 **System repo:** https://github.com/MiOS-DEV/MiOS
 
 ---

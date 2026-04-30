@@ -90,7 +90,7 @@ function Get-SHA512Hash {
 
 Write-Host ""
 Write-Host "  ╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "  ║  MiOS v0.1.4 -- Unified Bootstrap Wizard                         ║" -ForegroundColor Cyan
+Write-Host "  ║  MiOS v0.2.0 -- Unified Bootstrap Wizard                         ║" -ForegroundColor Cyan
 Write-Host "  ╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  This wizard collects ALL configuration variables ONCE," -ForegroundColor Gray
@@ -117,7 +117,7 @@ try {
     $wslCPUs = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
 
     $wslConfig = @"
-# MiOS v0.1.4 - WSL2 Configuration
+# MiOS v0.2.0 - WSL2 Configuration
 [wsl2]
 memory=${wslRAM}GB
 processors=${wslCPUs}
@@ -273,12 +273,12 @@ $registryToml = @"
 # XDG-Compliant Path: $MiosConfigFile
 
 [metadata]
-version = "0.1.4"
+version = "0.2.0"
 generated_at = "$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))"
 generated_by = "bootstrap-v2.ps1"
 
 [tags.VAR_VERSION]
-value = "0.1.4"
+value = "0.2.0"
 subscribers = [
     "VERSION",
     "Justfile:VERSION",

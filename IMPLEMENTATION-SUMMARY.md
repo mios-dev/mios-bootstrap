@@ -1,4 +1,4 @@
-# MiOS Bootstrap v0.1.4 Implementation Summary
+# MiOS Bootstrap v0.2.0 Implementation Summary
 
 **Date:** 2026-04-28
 **Repository:** MiOS-bootstrap
@@ -58,7 +58,7 @@ value = "$MIOS_USER"
 subscribers = ["automation/31-user.sh:C_USER", "Containerfile:MIOS_USER"]
 ```
 
-**Version:** Updated to v0.1.4 throughout
+**Version:** Updated to v0.2.0 throughout
 
 ---
 
@@ -117,12 +117,12 @@ $buildArgs = @(
 ### 3. README.md (UPDATED - 32 changes)
 
 **Changes:**
-- Updated version from MiOSv0.1.4 to MiOSv0.1.4 (all occurrences)
+- Updated version from MiOSv0.2.0 to MiOSv0.2.0 (all occurrences)
 - Updated date from 2026-04-27 to 2026-04-28
 - Updated all path references throughout:
-  - `/var/lib/mios/artifacts/MiOSv0.1.4/`
-  - `/var/log/mios/builds/MiOSv0.1.4/`
-  - `/usr/share/doc/mios/MiOSv0.1.4/`
+  - `/var/lib/mios/artifacts/MiOSv0.2.0/`
+  - `/var/log/mios/builds/MiOSv0.2.0/`
+  - `/usr/share/doc/mios/MiOSv0.2.0/`
 
 **No Breaking Changes** - File structure and content remain compatible
 
@@ -155,12 +155,12 @@ $buildArgs = @(
 
 ```toml
 [metadata]
-version = "0.1.4"
+version = "0.2.0"
 generated_by = "bootstrap.ps1"
 generated_at = "2026-04-28T17:00:00Z"
 
 [tags.VAR_VERSION]
-value = "0.1.4"
+value = "0.2.0"
 subscribers = ["Containerfile:LABEL", "automation/build.sh:MIOS_VERSION"]
 
 [tags.VAR_USER]
@@ -238,8 +238,8 @@ RUN echo "${MIOS_USER}:${MIOS_PASSWORD_HASH}" | chpasswd -e
 **After:** Canonical names (bootstrap.ps1, build.sh) - no version suffixes on scripts
 
 ### 5. Versioning Sync (FIXED)
-**Before:** Bootstrap repo showed v0.1.4
-**After:** Synced with mainline MiOS v0.1.4
+**Before:** Bootstrap repo showed v0.2.0
+**After:** Synced with mainline MiOS v0.2.0
 
 ---
 
@@ -267,7 +267,7 @@ feat: unified bootstrap with single-pass configuration
 - XDG-compliant directory structure
 - SHA-512 password hashing (Linux shadow format)
 - registry.toml as single source of truth
-- Update version to v0.1.4
+- Update version to v0.2.0
 
 Fixes: Redundant menus, late flatpak selection, scattered config files
 Ref: BOOTSTRAP-V2-IMPLEMENTATION.md
@@ -276,7 +276,7 @@ Ref: BOOTSTRAP-V2-IMPLEMENTATION.md
 ### Files Ready for Push
 - ✅ bootstrap.ps1 (unified, no v2 suffix)
 - ✅ mios-build-local.ps1 (new build script)
-- ✅ README.md (updated to v0.1.4)
+- ✅ README.md (updated to v0.2.0)
 - ✅ bootstrap.sh (unchanged - Linux/WSL2 entry point, NOT redundant)
 
 ---
@@ -361,7 +361,7 @@ Ref: BOOTSTRAP-V2-IMPLEMENTATION.md
 - ✅ XDG-compliant directory structure
 - ✅ SHA-512 password hashing
 - ✅ registry.toml as single source of truth
-- ✅ Version synced to v0.1.4
+- ✅ Version synced to v0.2.0
 - ✅ All version suffixes removed (no v2 files)
 - ✅ Ready to push to GitHub
 
@@ -446,4 +446,4 @@ podman build -f $containerfile $MiosRepoDir
 
 ---
 
-🚀 **MiOS Bootstrap v0.1.4 - Production Ready (with Critical Fix)**
+🚀 **MiOS Bootstrap v0.2.0 - Production Ready (with Critical Fix)**

@@ -3,12 +3,12 @@
     {
       "name": "01-repos.sh",
       "path": "automation/01-repos.sh",
-      "purpose": "MiOS v0.1.4 — 01-repos: Fedora 44 overlay on ucore (base kernel preserved)"
+      "purpose": "MiOS v0.2.0 — 01-repos: Fedora 44 overlay on ucore (base kernel preserved)"
     },
     {
       "name": "02-kernel.sh",
       "path": "automation/02-kernel.sh",
-      "purpose": "MiOS v0.1.4 — 02-kernel: Kernel extras + development headers"
+      "purpose": "MiOS v0.2.0 — 02-kernel: Kernel extras + development headers"
     },
     {
       "name": "05-enable-external-repos.sh",
@@ -23,22 +23,22 @@
     {
       "name": "10-gnome.sh",
       "path": "automation/10-gnome.sh",
-      "purpose": "MiOS v0.1.4 — 10-gnome: GNOME 50 desktop — PURE BUILD-UP"
+      "purpose": "MiOS v0.2.0 — 10-gnome: GNOME 50 desktop — PURE BUILD-UP"
     },
     {
       "name": "11-hardware.sh",
       "path": "automation/11-hardware.sh",
-      "purpose": "MiOS v0.1.4 — 11-hardware: GPU drivers (Mesa + AMD ROCm + Intel + NVIDIA)"
+      "purpose": "MiOS v0.2.0 — 11-hardware: GPU drivers (Mesa + AMD ROCm + Intel + NVIDIA)"
     },
     {
       "name": "12-virt.sh",
       "path": "automation/12-virt.sh",
-      "purpose": "MiOS v0.1.4 — 12-virt: Virtualization, containers, orchestration, gaming"
+      "purpose": "MiOS v0.2.0 — 12-virt: Virtualization, containers, orchestration, gaming"
     },
     {
       "name": "13-ceph-k3s.sh",
       "path": "automation/13-ceph-k3s.sh",
-      "purpose": "MiOS v0.1.4 — 13-ceph-k3s: Ceph distributed storage + K3s Kubernetes"
+      "purpose": "MiOS v0.2.0 — 13-ceph-k3s: Ceph distributed storage + K3s Kubernetes"
     },
     {
       "name": "18-apply-boot-fixes.sh",
@@ -58,7 +58,7 @@
     {
       "name": "20-services.sh",
       "path": "automation/20-services.sh",
-      "purpose": "MiOS v0.1.4 — 20-services: Enable systemd services + bare-metal/VM gating"
+      "purpose": "MiOS v0.2.0 — 20-services: Enable systemd services + bare-metal/VM gating"
     },
     {
       "name": "21-moby-engine.sh",
@@ -88,27 +88,27 @@
     {
       "name": "30-locale-theme.sh",
       "path": "automation/30-locale-theme.sh",
-      "purpose": "MiOS v0.1.4 — 30-locale-theme: Unified dark theme for EVERY window type"
+      "purpose": "MiOS v0.2.0 — 30-locale-theme: Unified dark theme for EVERY window type"
     },
     {
       "name": "31-user.sh",
       "path": "automation/31-user.sh",
-      "purpose": "MiOS v0.1.4 — 31-user: PAM, user creation, groups, sudoers"
+      "purpose": "MiOS v0.2.0 — 31-user: PAM, user creation, groups, sudoers"
     },
     {
       "name": "32-hostname.sh",
       "path": "automation/32-hostname.sh",
-      "purpose": "MiOS v0.1.4 — 32-hostname: Unique per-instance hostname"
+      "purpose": "MiOS v0.2.0 — 32-hostname: Unique per-instance hostname"
     },
     {
       "name": "33-firewall.sh",
       "path": "automation/33-firewall.sh",
-      "purpose": "MiOS v0.1.4 — 33-firewall: Firewall configuration script"
+      "purpose": "MiOS v0.2.0 — 33-firewall: Firewall configuration script"
     },
     {
       "name": "34-gpu-detect.sh",
       "path": "automation/34-gpu-detect.sh",
-      "purpose": "MiOS v0.1.4 — 34-gpu-detect: Bridge to GPU detection service"
+      "purpose": "MiOS v0.2.0 — 34-gpu-detect: Bridge to GPU detection service"
     },
     {
       "name": "35-gpu-passthrough.sh",
@@ -118,12 +118,12 @@
     {
       "name": "35-gpu-pv-shim.sh",
       "path": "automation/35-gpu-pv-shim.sh",
-      "purpose": "automation/35-gpu-pv-shim.sh - MiOS v0.1.4"
+      "purpose": "automation/35-gpu-pv-shim.sh - MiOS v0.2.0"
     },
     {
       "name": "35-init-service.sh",
       "path": "automation/35-init-service.sh",
-      "purpose": "MiOS v0.1.4 — 35-init-service: Bridge to Unified Role Engine"
+      "purpose": "MiOS v0.2.0 — 35-init-service: Bridge to Unified Role Engine"
     },
     {
       "name": "36-akmod-guards.sh",
@@ -133,7 +133,7 @@
     {
       "name": "36-tools.sh",
       "path": "automation/36-tools.sh",
-      "purpose": "MiOS v0.1.4 — 36-tools: CLI tools and consolidated mios command"
+      "purpose": "MiOS v0.2.0 — 36-tools: CLI tools and consolidated mios command"
     },
     {
       "name": "37-aichat.sh",
@@ -148,17 +148,17 @@
     {
       "name": "37-selinux.sh",
       "path": "automation/37-selinux.sh",
-      "purpose": "MiOS v0.1.4 — 37-selinux: Build-time SELinux policy fixes"
+      "purpose": "MiOS v0.2.0 — 37-selinux: Build-time SELinux policy fixes"
     },
     {
       "name": "38-vm-gating.sh",
       "path": "automation/38-vm-gating.sh",
-      "purpose": "MiOS v0.1.4 — 38-vm-gating: VM service gating + Hyper-V Enhanced Session"
+      "purpose": "MiOS v0.2.0 — 38-vm-gating: VM service gating + Hyper-V Enhanced Session"
     },
     {
       "name": "39-desktop-polish.sh",
       "path": "automation/39-desktop-polish.sh",
-      "purpose": "MiOS v0.1.4 — 39-desktop-polish: Desktop entries, Cockpit webapp, MOTD"
+      "purpose": "MiOS v0.2.0 — 39-desktop-polish: Desktop entries, Cockpit webapp, MOTD"
     },
     {
       "name": "40-composefs-verity.sh",
@@ -218,12 +218,12 @@
     {
       "name": "98-boot-config.sh",
       "path": "automation/98-boot-config.sh",
-      "purpose": "MiOS v0.1.4 — 98-boot-config: Boot console + service configuration"
+      "purpose": "MiOS v0.2.0 — 98-boot-config: Boot console + service configuration"
     },
     {
       "name": "99-cleanup.sh",
       "path": "automation/99-cleanup.sh",
-      "purpose": "MiOS v0.1.4 — 99-cleanup: Final image cleanup (mirrors ucore/cleanup.sh)"
+      "purpose": "MiOS v0.2.0 — 99-cleanup: Final image cleanup (mirrors ucore/cleanup.sh)"
     },
     {
       "name": "99-postcheck.sh",

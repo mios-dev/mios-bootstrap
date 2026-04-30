@@ -1,5 +1,5 @@
 {
-  "mios_version": "MiOSv0.1.4",
+  "mios_version": "MiOSv0.2.0",
   "generated_at": "2026-04-27T22:47:48Z",
   "architecture": "linux-filesystem-native",
   "description": "Unified artifacts, logs, snapshots, and wiki in native Linux FS structure",
@@ -13,19 +13,19 @@
   },
   
   "locations": {
-    "build_logs": "/var/log/mios/builds/MiOSv0.1.4/latest.log",
-    "artifacts": "/var/lib/mios/artifacts/MiOSv0.1.4/",
-    "snapshots": "/var/lib/mios/snapshots/MiOSv0.1.4/",
-    "documentation": "/usr/share/doc/mios/MiOSv0.1.4/",
+    "build_logs": "/var/log/mios/builds/MiOSv0.2.0/latest.log",
+    "artifacts": "/var/lib/mios/artifacts/MiOSv0.2.0/",
+    "snapshots": "/var/lib/mios/snapshots/MiOSv0.2.0/",
+    "documentation": "/usr/share/doc/mios/MiOSv0.2.0/",
     "knowledge_graph": "/usr/share/mios/knowledge/mios-knowledge-graph.json",
     "rag_manifest": "/etc/mios/rag-manifest.yaml"
   },
   
   "artifacts": {
-    "complete_rag_xz": "var/lib/mios/artifacts/MiOSv0.1.4/mios-complete-rag-*.tar.xz",
-    "knowledge_xz": "var/lib/mios/artifacts/MiOSv0.1.4/mios-knowledge-complete-*.tar.xz",
-    "snapshot_xz": "var/lib/mios/snapshots/MiOSv0.1.4/repo-rag-snapshot.json.xz",
-    "manifest_xz": "var/lib/mios/snapshots/MiOSv0.1.4/manifest.json.xz"
+    "complete_rag_xz": "var/lib/mios/artifacts/MiOSv0.2.0/mios-complete-rag-*.tar.xz",
+    "knowledge_xz": "var/lib/mios/artifacts/MiOSv0.2.0/mios-knowledge-complete-*.tar.xz",
+    "snapshot_xz": "var/lib/mios/snapshots/MiOSv0.2.0/repo-rag-snapshot.json.xz",
+    "manifest_xz": "var/lib/mios/snapshots/MiOSv0.2.0/manifest.json.xz"
   },
   
   "stats": {
@@ -46,11 +46,11 @@
   "fhs_compliance": {
     "standard": "FHS 3.0",
     "status": "100% compliant",
-    "audit": "/usr/share/doc/mios/MiOSv0.1.4/engineering/2026-04-27-Artifact-ENG-006-FHS-Compliance-Audit.md"
+    "audit": "/usr/share/doc/mios/MiOSv0.2.0/engineering/2026-04-27-Artifact-ENG-006-FHS-Compliance-Audit.md"
   },
   
   "wiki_integration": {
-    "location": "/usr/share/doc/mios/MiOSv0.1.4/",
+    "location": "/usr/share/doc/mios/MiOSv0.2.0/",
     "update_frequency": "Every build, push, and local build entry point",
     "primary_source": "Documentation in /usr/share/doc reflects latest state"
   }

@@ -1,13 +1,13 @@
 # MiOS User-Space Configuration Guide
 
-**Version:** MiOS v0.1.4
+**Version:** MiOS v0.2.0
 **Date:** 2026-04-27
 
 ---
 
 ##  Overview
 
-MiOS v0.1.4 introduces **user-space separation** following the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html). This separates mutable user configuration from the immutable system repository, enabling:
+MiOS v0.2.0 introduces **user-space separation** following the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html). This separates mutable user configuration from the immutable system repository, enabling:
 
 [OK] **Environment-independent configuration** - Move between machines without conflicts
 [OK] **Secure credential management** - Credentials never committed to git
@@ -141,7 +141,7 @@ Location: `~/.config/mios/env.toml`
 
 ```toml
 [mios]
-version = "v0.1.4"
+version = "v0.2.0"
 user = "your-username"
 hostname = "your-hostname"
 
@@ -178,7 +178,7 @@ image = "quay.io/centos-bootc/bootc-image-builder:latest"
 
 [output]
 name = "localhost/mios"
-tags = ["latest", "v0.1.4"]
+tags = ["latest", "v0.2.0"]
 registry = "ghcr.io"
 repository = "your-username/mios"
 
@@ -507,7 +507,7 @@ chmod 600 ~/.config/mios/credentials/*
 
 - **Engineering Spec:** [ENG-008: User-Space Separation](specs/engineering/2026-04-27-Artifact-ENG-008-UserSpace-Separation.md)
 - **XDG Spec:** https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
-- **TOML Spec:** https://toml.io/en/v0.1.4
+- **TOML Spec:** https://toml.io/en/v0.2.0
 - **System Templates:** [etc/mios/templates/](etc/mios/templates/)
 
 ---
@@ -542,5 +542,5 @@ chmod 600 ~/.config/mios/credentials/*
 ---
 
 **Generated:** 2026-04-27
-**MiOS Version:** v0.1.4
+**MiOS Version:** v0.2.0
 **License:** Personal Property - MiOS-DEV
