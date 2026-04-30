@@ -3,7 +3,7 @@
 > Interactive ignition installer for MiOS. The user-facing entry point.
 
 **Version:** v0.1.4
-**System repo:** https://github.com/mios-fss/MiOS
+**System repo:** https://github.com/MiOS-DEV/MiOS
 
 ---
 
@@ -26,9 +26,9 @@ interact with directly. It contains:
 
 ## What this is NOT
 
-- Not the OS image. Pre-built images live at `ghcr.io/mios-fss/mios:latest`.
+- Not the OS image. Pre-built images live at `ghcr.io/MiOS-DEV/mios:latest`.
 - Not the build infrastructure. Containerfile, Justfile, build scripts, and
-  the FHS overlay all live in https://github.com/mios-fss/MiOS.
+  the FHS overlay all live in https://github.com/MiOS-DEV/MiOS.
 - Not a Docker / OCI thing. Bootstrap runs on a target Fedora host, not in
   a container.
 
@@ -37,12 +37,12 @@ interact with directly. It contains:
 On a fresh Fedora bootc-capable host (Fedora Server 41+ or Fedora bootc):
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-FSS/MiOS-bootstrap/main/install.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/install.sh)"
 ```
 
 Bootstrap prompts for installation profile, applies it, then either:
 
-- `bootc switch ghcr.io/mios-fss/mios:latest` (bootc hosts), or
+- `bootc switch ghcr.io/MiOS-DEV/mios:latest` (bootc hosts), or
 - Clones MiOS and runs its FHS overlay installer (non-bootc hosts).
 
 Reboot when prompted. MiOS is now running.
@@ -58,7 +58,7 @@ Reboot when prompted. MiOS is now running.
 | Sudo groups | `wheel,libvirt,kvm,video,render,input,dialout` |
 | SSH key | generate ed25519 |
 | GitHub PAT | skip |
-| MiOS image | `ghcr.io/mios-fss/mios:latest` |
+| MiOS image | `ghcr.io/MiOS-DEV/mios:latest` |
 
 The user is prompted for each; pressing Enter accepts the default.
 

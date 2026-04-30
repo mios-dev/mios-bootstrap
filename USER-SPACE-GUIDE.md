@@ -23,7 +23,7 @@ MiOS v0.1.4 introduces **user-space separation** following the [XDG Base Directo
 
 ```bash
 # Clone MiOS repository
-git clone https://github.com/mios-fss/MiOS-bootstrap.git
+git clone https://github.com/MiOS-DEV/MiOS-bootstrap.git
 cd mios
 
 # Initialize your user-space configuration
@@ -507,7 +507,7 @@ chmod 600 ~/.config/mios/credentials/*
 
 - **Engineering Spec:** [ENG-008: User-Space Separation](specs/engineering/2026-04-27-Artifact-ENG-008-UserSpace-Separation.md)
 - **XDG Spec:** https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
-- **TOML Spec:** https://toml.io/en/v1.0.0
+- **TOML Spec:** https://toml.io/en/v0.1.4
 - **System Templates:** [etc/mios/templates/](etc/mios/templates/)
 
 ---
@@ -543,4 +543,4 @@ chmod 600 ~/.config/mios/credentials/*
 
 **Generated:** 2026-04-27
 **MiOS Version:** v0.1.4
-**License:** Personal Property - MiOS-FSS
+**License:** Personal Property - MiOS-DEV
