@@ -414,10 +414,16 @@ main() {
     check_network
     gather_user_choices
     print_summary
-    # Install everything first so groups exist
-    # Then create user
-    apply_user_profile
+    
+    # 1. Merge MiOS Repository and Install ALL Packages (this creates system groups)
+    trigger_mios_install
+    
+    # 2. Deploy AI System Prompt
     deploy_system_prompt
+    
+    # 3. Create MiOS User and apply profile (groups now exist)
+    apply_user_profile
+    
     reboot_prompt
 }
 
