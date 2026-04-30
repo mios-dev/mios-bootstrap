@@ -20,16 +20,15 @@
 #         - MiOS image / mode     (default: prebuilt bootc image)
 #   3. Apply the profile to the host:
 #         - hostnamectl set-hostname
-        # Sudoer groups check
-        local existing_groups=""
-        IFS="," read -ra ADDR <<< "${DEFAULT_USER_GROUPS}"
-        for group in "${ADDR[@]}"; do
-            if getent group "$group" >/dev/null; then
-                if [[ -n "$existing_groups" ]]; then existing_groups+=","; fi
-                existing_groups+="$group"
-            fi
-        done
-        useradd -m -G "${existing_groups}" -s "${DEFAULT_USER_SHELL}" -c "${USER_FULLNAME}" "${LINUX_USER}"
+#         - local existing_groups=""
+#         - IFS="," read -ra ADDR <<< "${DEFAULT_USER_GROUPS}"
+#         - for group in "${ADDR[@]}"; do
+#         -     if getent group "$group" >/dev/null; then
+#         -         if [[ -n "$existing_groups" ]]; then existing_groups+=","; fi
+#         -         existing_groups+="$group"
+#         -     fi
+#         - done
+#         - useradd -m -G "${existing_groups}" -s "${DEFAULT_USER_SHELL}" -c "${USER_FULLNAME}" "${LINUX_USER}"
 #         - chpasswd
 #         - ssh-keygen + ~/.ssh/authorized_keys staging
 #         - git credential helper for GitHub PAT
