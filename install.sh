@@ -20,15 +20,7 @@
 #         - MiOS image / mode     (default: prebuilt bootc image)
 #   3. Apply the profile to the host:
 #         - hostnamectl set-hostname
-#         - local existing_groups=""
-#         - IFS="," read -ra ADDR <<< "${DEFAULT_USER_GROUPS}"
-#         - for group in "${ADDR[@]}"; do
-#         -     if getent group "$group" >/dev/null; then
-#         -         if [[ -n "$existing_groups" ]]; then existing_groups+=","; fi
-#         -         existing_groups+="$group"
-#         -     fi
-#         - done
-#         - useradd -m -G "${existing_groups}" -s "${DEFAULT_USER_SHELL}" -c "${USER_FULLNAME}" "${LINUX_USER}"
+#         - useradd -m -G wheel,libvirt,kvm,video,render,input,dialout
 #         - chpasswd
 #         - ssh-keygen + ~/.ssh/authorized_keys staging
 #         - git credential helper for GitHub PAT
@@ -279,38 +271,6 @@ EOF
     chmod 0640 "${PROFILE_FILE}"
     log_ok "Profile written: ${PROFILE_FILE}"
 }
-
-# ============================================================================
-# Phase 4b: deploy AI system prompt
-# ============================================================================
-deploy_system_prompt() {
-    log_phase "Deploy AI system prompt"
-    install -d -m 0755 /etc/mios/ai
-
-    local src_local prompt_url
-    src_local="$(dirname "${BASH_SOURCE[0]}")/system-prompt.md"
-    prompt_url="https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/${DEFAULT_BRANCH}/system-prompt.md"
-
-    if [[ -f "$src_local" ]]; then
-        log_info "Using local system-prompt.md from ${src_local}"
-        install -m 0644 "$src_local" /etc/mios/ai/system-prompt.md
-    else
-        log_info "Fetching system prompt from ${prompt_url}"
-        if curl -fsSL --max-time 30 "$prompt_url" -o /etc/mios/ai/system-prompt.md.new; then
-            mv /etc/mios/ai/system-prompt.md.new /etc/mios/ai/system-prompt.md
-            chmod 0644 /etc/mios/ai/system-prompt.md
-        else
-            rm -f /etc/mios/ai/system-prompt.md.new
-            log_warn "Could not fetch system prompt"
-            return 0
-        fi
-    fi
-    log_ok "System prompt deployed: /etc/mios/ai/system-prompt.md"
-}
-
-# ============================================================================
-# Phase 5: trigger MiOS root install (TOTAL MERGE)
-# ============================================================================
 trigger_mios_install() {
     log_phase "Trigger MiOS Total Root Merge"
     
@@ -410,7 +370,6 @@ reboot_prompt() {
 main() {
     require_root
     log_phase "MiOS Bootstrap Installer (Total Root Merge Mode)"
-
     local hostkind
     hostkind="$(detect_host_kind)"
     if [[ "$hostkind" == "unsupported" ]]; then
@@ -418,14 +377,13 @@ main() {
         exit 1
     fi
     log_info "Detected host: ${hostkind}"
-
     check_network
     gather_user_choices
     print_summary
-    apply_user_profile
+    # --- REORDERED SEQUENCE ---
     deploy_system_prompt
-    trigger_mios_install
+    trigger_mios_install  # 1. Merge repo and Install ALL packages (creates groups)
+    apply_user_profile    # 2. Create user with those groups
     reboot_prompt
 }
-
 main "$@"
