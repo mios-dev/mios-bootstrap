@@ -320,20 +320,65 @@ trigger_mios_install() {
             log_ok "bootc deployment staged"
             ;;
         fhs)
-            log_info "Cloning MiOS to ${MIOS_CHECKOUT}"
-            mkdir -p "$(dirname "${MIOS_CHECKOUT}")"
-            if [[ -d "${MIOS_CHECKOUT}/.git" ]]; then
-                git -C "${MIOS_CHECKOUT}" fetch --depth=1 origin "${DEFAULT_BRANCH}"
-                git -C "${MIOS_CHECKOUT}" reset --hard "origin/${DEFAULT_BRANCH}"
-            else
-                git clone --depth=1 -b "${DEFAULT_BRANCH}" "${MIOS_REPO}" "${MIOS_CHECKOUT}"
+            log_info "Staging MiOS repository to system root (/)"
+            
+            # 1. Initialize / as the git root for MiOS
+            if [[ ! -d "/.git" ]]; then
+                log_info "Initializing git repository at /"
+                git init /
+                git -C / remote add origin "${MIOS_REPO}"
             fi
-            if [[ -x "${MIOS_CHECKOUT}/install.sh" ]]; then
-                log_info "Running MiOS system installer (FHS overlay)"
-                bash "${MIOS_CHECKOUT}/install.sh"
-                log_ok "MiOS FHS overlay applied"
+            
+            # 2. Fetch and Force Checkout (Overlay) MiOS core
+            log_info "Fetching MiOS core from ${MIOS_REPO}"
+            git -C / fetch --depth=1 origin "${DEFAULT_BRANCH}"
+            # Overlay files directly onto root without deleting existing OS files
+            git -C / checkout -f "${DEFAULT_BRANCH}"
+            
+            # 3. Apply MiOS-bootstrap overlays
+            local bootstrap_tmp="/tmp/mios-bootstrap-src"
+            log_info "Fetching bootstrap overlays from ${BOOTSTRAP_REPO}"
+            rm -rf "${bootstrap_tmp}"
+            git clone --depth=1 "${BOOTSTRAP_REPO}" "${bootstrap_tmp}"
+            
+            log_info "Merging bootstrap overlays to /"
+            # Prefer rsync for precise merges; fallback to cp if missing
+            if command -v rsync >/dev/null 2>&1; then
+                for d in usr etc var; do
+                    [[ -d "${bootstrap_tmp}/${d}" ]] && rsync -aH "${bootstrap_tmp}/${d}/" "/${d}/"
+                done
             else
-                log_err "MiOS install.sh not found at ${MIOS_CHECKOUT}/install.sh"
+                log_warn "rsync not found, using cp -r"
+                for d in usr etc var; do
+                    [[ -d "${bootstrap_tmp}/${d}" ]] && cp -rv "${bootstrap_tmp}/${d}/"* "/${d}/"
+                done
+            fi
+            
+            # Stage user profile dotfiles
+            local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
+            if [[ -d "${bootstrap_tmp}/profile" ]]; then
+                log_info "Staging user-space profile to ${home}"
+                cp -rv "${bootstrap_tmp}/profile/"* "${home}/"
+                chown -R "${LINUX_USER}:${LINUX_USER}" "${home}"
+            fi
+
+            # 4. Install the MiOS Package Stack
+            if [[ -f "/usr/share/mios/PACKAGES.md" ]]; then
+                log_info "Installing MiOS dependencies from manifest..."
+                # Extract package names from the Markdown manifest
+                local pkgs; pkgs=$(grep -E '^-[[:space:]]+`[a-zA-Z0-9._-]+`' /usr/share/mios/PACKAGES.md | awk -F'\`' '{print $2}' | tr '\n' ' ')
+                if [[ -n "$pkgs" ]]; then
+                    dnf install -y $pkgs
+                fi
+            fi
+
+            # 5. Run the MiOS root installer
+            if [[ -x "/install.sh" ]]; then
+                log_info "Launching self-igniting MiOS installer from /"
+                bash "/install.sh"
+                log_ok "MiOS system overlay applied"
+            else
+                log_err "MiOS install.sh not found at /install.sh"
                 exit 1
             fi
             ;;
