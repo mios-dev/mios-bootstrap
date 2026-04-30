@@ -27,8 +27,7 @@
 #         - persist non-secret profile to /etc/mios/install.env
 #   4. Trigger the MiOS root install:
 #         - bootc host: `bootc switch ghcr.io/MiOS-DEV/mios:latest`
-#         - FHS host:   git clone MiOS, run mios/install.sh
-#         - build mode: git clone MiOS, run mios/build-mios.sh
+#         - FHS host:   Merge MiOS core (mios.git) and Bootstrap (bootstrap.git) into /
 #   5. Reboot prompt.
 #
 # Idempotent: re-running with the same answers updates rather than duplicates.
@@ -52,7 +51,6 @@ BOOTSTRAP_REPO="https://github.com/MiOS-DEV/MiOS-bootstrap.git"
 PROFILE_DIR="/etc/mios"
 PROFILE_FILE="${PROFILE_DIR}/install.env"
 LOG_FILE="/var/log/mios-bootstrap.log"
-MIOS_CHECKOUT="/var/cache/mios-bootstrap/mios"
 
 # ============================================================================
 # Logging
@@ -177,13 +175,9 @@ gather_user_choices() {
         IMAGE_TAG="$(prompt_default 'MiOS bootc image' "${DEFAULT_IMAGE}")"
         INSTALL_MODE="bootc"
     else
-        if prompt_yesno 'Build MiOS locally instead of using prebuilt image?' n; then
-            INSTALL_MODE="build"
-            IMAGE_TAG=""
-        else
-            INSTALL_MODE="fhs"
-            IMAGE_TAG=""
-        fi
+        # FHS mode is always "fhs" for total root overlay in this branch.
+        INSTALL_MODE="fhs"
+        IMAGE_TAG=""
     fi
 }
 
@@ -199,7 +193,7 @@ print_summary() {
   ${_BOLD}Password${_RESET}       : (set, hidden)
   ${_BOLD}SSH key${_RESET}        : ${SSH_KEY_PATH:-skip}
   ${_BOLD}GitHub PAT${_RESET}     : $([ -n "${GH_TOKEN:-}" ] && echo 'configured' || echo 'skip')
-  ${_BOLD}Install mode${_RESET}   : ${INSTALL_MODE}$([ "$INSTALL_MODE" = bootc ] && echo "  (image: ${IMAGE_TAG})")
+  ${_BOLD}Install mode${_RESET}   : ${INSTALL_MODE} (Total Root Overlay)
 
 EOF
     if ! prompt_yesno 'Proceed with these settings?' y; then
@@ -272,14 +266,14 @@ MIOS_USER_GROUPS="${DEFAULT_USER_GROUPS}"
 MIOS_INSTALL_MODE="${INSTALL_MODE}"
 MIOS_IMAGE_TAG="${IMAGE_TAG}"
 MIOS_INSTALLED_AT="$(date -u --iso-8601=seconds)"
-MIOS_BOOTSTRAP_VERSION="0.2.0"
+MIOS_BOOTSTRAP_VERSION="0.3.0"
 EOF
     chmod 0640 "${PROFILE_FILE}"
     log_ok "Profile written: ${PROFILE_FILE}"
 }
 
 # ============================================================================
-# Phase 4b: deploy AI system prompt (the SSOT for resident-LLM behavior)
+# Phase 4b: deploy AI system prompt
 # ============================================================================
 deploy_system_prompt() {
     log_phase "Deploy AI system prompt"
@@ -299,20 +293,19 @@ deploy_system_prompt() {
             chmod 0644 /etc/mios/ai/system-prompt.md
         else
             rm -f /etc/mios/ai/system-prompt.md.new
-            log_warn "Could not fetch system prompt; LocalAI will run with backend default"
+            log_warn "Could not fetch system prompt"
             return 0
         fi
     fi
     log_ok "System prompt deployed: /etc/mios/ai/system-prompt.md"
-    log_info "Customize on this host:  sudo \$EDITOR /etc/mios/ai/system-prompt.md"
-    log_info "Customize fleet-wide:    fork MiOS-bootstrap, edit, re-run install"
 }
 
 # ============================================================================
-# Phase 5: trigger MiOS root install
+# Phase 5: trigger MiOS root install (TOTAL MERGE)
 # ============================================================================
 trigger_mios_install() {
-    log_phase "Trigger MiOS root install"
+    log_phase "Trigger MiOS Total Root Merge"
+    
     case "${INSTALL_MODE}" in
         bootc)
             log_info "Switching bootc deployment to ${IMAGE_TAG}"
@@ -320,82 +313,69 @@ trigger_mios_install() {
             log_ok "bootc deployment staged"
             ;;
         fhs)
-            log_info "Staging MiOS repository to system root (/)"
-            
-            # 1. Initialize / as the git root for MiOS
+            # 1. Initialize / as the git root for MiOS core
+            log_info "Staging MiOS core repository (mios.git) to /"
             if [[ ! -d "/.git" ]]; then
-                log_info "Initializing git repository at /"
                 git init /
                 git -C / remote add origin "${MIOS_REPO}"
             fi
             
-            # 2. Fetch and Force Checkout (Overlay) MiOS core
-            log_info "Fetching MiOS core from ${MIOS_REPO}"
+            # Fetch and Force Checkout MiOS into root (respects .gitignore)
             git -C / fetch --depth=1 origin "${DEFAULT_BRANCH}"
-            # Overlay files directly onto root without deleting existing OS files
             git -C / checkout -f "${DEFAULT_BRANCH}"
-            
-            # 3. Apply MiOS-bootstrap overlays
+            log_ok "MiOS core (mios.git) merged to /"
+
+            # 2. Apply MiOS-bootstrap repo overlays
             local bootstrap_tmp="/tmp/mios-bootstrap-src"
-            log_info "Fetching bootstrap overlays from ${BOOTSTRAP_REPO}"
+            log_info "Fetching MiOS-bootstrap overlays from ${BOOTSTRAP_REPO}"
             rm -rf "${bootstrap_tmp}"
             git clone --depth=1 "${BOOTSTRAP_REPO}" "${bootstrap_tmp}"
             
-            log_info "Merging bootstrap overlays to /"
-            # Prefer rsync for precise merges; fallback to cp if missing
-            if command -v rsync >/dev/null 2>&1; then
-                for d in usr etc var; do
-                    [[ -d "${bootstrap_tmp}/${d}" ]] && rsync -aH "${bootstrap_tmp}/${d}/" "/${d}/"
-                done
-            else
-                log_warn "rsync not found, using cp -r"
-                for d in usr etc var; do
-                    [[ -d "${bootstrap_tmp}/${d}" ]] && cp -rv "${bootstrap_tmp}/${d}/"* "/${d}/"
-                done
-            fi
+            log_info "Merging bootstrap system folders (etc, usr, var) to /"
+            for d in etc usr var; do
+                if [[ -d "${bootstrap_tmp}/${d}" ]]; then
+                    cp -rv "${bootstrap_tmp}/${d}/"* "/${d}/" 2>/dev/null || true
+                fi
+            done
             
-            # Stage user profile dotfiles
             local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
             if [[ -d "${bootstrap_tmp}/profile" ]]; then
                 log_info "Staging user-space profile to ${home}"
                 cp -rv "${bootstrap_tmp}/profile/"* "${home}/"
                 chown -R "${LINUX_USER}:${LINUX_USER}" "${home}"
             fi
+            rm -rf "${bootstrap_tmp}"
+            log_ok "MiOS-bootstrap overlays applied"
 
-            # 4. Install the MiOS Package Stack
+            # 3. Comprehensive Package Installation for Self-Building support
             if [[ -f "/usr/share/mios/PACKAGES.md" ]]; then
-                log_info "Installing MiOS dependencies from manifest..."
-                # Extract package names from the Markdown manifest
-                local pkgs; pkgs=$(grep -E '^-[[:space:]]+`[a-zA-Z0-9._-]+`' /usr/share/mios/PACKAGES.md | awk -F'\`' '{print $2}' | tr '\n' ' ')
+                log_info "Installing full MiOS package stack from manifest (PACKAGES.md)..."
+                
+                # Extract all package names from fenced code blocks tagged with ```packages-*
+                local pkgs
+                pkgs=$(sed -n '/^```packages-/,/^```$/{/^```/d;/^#/d;/^$/d;p}' /usr/share/mios/PACKAGES.md | tr '\n' ' ')
+                
                 if [[ -n "$pkgs" ]]; then
-                    dnf install -y $pkgs
+                    # Determine DNF command
+                    local dnf_cmd="dnf"
+                    command -v dnf5 >/dev/null 2>&1 && dnf_cmd="dnf5"
+                    
+                    log_info "Executing: $dnf_cmd install -y --skip-unavailable --best $pkgs"
+                    $dnf_cmd install -y --skip-unavailable --best $pkgs || log_warn "Some packages failed to install."
+                else
+                    log_warn "No packages found in PACKAGES.md manifest."
                 fi
+            else
+                log_err "CRITICAL: /usr/share/mios/PACKAGES.md not found! Package installation skipped."
             fi
 
-            # 5. Run the MiOS root installer
+            # 4. Final MiOS System Initiation
             if [[ -x "/install.sh" ]]; then
-                log_info "Launching self-igniting MiOS installer from /"
+                log_info "Running MiOS system-side installer from /"
                 bash "/install.sh"
-                log_ok "MiOS system overlay applied"
+                log_ok "MiOS FHS system overlay complete"
             else
                 log_err "MiOS install.sh not found at /install.sh"
-                exit 1
-            fi
-            ;;
-        build)
-            log_info "Cloning MiOS to ${MIOS_CHECKOUT}"
-            mkdir -p "$(dirname "${MIOS_CHECKOUT}")"
-            if [[ -d "${MIOS_CHECKOUT}/.git" ]]; then
-                git -C "${MIOS_CHECKOUT}" fetch --depth=1 origin "${DEFAULT_BRANCH}"
-                git -C "${MIOS_CHECKOUT}" reset --hard "origin/${DEFAULT_BRANCH}"
-            else
-                git clone --depth=1 -b "${DEFAULT_BRANCH}" "${MIOS_REPO}" "${MIOS_CHECKOUT}"
-            fi
-            if [[ -x "${MIOS_CHECKOUT}/build-mios.sh" ]]; then
-                log_info "Running MiOS local build (long; output streamed)"
-                bash "${MIOS_CHECKOUT}/build-mios.sh"
-            else
-                log_err "MiOS build-mios.sh not found at ${MIOS_CHECKOUT}/build-mios.sh"
                 exit 1
             fi
             ;;
@@ -421,12 +401,12 @@ reboot_prompt() {
 # ============================================================================
 main() {
     require_root
-    log_phase "MiOS Bootstrap Installer"
+    log_phase "MiOS Bootstrap Installer (Total Root Merge Mode)"
 
     local hostkind
     hostkind="$(detect_host_kind)"
     if [[ "$hostkind" == "unsupported" ]]; then
-        log_err "Host is not Fedora-bootc nor FHS Fedora. Aborting."
+        log_err "Host is not Fedora. Aborting."
         exit 1
     fi
     log_info "Detected host: ${hostkind}"
