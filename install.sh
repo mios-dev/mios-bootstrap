@@ -201,6 +201,23 @@ check_network() {
     log_ok "Network reachability verified"
 }
 
+install_prerequisites() {
+    local missing=()
+    for cmd in git curl openssl; do
+        command -v "$cmd" &>/dev/null || missing+=("$cmd")
+    done
+    [[ ${#missing[@]} -eq 0 ]] && return 0
+
+    log_info "Installing missing prerequisites: ${missing[*]}"
+    local dnf_cmd="dnf"
+    command -v dnf5 &>/dev/null && dnf_cmd="dnf5"
+    $dnf_cmd install -y --skip-unavailable "${missing[@]}" || {
+        log_err "Failed to install prerequisites: ${missing[*]}"
+        exit 1
+    }
+    log_ok "Prerequisites ready: ${missing[*]}"
+}
+
 # ============================================================================
 # Prompts -- the "mios" defaults are baked in; user just hits Enter to accept.
 # ============================================================================
@@ -597,6 +614,7 @@ main() {
     log_info "Detected host: ${hostkind}"
 
     check_network
+    install_prerequisites
     load_profile_defaults
     gather_user_choices
     print_summary
