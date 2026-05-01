@@ -1,0 +1,29 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "qwen2.5-coder:7b",
+      "object": "model",
+      "created": 1746057600,
+      "owned_by": "mios-system"
+    },
+    {
+      "id": "qwen2.5-coder:14b",
+      "object": "model",
+      "created": 1746057600,
+      "owned_by": "mios-system"
+    },
+    {
+      "id": "phi4-mini:3.8b-q4_K_M",
+      "object": "model",
+      "created": 1746057600,
+      "owned_by": "mios-system"
+    },
+    {
+      "id": "nomic-embed-text",
+      "object": "model",
+      "created": 1746057600,
+      "owned_by": "mios-system"
+    }
+  ]
+}

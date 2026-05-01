@@ -1,0 +1,6 @@
+{
+  "base_url": "http://localhost:8080/v1",
+  "default_model": "qwen2.5-coder:7b",
+  "embed_model": "nomic-embed-text",
+  "api_key": ""
+}
