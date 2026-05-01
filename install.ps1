@@ -249,6 +249,15 @@ function Get-PasswordHash([string]$Plain) {
             if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
         } catch {}
     }
+    # Podman machine SSH (machine-os not accessible via wsl.exe)
+    try {
+        $mls = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
+               Where-Object { $_ -match "^$([regex]::Escape($BuilderDistro))\s+true" }
+        if ($mls) {
+            $h = (& podman machine ssh $BuilderDistro -- bash -c "openssl passwd -6 -salt '$salt' '$Plain'" 2>$null) -join ""
+            if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
+        }
+    } catch {}
     try {
         $h = (& podman run --rm docker.io/library/alpine:latest sh -c "apk add -q openssl && openssl passwd -6 -salt '$salt' '$Plain'" 2>$null) -join ""
         if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
@@ -279,14 +288,30 @@ function Find-ActiveDistro {
             if ($r.Trim() -eq "ready") { return $d }
         } catch {}
     }
+    # Check Podman-managed machine (machine-os distro not accessible via wsl.exe)
+    try {
+        $mls = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
+               Where-Object { $_ -match "^$([regex]::Escape($BuilderDistro))\s+true" }
+        if ($mls) {
+            $r = (& podman machine ssh $BuilderDistro -- bash -c "test -f /Justfile && echo ready" 2>$null) -join ""
+            if ($r.Trim() -eq "ready") { return $BuilderDistro }
+        }
+    } catch {}
     return $null
 }
 
 function Sync-RepoToDistro([string]$Distro, [string]$WinPath) {
     $wsl = ConvertTo-WslPath $WinPath
+    # Try direct WSL file:// fetch (works when Windows drive is mounted at /mnt/)
     try {
         & wsl.exe -d $Distro --user root --exec bash -c `
             "git -C / fetch 'file://$wsl' main 2>/dev/null && git -C / reset --hard FETCH_HEAD 2>/dev/null"
+        if ($LASTEXITCODE -eq 0) { return $true }
+    } catch {}
+    # Podman machine fallback: Windows drive not mounted; pull from GitHub origin instead
+    try {
+        & podman machine ssh $Distro -- bash -c `
+            "cd / && git fetch --depth=1 origin main 2>/dev/null && git reset --hard FETCH_HEAD 2>/dev/null"
         return ($LASTEXITCODE -eq 0)
     } catch { return $false }
 }
@@ -303,42 +328,61 @@ function New-BuilderDistro([hashtable]$HW) {
     & podman machine set --default $BuilderDistro 2>&1 | Out-Null
     Log-Ok "MiOS-BUILDER created and set as default Podman machine"
 
-    # Wait up to 90 s for WSL2 to register the distro (podman machine init --now is async)
-    Set-Step "Waiting for $BuilderDistro WSL2 distro to register..."
-    $deadline = (Get-Date).AddSeconds(90)
+    # Wait up to 120 s for the machine to be SSH-accessible (machine-os boots systemd; not reachable via wsl.exe)
+    Set-Step "Waiting for $BuilderDistro Podman machine to be SSH-accessible..."
+    $deadline = (Get-Date).AddSeconds(120)
     $ready = $false
     while ((Get-Date) -lt $deadline) {
-        $r = (& wsl.exe -d $BuilderDistro --exec bash -c "echo ok" 2>$null) -join ""
+        $r = (& podman machine ssh $BuilderDistro -- bash -c "echo ok" 2>$null) -join ""
         if ($r.Trim() -eq "ok") { $ready = $true; break }
         Start-Sleep -Seconds 3
     }
-    if (-not $ready) { throw "$BuilderDistro not accessible after 90 s -- check: wsl --list" }
-    Log-Ok "$BuilderDistro WSL2 distro is accessible"
+    if (-not $ready) { throw "$BuilderDistro not SSH-accessible after 120 s -- try: podman machine ssh $BuilderDistro" }
+    Log-Ok "$BuilderDistro Podman machine is accessible"
 
     Set-Step "Installing dev stack (git just podman buildah skopeo openssl python3)"
     $pkgs = "git just podman buildah skopeo openssl python3 fuse-overlayfs shadow-utils podman-compose"
-    & wsl.exe -d $BuilderDistro --user root --exec bash -c `
-        "dnf install -y --setopt=install_weak_deps=False $pkgs >>$BuildLogFile 2>&1 && dnf clean all >>$BuildLogFile 2>&1"
+    & podman machine ssh $BuilderDistro -- bash -c `
+        "dnf install -y --setopt=install_weak_deps=False $pkgs && dnf clean all" `
+        2>&1 | Out-File $BuildLogFile -Append -Encoding UTF8 -EA SilentlyContinue
     Log-Ok "Dev stack installed"
 
     Set-Step "Installing Ollama (AI runtime)"
-    & wsl.exe -d $BuilderDistro --user root --exec bash -c `
-        "curl -fsSL https://ollama.com/install.sh | sh >>$BuildLogFile 2>&1 || true"
+    & podman machine ssh $BuilderDistro -- bash -c `
+        "curl -fsSL https://ollama.com/install.sh | sh 2>&1 || true" `
+        2>&1 | Out-File $BuildLogFile -Append -Encoding UTF8 -EA SilentlyContinue
     Log-Ok "MiOS-BUILDER ready (feature-complete)"
 }
 
 function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel) {
-    & wsl.exe -d $Distro --user root --exec bash -c `
-        "command -v just &>/dev/null || dnf install -y just >>$BuildLogFile 2>&1"
+    # Detect whether the distro is accessible via wsl.exe or needs podman machine ssh
+    $usePodmanSsh = $true
+    try {
+        $r = (& wsl.exe -d $Distro --exec bash -c "echo ok" 2>$null) -join ""
+        if ($r.Trim() -eq "ok") { $usePodmanSsh = $false }
+    } catch {}
+
+    $justCheck = "command -v just &>/dev/null || dnf install -y just"
+    if ($usePodmanSsh) {
+        & podman machine ssh $Distro -- bash -c $justCheck 2>$null | Out-Null
+    } else {
+        & wsl.exe -d $Distro --user root --exec bash -c $justCheck 2>$null | Out-Null
+    }
 
     Set-Step "Launching: just build (inside $Distro)"
     Write-Log "BUILD START  base=$BaseImage  model=$AiModel"
 
     # Stream build output line-by-line: update dashboard Step, write to log
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName  = "wsl.exe"
-    $psi.Arguments = "-d $Distro --user root --cd / --exec bash -c " +
-                     "'MIOS_BASE_IMAGE=''$BaseImage'' MIOS_AI_MODEL=''$AiModel'' just build 2>&1'"
+    if ($usePodmanSsh) {
+        $psi.FileName  = "podman"
+        $psi.Arguments = "machine ssh $Distro -- bash -c " +
+                         "'cd / && MIOS_BASE_IMAGE=''$BaseImage'' MIOS_AI_MODEL=''$AiModel'' just build 2>&1'"
+    } else {
+        $psi.FileName  = "wsl.exe"
+        $psi.Arguments = "-d $Distro --user root --cd / --exec bash -c " +
+                         "'MIOS_BASE_IMAGE=''$BaseImage'' MIOS_AI_MODEL=''$AiModel'' just build 2>&1'"
+    }
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError  = $false
     $psi.UseShellExecute        = $false
@@ -475,9 +519,17 @@ if ($activeDistro) {
     # ── Phase 3 -- MiOS-BUILDER distro ───────────────────────────────────────
     Start-Phase 3
     $distroOk = $false
-    try {
-        $distroOk = ((& wsl.exe -d $BuilderDistro --exec bash -c "echo ok" 2>$null) -join "").Trim() -eq "ok"
-    } catch {}
+    try { $distroOk = ((& wsl.exe -d $BuilderDistro --exec bash -c "echo ok" 2>$null) -join "").Trim() -eq "ok" } catch {}
+    if (-not $distroOk) {
+        # machine-os distros managed by Podman are not accessible via wsl.exe; check via machine ssh
+        try {
+            $mls = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
+                   Where-Object { $_ -match "^$([regex]::Escape($BuilderDistro))\s+true" }
+            if ($mls) {
+                $distroOk = ((& podman machine ssh $BuilderDistro -- bash -c "echo ok" 2>$null) -join "").Trim() -eq "ok"
+            }
+        } catch {}
+    }
 
     if ($distroOk) {
         Log-Ok "$BuilderDistro already exists"
@@ -510,9 +562,10 @@ guiApplications=true
     # ── Phase 5 -- Seed mios.git to / inside MiOS-BUILDER ───────────────────
     Start-Phase 5
     $seeded = $false
-    try {
-        $seeded = ((& wsl.exe -d $BuilderDistro --exec bash -c "test -f /Justfile && echo y" 2>$null) -join "").Trim() -eq "y"
-    } catch {}
+    try { $seeded = ((& wsl.exe -d $BuilderDistro --exec bash -c "test -f /Justfile && echo y" 2>$null) -join "").Trim() -eq "y" } catch {}
+    if (-not $seeded) {
+        try { $seeded = ((& podman machine ssh $BuilderDistro -- bash -c "test -f /Justfile && echo y" 2>$null) -join "").Trim() -eq "y" } catch {}
+    }
 
     if ($seeded) {
         Set-Step "Already seeded -- syncing from Windows clone"
@@ -520,10 +573,16 @@ guiApplications=true
         Log-Ok "Repo synced"
     } else {
         Set-Step "Cloning mios.git to / inside MiOS-BUILDER"
-        & wsl.exe -d $BuilderDistro --user root --exec bash -c `
-            "git init / && git -C / remote add origin '$MiosRepoUrl' && git -C / fetch --depth=1 origin main && git -C / reset --hard FETCH_HEAD" `
-            2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "mios.git clone to / failed (exit $LASTEXITCODE)" }
+        $cloneCmd = "git init / && git -C / remote add origin '$MiosRepoUrl' && git -C / fetch --depth=1 origin main && git -C / reset --hard FETCH_HEAD"
+        $cloneDone = $false
+        try {
+            & wsl.exe -d $BuilderDistro --user root --exec bash -c $cloneCmd 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { $cloneDone = $true }
+        } catch {}
+        if (-not $cloneDone) {
+            & podman machine ssh $BuilderDistro -- bash -c $cloneCmd 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "mios.git clone to / failed (exit $LASTEXITCODE)" }
+        }
         Log-Ok "mios.git seeded to /"
     }
     End-Phase 5
@@ -544,10 +603,15 @@ guiApplications=true
     Start-Phase 7
     # Pipe via stdin -- Podman machine rootfs does not mount the Windows drive
     $envContent = "MIOS_USER=`"$MiosUser`"`nMIOS_HOSTNAME=`"$MiosHostname`"`nMIOS_USER_PASSWORD_HASH=`"$MiosHash`""
-    $envContent | & wsl.exe -d $BuilderDistro --user root --exec bash -c `
-        "mkdir -p /etc/mios && cat > /etc/mios/install.env && chmod 0640 /etc/mios/install.env" `
-        2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { Log-Ok "/etc/mios/install.env written" } `
+    $writeCmd  = "mkdir -p /etc/mios && cat > /etc/mios/install.env && chmod 0640 /etc/mios/install.env"
+    $written = $false
+    $envContent | & wsl.exe -d $BuilderDistro --user root --exec bash -c $writeCmd 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { $written = $true }
+    if (-not $written) {
+        $envContent | & podman machine ssh $BuilderDistro -- bash -c $writeCmd 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $written = $true }
+    }
+    if ($written) { Log-Ok "/etc/mios/install.env written" } `
     else { Log-Warn "install.env write failed (non-fatal -- set MIOS_* vars manually)" }
     End-Phase 7
 
