@@ -82,12 +82,14 @@ function pbar([int]$done,[int]$total,[int]$width) {
 }
 
 function Show-Dashboard {
-    $w  = $script:DW
+    try {
+    $w  = [int]$script:DW
+    if ($w -lt 66) { $w = 66 }
     $in = $w - 4          # usable inner width (inside "| " and " |")
     $sep = "+" + ("-" * ($w - 2)) + "+"
 
-    $done = ($script:PhStat | Where-Object { $_ -eq 2 }).Count
-    $fail = ($script:PhStat | Where-Object { $_ -eq 3 }).Count
+    $done  = [int]($script:PhStat | Where-Object { $_ -eq 2 } | Measure-Object).Count
+    $fail  = [int]($script:PhStat | Where-Object { $_ -eq 3 } | Measure-Object).Count
     $elapsed = [datetime]::Now - $script:ScriptStart
     $elStr   = fmtSpan $elapsed
 
@@ -95,61 +97,67 @@ function Show-Dashboard {
                  elseif ($script:CurPhase -ge 0 -and $script:PhStat[$script:CurPhase] -eq 1) { "RUNNING" } `
                  else { "IDLE" }
 
-    $curName = if ($script:CurPhase -ge 0) { $script:PhaseNames[$script:CurPhase] } else { "Initializing" }
-    $phLabel = "[{0}/{1}] {2}" -f $script:CurPhase,($script:TotalPhases-1),$curName
+    $curName = if ($script:CurPhase -ge 0) { [string]$script:PhaseNames[$script:CurPhase] } else { "Initializing" }
+    $phLabel = "[$($script:CurPhase)/$($script:TotalPhases-1)] $curName"
 
-    $step = $script:CurStep
+    $step = [string]$script:CurStep
     if ($step.Length -gt $in) { $step = $step.Substring(0,$in-3)+"..." }
 
-    $barW   = $in - 12
+    $barW   = [math]::Max(10, $in - 12)
     $barStr = pbar $done $script:TotalPhases $barW
 
-    $statStr = "Errors:{0}  Warns:{1}  Status:{2}" -f $script:ErrCount,$script:WarnCount,$statusStr
+    $statStr = "Errors:$($script:ErrCount)  Warns:$($script:WarnCount)  Status:$statusStr"
 
     # Phase table col widths
-    $nameW = $in - 16    # 3(ph) + 1 + 5(state) + 1 + name + 1 + 5(time)
+    $nameW = [math]::Max(8, $in - 16)
 
     $rows = [System.Collections.Generic.List[string]]::new()
     $rows.Add($sep)
     # Header row: title left, elapsed right
     $title = " MiOS $MiosVersion  --  Build Dashboard"
     $right = "[ $elStr ] "
-    $mid   = $in - $title.Length - $right.Length + 2
-    if ($mid -lt 0) { $mid = 0 }
-    $rows.Add("|{0}{1}{2}|" -f $title,(" "*$mid),$right)
+    $mid   = [math]::Max(0, $in - $title.Length - $right.Length + 2)
+    $rows.Add("| $title$(' ' * $mid)$right |".PadRight($w-1).Substring(0,$w-1) + "|")
     $rows.Add($sep)
-    $rows.Add("| Ph : {0,-$($in-6)} |" -f $phLabel)
-    $rows.Add("| Op : {0,-$($in-6)} |" -f $step)
-    $rows.Add("| {0,-$($in)} |" -f $statStr)
+    $rows.Add(("| Ph : " + $phLabel.PadRight($in-6).Substring(0,[math]::Min($phLabel.Length,$in-6)).PadRight($in-6) + " |").PadRight($w))
+    $rows.Add(("| Op : " + $step.PadRight($in-6) + " |").PadRight($w))
+    $rows.Add(("| " + $statStr.PadRight($in) + " |").PadRight($w))
     $rows.Add($sep)
-    $rows.Add("| {0,-$($in)} |" -f $barStr)
+    $rows.Add(("| " + $barStr.PadRight($in) + " |").PadRight($w))
     $rows.Add($sep)
     # Column headers
-    $rows.Add("| {0,-3} {1,-5} {2,-$nameW} {3,5} |" -f "  #","State","Phase Name","Time")
-    $rows.Add("| {0,-3} {1,-5} {2,-$nameW} {3,5} |" -f "---","-----",("-"*$nameW),"-----")
+    $hdr = "  # State " + "Phase Name".PadRight($nameW) + " Time"
+    $rows.Add(("| " + $hdr.PadRight($in) + " |").PadRight($w))
+    $div = "--- ----- " + ("-" * $nameW) + " -----"
+    $rows.Add(("| " + $div.PadRight($in) + " |").PadRight($w))
 
     for ($i = 0; $i -lt $script:TotalPhases; $i++) {
-        $st = switch ($script:PhStat[$i]) {
+        $st = switch ([int]$script:PhStat[$i]) {
             0 { "[ ]  " }
-            1 { "[>>]" }
-            2 { "[OK]" }
-            3 { "[XX]" }
-            4 { "[!!]" }
+            1 { "[>>] " }
+            2 { "[OK] " }
+            3 { "[XX] " }
+            4 { "[!!] " }
+            default { "[??] " }
         }
-        $nm = $script:PhaseNames[$i]
+        $nm = [string]$script:PhaseNames[$i]
         if ($nm.Length -gt $nameW) { $nm = $nm.Substring(0,$nameW-3)+"..." }
         $t = ""
-        if ($script:PhStart[$i]) {
-            $span = if ($script:PhEnd[$i]) { $script:PhEnd[$i] - $script:PhStart[$i] } `
-                    else { [datetime]::Now - $script:PhStart[$i] }
-            $t = fmtSpan $span
+        if ($null -ne $script:PhStart[$i]) {
+            try {
+                $ps = [datetime]$script:PhStart[$i]
+                $pe = if ($null -ne $script:PhEnd[$i]) { [datetime]$script:PhEnd[$i] } else { [datetime]::Now }
+                $t = fmtSpan ($pe - $ps)
+            } catch { $t = "--:--" }
         }
-        $rows.Add("| {0,3} {1,-5} {2,-$nameW} {3,5} |" -f $i,$st,$nm,$t)
+        $phRow = ("{0,3} {1} {2} {3,5}" -f $i,$st,$nm.PadRight($nameW),$t)
+        $rows.Add(("| " + $phRow.PadRight($in) + " |").PadRight($w))
     }
     $rows.Add($sep)
-    $logShort = Split-Path $LogFile -Leaf
-    if ($logShort.Length -gt $in-6) { $logShort = "..."+$logShort.Substring($logShort.Length-($in-9)) }
-    $rows.Add("| Log: {0,-$($in-5)} |" -f $logShort)
+    $logShort = try { Split-Path $LogFile -Leaf } catch { $LogFile }
+    $logInner = $in - 5
+    if ($logShort.Length -gt $logInner) { $logShort = "..."+$logShort.Substring($logShort.Length-($logInner-3)) }
+    $rows.Add(("| Log: " + $logShort.PadRight($logInner) + " |").PadRight($w))
     $rows.Add($sep)
 
     # Redraw at saved position
@@ -164,6 +172,11 @@ function Show-Dashboard {
         $script:DashHeight = $rows.Count
         [Console]::SetCursorPosition(0, $script:DashRow + $script:DashHeight)
     } catch { <# non-interactive / piped -- skip cursor ops #> }
+
+    } catch {
+        # Dashboard render error -- log and continue; never let dashboard kill the script
+        try { "[$([datetime]::Now.ToString('HH:mm:ss.fff'))][WARN] dashboard render error: $_" | Out-File $LogFile -Append -Encoding UTF8 -EA SilentlyContinue } catch {}
+    }
 }
 
 function Start-Phase([int]$i) {
@@ -178,9 +191,12 @@ function Start-Phase([int]$i) {
 function End-Phase([int]$i, [switch]$Fail, [switch]$Warn) {
     $script:PhStat[$i] = if ($Fail) { 3 } elseif ($Warn) { 4 } else { 2 }
     $script:PhEnd[$i]  = [datetime]::Now
-    $span = $script:PhEnd[$i] - $script:PhStart[$i]
-    $tag  = if ($Fail) { "FAIL" } elseif ($Warn) { "WARN" } else { "OK  " }
-    Write-Log "$tag  phase $i : $($script:PhaseNames[$i]) ($(fmtSpan $span))" (if ($Fail) {"ERROR"} else {"INFO"})
+    $spanStr = try {
+        if ($null -ne $script:PhStart[$i]) { fmtSpan ([datetime]$script:PhEnd[$i] - [datetime]$script:PhStart[$i]) } else { "--:--" }
+    } catch { "--:--" }
+    $tag     = if ($Fail) { "FAIL" } elseif ($Warn) { "WARN" } else { "OK  " }
+    $lvl     = if ($Fail) { "ERROR" } else { "INFO" }
+    Write-Log "$tag  phase $i : $($script:PhaseNames[$i]) ($spanStr)" $lvl
     Show-Dashboard
 }
 
@@ -589,14 +605,14 @@ Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -Foreground
 } # end full-install branch
 
 } catch {
+    $ExitCode = 1   # set FIRST -- must be reached even if Show-Dashboard below also fails
     $errMsg = "$_"
     Write-Log "FATAL: $errMsg" "ERROR"
-    $script:CurStep = "FATAL: $errMsg"
+    $script:CurStep = "FATAL: $($errMsg.Substring(0,[math]::Min($errMsg.Length,120)))"
     if ($script:CurPhase -ge 0 -and $script:PhStat[$script:CurPhase] -eq 1) {
-        End-Phase $script:CurPhase -Fail
+        try { End-Phase $script:CurPhase -Fail } catch {}
     }
     Show-Dashboard
-    $ExitCode = 1
 } finally {
     # Always show final summary and keep window open
     try { [Console]::SetCursorPosition(0, $script:DashRow + $script:DashHeight) } catch {}
