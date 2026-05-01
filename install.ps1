@@ -187,7 +187,9 @@ function Show-Dashboard {
 
     # Redraw at saved position
     try {
-        [Console]::SetCursorPosition(0, $script:DashRow)
+        $bufH = try { [Console]::BufferHeight } catch { 9999 }
+        $dashStart = [math]::Min($script:DashRow, $bufH - 1)
+        [Console]::SetCursorPosition(0, $dashStart)
         foreach ($row in $rows) {
             if ($row.Length -lt $w) { $row = $row.PadRight($w) }
             elseif ($row.Length -gt $w) { $row = $row.Substring(0,$w) }
@@ -195,7 +197,8 @@ function Show-Dashboard {
             [Console]::Write([Environment]::NewLine)
         }
         $script:DashHeight = $rows.Count
-        [Console]::SetCursorPosition(0, $script:DashRow + $script:DashHeight)
+        $dashEnd = [math]::Min($dashStart + $script:DashHeight, $bufH - 1)
+        [Console]::SetCursorPosition(0, $dashEnd)
     } catch { <# non-interactive / piped -- skip cursor ops #> }
 
     } catch {
@@ -242,8 +245,15 @@ function ConvertTo-WslPath([string]$P) {
     return $P
 }
 
+function Move-BelowDash {
+    try {
+        $targetRow = [math]::Min($script:DashRow + $script:DashHeight, [Console]::BufferHeight - 1)
+        [Console]::SetCursorPosition(0, $targetRow)
+    } catch {}
+}
+
 function Read-Line([string]$Prompt, [string]$Default = "") {
-    [Console]::SetCursorPosition(0, $script:DashRow + $script:DashHeight) 2>$null
+    Move-BelowDash
     Write-Host "  $Prompt" -NoNewline -ForegroundColor White
     if ($Default) { Write-Host " [$Default]" -NoNewline -ForegroundColor DarkGray }
     Write-Host ": " -NoNewline
@@ -253,7 +263,7 @@ function Read-Line([string]$Prompt, [string]$Default = "") {
 }
 
 function Read-Password([string]$Prompt = "Password") {
-    [Console]::SetCursorPosition(0, $script:DashRow + $script:DashHeight) 2>$null
+    Move-BelowDash
     Write-Host "  $Prompt [default: mios]: " -NoNewline -ForegroundColor White
     if ($Unattended) { Write-Host "(default)" -ForegroundColor DarkGray; return "" }
     if ($PSVersionTable.PSVersion.Major -ge 7) { return (Read-Host -MaskInput) }
