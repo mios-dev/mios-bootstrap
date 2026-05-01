@@ -63,7 +63,8 @@ allow_libvirt_bridge   = true   # for VM networking
 #------------------------------------------------------------------------------
 [ai]
 endpoint        = "http://localhost:8080/v1"
-model           = "default"
+model           = "qwen2.5-coder:7b"
+embed_model     = "nomic-embed-text"
 api_key         = ""              # empty = unauthenticated localhost
 enable_ollama   = true
 enable_localai  = true

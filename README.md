@@ -29,6 +29,24 @@ user-editable layer of the three-layer profile model.
 
 ## Install
 
+### Windows 11 (Podman + WSL2)
+
+```powershell
+irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.ps1 | iex
+```
+
+Installs MiOS as a Windows application under `%LOCALAPPDATA%\Programs\MiOS\`:
+- Clones both repos to `...\Programs\MiOS\repo\{mios,mios-bootstrap}`
+- Writes `%APPDATA%\MiOS\registry.toml` (Windows user-space config)
+- Registers in Add/Remove Programs (no admin required — HKCU)
+- Creates a **MiOS** Start Menu group: Bootstrap, Build, WSL Terminal, Uninstall
+- Auto-configures `%USERPROFILE%\.wslconfig` (memory, processors, mirrored networking)
+
+Prerequisites: [Git](https://git-scm.com/download/win) and [Podman Desktop](https://podman-desktop.io).
+WSL2 (`wsl --install`) must be enabled for the runtime and build pipeline.
+
+### Linux (Fedora bootc)
+
 On any Fedora bootc-capable host (Fedora Server 41+ or Fedora bootc):
 
 ```bash
