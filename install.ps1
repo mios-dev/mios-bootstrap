@@ -24,8 +24,9 @@ $MiosDataDir       = Join-Path $env:LOCALAPPDATA "MiOS"
 $MiosVersion       = "v0.2.0"
 $MiosRepoUrl       = "https://github.com/mios-dev/mios.git"
 $MiosBootstrapUrl  = "https://github.com/mios-dev/mios-bootstrap.git"
-$BuilderDistro     = "MiOS-BUILDER"   # dedicated build WSL2 distro
-$LegacyDistro      = "podman-machine-default"  # migration fallback
+$BuilderMachine    = "MiOS-BUILDER"                  # Podman machine name
+$BuilderDistro     = "podman-machine-MiOS-BUILDER"   # WSL2 distro backing the Podman machine
+$LegacyDistro      = "podman-machine-default"        # migration fallback
 $UninstallRegKey   = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS"
 $StartMenuDir      = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\MiOS"
 
@@ -38,6 +39,13 @@ function Write-Step { param([string]$T); Write-Host "  > $T" -ForegroundColor Wh
 function Write-Warn { param([string]$T); Write-Host "  ! $T" -ForegroundColor Yellow }
 function Write-Fail { param([string]$T); Write-Host "  x $T" -ForegroundColor Red }
 function Write-Info { param([string]$T); Write-Host "    $T" -ForegroundColor DarkGray }
+
+function ConvertTo-WslPath {
+    param([string]$P)
+    $P = $P -replace '\\','/'
+    if ($P -match '^([A-Za-z]):(.*)') { return "/mnt/$($Matches[1].ToLower())$($Matches[2])" }
+    return $P
+}
 
 function Read-Line {
     param([string]$Prompt, [string]$Default = "")
@@ -68,7 +76,7 @@ function Get-PasswordHash {
     $salt = -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
     foreach ($d in @($BuilderDistro, $LegacyDistro)) {
         try {
-            $h = & wsl.exe -d $d openssl passwd -6 -salt $salt $Plain 2>$null
+            $h = & wsl.exe -d $d --exec openssl passwd -6 -salt $salt $Plain 2>$null
             if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
         } catch {}
     }
@@ -88,16 +96,18 @@ function Get-Hardware {
     $hasAmd    = $gpuName -match "AMD|Radeon|RX\s"
     $baseImage = if ($hasNvidia) { "ghcr.io/ublue-os/ucore-hci:stable-nvidia" } else { "ghcr.io/ublue-os/ucore-hci:stable" }
     $aiModel   = if ($ramGB -ge 32) { "qwen2.5-coder:14b" } elseif ($ramGB -ge 12) { "qwen2.5-coder:7b" } else { "phi4-mini:3.8b-q4_K_M" }
-    $wslRam    = [math]::Max(8, [math]::Min(24, [math]::Floor($ramGB * 0.75)))
+    # MiOS-BUILDER gets ALL resources — it IS the build + dev machine
+    $diskFreeGB    = try { [math]::Floor((Get-PSDrive C -EA Stop).Free / 1GB) } catch { 200 }
+    $builderDiskGB = [math]::Max(80, $diskFreeGB - 20)  # leave 20 GB headroom on host C:
     return @{ RamGB=$ramGB; Cpus=$cpus; GpuName=$gpuName; HasNvidia=$hasNvidia; HasAmd=$hasAmd
-              BaseImage=$baseImage; AiModel=$aiModel; WslRam=$wslRam }
+              BaseImage=$baseImage; AiModel=$aiModel; DiskGB=$builderDiskGB }
 }
 
 function Find-ActiveDistro {
     # Returns the distro name that has MiOS at /, preferring MiOS-BUILDER
     foreach ($d in @($BuilderDistro, $LegacyDistro)) {
         try {
-            $r = (& wsl.exe -d $d bash -c "test -f /Justfile && echo ready" 2>$null -join "").Trim()
+            $r = (& wsl.exe -d $d --exec bash -c "test -f /Justfile && echo ready" 2>$null -join "").Trim()
             if ($r -eq "ready") { return $d }
         } catch {}
     }
@@ -107,10 +117,9 @@ function Find-ActiveDistro {
 function Sync-RepoToDistro {
     param([string]$Distro, [string]$WindowsRepoPath)
     # Sync Windows-side clone to WSL via file:// — no internet, no hanging
-    $wslPath = $null
-    try { $wslPath = (& wsl.exe -d $Distro wslpath ($WindowsRepoPath -replace '\\','/') 2>$null -join "").Trim() } catch {}
+    $wslPath = ConvertTo-WslPath $WindowsRepoPath
     if ($wslPath) {
-        & wsl.exe -d $Distro bash -c "sudo git -C / fetch ""file://$wslPath"" main 2>/dev/null && sudo git -C / reset --hard FETCH_HEAD 2>/dev/null" 2>$null
+        & wsl.exe -d $Distro --user root --exec bash -c "git -C / fetch 'file://$wslPath' main 2>/dev/null && git -C / reset --hard FETCH_HEAD 2>/dev/null"
         return $true
     }
     return $false
@@ -118,40 +127,39 @@ function Sync-RepoToDistro {
 
 function New-BuilderDistro {
     param([hashtable]$HW)
-    Write-Step "Creating MiOS-BUILDER WSL2 distro from Fedora container..."
-    $builderDir = Join-Path $MiosDistroDir $BuilderDistro
-    New-Item -ItemType Directory -Path $builderDir -Force | Out-Null
-    $rootfs = Join-Path $env:TEMP "mios-builder-rootfs.tar"
+    Write-Step "Creating MiOS-BUILDER Podman machine ($($HW.Cpus) CPUs / $($HW.RamGB)GB RAM / $($HW.DiskGB)GB disk)..."
 
-    # Pull Fedora and export rootfs via Podman
-    Write-Info "Pulling registry.fedoraproject.org/fedora:latest..."
-    & podman pull registry.fedoraproject.org/fedora:latest 2>&1 | Where-Object { $_ -match "Trying|Writing|Storing" } | ForEach-Object { Write-Info $_ }
-    Write-Info "Exporting rootfs..."
-    & podman create --name mios-builder-init registry.fedoraproject.org/fedora:latest sh 2>&1 | Out-Null
-    & podman export mios-builder-init -o $rootfs
-    & podman rm -f mios-builder-init 2>&1 | Out-Null
+    $ramMB = $HW.RamGB * 1024
 
-    Write-Info "Importing as WSL2 distro $BuilderDistro..."
-    & wsl.exe --import $BuilderDistro $builderDir $rootfs --version 2
-    Remove-Item $rootfs -ErrorAction SilentlyContinue
-    Write-Ok "$BuilderDistro WSL2 distro created"
+    # Use podman machine — native rootful WSL2 Podman VM, set as default
+    & podman machine init $BuilderMachine `
+        --cpus $HW.Cpus `
+        --memory $ramMB `
+        --disk-size $HW.DiskGB `
+        --rootful `
+        --now 2>&1 | ForEach-Object { if ($_ -match "Copying|Starting|Machine") { Write-Info $_ } }
 
-    # Install build stack inside MiOS-BUILDER
-    Write-Step "Installing build stack (Podman, just, git, openssl, python3)..."
-    $pkgs = "git just podman buildah skopeo openssl python3 fuse-overlayfs shadow-utils"
-    & wsl.exe -d $BuilderDistro bash -c "dnf install -y --setopt=install_weak_deps=False $pkgs &>/dev/null && dnf clean all &>/dev/null"
-    Write-Ok "Build stack ready"
+    & podman machine set --default $BuilderMachine 2>&1 | Out-Null
+    Write-Ok "$BuilderMachine Podman machine created and set as default"
+    Write-Info "WSL2 distro: $BuilderDistro"
+
+    # Install MiOS-complete dev stack inside the machine
+    Write-Step "Installing full MiOS dev stack (Podman, buildah, skopeo, just, git, openssl, python3, ollama)..."
+    $pkgs = "git just podman buildah skopeo openssl python3 fuse-overlayfs shadow-utils podman-compose"
+    & wsl.exe -d $BuilderDistro --user root --exec bash -c "dnf install -y --setopt=install_weak_deps=False $pkgs &>/dev/null && dnf clean all &>/dev/null"
+
+    # Install ollama (MiOS-BUILDER is feature-complete for AI dev)
+    & wsl.exe -d $BuilderDistro --user root --exec bash -c "curl -fsSL https://ollama.com/install.sh | sh &>/dev/null || true"
+    Write-Ok "MiOS-BUILDER dev stack ready (feature-complete)"
 }
 
 function Invoke-WslBuild {
     param([string]$Distro, [string]$BaseImage, [string]$AiModel)
     # Ensure just is present
-    & wsl.exe -d $Distro bash -c "command -v just &>/dev/null || dnf install -y just &>/dev/null"
-    Write-Step "Running: sudo just build (inside $Distro)"
+    & wsl.exe -d $Distro --user root --exec bash -c "command -v just &>/dev/null || dnf install -y just &>/dev/null"
+    Write-Step "Running: just build (inside $Distro, as root)"
     Write-Host ""
-    $env:MIOS_BASE_IMAGE = $BaseImage
-    $env:MIOS_AI_MODEL   = $AiModel
-    & wsl.exe -d $Distro bash -lc "cd / && MIOS_BASE_IMAGE='$BaseImage' MIOS_AI_MODEL='$AiModel' sudo just build"
+    & wsl.exe -d $Distro --user root --cd / --exec bash -c "MIOS_BASE_IMAGE='$BaseImage' MIOS_AI_MODEL='$AiModel' just build"
     return $LASTEXITCODE
 }
 
@@ -179,8 +187,9 @@ Write-Host ""
 Write-Phase "Phase 0 — Hardware + Prerequisites"
 
 $HW = Get-Hardware
-Write-Info "CPU  : $($HW.Cpus) threads"
-Write-Info "RAM  : $($HW.RamGB) GB  (WSL2 allocation: $($HW.WslRam) GB)"
+Write-Info "CPU  : $($HW.Cpus) threads (all → MiOS-BUILDER)"
+Write-Info "RAM  : $($HW.RamGB) GB (all → MiOS-BUILDER)"
+Write-Info "Disk : $($HW.DiskGB) GB allocated to MiOS-BUILDER"
 Write-Info "GPU  : $($HW.GpuName)"
 Write-Info "Base : $($HW.BaseImage)"
 Write-Info "Model: $($HW.AiModel)"
@@ -258,7 +267,7 @@ Write-Phase "Phase 3 — MiOS-BUILDER distro"
 
 $distroExists = $false
 try {
-    $r = (& wsl.exe -d $BuilderDistro bash -c "echo ok" 2>$null -join "").Trim()
+    $r = (& wsl.exe -d $BuilderDistro --exec bash -c "echo ok" 2>$null -join "").Trim()
     $distroExists = ($r -eq "ok")
 } catch {}
 
@@ -280,14 +289,15 @@ if ((Test-Path $wslCfg) -and ((Get-Content $wslCfg -Raw) -match "\[wsl2\]")) {
     @"
 
 [wsl2]
-# MiOS-managed — $($HW.WslRam)GB / $($HW.Cpus) CPUs auto-detected
-memory=$($HW.WslRam)GB
+# MiOS-managed — all host resources allocated to MiOS-BUILDER
+memory=$($HW.RamGB)GB
 processors=$($HW.Cpus)
 swap=4GB
 localhostForwarding=true
 networkingMode=mirrored
+guiApplications=true
 "@ | Add-Content -Path $wslCfg
-    Write-Ok ".wslconfig: $($HW.WslRam)GB RAM, $($HW.Cpus) CPUs, mirrored networking"
+    Write-Ok ".wslconfig: $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored networking"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -297,7 +307,7 @@ Write-Phase "Phase 5 — Seeding MiOS-BUILDER repo"
 
 $repoSeeded = $false
 try {
-    $r = (& wsl.exe -d $BuilderDistro bash -c "test -f /Justfile && echo seeded" 2>$null -join "").Trim()
+    $r = (& wsl.exe -d $BuilderDistro --exec bash -c "test -f /Justfile && echo seeded" 2>$null -join "").Trim()
     $repoSeeded = ($r -eq "seeded")
 } catch {}
 
@@ -307,7 +317,7 @@ if ($repoSeeded) {
     Write-Ok "Synced"
 } else {
     Write-Step "Initializing git root and cloning mios.git to /..."
-    & wsl.exe -d $BuilderDistro bash -c "git init / && git -C / remote add origin '$MiosRepoUrl' && git -C / fetch --depth=1 origin main && git -C / reset --hard FETCH_HEAD" 2>&1 | Out-Null
+    & wsl.exe -d $BuilderDistro --user root --exec bash -c "git init / && git -C / remote add origin '$MiosRepoUrl' && git -C / fetch --depth=1 origin main && git -C / reset --hard FETCH_HEAD" 2>&1 | Out-Null
     Write-Ok "mios.git cloned to /"
 }
 
@@ -339,8 +349,8 @@ MIOS_USER_PASSWORD_HASH="$MiosHash"
 "@ | Set-Content $tmpEnv -Encoding UTF8
 
 try {
-    $wslTmp = (& wsl.exe -d $BuilderDistro wslpath ($tmpEnv -replace '\\','/') 2>$null -join "").Trim()
-    & wsl.exe -d $BuilderDistro bash -c "mkdir -p /etc/mios && cp '$wslTmp' /etc/mios/install.env && chmod 0640 /etc/mios/install.env"
+    $wslTmp = ConvertTo-WslPath $tmpEnv
+    & wsl.exe -d $BuilderDistro --user root --exec bash -c "mkdir -p /etc/mios && cp '$wslTmp' /etc/mios/install.env && chmod 0640 /etc/mios/install.env"
     Write-Ok "/etc/mios/install.env written"
 } catch { Write-Warn "Could not write install.env (non-fatal)" }
 Remove-Item $tmpEnv -ErrorAction SilentlyContinue
@@ -373,7 +383,8 @@ if (-not (Test-Path $StartMenuDir)) { New-Item -ItemType Directory -Path $StartM
 @(
     @{ F="MiOS Setup.lnk";       T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfScript`"";             D="Re-run full MiOS setup" },
     @{ F="MiOS Build.lnk";       T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfScript`" -BuildOnly";   D="Pull latest + build MiOS OCI image" },
-    @{ F="MiOS WSL Terminal.lnk"; T="wsl.exe"; A="-d $BuilderDistro";                                         D="Open MiOS-BUILDER terminal" },
+    @{ F="MiOS WSL Terminal.lnk"; T="wsl.exe"; A="-d $BuilderDistro --user root";                             D="Open MiOS-BUILDER terminal (root)" },
+    @{ F="MiOS Podman Machine.lnk"; T="powershell.exe"; A="-NoProfile -Command podman machine ssh $BuilderMachine"; D="SSH into MiOS-BUILDER Podman machine" },
     @{ F="Uninstall MiOS.lnk";   T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$uninstScr`"";               D="Remove MiOS" }
 ) | ForEach-Object { New-Shortcut (Join-Path $StartMenuDir $_.F) $_.T $_.A $_.D $MiosInstallDir }
 Write-Ok "Add/Remove Programs + Start Menu 'MiOS' (4 shortcuts)"
@@ -382,13 +393,15 @@ Write-Ok "Add/Remove Programs + Start Menu 'MiOS' (4 shortcuts)"
 @"
 #Requires -Version 5.1
 param([switch]`$Quiet)
-`$I='$($MiosInstallDir -replace "'","''")'; `$D='$($MiosDataDir -replace "'","''")'; `$C='$($MiosConfigDir -replace "'","''")'; `$S='$($StartMenuDir -replace "'","''")'; `$K='$($UninstallRegKey -replace "'","''")'; `$B='$BuilderDistro'
+`$I='$($MiosInstallDir -replace "'","''")'; `$D='$($MiosDataDir -replace "'","''")'; `$C='$($MiosConfigDir -replace "'","''")'; `$S='$($StartMenuDir -replace "'","''")'; `$K='$($UninstallRegKey -replace "'","''")'; `$M='$BuilderMachine'; `$B='$BuilderDistro'
 if (-not `$Quiet) {
     Write-Host ''; Write-Host '  MiOS Uninstaller' -ForegroundColor Red; Write-Host ''
-    Write-Host "  Removes: `$I, `$D, `$B WSL2 distro, Start Menu"
+    Write-Host "  Removes: `$I, `$D, `$M Podman machine, Start Menu"
     Write-Host "  Preserves: `$C (config)"; Write-Host ''
     if ((Read-Host "  Type 'yes' to confirm") -ne 'yes') { Write-Host '  Aborted.'; exit 0 }
 }
+try { podman machine stop `$M 2>`$null } catch {}
+try { podman machine rm -f `$M 2>`$null } catch {}
 try { wsl --unregister `$B 2>`$null } catch {}
 foreach (`$p in @(`$I,`$D,`$S)) { if (Test-Path `$p) { Remove-Item `$p -Recurse -Force } }
 if (Test-Path `$K) { Remove-Item `$K -Recurse -Force }
@@ -402,7 +415,7 @@ Write-Ok "uninstall.ps1 written"
 Write-Phase "Phase 9 — Building MiOS OCI image"
 Write-Info "Base image : $($HW.BaseImage)"
 Write-Info "AI model   : $($HW.AiModel)"
-Write-Info "Build host : $BuilderDistro (Fedora + Podman)"
+Write-Info "Build host : $BuilderMachine (Podman machine, $($HW.RamGB)GB RAM / $($HW.Cpus) CPUs)"
 Write-Info "Est. time  : 15-30 min on first run (OCI layers cached after)"
 Write-Host ""
 
@@ -417,13 +430,14 @@ if ($rc -eq 0) {
     Write-Host "  |  MiOS built successfully!                      |" -ForegroundColor Green
     Write-Host "  +================================================+" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Image    : localhost/mios:latest (in $BuilderDistro)" -ForegroundColor White
-    Write-Host "  Builder  : $BuilderDistro WSL2 distro" -ForegroundColor DarkGray
+    Write-Host "  Image    : localhost/mios:latest (in $BuilderMachine)" -ForegroundColor White
+    Write-Host "  Builder  : $BuilderMachine (Podman machine, default)" -ForegroundColor DarkGray
     Write-Host "  Base     : $($HW.BaseImage)" -ForegroundColor DarkGray
     Write-Host "  AI model : $($HW.AiModel)" -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "  Start Menu > MiOS Build   — pull latest + rebuild at any time" -ForegroundColor DarkGray
-    Write-Host "             > MiOS WSL Terminal — open $BuilderDistro shell" -ForegroundColor DarkGray
+    Write-Host "  Start Menu > MiOS Build          — pull latest + rebuild at any time" -ForegroundColor DarkGray
+    Write-Host "             > MiOS Podman Machine — podman machine ssh $BuilderMachine" -ForegroundColor DarkGray
+    Write-Host "             > MiOS WSL Terminal   — root shell in $BuilderDistro" -ForegroundColor DarkGray
 } else {
     Write-Host "  +================================================+" -ForegroundColor Red
     Write-Host "  |  Build failed (exit $rc)                       |" -ForegroundColor Red
