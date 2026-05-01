@@ -68,8 +68,16 @@ below them.
 The shipped defaults are identical between `etc/mios/profile.toml`
 (this repo) and `/usr/share/mios/profile.toml` (mios.git). Edit
 `etc/mios/profile.toml` here, or `/etc/mios/profile.toml` on a deployed
-host, to override per-host. Edit `~/.config/mios/profile.toml` per
-user.
+host, to override per-host. Edit `~/.config/mios/profile.toml` per user.
+
+**Defaults policy (project-wide invariant):** every boolean feature
+flag — `[quadlets.enable]` entries, `[ai] enable_*`, `[network]
+allow_*`, `[bootstrap] install_packages` / `reboot_on_finish` — ships
+`true`. The system never disables a component via static config; when
+a component is incompatible with the host, systemd `Condition*`
+directives on the underlying unit short-circuit it at boot/pre-boot.
+Operators can still set a flag to `false` to force-disable. See
+`INDEX.md` §5 in the system repo for the active gating table.
 
 | Field | Default |
 |---|---|

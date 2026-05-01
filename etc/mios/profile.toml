@@ -65,7 +65,7 @@ allow_libvirt_bridge   = true   # for VM networking
 endpoint        = "http://localhost:8080/v1"
 model           = "default"
 api_key         = ""              # empty = unauthenticated localhost
-enable_ollama   = false
+enable_ollama   = true
 enable_localai  = true
 mcp_registry    = "/usr/share/mios/ai/v1/mcp.json"
 
@@ -107,16 +107,24 @@ reboot_on_finish = true   # interactive y/N prompt at end
 #------------------------------------------------------------------------------
 # Sidecar Quadlet enablement. Each entry maps a Quadlet name to whether it
 # should be `systemctl enable --now`'d at first boot.
-# Quadlet definitions ship in mios.git under etc/containers/systemd/ and
-# usr/share/containers/systemd/.
+#
+# Defaults policy: every flag is true. Static config never disables a
+# service; incompatible deployments are gated via systemd `Condition*`
+# directives in the Quadlet itself (e.g., ConditionVirtualization=!wsl
+# on mios-k3s) so the service no-ops at pre-boot when the host can't
+# run it. Set a flag to false here to force-disable a service even
+# when it would otherwise run.
+#
+# Quadlet definitions ship in mios.git under etc/containers/systemd/
+# and usr/share/containers/systemd/.
 #------------------------------------------------------------------------------
 [quadlets.enable]
-mios-ai           = true
-mios-ceph         = false
-mios-k3s          = false
-crowdsec-dashboard = false
-ollama            = false
-cloudws-guacamole = false
-cloudws-pxe-hub   = false
-guacamole-postgres = false
-guacd             = false
+mios-ai            = true
+mios-ceph          = true
+mios-k3s           = true
+crowdsec-dashboard = true
+ollama             = true
+cloudws-guacamole  = true
+cloudws-pxe-hub    = true
+guacamole-postgres = true
+guacd              = true
