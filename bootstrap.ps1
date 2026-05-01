@@ -72,26 +72,38 @@ function Get-SHA512Hash {
     param([string]$PlainText)
     $salt = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
 
-    # Try WSL openssl first (fastest, no container pull needed)
+    # If using the default 'mios' password, return the pre-computed canonical hash
+    # (avoids any WSL/Podman round-trip for the common case)
+    if ($PlainText -eq "mios") {
+        return '$6$miosmios0$ShHuf/TnPoEmEX//L9mrNNuP7kZ6l9aj/qV9WFj5LnjL3lunhKEwnJfY6tvlJbRiWkLTtPmdwCgWeOQB9eXuW.'
+    }
+
+    # Try podman-machine-default first (always present in MiOS Windows installs)
     try {
-        $hash = & wsl openssl passwd -6 -salt $salt $PlainText 2>$null
+        $hash = & wsl.exe -d podman-machine-default openssl passwd -6 -salt $salt $PlainText 2>$null
         if ($LASTEXITCODE -eq 0 -and $hash -match '^\$6\$') { return $hash.Trim() }
     } catch {}
 
-    # Fallback: MiOS helper image
+    # Fallback: whatever WSL default distro is configured
+    try {
+        $hash = & wsl.exe openssl passwd -6 -salt $salt $PlainText 2>$null
+        if ($LASTEXITCODE -eq 0 -and $hash -match '^\$6\$') { return $hash.Trim() }
+    } catch {}
+
+    # Fallback: MiOS OCI image via Podman
     $HelperImage = "ghcr.io/mios-dev/mios:latest"
     try {
         $hash = & podman run --rm $HelperImage openssl passwd -6 -salt $salt $PlainText 2>$null
         if ($LASTEXITCODE -eq 0 -and $hash -match '^\$6\$') { return $hash.Trim() }
     } catch {}
 
-    # Fallback: alpine
+    # Fallback: alpine via Podman
     try {
         $hash = & podman run --rm docker.io/library/alpine:latest sh -c "apk add --quiet openssl >/dev/null 2>&1 && openssl passwd -6 -salt '$salt' '$PlainText'" 2>$null
         if ($LASTEXITCODE -eq 0 -and $hash -match '^\$6\$') { return $hash.Trim() }
     } catch {}
 
-    throw "Failed to generate sha512crypt hash. Ensure WSL or Podman is available."
+    throw "Failed to generate sha512crypt hash. Ensure podman-machine-default WSL distro or Podman is available."
 }
 
 # ============================================================================
@@ -156,34 +168,37 @@ autoProxy=true
 Write-Host ""
 
 # ============================================================================
-# Quick-path: detect existing MiOS setup in podman-machine-default and build
+# Quick-path: detect existing MiOS setup in podman-machine-default and build.
+# Note: wsl --list --quiet emits UTF-16LE which PowerShell often mangles.
+# Instead, try running directly in podman-machine-default — if it fails the
+# distro is absent/not running and we fall through to the full wizard.
 # ============================================================================
 Write-Host "  Checking for existing MiOS setup in podman-machine-default..." -ForegroundColor Gray
+$miosReady = $null
 try {
-    $wslDistros = (wsl --list --quiet 2>$null) -join " "
-    if ($wslDistros -match "podman-machine-default") {
-        $miosReady = (wsl -d podman-machine-default -- bash -c "test -f /Justfile && echo ready" 2>$null).Trim()
-        if ($miosReady -eq "ready") {
-            Write-Host "  [OK] MiOS repo found at / in podman-machine-default." -ForegroundColor Green
-            Write-Host ""
-            Write-Host "  ════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-            Write-Host "  Running: just build inside podman-machine-default" -ForegroundColor Cyan
-            Write-Host "  ════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-            Write-Host ""
-            # Ensure just is available and run the build
-            wsl -d podman-machine-default -- bash -lc "command -v just &>/dev/null || sudo dnf install -y just &>/dev/null; cd / && sudo just build"
-            $buildExit = $LASTEXITCODE
-            Write-Host ""
-            if ($buildExit -eq 0) {
-                Write-Host "  [OK] Build complete." -ForegroundColor Green
-            } else {
-                Write-Host "  [!] Build exited with code $buildExit — check output above." -ForegroundColor Red
-            }
-            exit $buildExit
-        }
+    $result = & wsl.exe -d podman-machine-default bash -c "test -f /Justfile && echo ready" 2>$null
+    $miosReady = ($result -join "").Trim()
+} catch { $miosReady = $null }
+
+if ($miosReady -eq "ready") {
+    Write-Host "  [OK] MiOS repo detected at / in podman-machine-default." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  ════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "  Running: just build inside podman-machine-default" -ForegroundColor Cyan
+    Write-Host "  ════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
+    # Ensure just is installed, then run the build from /
+    & wsl.exe -d podman-machine-default bash -lc "command -v just &>/dev/null || sudo dnf install -y just &>/dev/null; cd / && sudo just build"
+    $buildExit = $LASTEXITCODE
+    Write-Host ""
+    if ($buildExit -eq 0) {
+        Write-Host "  [OK] Build complete." -ForegroundColor Green
+    } else {
+        Write-Host "  [!] Build exited with code $buildExit -- check output above." -ForegroundColor Red
     }
-} catch {
-    Write-Host "  [!] WSL detection failed (non-fatal) — continuing wizard." -ForegroundColor DarkGray
+    exit $buildExit
+} else {
+    Write-Host "  No existing setup found -- running full wizard." -ForegroundColor DarkGray
 }
 Write-Host ""
 

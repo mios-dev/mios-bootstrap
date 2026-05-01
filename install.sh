@@ -501,9 +501,9 @@ trigger_mios_install() {
                 git -C / remote add origin "${MIOS_REPO}"
             fi
             
-            # Fetch and Force Checkout MiOS into root (respects .gitignore)
+            # Fetch and hard-reset to remote (resolves any local divergence)
             git -C / fetch --depth=1 origin "${DEFAULT_BRANCH}"
-            git -C / checkout -f "${DEFAULT_BRANCH}"
+            git -C / reset --hard FETCH_HEAD
             log_ok "MiOS core (mios.git) merged to /"
 
             # 2. Apply MiOS-bootstrap repo overlays
