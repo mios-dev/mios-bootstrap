@@ -1,105 +1,97 @@
 {
   "project": "MiOS",
-  "version": "0.1.3",
+  "version": "0.2.2",
   "type": "bootc-immutable-os",
-  "base": "Fedora Rawhide + ucore-hci",
-  "architecture": "rootfs-native",
-  "future": "MiOS-NXT (Hummingbird, SBOM, minimal variants)",
+  "base": "Fedora CoreOS 44 + ucore-hci:stable",
+  "ai_endpoint": "http://localhost:8080/v1",
 
-  "live_documentation": {
-    "wiki": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki",
-    "update_frequency": "Every build, push, and local build entry point",
-    "purpose": "ALWAYS check Wiki for current tasks, research patterns, artifacts, and build logs",
-    "primary_source": "Wiki pages reflect latest state - use for current/new tasks",
-    "static_source": "This knowledge graph is snapshot - refer to Wiki for updates"
+  "repos": {
+    "system": "https://github.com/mios-dev/mios",
+    "bootstrap": "https://github.com/mios-dev/mios-bootstrap"
   },
 
-  "wiki_pages": {
-    "home": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Home",
-    "ai_integration": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/AI-Integration-Index",
-    "rag_guide": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/RAG-Integration",
-    "quick_reference": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Quick-Reference",
-    "prompts": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Prompts-Library",
-    "knowledge_graph": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/Knowledge-Graph",
-    "index": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/INDEX",
-    "readme": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/README",
-    "ai_agent_guide": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/AI-AGENT-GUIDE",
-    "self_build": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/SELF-BUILD",
-    "security": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/SECURITY",
-    "fhs_compliance": "https://github.com/MiOS-DEV/MiOS-bootstrap/wiki/engineering/2026-04-27-Artifact-ENG-006-FHS-Compliance-Audit"
+  "architectural_laws": [
+    "USR-OVER-ETC: static config in /usr/lib/<component>.d/; /etc/ for admin overrides only",
+    "NO-MKDIR-IN-VAR: every /var/ path declared via usr/lib/tmpfiles.d/*.conf",
+    "BOUND-IMAGES: every Quadlet sidecar image symlinked in /usr/lib/bootc/bound-images.d/",
+    "BOOTC-CONTAINER-LINT: RUN bootc container lint is the final Containerfile instruction",
+    "UNIFIED-AI-REDIRECTS: MIOS_AI_ENDPOINT/MODEL/KEY target http://localhost:8080/v1; zero vendor URLs in committed files",
+    "UNPRIVILEGED-QUADLETS: every Quadlet defines User=, Group=, Delegate=yes; exceptions: mios-k3s.container, mios-ceph.container"
+  ],
+
+  "directory_map": {
+    "/usr/bin/mios": "OpenAI-compatible CLI client",
+    "/usr/share/mios/PACKAGES.md": "SSOT for all RPM packages (fenced packages-<category> blocks)",
+    "/usr/share/mios/env.defaults": "vendor MIOS_* defaults (lowest precedence)",
+    "/usr/share/mios/profile.toml": "vendor identity/locale/feature defaults",
+    "/usr/share/mios/ai/system.md": "canonical agent system prompt",
+    "/usr/share/mios/ai/models.json": "OpenAI /v1/models catalog",
+    "/usr/share/mios/ai/mcp.json": "MCP server registry",
+    "/etc/mios/profile.toml": "host/admin profile overrides",
+    "/etc/mios/install.env": "runtime identity (MIOS_USER, MIOS_HOSTNAME, MIOS_USER_PASSWORD_HASH)",
+    "/etc/mios/ai/system-prompt.md": "host-local system prompt override",
+    "/etc/mios/ai/config.json": "host-local AI inference config (base_url, models)",
+    "/var/lib/mios/ai/memory/": "persistent episodic memory",
+    "/var/lib/mios/ai/scratch/": "volatile inter-agent scratchpad",
+    "/var/lib/mios/ai/journal.md": "chronological action log",
+    "/srv/ai/models/": "GGUF/safetensors model weights"
   },
 
-  "artifact_locations": {
-    "bootstrap_repo": "https://github.com/MiOS-DEV/MiOS-bootstrap",
-    "ai_rag_packages": "https://github.com/MiOS-DEV/MiOS-bootstrap/tree/main/ai-rag-packages",
-    "build_logs": "https://github.com/MiOS-DEV/MiOS-bootstrap/tree/main/build-logs",
-    "compressed_artifacts": "509 KB XZ (primary) + 814 KB GZ (legacy)",
-    "update_mechanism": "Automatic via tools/log-to-bootstrap.sh on every build"
+  "env_cascade": {
+    "order": "~/.config/mios/env > /etc/mios/install.env > /etc/mios/env.d/*.env > /usr/share/mios/env.defaults",
+    "key_vars": ["MIOS_AI_ENDPOINT", "MIOS_AI_MODEL", "MIOS_AI_EMBED_MODEL", "MIOS_AI_KEY", "MIOS_BASE_IMAGE", "MIOS_VERSION"]
   },
+
+  "system_prompt_cascade": {
+    "order": "$MIOS_AI_SYSTEM_PROMPT > ~/.config/mios/system-prompt.md > /etc/mios/ai/system-prompt.md > /usr/share/mios/ai/system.md"
+  },
+
+  "profile_cascade": {
+    "order": "~/.config/mios/profile.toml > /etc/mios/profile.toml > /usr/share/mios/profile.toml"
+  },
+
+  "ai_stack": {
+    "endpoint": "http://localhost:8080/v1",
+    "inference_model": "qwen2.5-coder:7b",
+    "embed_model": "nomic-embed-text",
+    "quadlet_unit": "mios-ai.container",
+    "port": 8080,
+    "model_volume": "/srv/ai/models"
+  },
+
+  "quadlet_sidecars": {
+    "network": "mios.network (10.89.0.0/24)",
+    "units": [
+      {"name": "mios-ai.container", "port": 8080, "condition": "PathIsDirectory=/etc/mios/ai"},
+      {"name": "mios-k3s.container", "condition": "!wsl !container", "privileged": true},
+      {"name": "mios-ceph.container", "condition": "PathExists=/etc/ceph/ceph.conf !container", "privileged": true}
+    ]
+  },
+
+  "build_pipeline": {
+    "entry": "Containerfile -> 08-system-files-overlay.sh -> automation/build.sh -> numbered scripts -> bootc container lint",
+    "package_ssot": "/usr/share/mios/PACKAGES.md (fenced packages-<category> blocks)",
+    "script_range": "01-repos through 99-postcheck (45 scripts; 08/37-ollama/99 run from Containerfile only)",
+    "non_fatal_scripts": ["05","13","19","21","22","23","26","36-akmod","37-aichat","38","42","43","44","50","52","53"]
+  },
+
+  "install_surfaces": {
+    "windows": "install.ps1 via irm | iex",
+    "linux_bootc": "bootc switch ghcr.io/mios-dev/mios:latest",
+    "linux_fhs": "install.sh via curl | bash (Total Root Merge)"
+  },
+
+  "day2_operations": [
+    "sudo bootc upgrade && sudo systemctl reboot",
+    "sudo bootc switch <ref>",
+    "sudo bootc rollback",
+    "mios \"<prompt>\""
+  ],
 
   "core_concepts": {
-    "bootc": "OCI image → bootable OS, atomic updates, composefs backend",
-    "immutability": "/usr read-only, /etc + /var mutable, OSTree/composefs integrity",
-    "self_building": "Podman + Buildah + bootc in-image, v1.x builds v1.(x+1)",
-    "multi_surface": "WSL2, Hyper-V, bare metal, k3s nodes from single OCI image",
-    "security": "SELinux enforcing, fapolicyd, CrowdSec, composefs verification"
-  },
-  
-  "key_files": {
-    "index": "INDEX.md (AI agent hub, laws, directory map)",
-    "packages": "specs/engineering/2026-04-26-Artifact-ENG-001-Packages.md",
-    "build": "Containerfile (2-stage OCI build)",
-    "orchestration": "Justfile (build targets), automation/build.sh (master runner)",
-    "config": ".env.mios (unified environment variables)",
-    "self_build": "SELF-BUILD.md (4 build modes: CI/CD, Windows, Linux, self-build)"
-  },
-  
-  "immutable_laws": [
-    "USR-OVER-ETC: No static config in /etc/ at build time, use /usr/lib/",
-    "NO-MKDIR-IN-VAR: All /var dirs via tmpfiles.d, never mkdir in Containerfile",
-    "MANAGED-SELINUX: semodule -i in RUN layer, or stage in /usr/share/selinux/",
-    "BOUND-IMAGES: Quadlet containers in /usr/lib/bootc/bound-images.d/",
-    "BOOTC-CONTAINER-LINT: Mandatory final validation, enforces kernel hygiene"
-  ],
-  
-  "build_pipeline": {
-    "stages": ["ctx (scratch + automation)", "main (FROM base + apply overlays)"],
-    "numbered_scripts": "automation/01-repos.sh through automation/99-cleanup.sh",
-    "package_installation": "install_packages <category> via automation/lib/packages.sh",
-    "system_overlay": "usr/, etc/, var/ copied via 08-system-files-overlay.sh",
-    "outputs": "OCI image → rechunk → RAW/ISO/VHDX/WSL via bootc-image-builder"
-  },
-  
-  "version_history": {
-    "MiOS-1": "Fedora bootc + akmod NVIDIA drivers",
-    "MiOS-2": "v0.1.x, ucore-hci base, pre-signed NVIDIA kmods",
-    "MiOS-NXT": "Future: Hummingbird, SBOM, ARM64, minimal variants"
-  },
-  
-  "mios_nxt_roadmap": {
-    "timeline": "Q4 2026 - Q2 2027",
-    "hummingbird": "Zero-CVE minimal base from Red Hat/Fedora",
-    "sbom": "CycloneDX + SPDX via Syft, EU CRA compliance",
-    "variants": {
-      "Desktop": "2-3GB, GNOME, GPU passthrough, Steam/Wine",
-      "Core": "<500MB, bootc+podman+k3s, container hosts",
-      "Edge": "<200MB, IoT/embedded (future)"
-    },
-    "arm64": "Raspberry Pi 5, AWS Graviton, cross-arch builds",
-    "composefs": "Fedora 42+ default, runtime integrity verification"
-  },
-  
-  "security_hardening": {
-    "kernel": "init_on_alloc=1, pti=on, spectre_v2=on, iommu=pt",
-    "application": "fapolicyd whitelisting, USBGuard, CrowdSec IPS",
-    "filesystem": "composefs + fs-verity, transient /etc",
-    "image": "cosign keyless signing via GitHub OIDC"
-  },
-  
-  "integration_points": {
-    "ollama": "Pre-pulled in Containerfile, Quadlet service",
-    "k3s": "SELinux policies, automated install via automation/13-ceph-k3s.sh",
-    "vfio": "GPU passthrough for VMs, 34-gpu-detect.sh gates NVIDIA on bare metal",
-    "flatpak": "Desktop apps isolation, install list in .env.mios"
+    "bootc": "OCI image -> bootable OS, atomic updates, composefs backend",
+    "immutability": "/usr read-only, /etc + /var mutable, composefs integrity",
+    "multi_surface": "WSL2, Hyper-V, QEMU, bare metal, k3s nodes from single OCI image",
+    "security": "SELinux enforcing, fapolicyd, composefs-verity, cosign signing"
   }
 }
