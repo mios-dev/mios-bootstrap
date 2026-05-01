@@ -538,11 +538,19 @@ function Invoke-BibBuild([string[]]$Types, [string]$MachineOutDir, [int]$Timeout
     Set-Step "BIB: $($Types -join '+')..."
     Write-Log "BIB start: types=$($Types -join ',')  out=$MachineOutDir"
 
+    # Pre-create the output directory inside the machine — podman volume mounts require
+    # the host-side path to exist before the container starts.
+    Set-Step "BIB: creating output dir in machine..."
+    & podman run --rm --privileged --security-opt label=disable `
+        docker.io/library/alpine:latest `
+        mkdir -p $MachineOutDir 2>&1 | ForEach-Object { Write-Log "bib-mkdir: $_" }
+    if ($LASTEXITCODE -ne 0) { Write-Log "WARN: bib mkdir returned $LASTEXITCODE (may still work)" }
+
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = "cmd.exe"
     $psi.Arguments = ("/c podman run --rm --privileged --pull=newer " +
         "--security-opt label=type:unconfined_t " +
-        "-v /var/lib/containers/storage:/var/lib/containers/storage:ro " +
+        "-v /var/lib/containers/storage:/var/lib/containers/storage " +
         "-v ${MachineOutDir}:/output:z " +
         "quay.io/centos-bootc/bootc-image-builder:latest " +
         "$typeArgs --local localhost/mios:latest 2>&1")
