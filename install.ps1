@@ -291,7 +291,9 @@ function Sync-RepoToDistro([string]$Distro, [string]$WinPath) {
 
 function New-BuilderDistro([hashtable]$HW) {
     Set-Step "Initializing MiOS-BUILDER ($($HW.Cpus) CPUs / $($HW.RamGB)GB / $($HW.DiskGB)GB disk)"
-    $ramMB = $HW.RamGB * 1024
+    # Reserve 2 GB for the host kernel/BIOS -- physical RAM is always slightly less
+    # than the nominal GB count, so allocating RamGB*1024 MB overcommits and fails.
+    $ramMB = [math]::Max(4096, $HW.RamGB * 1024 - 2048)
     & podman machine init $BuilderDistro `
         --cpus $HW.Cpus --memory $ramMB --disk-size $HW.DiskGB `
         --rootful --now 2>&1 | ForEach-Object { Write-Log "podman-init: $_" }
@@ -403,11 +405,11 @@ Write-Log "hw: CPU=$($HW.Cpus)  RAM=$($HW.RamGB)GB  Disk=$($HW.DiskGB)GB  GPU=$(
 Write-Log "hw: Base=$($HW.BaseImage)  Model=$($HW.AiModel)"
 
 $preOk = $true
-if (Get-Command git    -EA SilentlyContinue) { Log-Ok "Git $(git --version 2>$null -replace 'git version ','')" }
+if (Get-Command git    -EA SilentlyContinue) { Log-Ok "Git $((& git --version 2>&1) -replace 'git version ','')" }
 else { Log-Fail "Git not found -- winget install Git.Git"; $preOk = $false }
 if (Get-Command wsl    -EA SilentlyContinue) { Log-Ok "WSL2 available" }
 else { Log-Warn "WSL2 not found -- run: wsl --install" }
-if (Get-Command podman -EA SilentlyContinue) { Log-Ok "Podman $(podman --version 2>$null -replace 'podman version ','')" }
+if (Get-Command podman -EA SilentlyContinue) { Log-Ok "Podman $((& podman --version 2>&1) -replace 'podman version ','')" }
 else { Log-Warn "Podman not found -- winget install RedHat.Podman-Desktop" }
 
 if (-not $preOk) { End-Phase 0 -Fail; throw "Prerequisites missing -- see log: $LogFile" }
