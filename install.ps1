@@ -125,8 +125,12 @@ function Show-Dashboard {
         $phLabel += "  ($($script:BuildSubDone)/$($script:BuildSubTotal) steps)"
     }
 
+    $spinChars = @('|', '/', '-', '\')
+    $spinChar  = $spinChars[[int](([datetime]::Now - $script:ScriptStart).TotalMilliseconds / 250) % 4]
     $step = [string]$script:CurStep
-    if ($step.Length -gt $in) { $step = $step.Substring(0,$in-3)+"..." }
+    $stepMax = $in - 10
+    if ($step.Length -gt $stepMax) { $step = $step.Substring(0,$stepMax-3)+"..." }
+    $stepLine = "$spinChar $step"
 
     $barW   = [math]::Max(10, $in - 12)
     $barStr = pbar $globalDone $globalTotal $barW
@@ -145,7 +149,7 @@ function Show-Dashboard {
     $rows.Add("| $title$(' ' * $mid)$right |".PadRight($w-1).Substring(0,$w-1) + "|")
     $rows.Add($sep)
     $rows.Add(("| Ph : " + $phLabel.PadRight($in-6).Substring(0,[math]::Min($phLabel.Length,$in-6)).PadRight($in-6) + " |").PadRight($w))
-    $rows.Add(("| Op : " + $step.PadRight($in-6) + " |").PadRight($w))
+    $rows.Add(("| Op : " + $stepLine.PadRight($in-6) + " |").PadRight($w))
     $rows.Add(("| " + $statStr.PadRight($in) + " |").PadRight($w))
     $rows.Add($sep)
     $rows.Add(("| " + $barStr.PadRight($in) + " |").PadRight($w))
@@ -354,9 +358,18 @@ function New-BuilderDistro([hashtable]$HW) {
     # Cap at the OS-reported physical RAM (what podman validates) minus 512 MB safety margin.
     # Nominal $HW.RamGB rounds up from actual hardware, causing podman to reject the request.
     $ramMB = [math]::Max(4096, [math]::Min($HW.OsTotalRamMB - 512, $HW.RamGB * 1024 - 512))
+    $initSw = [System.Diagnostics.Stopwatch]::StartNew()
     & podman machine init $BuilderDistro `
         --cpus $HW.Cpus --memory $ramMB --disk-size $HW.DiskGB `
-        --rootful --now 2>&1 | ForEach-Object { Write-Log "podman-init: $_" }
+        --rootful --now 2>&1 | ForEach-Object {
+            Write-Log "podman-init: $_"
+            if ($initSw.ElapsedMilliseconds -ge 400) {
+                $clean = ($_ -replace '\x1b\[[0-9;]*[mGKHFJ]','').Trim()
+                if ($clean) { $script:CurStep = $clean.Substring(0,[math]::Min($clean.Length,80)) }
+                Show-Dashboard
+                $initSw.Restart()
+            }
+        }
     if ($LASTEXITCODE -ne 0) { throw "podman machine init failed (exit $LASTEXITCODE)" }
     & podman machine set --default $BuilderDistro 2>&1 | Out-Null
     Log-Ok "MiOS-BUILDER created and set as default Podman machine"

@@ -169,6 +169,30 @@ log_warn()  { printf '%s[WARN]%s %s\n' "${_YELLOW}" "${_RESET}" "$*" >&2; }
 log_err()   { printf '%s[ERR ]%s %s\n' "${_RED}" "${_RESET}" "$*" >&2; }
 log_phase() { printf '\n%s%s== %s ==%s\n\n' "${_BOLD}" "${_CYAN}" "$*" "${_RESET}"; }
 
+# ── Spinner ───────────────────────────────────────────────────────────────────
+_SPIN_PID=0
+spin_start() {
+    local msg="${1:-Working...}"
+    printf '%s  %s...%s\n' "${_CYAN}" "$msg" "${_RESET}" >&2
+    (
+        local i=0 chars='|/-\'
+        while true; do
+            printf '\r  %s %s %s  ' "${_CYAN}" "${chars:$((i % 4)):1}" "$msg${_RESET}" >&2
+            i=$((i + 1))
+            sleep 0.2
+        done
+    ) &
+    _SPIN_PID=$!
+}
+spin_stop() {
+    if [[ "$_SPIN_PID" -ne 0 ]]; then
+        kill "$_SPIN_PID" 2>/dev/null || true
+        wait "$_SPIN_PID" 2>/dev/null || true
+        _SPIN_PID=0
+    fi
+    printf '\r%s\r' "$(tput el 2>/dev/null || printf '%80s')" >&2
+}
+
 # ============================================================================
 # Preflight
 # ============================================================================
@@ -211,10 +235,13 @@ install_prerequisites() {
     log_info "Installing missing prerequisites: ${missing[*]}"
     local dnf_cmd="dnf"
     command -v dnf5 &>/dev/null && dnf_cmd="dnf5"
+    spin_start "Installing ${missing[*]}"
     $dnf_cmd install -y --skip-unavailable "${missing[@]}" || {
+        spin_stop
         log_err "Failed to install prerequisites: ${missing[*]}"
         exit 1
     }
+    spin_stop
     log_ok "Prerequisites ready: ${missing[*]}"
 }
 
@@ -415,10 +442,13 @@ deploy_system_prompt() {
         install -m 0644 "$src_local" /etc/mios/ai/system-prompt.md
     else
         log_info "Fetching system prompt from ${prompt_url}"
+        spin_start "Downloading system-prompt.md"
         if curl -fsSL --max-time 30 "$prompt_url" -o /etc/mios/ai/system-prompt.md.new; then
+            spin_stop
             mv /etc/mios/ai/system-prompt.md.new /etc/mios/ai/system-prompt.md
             chmod 0644 /etc/mios/ai/system-prompt.md
         else
+            spin_stop
             rm -f /etc/mios/ai/system-prompt.md.new
             log_warn "Could not fetch system prompt"
             return 0
@@ -511,75 +541,115 @@ trigger_mios_install() {
             log_ok "bootc deployment staged"
             ;;
         fhs)
+            local dnf_cmd="dnf"
+            command -v dnf5 >/dev/null 2>&1 && dnf_cmd="dnf5"
+
             # 1. Initialize / as the git root for MiOS core
             log_info "Staging MiOS core repository (mios.git) to /"
             if [[ ! -d "/.git" ]]; then
                 git init /
                 git -C / remote add origin "${MIOS_REPO}"
             fi
-            
-            # Fetch and hard-reset to remote (resolves any local divergence)
-            git -C / fetch --depth=1 origin "${DEFAULT_BRANCH}"
+            spin_start "Fetching mios.git (system layer)"
+            git -C / fetch --depth=1 origin "${DEFAULT_BRANCH}" 2>&1 | tail -3
             git -C / reset --hard FETCH_HEAD
+            spin_stop
             log_ok "MiOS core (mios.git) merged to /"
 
             # 2. Apply MiOS-bootstrap repo overlays
             local bootstrap_tmp="/tmp/mios-bootstrap-src"
             log_info "Fetching MiOS-bootstrap overlays from ${BOOTSTRAP_REPO}"
+            spin_start "Cloning mios-bootstrap.git (user layer)"
             rm -rf "${bootstrap_tmp}"
-            git clone --depth=1 "${BOOTSTRAP_REPO}" "${bootstrap_tmp}"
-            
-            log_info "Merging bootstrap system folders (etc, usr, var) to /"
-            for d in etc usr var; do
+            git clone --depth=1 "${BOOTSTRAP_REPO}" "${bootstrap_tmp}" 2>&1 | tail -3
+            spin_stop
+
+            log_info "Merging bootstrap system folders (etc, usr) to /"
+            for d in etc usr; do
                 if [[ -d "${bootstrap_tmp}/${d}" ]]; then
-                    cp -rv "${bootstrap_tmp}/${d}/"* "/${d}/" 2>/dev/null || true
+                    cp -a "${bootstrap_tmp}/${d}/." "/${d}/" 2>/dev/null || true
                 fi
             done
-            
-            local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
-            if [[ -d "${bootstrap_tmp}/profile" ]]; then
-                log_info "Staging user-space profile to ${home}"
-                cp -rv "${bootstrap_tmp}/profile/"* "${home}/"
-                chown -R "${LINUX_USER}:${LINUX_USER}" "${home}"
-            fi
             rm -rf "${bootstrap_tmp}"
             log_ok "MiOS-bootstrap overlays applied"
 
-            # 3. Phase-2: Comprehensive Package Installation (build the FHS host
-            # from the merged source tree using PACKAGES.md SSOT).
-            log_phase "Phase-2 — Build (FHS package install from PACKAGES.md)"
-            if [[ -f "/usr/share/mios/PACKAGES.md" ]]; then
-                log_info "Installing full MiOS package stack from manifest (PACKAGES.md)..."
-                
-                # Extract all package names from fenced code blocks tagged with ```packages-*
+            # 3. Phase-2: RPM package install from PACKAGES.md SSOT.
+            # Build-only blocks (kernel kmods, selinux policy source, looking-glass
+            # build deps, cockpit plugin build deps) are excluded — they only make
+            # sense inside the OCI build pipeline, not on a running FHS host.
+            log_phase "Phase-2 — FHS package install (from PACKAGES.md)"
+            local packages_md="/usr/share/mios/PACKAGES.md"
+            if [[ -f "$packages_md" ]]; then
+                # Excluded block names: build-time / image-only groups
+                local -a exclude_blocks=(
+                    packages-kernel
+                    packages-k3s-selinux-build
+                    packages-looking-glass-build
+                    packages-cockpit-plugins-build
+                    packages-self-build
+                )
+                local exclude_pat
+                exclude_pat=$(printf '|%s' "${exclude_blocks[@]}")
+                exclude_pat="${exclude_pat:1}"   # strip leading |
+
                 local pkgs
-                pkgs=$(sed -n '/^```packages-/,/^```$/{/^```/d;/^#/d;/^$/d;p}' /usr/share/mios/PACKAGES.md | tr '\n' ' ')
-                
+                pkgs=$(awk -v excl="$exclude_pat" '
+                    /^```packages-/ {
+                        block = $0; sub(/^```/,"",block); sub(/[[:space:]].*$/,"",block)
+                        if (block ~ excl) { skip=1 } else { skip=0 }
+                        next
+                    }
+                    /^```$/ { skip=0; next }
+                    skip || /^#/ || /^$/ { next }
+                    { print }
+                ' "$packages_md" | tr '\n' ' ')
+
                 if [[ -n "$pkgs" ]]; then
-                    # Determine DNF command
-                    local dnf_cmd="dnf"
-                    command -v dnf5 >/dev/null 2>&1 && dnf_cmd="dnf5"
-                    
-                    log_info "Executing: $dnf_cmd install -y --skip-unavailable --best $pkgs"
-                    $dnf_cmd install -y --skip-unavailable --best $pkgs || log_warn "Some packages failed to install."
+                    # Install repos meta-packages first so that subsequent packages
+                    # can resolve from RPMFusion, CrowdSec, Terra, etc.
+                    local repo_pkgs
+                    repo_pkgs=$(sed -n '/^```packages-repos/,/^```$/{/^```/d;/^#/d;/^$/d;p}' "$packages_md" | tr '\n' ' ')
+                    if [[ -n "$repo_pkgs" ]]; then
+                        log_info "Setting up additional repos..."
+                        spin_start "Installing repo packages"
+                        # shellcheck disable=SC2086
+                        $dnf_cmd install -y --skip-unavailable $repo_pkgs 2>&1 | grep -E '^(Install|Upgrade|Error|Warning|Failed)' || true
+                        spin_stop
+                        $dnf_cmd makecache --refresh 2>/dev/null || true
+                        log_ok "Repos configured"
+                    fi
+
+                    log_info "Installing full MiOS component stack..."
+                    spin_start "dnf install (this takes several minutes)"
+                    # shellcheck disable=SC2086
+                    $dnf_cmd install -y --skip-unavailable --best $pkgs 2>&1 \
+                        | grep -E '^\s*(Installing|Upgrading|Removing|Error|Warning|Nothing)' || true
+                    spin_stop
+                    log_ok "Package installation complete"
                 else
-                    log_warn "No packages found in PACKAGES.md manifest."
+                    log_warn "No packages extracted from PACKAGES.md"
                 fi
             else
-                log_err "CRITICAL: /usr/share/mios/PACKAGES.md not found! Package installation skipped."
+                log_err "PACKAGES.md not found at ${packages_md} — package installation skipped"
             fi
 
-            # 4. Phase-3: Final MiOS System Initiation (sysusers, tmpfiles,
-            # daemon-reload, services).
-            log_phase "Phase-3 — System Init (sysusers + tmpfiles + services)"
-            if [[ -x "/install.sh" ]]; then
-                log_info "Running MiOS system-side installer from /"
-                bash "/install.sh"
-                log_ok "MiOS FHS system overlay complete"
-            else
-                log_err "MiOS install.sh not found at /install.sh"
-                exit 1
+            # 4. Phase-3: systemd-sysusers, systemd-tmpfiles, daemon-reload.
+            # This wires up MiOS user/group definitions and creates /var/ paths
+            # declared in usr/lib/tmpfiles.d/mios*.conf.
+            log_phase "Phase-3 — System init (sysusers + tmpfiles + daemon-reload)"
+            spin_start "Running systemd-sysusers"
+            systemctl-sysusers 2>/dev/null || systemd-sysusers 2>/dev/null || log_warn "systemd-sysusers not available"
+            spin_stop
+            spin_start "Running systemd-tmpfiles --create"
+            systemd-tmpfiles --create 2>/dev/null || log_warn "systemd-tmpfiles failed"
+            spin_stop
+            if systemctl is-system-running --quiet 2>/dev/null; then
+                spin_start "Reloading systemd daemon"
+                systemctl daemon-reload
+                spin_stop
+                log_ok "Systemd daemon reloaded"
             fi
+            log_ok "FHS system init complete"
             ;;
     esac
 }
