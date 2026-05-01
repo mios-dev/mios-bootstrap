@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mios-system": {
+      "command": "/usr/bin/mios-status",
+      "args": ["--mcp-mode"],
+      "env": {
+        "MIOS_ROOT": "/"
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "base_url": "http://localhost:8080/v1",
+  "chat_endpoint": "/v1/chat/completions",
+  "models_endpoint": "/v1/models",
+  "embeddings_endpoint": "/v1/embeddings",
+  "default_model": "qwen2.5-coder:7b",
+  "embed_model": "nomic-embed-text"
+}

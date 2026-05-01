@@ -30,17 +30,20 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/mios-dev/mios-boots
 2. `/etc/mios/profile.toml` — host (this repo's editable copy)
 3. `/usr/share/mios/profile.toml` — vendor defaults (`mios.git`)
 
-## AI file locations
+## AI file locations (flat structure, OpenAI-compatible)
 
 | File | Purpose |
 |---|---|
-| `/usr/share/mios/ai/system.md` | Canonical agent system prompt |
-| `/usr/share/mios/ai/v1/models.json` | Locally-served model catalog |
-| `/usr/share/mios/ai/v1/mcp.json` | MCP server registry |
-| `/etc/mios/ai/` | Host-local AI config overrides |
-| `/etc/skel/.config/mios/system-prompt.md` | Per-user AI prompt template |
+| `/usr/share/mios/ai/system.md` | Canonical agent system prompt (day-zero ready) |
+| `/usr/share/mios/ai/models.json` | OpenAI `/v1/models` format local model catalog |
+| `/usr/share/mios/ai/mcp.json` | MCP server registry |
+| `/etc/mios/ai/config.json` | Host-local inference config (base_url, models) |
+| `/etc/mios/ai/system-prompt.md` | Host-local system prompt override |
+| `/etc/skel/.config/mios/system-prompt.md` | Per-user prompt override template |
 | `/usr/share/mios/memory/` | AI episodic journal (JSONL) |
 | `/usr/share/mios/knowledge/` | RAG knowledge graphs |
+
+**System prompt resolution:** `$MIOS_AI_SYSTEM_PROMPT` → `~/.config/mios/system-prompt.md` → `/etc/mios/ai/system-prompt.md` → `/usr/share/mios/ai/system.md`
 
 ## Default identity
 

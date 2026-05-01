@@ -1,0 +1,23 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "qwen2.5-coder:7b",
+      "object": "model",
+      "created": 1746057600,
+      "owned_by": "mios-system",
+      "permission": [],
+      "root": "qwen2.5-coder:7b",
+      "parent": null
+    },
+    {
+      "id": "nomic-embed-text",
+      "object": "model",
+      "created": 1746057600,
+      "owned_by": "mios-system",
+      "permission": [],
+      "root": "nomic-embed-text",
+      "parent": null
+    }
+  ]
+}
