@@ -70,18 +70,28 @@ function Read-WithDefault {
 
 function Get-SHA512Hash {
     param([string]$PlainText)
-    # Generate SHA-512 crypt-style hash (format: $6$salt$hash)
-    # Compatible with Linux shadow file format
     $salt = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
-    $saltPrefix = "`$6`$$salt`$"
 
-    $encoder = [System.Text.Encoding]::UTF8
-    $hasher = [System.Security.Cryptography.SHA512]::Create()
-    $bytes = $encoder.GetBytes($PlainText + $salt)
-    $hashBytes = $hasher.ComputeHash($bytes)
-    $hashB64 = [Convert]::ToBase64String($hashBytes).Replace("+", ".").Replace("=", "")
+    # Try WSL openssl first (fastest, no container pull needed)
+    try {
+        $hash = & wsl openssl passwd -6 -salt $salt $PlainText 2>$null
+        if ($LASTEXITCODE -eq 0 -and $hash -match '^\$6\$') { return $hash.Trim() }
+    } catch {}
 
-    return "$saltPrefix$hashB64"
+    # Fallback: MiOS helper image
+    $HelperImage = "ghcr.io/mios-dev/mios:latest"
+    try {
+        $hash = & podman run --rm $HelperImage openssl passwd -6 -salt $salt $PlainText 2>$null
+        if ($LASTEXITCODE -eq 0 -and $hash -match '^\$6\$') { return $hash.Trim() }
+    } catch {}
+
+    # Fallback: alpine
+    try {
+        $hash = & podman run --rm docker.io/library/alpine:latest sh -c "apk add --quiet openssl >/dev/null 2>&1 && openssl passwd -6 -salt '$salt' '$PlainText'" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $hash -match '^\$6\$') { return $hash.Trim() }
+    } catch {}
+
+    throw "Failed to generate sha512crypt hash. Ensure WSL or Podman is available."
 }
 
 # ============================================================================
@@ -407,19 +417,60 @@ if ($GHCR_USER) {
     $env:GHCR_TOKEN = $GHCR_TOKEN
 }
 
-$target = "$env:TEMP\mios-install-$(Get-Random).ps1"
+# Clone repositories to persistent Windows application data directory
+Write-Host "  Cloning MiOS repositories to $MiosRepoDir..." -ForegroundColor Gray
+
+$MiosSystemRepo = Join-Path $MiosRepoDir "mios"
+$MiosBootstrapRepo = Join-Path $MiosRepoDir "mios-bootstrap"
+
+$gitCredHelper = if ($GITHUB_TOKEN) { "https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com" } else { "https://github.com" }
 
 try {
-    Write-Host "  Fetching mios-build-local.ps1 from MiOS-bootstrap..." -ForegroundColor Gray
-    Invoke-WebRequest -Uri $PublicInstaller -OutFile $target -UseBasicParsing
-    Write-Host "  [OK] Build script downloaded" -ForegroundColor Green
+    foreach ($repoSpec in @(
+        @{ Url = "https://github.com/MiOS-DEV/MiOS.git"; Dest = $MiosSystemRepo; Name = "mios" },
+        @{ Url = "https://github.com/MiOS-DEV/MiOS-bootstrap.git"; Dest = $MiosBootstrapRepo; Name = "mios-bootstrap" }
+    )) {
+        $cloneUrl = if ($GITHUB_TOKEN) {
+            $repoSpec.Url -replace "https://", "https://${GITHUB_USER}:${GITHUB_TOKEN}@"
+        } else { $repoSpec.Url }
+
+        if (Test-Path (Join-Path $repoSpec.Dest ".git")) {
+            Write-Host "    Updating $($repoSpec.Name)..." -ForegroundColor DarkGray
+            & git -C $repoSpec.Dest pull --ff-only 2>&1 | Out-Null
+        } else {
+            Write-Host "    Cloning $($repoSpec.Name)..." -ForegroundColor DarkGray
+            & git clone --depth 1 $cloneUrl $repoSpec.Dest 2>&1 | Out-Null
+        }
+        Write-Host "    [OK] $($repoSpec.Name) → $($repoSpec.Dest)" -ForegroundColor DarkGray
+    }
+    Write-Host "  [OK] Repositories cloned" -ForegroundColor Green
+} catch {
+    Write-Host "  [!] Git clone failed: $_ (non-fatal, will use downloaded build script)" -ForegroundColor Yellow
+}
+
+# Run build script: prefer cloned copy, fallback to download
+$buildScript = Join-Path $MiosBootstrapRepo "mios-build-local.ps1"
+if (-not (Test-Path $buildScript)) {
+    $buildScript = Join-Path $MiosSystemRepo "mios-build-local.ps1"
+}
+
+try {
+    if (Test-Path $buildScript) {
+        Write-Host "  Using build script: $buildScript" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  Fetching mios-build-local.ps1 from MiOS-bootstrap..." -ForegroundColor Gray
+        $buildScript = Join-Path $MiosLogsDir "mios-build-local.ps1"
+        Invoke-WebRequest -Uri $PublicInstaller -OutFile $buildScript -UseBasicParsing
+        Write-Host "  [OK] Build script downloaded" -ForegroundColor Green
+    }
+
     Write-Host ""
     Write-Host "  ════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
     Write-Host "  Starting MiOS build (estimated time: 15-20 minutes)" -ForegroundColor Cyan
     Write-Host "  ════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
     Write-Host ""
 
-    & $target
+    & $buildScript
 
 } catch {
     Write-Host ""
@@ -440,5 +491,5 @@ try {
     Write-Host "    .\mios-build-local.ps1" -ForegroundColor Gray
     exit 1
 } finally {
-    Remove-Item $target -ErrorAction SilentlyContinue
+    Remove-Item $buildScript -ErrorAction SilentlyContinue
 }
