@@ -1,0 +1,27 @@
+# ~/.config/mios/profile.toml — Per-user MiOS profile.
+#
+# Seeded from /etc/mios/profile.toml on first login by `mios init-user-space`.
+# Edit freely; `mios reinit-user-space` overwrites this file from the system
+# profile, so back up customizations first.
+
+[identity]
+# `username` is fixed (it's your own login). Override fullname only.
+fullname = "MiOS User"
+
+[locale]
+timezone        = "UTC"
+keyboard_layout = "us"
+language        = "en_US.UTF-8"
+
+[ai]
+# Per-user AI overrides. `endpoint` MUST stay on localhost (LAW 5).
+endpoint = "http://localhost:8080/v1"
+model    = "default"
+api_key  = ""
+
+[desktop]
+# Per-user desktop preferences override the system defaults.
+color_scheme = "prefer-dark"
+
+[mios]
+# Reserved for per-user feature flags. Bootstrap leaves this empty.

@@ -7,50 +7,117 @@
 #   # or after cloning:
 #   sudo /path/to/MiOS-bootstrap/install.sh
 #
-# Bootstrap's job:
-#   1. Detect host kind (bootc-managed Fedora vs FHS Fedora vs unsupported).
-#   2. Interactively gather installation profile -- everything defaults to
-#      "mios" until the user overrides. Prompts:
-#         - Linux username        (default: mios)
-#         - Hostname              (default: mios)
-#         - Full name (GECOS)     (default: "MiOS User")
-#         - Password              (no default; prompt twice for confirm)
-#         - SSH key handling      (default: generate ed25519)
-#         - GitHub PAT            (default: skip)
-#         - MiOS image / mode     (default: prebuilt bootc image)
-#   3. Apply the profile to the host:
-#         - hostnamectl set-hostname
-#         - useradd -m -G wheel,libvirt,kvm,video,render,input,dialout
-#         - chpasswd
-#         - ssh-keygen + ~/.ssh/authorized_keys staging
-#         - git credential helper for GitHub PAT
-#         - persist non-secret profile to /etc/mios/install.env
-#   4. Trigger the MiOS root install:
-#         - bootc host: `bootc switch ghcr.io/MiOS-DEV/mios:latest`
-#         - FHS host:   Merge MiOS core (mios.git) and Bootstrap (bootstrap.git) into /
-#   5. Reboot prompt.
+# Global pipeline phases (numbered; reused everywhere this project speaks of
+# "phases"):
+#
+#   Phase-0  mios-bootstrap    — preflight, profile load, host detection,
+#                                interactive identity capture (this script).
+#   Phase-1  overlay-merge     — clone mios.git into /, copy bootstrap
+#                                overlays (etc/, usr/, var/, profile/) on top.
+#   Phase-2  build             — optional self-build: `podman build` an OCI
+#                                image from the merged tree. The numbered
+#                                automation/[0-9][0-9]-*.sh scripts inside
+#                                Containerfile are sub-phases of Phase-2.
+#   Phase-3  apply             — systemd-sysusers, systemd-tmpfiles, daemon
+#                                reload; create the Linux user; stage
+#                                ~/.config/mios/{profile.toml,system-prompt.md}
+#                                + ~/.ssh/; deploy /etc/mios/ai/system-prompt.md.
+#   Phase-4  reboot            — interactive y/N to `systemctl reboot`.
 #
 # Idempotent: re-running with the same answers updates rather than duplicates.
+# load_profile_defaults() reads /etc/mios/profile.toml on a previously-
+# bootstrapped host (or this repo's etc/mios/profile.toml otherwise) so each
+# re-run picks up edits.
 
 set -euo pipefail
 
 # ============================================================================
-# Defaults -- the "mios everywhere" convention. User overrides via prompts.
+# Defaults — sourced from the user profile card (etc/mios/profile.toml in
+# this repo, or /etc/mios/profile.toml on a previously-bootstrapped host).
+# load_profile_defaults() below parses the TOML on-the-fly with sed/grep so
+# we don't pull in any TOML library at install time.
 # ============================================================================
 DEFAULT_USER="mios"
 DEFAULT_HOST="mios"
 DEFAULT_USER_FULLNAME="MiOS User"
 DEFAULT_USER_SHELL="/bin/bash"
-DEFAULT_USER_GROUPS="wheel,libvirt,kvm,video,render,input,dialout"
+DEFAULT_USER_GROUPS="wheel,libvirt,kvm,video,render,input,dialout,docker"
 DEFAULT_SSH_KEY_TYPE="ed25519"
-DEFAULT_IMAGE="ghcr.io/MiOS-DEV/mios:latest"
+DEFAULT_IMAGE="ghcr.io/mios-dev/mios:latest"
 DEFAULT_BRANCH="main"
+DEFAULT_TIMEZONE="UTC"
+DEFAULT_KEYBOARD="us"
+DEFAULT_LANG="en_US.UTF-8"
 
-MIOS_REPO="https://github.com/MiOS-DEV/MiOS.git"
-BOOTSTRAP_REPO="https://github.com/MiOS-DEV/MiOS-bootstrap.git"
+MIOS_REPO="https://github.com/mios-dev/mios.git"
+BOOTSTRAP_REPO="https://github.com/mios-dev/mios-bootstrap.git"
 PROFILE_DIR="/etc/mios"
+PROFILE_CARD="${PROFILE_DIR}/profile.toml"
 PROFILE_FILE="${PROFILE_DIR}/install.env"
 LOG_FILE="/var/log/mios-bootstrap.log"
+
+# Pull a value from a TOML file. Args: <file> <section> <key>.
+# Strips quotes and inline comments. Returns empty if missing.
+toml_get() {
+    local file="$1" section="$2" key="$3"
+    [[ -f "$file" ]] || { echo ""; return; }
+    awk -v sect="[${section}]" -v k="$key" '
+        $0 == sect            { in_sect = 1; next }
+        /^\[/                 { in_sect = 0 }
+        in_sect && $1 == k    { sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t]*#.*$/, ""); gsub(/^"|"$/, ""); print; exit }
+    ' "$file"
+}
+
+# Parse a TOML array of strings into a comma-joined value (groups, flatpaks).
+toml_get_array_csv() {
+    local file="$1" section="$2" key="$3"
+    [[ -f "$file" ]] || { echo ""; return; }
+    awk -v sect="[${section}]" -v k="$key" '
+        $0 == sect            { in_sect = 1; next }
+        /^\[/                 { in_sect = 0 }
+        in_sect && $1 == k    {
+            sub(/^[^\[]*\[/, ""); sub(/\].*$/, "")
+            gsub(/[ \t"]/, "")
+            print
+            exit
+        }
+    ' "$file"
+}
+
+# Resolve the active profile card path: /etc/mios/profile.toml first (a
+# previous install), then this repo's checkout copy.
+resolve_profile_card() {
+    if [[ -f "$PROFILE_CARD" ]]; then
+        echo "$PROFILE_CARD"; return
+    fi
+    local repo_card; repo_card="$(dirname "${BASH_SOURCE[0]}")/etc/mios/profile.toml"
+    if [[ -f "$repo_card" ]]; then
+        echo "$repo_card"; return
+    fi
+    echo ""
+}
+
+# Override DEFAULT_* from the resolved profile card (if any).
+load_profile_defaults() {
+    local card; card="$(resolve_profile_card)"
+    [[ -n "$card" ]] || return 0
+    log_info "Seeding defaults from profile card: ${card}"
+
+    local v
+    v="$(toml_get "$card" identity username)";  [[ -n "$v" ]] && DEFAULT_USER="$v"
+    v="$(toml_get "$card" identity hostname)";  [[ -n "$v" ]] && DEFAULT_HOST="$v"
+    v="$(toml_get "$card" identity fullname)";  [[ -n "$v" ]] && DEFAULT_USER_FULLNAME="$v"
+    v="$(toml_get "$card" identity shell)";     [[ -n "$v" ]] && DEFAULT_USER_SHELL="$v"
+    v="$(toml_get_array_csv "$card" identity groups)"; [[ -n "$v" ]] && DEFAULT_USER_GROUPS="$v"
+    v="$(toml_get "$card" auth ssh_key_type)";  [[ -n "$v" ]] && DEFAULT_SSH_KEY_TYPE="$v"
+    v="$(toml_get "$card" image ref)";          [[ -n "$v" ]] && DEFAULT_IMAGE="$v"
+    v="$(toml_get "$card" image branch)";       [[ -n "$v" ]] && DEFAULT_BRANCH="$v"
+    v="$(toml_get "$card" locale timezone)";    [[ -n "$v" ]] && DEFAULT_TIMEZONE="$v"
+    v="$(toml_get "$card" locale keyboard_layout)"; [[ -n "$v" ]] && DEFAULT_KEYBOARD="$v"
+    v="$(toml_get "$card" locale language)";    [[ -n "$v" ]] && DEFAULT_LANG="$v"
+    v="$(toml_get "$card" bootstrap mios_repo)";      [[ -n "$v" ]] && MIOS_REPO="$v"
+    v="$(toml_get "$card" bootstrap bootstrap_repo)"; [[ -n "$v" ]] && BOOTSTRAP_REPO="$v"
+}
 
 # ============================================================================
 # Logging
@@ -141,10 +208,10 @@ prompt_yesno() {
 }
 
 # ============================================================================
-# Phase 2: gather installation profile
+# Phase-0 (continued): gather installation profile
 # ============================================================================
 gather_user_choices() {
-    log_phase "Installation profile"
+    log_phase "Phase-0 — Installation profile"
     log_info "Press Enter to accept defaults (everything defaults to MiOS)."
     echo
 
@@ -182,10 +249,10 @@ gather_user_choices() {
 }
 
 # ============================================================================
-# Phase 3: confirm before applying
+# Phase-0 (continued): confirm before applying
 # ============================================================================
 print_summary() {
-    log_phase "Review profile"
+    log_phase "Phase-0 — Review profile"
     cat <<EOF
   ${_BOLD}Linux user${_RESET}     : ${LINUX_USER}  (full name: ${USER_FULLNAME})
   ${_BOLD}Sudo groups${_RESET}    : ${DEFAULT_USER_GROUPS}
@@ -203,10 +270,10 @@ EOF
 }
 
 # ============================================================================
-# Phase 4: apply profile to host
+# Phase-3: apply profile to host
 # ============================================================================
 apply_user_profile() {
-    log_phase "Apply profile to host"
+    log_phase "Phase-3 — Apply profile to host"
     mkdir -p "${PROFILE_DIR}"
     chmod 0750 "${PROFILE_DIR}"
 
@@ -269,19 +336,29 @@ MIOS_INSTALLED_AT="$(date -u --iso-8601=seconds)"
 MIOS_BOOTSTRAP_VERSION="0.2.0"
 EOF
     chmod 0640 "${PROFILE_FILE}"
-    log_ok "Profile written: ${PROFILE_FILE}"
+    log_ok "Profile env written: ${PROFILE_FILE}"
+
+    # Persist the user-editable profile card alongside install.env so future
+    # bootstrap re-runs (or `mios edit-env`) can amend defaults in TOML.
+    if [[ ! -f "${PROFILE_CARD}" ]]; then
+        local repo_card; repo_card="$(dirname "${BASH_SOURCE[0]}")/etc/mios/profile.toml"
+        if [[ -f "$repo_card" ]]; then
+            install -m 0644 "$repo_card" "${PROFILE_CARD}"
+            log_ok "Profile card seeded: ${PROFILE_CARD}"
+        fi
+    fi
 }
 
 # ============================================================================
-# Phase 4b: deploy AI system prompt
+# Phase-3 (continued): deploy AI system prompt to host AND user home
 # ============================================================================
 deploy_system_prompt() {
-    log_phase "Deploy AI system prompt"
+    log_phase "Phase-3 — Deploy AI system prompt"
     install -d -m 0755 /etc/mios/ai
 
     local src_local prompt_url
     src_local="$(dirname "${BASH_SOURCE[0]}")/system-prompt.md"
-    prompt_url="https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/${DEFAULT_BRANCH}/system-prompt.md"
+    prompt_url="https://raw.githubusercontent.com/mios-dev/mios-bootstrap/${DEFAULT_BRANCH}/system-prompt.md"
 
     if [[ -f "$src_local" ]]; then
         log_info "Using local system-prompt.md from ${src_local}"
@@ -297,14 +374,58 @@ deploy_system_prompt() {
             return 0
         fi
     fi
-    log_ok "System prompt deployed: /etc/mios/ai/system-prompt.md"
+    log_ok "Host system prompt deployed: /etc/mios/ai/system-prompt.md"
+
+    # Stage per-user copies for every existing human account (uid >= 1000,
+    # excluding nobody/65534). Each user gets their own editable copy at
+    # ~/.config/mios/system-prompt.md alongside ~/.config/mios/profile.toml.
+    local home u
+    while IFS=: read -r u _ uid _ _ home _; do
+        [[ "$uid" -ge 1000 && "$uid" -lt 65534 && -d "$home" ]] || continue
+        sudo -u "$u" install -d -m 0755 "${home}/.config/mios"
+        install -o "$u" -g "$u" -m 0644 \
+            /etc/mios/ai/system-prompt.md "${home}/.config/mios/system-prompt.md"
+        log_ok "User system prompt staged: ${home}/.config/mios/system-prompt.md"
+    done < /etc/passwd
 }
 
 # ============================================================================
-# Phase 5: trigger MiOS root install (TOTAL MERGE)
+# Phase-3 (continued): stage per-user profile card + system prompt for the
+# bootstrap-created user. Called from trigger_mios_install after the new
+# Linux user exists.
+# ============================================================================
+stage_user_profile_artifacts() {
+    log_phase "Phase-3 — Stage per-user MiOS artifacts"
+    local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
+    [[ -n "$home" && -d "$home" ]] || { log_warn "User home not found; skipping per-user staging"; return 0; }
+
+    sudo -u "${LINUX_USER}" install -d -m 0755 "${home}/.config/mios"
+
+    local repo_card; repo_card="$(dirname "${BASH_SOURCE[0]}")/profile/.config/mios/profile.toml"
+    if [[ -f "$repo_card" ]]; then
+        install -o "${LINUX_USER}" -g "${LINUX_USER}" -m 0644 \
+            "$repo_card" "${home}/.config/mios/profile.toml"
+        log_ok "User profile card: ${home}/.config/mios/profile.toml"
+    else
+        log_warn "profile/.config/mios/profile.toml missing in bootstrap repo"
+    fi
+
+    if [[ -f /etc/mios/ai/system-prompt.md ]]; then
+        install -o "${LINUX_USER}" -g "${LINUX_USER}" -m 0644 \
+            /etc/mios/ai/system-prompt.md "${home}/.config/mios/system-prompt.md"
+        log_ok "User system prompt: ${home}/.config/mios/system-prompt.md"
+    fi
+}
+
+# ============================================================================
+# Phase-1 + Phase-2: clone mios.git into /, apply bootstrap overlays, install
+# packages from PACKAGES.md SSOT, run mios.git/install.sh for system init.
+# Phase-2 (build) is implicit: on FHS hosts the package install + system-side
+# init is the equivalent of "build the running system from the merged tree";
+# on bootc hosts Phase-2 is `bootc switch` to a pre-built image.
 # ============================================================================
 trigger_mios_install() {
-    log_phase "Trigger MiOS Total Root Merge"
+    log_phase "Phase-1 — Total Root Merge"
     
     case "${INSTALL_MODE}" in
         bootc)
@@ -347,7 +468,9 @@ trigger_mios_install() {
             rm -rf "${bootstrap_tmp}"
             log_ok "MiOS-bootstrap overlays applied"
 
-            # 3. Comprehensive Package Installation for Self-Building support
+            # 3. Phase-2: Comprehensive Package Installation (build the FHS host
+            # from the merged source tree using PACKAGES.md SSOT).
+            log_phase "Phase-2 — Build (FHS package install from PACKAGES.md)"
             if [[ -f "/usr/share/mios/PACKAGES.md" ]]; then
                 log_info "Installing full MiOS package stack from manifest (PACKAGES.md)..."
                 
@@ -369,7 +492,9 @@ trigger_mios_install() {
                 log_err "CRITICAL: /usr/share/mios/PACKAGES.md not found! Package installation skipped."
             fi
 
-            # 4. Final MiOS System Initiation
+            # 4. Phase-3: Final MiOS System Initiation (sysusers, tmpfiles,
+            # daemon-reload, services).
+            log_phase "Phase-3 — System Init (sysusers + tmpfiles + services)"
             if [[ -x "/install.sh" ]]; then
                 log_info "Running MiOS system-side installer from /"
                 bash "/install.sh"
@@ -383,10 +508,10 @@ trigger_mios_install() {
 }
 
 # ============================================================================
-# Phase 6: reboot prompt
+# Phase-4: reboot prompt
 # ============================================================================
 reboot_prompt() {
-    log_phase "Reboot"
+    log_phase "Phase-4 — Reboot"
     if prompt_yesno 'Reboot now to activate MiOS?' y; then
         log_info "Rebooting in 3s..."
         sleep 3
@@ -401,7 +526,7 @@ reboot_prompt() {
 # ============================================================================
 main() {
     require_root
-    log_phase "MiOS Bootstrap Installer (Total Root Merge Mode)"
+    log_phase "Phase-0 — mios-bootstrap (Total Root Merge Mode)"
 
     local hostkind
     hostkind="$(detect_host_kind)"
@@ -412,18 +537,27 @@ main() {
     log_info "Detected host: ${hostkind}"
 
     check_network
+    load_profile_defaults
     gather_user_choices
     print_summary
-    
-    # 1. Merge MiOS Repository and Install ALL Packages (this creates system groups)
+
+    # Phase-1 (overlay merge) and Phase-2 (build / package install) happen
+    # inside trigger_mios_install. System groups are created there before
+    # apply_user_profile needs them.
     trigger_mios_install
-    
-    # 2. Deploy AI System Prompt
+
+    # Phase-3a: deploy AI system prompt to host /etc/ AND every existing user home.
     deploy_system_prompt
-    
-    # 3. Create MiOS User and apply profile (groups now exist)
+
+    # Phase-3b: create the bootstrap user, set password, persist install.env
+    # and seed /etc/mios/profile.toml.
     apply_user_profile
-    
+
+    # Phase-3c: stage the per-user profile.toml + system-prompt.md into the
+    # newly-created user's home (idempotent on re-run).
+    stage_user_profile_artifacts
+
+    # Phase-4
     reboot_prompt
 }
 

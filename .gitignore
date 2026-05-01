@@ -29,9 +29,18 @@
 !VARIABLES.md
 !llms.txt
 
-# Profile skeleton (dotfiles, per-user systemd units, etc.)
+# Profile skeleton (dotfiles, per-user systemd units, system prompt, profile card)
 !profile/
 !profile/**
+
+# Bootstrap-owned overlay subtrees that get merged into / on FHS hosts
+# (system-prompt host copy, manifest, RAG, knowledge graphs, snapshots).
+!etc/
+!etc/**
+!usr/
+!usr/**
+!var/
+!var/**
 
 # Re-ignore noise
 **/__pycache__/

@@ -1,13 +1,21 @@
 # profile/
 
-User-space ignition profile applied by `install.sh`.
+Per-user dotfile and config skeleton staged into `~<user>/` by
+`install.sh:trigger_mios_install` after the Total Root Merge. The contents
+are copied verbatim, then `chown`'d to the new user.
 
-Layout (populate as the project grows):
+## Layout
 
-- `dotfiles/`  -- skel-style dotfiles symlinked into `~` for the created user
-- `systemd/`   -- per-user systemd units (`.config/systemd/user/`)
-- `gnome/`     -- dconf snapshots and extension manifests
-- `xdg/`       -- XDG config templates
+```
+profile/
+├── .bashrc                          # shell init (optional)
+├── .config/
+│   └── mios/
+│       └── profile.toml             # per-user copy of /etc/mios/profile.toml
+└── .ssh/                            # optional placeholder; installer populates id_*
+```
 
-Bootstrap's `install.sh` reads from this tree and stages files into the
-created user's home and XDG dirs. Ownership and mode are preserved.
+The system-wide profile at `/etc/mios/profile.toml` is the source of truth;
+per-user `~/.config/mios/profile.toml` overrides specific fields. Run
+`mios init-user-space` on first login to reseed per-user state from the
+system profile.

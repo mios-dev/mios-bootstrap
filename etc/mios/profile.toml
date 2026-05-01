@@ -1,0 +1,122 @@
+# /etc/mios/profile.toml — MiOS User Profile Card
+#
+# Edit any field below before installing, or after at any time. The bootstrap
+# installer (install.sh) reads this file to seed prompt defaults; the
+# resulting non-secret installation metadata is written to
+# /etc/mios/install.env at install time.
+#
+# Secret fields (password_hash, luks_passphrase, github_pat) are NEVER read
+# from a checked-in copy; the installer prompts interactively for them and
+# writes them to root-owned mode-0600 files outside this profile.
+#
+# Format: TOML 1.0 (https://toml.io/en/v1.0.0).
+
+#------------------------------------------------------------------------------
+# Identity — Linux account, hostname, GECOS, login shell, group membership.
+#------------------------------------------------------------------------------
+[identity]
+username  = "mios"
+fullname  = "MiOS User"
+hostname  = "mios"
+shell     = "/bin/bash"
+groups    = ["wheel", "libvirt", "kvm", "video", "render", "input", "dialout", "docker"]
+
+#------------------------------------------------------------------------------
+# Locale — system-wide defaults applied via systemd-localed at first boot.
+#------------------------------------------------------------------------------
+[locale]
+timezone        = "UTC"
+keyboard_layout = "us"
+language        = "en_US.UTF-8"
+
+#------------------------------------------------------------------------------
+# Authentication & secrets policy.
+#   ssh_key_action: generate | existing | skip
+#   password_policy: interactive | hashed | none
+#     - "interactive" : prompt at install (default)
+#     - "hashed"      : use the literal hash in `password_hash` (openssl passwd -6)
+#     - "none"        : no password set; useful for kiosk / CI builds
+#------------------------------------------------------------------------------
+[auth]
+ssh_key_type     = "ed25519"
+ssh_key_action   = "generate"
+existing_ssh_key = ""
+password_policy  = "interactive"
+password_hash    = ""           # only used when password_policy = "hashed"
+luks_passphrase  = ""           # only honored on FHS installer with disk encryption
+github_pat       = ""           # configures git credential helper if non-empty
+
+#------------------------------------------------------------------------------
+# Network & firewall posture.
+# Defaults match SECURITY.md (firewalld default zone "drop", ssh + cockpit allowed).
+#------------------------------------------------------------------------------
+[network]
+firewalld_default_zone = "drop"
+allow_ssh              = true
+allow_cockpit          = true   # opens 9090/tcp
+allow_libvirt_bridge   = true   # for VM networking
+
+#------------------------------------------------------------------------------
+# Local AI surface (LAW 5 — UNIFIED-AI-REDIRECTS).
+# Endpoint MUST stay on localhost; vendor URLs are forbidden by the canonical
+# system prompt §6.
+#------------------------------------------------------------------------------
+[ai]
+endpoint        = "http://localhost:8080/v1"
+model           = "default"
+api_key         = ""              # empty = unauthenticated localhost
+enable_ollama   = false
+enable_localai  = true
+mcp_registry    = "/usr/share/mios/ai/v1/mcp.json"
+
+#------------------------------------------------------------------------------
+# Desktop session preferences. GNOME 50 Wayland is the only supported session.
+#------------------------------------------------------------------------------
+[desktop]
+session       = "gnome"
+color_scheme  = "prefer-dark"   # libadwaita / dconf color-scheme
+flatpaks      = [
+    "org.gnome.Epiphany",
+    "com.github.tchx84.Flatseal",
+    "io.github.kolunmi.Bazaar",
+    "com.mattjakeman.ExtensionManager",
+]
+
+#------------------------------------------------------------------------------
+# Image reference — overrides the default ghcr ref baked into the image.
+# Used by `bootc switch` on bootc-managed hosts.
+#------------------------------------------------------------------------------
+[image]
+ref    = "ghcr.io/mios-dev/mios:latest"
+branch = "main"
+
+#------------------------------------------------------------------------------
+# Bootstrap behavior.
+#   mode: auto | bootc | fhs
+#     - "auto"  : detect host kind, prefer bootc switch when available
+#     - "bootc" : force `bootc switch` (fail if not bootc-managed)
+#     - "fhs"   : force the Total Root Merge path (clone + overlay)
+#------------------------------------------------------------------------------
+[bootstrap]
+mode             = "auto"
+mios_repo        = "https://github.com/mios-dev/mios.git"
+bootstrap_repo   = "https://github.com/mios-dev/mios-bootstrap.git"
+install_packages = true   # run dnf install on PACKAGES.md after FHS overlay
+reboot_on_finish = true   # interactive y/N prompt at end
+
+#------------------------------------------------------------------------------
+# Sidecar Quadlet enablement. Each entry maps a Quadlet name to whether it
+# should be `systemctl enable --now`'d at first boot.
+# Quadlet definitions ship in mios.git under etc/containers/systemd/ and
+# usr/share/containers/systemd/.
+#------------------------------------------------------------------------------
+[quadlets.enable]
+mios-ai           = true
+mios-ceph         = false
+mios-k3s          = false
+crowdsec-dashboard = false
+ollama            = false
+cloudws-guacamole = false
+cloudws-pxe-hub   = false
+guacamole-postgres = false
+guacd             = false
