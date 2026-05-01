@@ -29,21 +29,26 @@ user-editable layer of the three-layer profile model.
 
 ## Install
 
-### Windows 11 (Podman + WSL2)
+### Windows 11 (Podman Desktop + WSL2)
 
 ```powershell
 irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.ps1 | iex
 ```
 
-Installs MiOS as a Windows application under `%LOCALAPPDATA%\Programs\MiOS\`:
-- Clones both repos to `...\Programs\MiOS\repo\{mios,mios-bootstrap}`
-- Writes `%APPDATA%\MiOS\registry.toml` (Windows user-space config)
-- Registers in Add/Remove Programs (no admin required — HKCU)
-- Creates a **MiOS** Start Menu group: Bootstrap, Build, WSL Terminal, Uninstall
-- Auto-configures `%USERPROFILE%\.wslconfig` (memory, processors, mirrored networking)
+One script — all phases in sequence, fully idempotent:
 
-Prerequisites: [Git](https://git-scm.com/download/win) and [Podman Desktop](https://podman-desktop.io).
-WSL2 (`wsl --install`) must be enabled for the runtime and build pipeline.
+1. Checks prerequisites (Git, WSL2, Podman Desktop)
+2. Creates `%LOCALAPPDATA%\Programs\MiOS\`, clones both repos
+3. Configures `%USERPROFILE%\.wslconfig` (memory/CPU/mirrored networking)
+4. Collects identity — username, hostname, password (all default to `mios`, just press Enter)
+5. Writes identity into the WSL2 distro (`/etc/mios/install.env`)
+6. Registers in Add/Remove Programs and creates the **MiOS** Start Menu group
+7. Runs `just build` inside `podman-machine-default`
+
+Re-running is safe — if the WSL2 distro already has the repo at `/`, it pulls
+the latest and goes straight to build with no prompts.
+
+Prerequisites: [Git](https://git-scm.com/download/win), [Podman Desktop](https://podman-desktop.io), WSL2 (`wsl --install`).
 
 ### Linux (Fedora bootc)
 
