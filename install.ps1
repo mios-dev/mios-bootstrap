@@ -23,6 +23,7 @@ $MiosLogDir       = Join-Path $MiosDataDir "logs"
 $MiosRepoUrl      = "https://github.com/mios-dev/mios.git"
 $MiosBootstrapUrl = "https://github.com/mios-dev/mios-bootstrap.git"
 $BuilderDistro    = "MiOS-BUILDER"
+$MiosWslDistro    = "MiOS"
 $LegacyDistro     = "podman-machine-default"
 $UninstallRegKey  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS"
 $StartMenuDir     = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\MiOS"
@@ -53,10 +54,14 @@ $script:PhaseNames = @(
     "Identity",                    # 6
     "Writing identity",            # 7
     "App registration",            # 8
-    "Building OCI image"           # 9
+    "Building OCI image",          # 9
+    "Exporting WSL2 image",        # 10
+    "Registering MiOS WSL2",       # 11
+    "Building disk images",        # 12
+    "Deploying Hyper-V VM"         # 13
 )
 $script:TotalPhases  = $script:PhaseNames.Count
-$script:PhStat       = @(0,0,0,0,0,0,0,0,0,0)   # 0=wait 1=run 2=ok 3=fail 4=warn
+$script:PhStat       = @(0,0,0,0,0,0,0,0,0,0,0,0,0,0)   # 0=wait 1=run 2=ok 3=fail 4=warn
 $script:PhStart      = @{}
 $script:PhEnd        = @{}
 $script:CurPhase     = -1
@@ -116,7 +121,7 @@ function Show-Dashboard {
 
     $curName = if ($script:CurPhase -ge 0) { [string]$script:PhaseNames[$script:CurPhase] } else { "Initializing" }
     $phLabel = "[$($script:CurPhase)/$($script:TotalPhases-1)] $curName"
-    if ($script:CurPhase -eq ($script:TotalPhases-1) -and $script:BuildSubTotal -gt 0) {
+    if ($script:CurPhase -eq 9 -and $script:BuildSubTotal -gt 0) {
         $phLabel += "  ($($script:BuildSubDone)/$($script:BuildSubTotal) steps)"
     }
 
@@ -465,6 +470,239 @@ function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
     return $rc
 }
 
+function Export-WslTar([string]$OutFile) {
+    # Stream localhost/mios:latest filesystem from machine → Windows tar via podman socket API
+    Set-Step "Creating container snapshot of localhost/mios:latest..."
+    $contLines = (& podman create localhost/mios:latest /bin/true 2>$null)
+    $contId = ($contLines | Where-Object { $_ -match '^[0-9a-f]{12,64}$' } | Select-Object -Last 1)
+    if ([string]::IsNullOrWhiteSpace($contId)) {
+        $contId = ($contLines | Select-Object -Last 1)
+    }
+    if ([string]::IsNullOrWhiteSpace($contId)) { throw "podman create returned no container ID" }
+    $contId = $contId.Trim()
+    Write-Log "export container: $contId"
+    try {
+        Set-Step "Streaming container filesystem → $([System.IO.Path]::GetFileName($OutFile))..."
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName               = "podman"
+        $psi.Arguments              = "export $contId"
+        $psi.RedirectStandardOutput = $true
+        $psi.UseShellExecute        = $false
+        $psi.CreateNoWindow         = $true
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $fs   = [System.IO.File]::Create($OutFile)
+        $sw   = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+            $buf    = New-Object byte[] 65536
+            $stream = $proc.StandardOutput.BaseStream
+            while ($true) {
+                $n = $stream.Read($buf, 0, $buf.Length)
+                if ($n -le 0) { break }
+                $fs.Write($buf, 0, $n)
+                if ($sw.ElapsedMilliseconds -ge 2000) {
+                    $mb = [math]::Round($fs.Length / 1MB)
+                    Set-Step "Exporting WSL2 tar... ${mb} MB"
+                    $sw.Restart()
+                }
+            }
+        } finally { $fs.Close() }
+        $proc.WaitForExit()
+        if ($proc.ExitCode -ne 0) { throw "podman export exited $($proc.ExitCode)" }
+        return $true
+    } finally {
+        & podman rm $contId 2>$null | Out-Null
+    }
+}
+
+function Import-MiosWsl([string]$TarFile, [string]$InstallDir) {
+    # Register WSL2 distro from tar (replaces existing MiOS distro if present)
+    if (-not (Test-Path $TarFile)) { throw "WSL2 tar not found: $TarFile" }
+    try { & wsl.exe --unregister $MiosWslDistro 2>$null | Out-Null } catch {}
+    if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
+    Set-Step "wsl --import $MiosWslDistro ..."
+    & wsl.exe --import $MiosWslDistro $InstallDir $TarFile --version 2 2>&1 |
+        ForEach-Object { Write-Log "wsl-import: $_" }
+    if ($LASTEXITCODE -ne 0) { throw "wsl --import exited $LASTEXITCODE" }
+    # Set default user in the new distro
+    try {
+        & wsl.exe -d $MiosWslDistro --user root --exec bash -c `
+            "id mios &>/dev/null && echo '[user]\ndefault=mios' >> /etc/wsl.conf || true" 2>$null | Out-Null
+    } catch {}
+    return $true
+}
+
+function Invoke-BibBuild([string[]]$Types, [string]$MachineOutDir, [int]$TimeoutMin = 60) {
+    # Run bootc-image-builder inside the machine via Windows podman API (→ machine socket)
+    # Types: 'qcow2', 'raw', 'anaconda-iso', 'vmdk'
+    $typeArgs = ($Types | ForEach-Object { "--type $_" }) -join " "
+    Set-Step "BIB: $($Types -join '+')..."
+    Write-Log "BIB start: types=$($Types -join ',')  out=$MachineOutDir"
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName  = "cmd.exe"
+    $psi.Arguments = ("/c podman run --rm --privileged --pull=newer " +
+        "--security-opt label=type:unconfined_t " +
+        "-v /var/lib/containers/storage:/var/lib/containers/storage:ro " +
+        "-v ${MachineOutDir}:/output:z " +
+        "quay.io/centos-bootc/bootc-image-builder:latest " +
+        "$typeArgs --local localhost/mios:latest 2>&1")
+    $psi.RedirectStandardOutput = $true
+    $psi.UseShellExecute        = $false
+    $psi.CreateNoWindow         = $true
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $sw   = [System.Diagnostics.Stopwatch]::StartNew()
+    $done = $false
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not $proc.StandardOutput.EndOfStream) {
+        $line = $proc.StandardOutput.ReadLine()
+        if ($null -eq $line) { break }
+        Write-Log "bib: $line"
+        if ($sw.ElapsedMilliseconds -ge 2000) {
+            $elapsed = [math]::Floor($timer.Elapsed.TotalMinutes)
+            Set-Step "BIB ${elapsed}min: $($line.Substring(0,[math]::Min($line.Length,60)))"
+            $sw.Restart()
+        }
+        if ($timer.Elapsed.TotalMinutes -ge $TimeoutMin) {
+            Write-Log "WARN: BIB timeout after ${TimeoutMin}min -- killing"
+            $proc.Kill()
+            break
+        }
+    }
+    $proc.WaitForExit()
+    Write-Log "BIB end: exit=$($proc.ExitCode)"
+    return $proc.ExitCode -eq 0
+}
+
+function Copy-FromMachine([string]$MachinePath, [string]$WinDest) {
+    # podman machine cp MiOS-BUILDER:/path/in/machine C:\windows\path
+    Set-Step "Copying $([System.IO.Path]::GetFileName($MachinePath)) from machine..."
+    & podman machine cp "${BuilderDistro}:${MachinePath}" $WinDest 2>&1 |
+        ForEach-Object { Write-Log "machine-cp: $_" }
+    return ($LASTEXITCODE -eq 0)
+}
+
+function New-MiosHyperVVm([string]$RawPath, [int]$RamGB = 8) {
+    if (-not (Get-Command New-VM -EA SilentlyContinue)) {
+        Write-Log "Hyper-V module not available -- skipping VM creation"
+        return $false
+    }
+    # Convert raw → vhdx if Convert-VHD is available
+    $vhdxPath = [System.IO.Path]::ChangeExtension($RawPath, ".vhdx")
+    if (Get-Command Convert-VHD -EA SilentlyContinue) {
+        Set-Step "Converting raw → vhdx..."
+        try {
+            Convert-VHD -Path $RawPath -DestinationPath $vhdxPath -VHDType Dynamic -EA Stop
+        } catch {
+            Write-Log "Convert-VHD failed: $_ -- trying raw rename"
+            $vhdxPath = [System.IO.Path]::ChangeExtension($RawPath, ".vhd")
+            Copy-Item $RawPath $vhdxPath -Force
+        }
+    } else {
+        # Raw can be used as a fixed VHD by Hyper-V if renamed .vhd
+        $vhdxPath = [System.IO.Path]::ChangeExtension($RawPath, ".vhd")
+        Copy-Item $RawPath $vhdxPath -Force
+    }
+    if (-not (Test-Path $vhdxPath)) { throw "VHDX/VHD not found after conversion" }
+
+    # Remove existing VM if present
+    $vmName = $MiosWslDistro
+    try { Remove-VM -Name $vmName -Force -EA SilentlyContinue } catch {}
+
+    Set-Step "Creating Hyper-V VM: $vmName..."
+    $vm = New-VM -Name $vmName -MemoryStartupBytes ($RamGB * 1GB) `
+                 -VHDPath $vhdxPath -Generation 2 -EA Stop
+    Set-VMFirmware  -VMName $vmName -EnableSecureBoot Off
+    Set-VMProcessor -VMName $vmName -Count ([math]::Max(2, [int]([Environment]::ProcessorCount / 2)))
+    Set-VMMemory    -VMName $vmName -DynamicMemoryEnabled $true `
+                    -MinimumBytes 2GB -MaximumBytes ($RamGB * 1GB)
+    Log-Ok "Hyper-V VM '$vmName' created from $([System.IO.Path]::GetFileName($vhdxPath))"
+    return $true
+}
+
+function Invoke-DeployPipeline([hashtable]$HW) {
+    $artifactDir = Join-Path $MiosDistroDir "artifacts"
+    $wslFsDir    = Join-Path $MiosDistroDir "MiOS"
+    if (-not (Test-Path $artifactDir)) { New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null }
+    if (-not (Test-Path $wslFsDir))    { New-Item -ItemType Directory -Path $wslFsDir    -Force | Out-Null }
+
+    # ── Phase 10: Export WSL2 tar ──────────────────────────────────────────────
+    Start-Phase 10
+    $wslTar = Join-Path $artifactDir "mios-wsl2.tar"
+    $wslOk  = $false
+    try {
+        $wslOk = Export-WslTar -OutFile $wslTar
+        $sizeMB = [math]::Round((Get-Item $wslTar).Length / 1MB)
+        Log-Ok "WSL2 tar: ${sizeMB}MB → $wslTar"
+        End-Phase 10
+    } catch {
+        Log-Warn "WSL2 export: $_"
+        End-Phase 10 -Warn
+    }
+
+    # ── Phase 11: Register WSL2 distro ────────────────────────────────────────
+    Start-Phase 11
+    if ($wslOk) {
+        try {
+            $null = Import-MiosWsl -TarFile $wslTar -InstallDir $wslFsDir
+            Log-Ok "WSL2 distro '$MiosWslDistro' registered at $wslFsDir"
+            End-Phase 11
+        } catch {
+            Log-Warn "WSL2 import: $_"
+            End-Phase 11 -Warn
+        }
+    } else {
+        Log-Warn "Skipped (no WSL2 tar)"
+        End-Phase 11 -Warn
+    }
+
+    # ── Phase 12: BIB disk images (qcow2 + raw) ───────────────────────────────
+    Start-Phase 12
+    $bibMachineDir = "/tmp/mios-bib-output"
+    $bibOk = $false
+    try {
+        $bibOk = Invoke-BibBuild -Types @('qcow2','raw') -MachineOutDir $bibMachineDir
+        if ($bibOk) {
+            # Copy artifacts from machine to Windows
+            $cpOk = @{}
+            foreach ($pair in @(
+                @{ src="$bibMachineDir/qcow2/disk.qcow2"; dst=Join-Path $artifactDir "mios.qcow2" },
+                @{ src="$bibMachineDir/image/disk.raw";   dst=Join-Path $artifactDir "mios.raw"   }
+            )) {
+                try {
+                    $cpOk[$pair.dst] = Copy-FromMachine $pair.src $pair.dst
+                    if ($cpOk[$pair.dst]) {
+                        $sz = [math]::Round((Get-Item $pair.dst).Length / 1GB, 1)
+                        Log-Ok "$([System.IO.Path]::GetFileName($pair.dst)): ${sz}GB"
+                    }
+                } catch { Write-Log "WARN: copy $($pair.src): $_" }
+            }
+            End-Phase 12
+        } else {
+            Log-Warn "BIB build failed (non-fatal -- OCI image still available in $BuilderDistro)"
+            End-Phase 12 -Warn
+        }
+    } catch {
+        Log-Warn "BIB phase: $_"
+        End-Phase 12 -Warn
+    }
+
+    # ── Phase 13: Hyper-V VM from raw disk ────────────────────────────────────
+    Start-Phase 13
+    $rawPath = Join-Path $artifactDir "mios.raw"
+    if ($bibOk -and (Test-Path $rawPath)) {
+        try {
+            $vmOk = New-MiosHyperVVm -RawPath $rawPath -RamGB ([math]::Max(4, [math]::Min($HW.RamGB / 2, 16)))
+            if ($vmOk) { End-Phase 13 } else { Log-Warn "Hyper-V not available"; End-Phase 13 -Warn }
+        } catch {
+            Log-Warn "Hyper-V VM: $_"
+            End-Phase 13 -Warn
+        }
+    } else {
+        Log-Warn "Skipped (no raw disk image)"
+        End-Phase 13 -Warn
+    }
+}
+
 function New-Shortcut([string]$Path,[string]$Target,[string]$Args="",[string]$Desc="",[string]$Dir="") {
     $ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut($Path)
     $sc.TargetPath = $Target
@@ -538,7 +776,10 @@ if ($activeDistro) {
 
     Start-Phase 9
     $rc = Invoke-WslBuild -Distro $activeDistro -BaseImage $HW.BaseImage -AiModel $HW.AiModel
-    if ($rc -eq 0) { End-Phase 9 } else { End-Phase 9 -Fail; $ExitCode = $rc }
+    if ($rc -eq 0) {
+        End-Phase 9
+        Invoke-DeployPipeline -HW $HW
+    } else { End-Phase 9 -Fail; $ExitCode = $rc }
 } else {
 
     if ($BuildOnly) { End-Phase 1 -Fail; throw "-BuildOnly: no MiOS build environment found. Run without -BuildOnly first." }
@@ -701,7 +942,8 @@ guiApplications=true
     @(
         @{ F="MiOS Setup.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`"";            D="Re-run full MiOS setup" },
         @{ F="MiOS Build.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`" -BuildOnly";  D="Pull latest + build MiOS OCI image" },
-        @{ F="MiOS WSL Terminal.lnk";  T="wsl.exe"; A="-d $BuilderDistro --user root";                         D="Open MiOS-BUILDER terminal (root)" },
+        @{ F="MiOS Terminal.lnk";        T="wsl.exe"; A="-d $MiosWslDistro";                                    D="Open MiOS workstation terminal" },
+        @{ F="MiOS Builder Shell.lnk";  T="wsl.exe"; A="-d $BuilderDistro --user root";                         D="Open MiOS-BUILDER terminal (root)" },
         @{ F="MiOS Podman Shell.lnk";  T=$pwsh;     A="-NoProfile -Command podman machine ssh $BuilderDistro"; D="SSH into MiOS-BUILDER Podman machine" },
         @{ F="Uninstall MiOS.lnk";     T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$uninstSc`"";           D="Remove MiOS" }
     ) | ForEach-Object { New-Shortcut (Join-Path $StartMenuDir $_.F) $_.T $_.A $_.D $MiosInstallDir }
@@ -733,7 +975,10 @@ Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -Foreground
     Start-Phase 9
     $rc = Invoke-WslBuild -Distro $BuilderDistro -BaseImage $HW.BaseImage -AiModel $HW.AiModel `
                           -MiosUser $MiosUser -MiosHostname $MiosHostname
-    if ($rc -eq 0) { End-Phase 9 } else { End-Phase 9 -Fail; $ExitCode = $rc }
+    if ($rc -eq 0) {
+        End-Phase 9
+        Invoke-DeployPipeline -HW $HW
+    } else { End-Phase 9 -Fail; $ExitCode = $rc }
 
 } # end full-install branch
 
@@ -754,10 +999,24 @@ Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -Foreground
     Write-Host ""
     $b = "+" + ("=" * ($script:DW - 2)) + "+"
     if ($ExitCode -eq 0) {
+        $artifactDir = Join-Path $MiosDistroDir "artifacts"
         Write-Host $b -ForegroundColor Green
-        $l = "| MiOS $MiosVersion built successfully!  (total: $totalTime)"
+        $l = "| MiOS $MiosVersion built and deployed!  (total: $totalTime)"
         Write-Host ($l.PadRight($script:DW - 1) + "|") -ForegroundColor Green
-        Write-Host ("| Image : localhost/mios:latest  in $BuilderDistro".PadRight($script:DW - 1) + "|") -ForegroundColor White
+        Write-Host ("| OCI   : localhost/mios:latest  in $BuilderDistro".PadRight($script:DW - 1) + "|") -ForegroundColor White
+        $wslLine = "| WSL2  : wsl -d $MiosWslDistro"
+        $wslDistroOk = (& wsl.exe -l --quiet 2>$null) -join " " -match $MiosWslDistro
+        if ($wslDistroOk) {
+            Write-Host ($wslLine.PadRight($script:DW - 1) + "|") -ForegroundColor Cyan
+        } else {
+            Write-Host ("| WSL2  : see $artifactDir\mios-wsl2.tar".PadRight($script:DW - 1) + "|") -ForegroundColor DarkGray
+        }
+        $qcow2 = Join-Path $artifactDir "mios.qcow2"
+        $raw   = Join-Path $artifactDir "mios.raw"
+        if (Test-Path $qcow2) { Write-Host ("| QEMU  : $qcow2".PadRight($script:DW - 1) + "|") -ForegroundColor Cyan }
+        if (Test-Path $raw)   { Write-Host ("| RAW   : $raw".PadRight($script:DW - 1) + "|") -ForegroundColor Cyan }
+        $hvVm = try { Get-VM -Name $MiosWslDistro -EA SilentlyContinue } catch { $null }
+        if ($hvVm) { Write-Host ("| HV    : Hyper-V VM '$MiosWslDistro' ready -- Start-VM -Name $MiosWslDistro".PadRight($script:DW - 1) + "|") -ForegroundColor Cyan }
         Write-Host ("| Logs  : $MiosLogDir".PadRight($script:DW - 1) + "|") -ForegroundColor DarkGray
         Write-Host $b -ForegroundColor Green
     } else {
