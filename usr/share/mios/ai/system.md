@@ -10,7 +10,7 @@ MiOS is an immutable bootc-native Fedora workstation OS delivered as an OCI imag
 - **model:** `qwen2.5-coder:7b` (`MIOS_AI_MODEL`)
 - **embed_model:** `nomic-embed-text` (`MIOS_AI_EMBED_MODEL`)
 - **port:** `8080` (`MIOS_AI_PORT`)
-- **container:** `mios-ai.container` (Quadlet, image: `localai/localai:v2.20.0`)
+- **container:** `mios-ai.container` (Quadlet, `MIOS_LOCALAI_IMAGE`)
 - **model weights:** `/srv/ai/models` (`MIOS_AI_MODELS_DIR`)
 - **MCP:** `/usr/share/mios/ai/mcp.json` → `/usr/bin/mios-status --mcp-mode`
 - **vars index:** `/usr/share/mios/ai/vars.json`
@@ -135,9 +135,9 @@ Network: `mios.network` (`MIOS_QUADLET_SUBNET=10.89.0.0/24`). Units in `/etc/con
 
 | Unit | Image | Port | Condition |
 |---|---|---|---|
-| `mios-ai.container` | `localai/localai:v2.20.0` | 8080 | PathIsDirectory=/etc/mios/ai |
-| `mios-k3s.container` | `rancher/k3s:v1.32.1-k3s1` | — | !wsl !container |
-| `mios-ceph.container` | `quay.io/ceph/ceph:v18` | — | PathExists=/etc/ceph/ceph.conf !container |
+| `mios-ai.container` | `MIOS_LOCALAI_IMAGE` | 8080 | PathIsDirectory=/etc/mios/ai |
+| `mios-k3s.container` | `MIOS_K3S_IMAGE` | — | !wsl !container |
+| `mios-ceph.container` | `MIOS_CEPH_IMAGE` | — | PathExists=/etc/ceph/ceph.conf !container |
 
 ---
 
