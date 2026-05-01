@@ -1,45 +1,49 @@
-# MiOS-DEV/MiOS-bootstrap
+# mios-dev/mios-bootstrap
 
-> Interactive ignition installer for MiOS. User-facing entry point.
-> Snapshot v0.2.0. The system layer (Containerfile, FHS overlay, build infra)
-> lives in https://github.com/MiOS-DEV/MiOS.
+> Interactive installer for MiOS v0.2.2. User-facing entry point.
+> The system layer (Containerfile, FHS overlay, build scripts) lives in
+> https://github.com/mios-dev/mios.git
 
-MiOS is an immutable, bootc-native workstation OS on Fedora. This repository
-contains only the bootstrap installer -- the script users run as root to
-create their MiOS account, set hostname/password, install an SSH key, and
-trigger the system install (either `bootc switch` for bootc hosts or a
-clone-and-FHS-overlay for non-bootc Fedora).
+MiOS is an immutable, bootc-native workstation OS on Fedora CoreOS delivered
+as an OCI image. This repository contains the bootstrap installer and
+AI/knowledge assets that are written to the deployed host at install time.
 
-## Files
+## Key files
 
-- install.sh - Interactive installer (the user entry point)
-- system-prompt.md - SSOT for AI behavior on every MiOS host (deployed to /etc/mios/ai/)
-- README.md  - User-facing overview
-- VARIABLES.md - Documentation of every prompt and default
-- USER-SPACE-GUIDE.md - User-side environment notes
-- .env.mios - User-runtime defaults
-- identity.env.example - Identity template
-- image-versions.yml - Pinned image references
+- `install.ps1`       — Windows unified installer (irm | iex, no prompts after launch)
+- `install.sh`        — Linux/Fedora installer (curl | bash)
+- `etc/mios/profile.toml`             — User profile card (identity, locale, auth, AI, desktop)
+- `usr/share/mios/ai/system.md`       — Deployed compact agent prompt (SSOT)
+- `usr/share/mios/ai/models.json`     — OpenAI /v1/models catalog
+- `usr/share/mios/ai/mcp.json`        — MCP server registry
+- `usr/share/mios/PACKAGES.md`        — (symlinked from mios.git) RPM package SSOT
+- `CLAUDE.md`                         — Agent CLI entry point (redirects to system.md)
 
-## Install command
+## Install commands
 
-```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/install.sh)"
+Windows (PowerShell, no pre-setup required):
+```powershell
+irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.ps1 | iex
 ```
 
-## Defaults convention
+Linux (Fedora / bootc host):
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.sh)"
+```
 
-Everything defaults to `mios` -- username, hostname, full name -- until the
-user overrides at the prompt. This is intentional: a vanilla MiOS install
-produces a host named `mios` with a sudoer named `mios`. The user only
-types when they want something different.
+## Repo split
 
-## Standards alignment
+`mios.git` owns: Containerfile, automation scripts, FHS system overlay,
+systemd units, Quadlet sidecars, kernel args, tmpfiles, sysusers.
 
-- OpenAI REST API (open spec, multi-vendor)
-- Linux Filesystem Hierarchy Standard (FHS 3.0)
-- XDG Base Directory specification
-- systemd / Quadlet
+`mios-bootstrap.git` owns: AI files (`usr/share/mios/ai/`), knowledge graphs,
+user profile templates, installer scripts. Never double-track paths.
+
+## Standards
+
+- OpenAI REST API v1 at `http://localhost:8080/v1` (no vendor endpoints)
+- Linux FHS 3.0 and XDG Base Directory spec
+- systemd / Podman Quadlet
 - bootc / OCI image format
 
 ## License

@@ -178,20 +178,30 @@ All images pre-pulled offline via `/usr/lib/bootc/bound-images.d/` symlinks.
 
 **Targets:** `mios-desktop.target`, `mios-headless.target`, `mios-hybrid.target`
 
+**WSL2 drop-ins** (`*.service.d/10-mios-wsl2.conf`): stratisd, systemd-homed, var-lib-nfs-rpc_pipefs.mount, coreos-ignition-firstboot-complete, greenboot-healthcheck, zincati, rpm-ostree-fix-shadow-mode, avahi-daemon, cockpit, ollama, dbus-broker, upower, virtlxcd, systemd-networkd-wait-online. All apply `ConditionVirtualization=!wsl` or `ConditionVirtualization=wsl` to gate services on WSL2 deployments.
+
 ---
 
 ## Kernel Args (`kargs.d/*.toml` — flat `kargs = [...]` ONLY, no headers)
 
-| File | Key args |
+| File | Purpose |
 |---|---|
-| 00-mios.toml | `iommu=pt amd_iommu=on rd.driver.blacklist=nouveau modprobe.blacklist=nouveau systemd.show-status=true` |
-| 10-nvidia.toml | `nvidia.NVreg_OpenRmEnableUnsupportedGpus=1 nvidia-drm.modeset=1 nvidia-drm.fbdev=1` |
+| 00-mios.toml | iommu=pt, amd_iommu=on, nouveau blacklist, systemd.show-status=true |
 | 01-mios-hardening.toml | security/hardening args |
-| 20-vfio.toml | VFIO isolation |
+| 01-mios-vfio.toml | vfio-pci module load |
+| 02-mios-gpu.toml | GPU-agnostic kargs |
+| 10-mios-console.toml | console/tty settings |
+| 10-mios-verbose.toml | verbose boot (debug) |
+| 10-nvidia.toml | nvidia NVreg, drm.modeset, drm.fbdev |
+| 12-intel-xe.toml | Intel Xe GPU kargs |
 | 13-rtx50-vfio-workaround.toml | RTX 50-series VFIO reset fix |
 | 15-rootflags.toml | rootfs mount flags |
+| 16-nested-virt.toml | KVM nested-virt enable |
+| 20-vfio.toml | VFIO isolation (iommu groups) |
+| 30-security.toml | lockdown, slab, NX settings |
+| 31-secureblue-extended.toml | hardened memory / seccomp |
 
-14 karg TOML files total. All `match-architectures = ["x86_64"]`.
+14 karg TOML files. All `match-architectures = ["x86_64"]`.
 
 ---
 
