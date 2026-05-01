@@ -832,8 +832,16 @@ if ($activeDistro) {
                   Where-Object { $_ -match "^$([regex]::Escape($BuilderDistro))" }
             if ($ml) {
                 Set-Step "Starting existing $BuilderDistro machine..."
-                & podman machine start $BuilderDistro 2>&1 | ForEach-Object { Write-Log "podman-start: $_" }
-                if ($LASTEXITCODE -eq 0) { $machineRunning = $true; Log-Ok "$BuilderDistro started" }
+                $startOut = @(& podman machine start $BuilderDistro 2>&1)
+                $startOut | ForEach-Object { Write-Log "podman-start: $_" }
+                if ($LASTEXITCODE -eq 0) {
+                    $machineRunning = $true; Log-Ok "$BuilderDistro started"
+                } elseif (($startOut -join " ") -match "DISTRO_NOT_FOUND|bootstrap script failed|WSL_E_DISTRO") {
+                    # Stale Podman machine metadata — WSL distro was deleted but Podman registry entry remains.
+                    # Force-remove the stale entry so New-BuilderDistro can re-init cleanly.
+                    Write-Log "podman-start: stale machine registration detected -- removing $BuilderDistro" "WARN"
+                    & podman machine rm --force $BuilderDistro 2>&1 | ForEach-Object { Write-Log "podman-rm: $_" }
+                }
             }
         } catch {}
     }
