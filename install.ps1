@@ -21,12 +21,11 @@ $MiosRepoDir       = Join-Path $MiosInstallDir "repo"
 $MiosDistroDir     = Join-Path $MiosInstallDir "distros"
 $MiosConfigDir     = Join-Path $env:APPDATA "MiOS"
 $MiosDataDir       = Join-Path $env:LOCALAPPDATA "MiOS"
-$MiosVersion       = "v0.2.0"
+$MiosVersion       = "v0.2.2"
 $MiosRepoUrl       = "https://github.com/mios-dev/mios.git"
 $MiosBootstrapUrl  = "https://github.com/mios-dev/mios-bootstrap.git"
-$BuilderMachine    = "MiOS-BUILDER"                  # Podman machine name
-$BuilderDistro     = "podman-machine-MiOS-BUILDER"   # WSL2 distro backing the Podman machine
-$LegacyDistro      = "podman-machine-default"        # migration fallback
+$BuilderDistro     = "MiOS-BUILDER"           # Podman machine name == WSL2 distro name
+$LegacyDistro      = "podman-machine-default" # migration fallback
 $UninstallRegKey   = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS"
 $StartMenuDir      = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\MiOS"
 
@@ -132,16 +131,15 @@ function New-BuilderDistro {
     $ramMB = $HW.RamGB * 1024
 
     # Use podman machine — native rootful WSL2 Podman VM, set as default
-    & podman machine init $BuilderMachine `
+    & podman machine init $BuilderDistro `
         --cpus $HW.Cpus `
         --memory $ramMB `
         --disk-size $HW.DiskGB `
         --rootful `
         --now 2>&1 | ForEach-Object { if ($_ -match "Copying|Starting|Machine") { Write-Info $_ } }
 
-    & podman machine set --default $BuilderMachine 2>&1 | Out-Null
-    Write-Ok "$BuilderMachine Podman machine created and set as default"
-    Write-Info "WSL2 distro: $BuilderDistro"
+    & podman machine set --default $BuilderDistro 2>&1 | Out-Null
+    Write-Ok "$BuilderDistro Podman machine created and set as default"
 
     # Install MiOS-complete dev stack inside the machine
     Write-Step "Installing full MiOS dev stack (Podman, buildah, skopeo, just, git, openssl, python3, ollama)..."
@@ -384,7 +382,7 @@ if (-not (Test-Path $StartMenuDir)) { New-Item -ItemType Directory -Path $StartM
     @{ F="MiOS Setup.lnk";       T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfScript`"";             D="Re-run full MiOS setup" },
     @{ F="MiOS Build.lnk";       T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfScript`" -BuildOnly";   D="Pull latest + build MiOS OCI image" },
     @{ F="MiOS WSL Terminal.lnk"; T="wsl.exe"; A="-d $BuilderDistro --user root";                             D="Open MiOS-BUILDER terminal (root)" },
-    @{ F="MiOS Podman Machine.lnk"; T="powershell.exe"; A="-NoProfile -Command podman machine ssh $BuilderMachine"; D="SSH into MiOS-BUILDER Podman machine" },
+    @{ F="MiOS Podman Machine.lnk"; T="powershell.exe"; A="-NoProfile -Command podman machine ssh $BuilderDistro"; D="SSH into MiOS-BUILDER Podman machine" },
     @{ F="Uninstall MiOS.lnk";   T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$uninstScr`"";               D="Remove MiOS" }
 ) | ForEach-Object { New-Shortcut (Join-Path $StartMenuDir $_.F) $_.T $_.A $_.D $MiosInstallDir }
 Write-Ok "Add/Remove Programs + Start Menu 'MiOS' (4 shortcuts)"
@@ -393,15 +391,15 @@ Write-Ok "Add/Remove Programs + Start Menu 'MiOS' (4 shortcuts)"
 @"
 #Requires -Version 5.1
 param([switch]`$Quiet)
-`$I='$($MiosInstallDir -replace "'","''")'; `$D='$($MiosDataDir -replace "'","''")'; `$C='$($MiosConfigDir -replace "'","''")'; `$S='$($StartMenuDir -replace "'","''")'; `$K='$($UninstallRegKey -replace "'","''")'; `$M='$BuilderMachine'; `$B='$BuilderDistro'
+`$I='$($MiosInstallDir -replace "'","''")'; `$D='$($MiosDataDir -replace "'","''")'; `$C='$($MiosConfigDir -replace "'","''")'; `$S='$($StartMenuDir -replace "'","''")'; `$K='$($UninstallRegKey -replace "'","''")'; `$B='$BuilderDistro'
 if (-not `$Quiet) {
     Write-Host ''; Write-Host '  MiOS Uninstaller' -ForegroundColor Red; Write-Host ''
-    Write-Host "  Removes: `$I, `$D, `$M Podman machine, Start Menu"
+    Write-Host "  Removes: `$I, `$D, `$B Podman machine + WSL2 distro, Start Menu"
     Write-Host "  Preserves: `$C (config)"; Write-Host ''
     if ((Read-Host "  Type 'yes' to confirm") -ne 'yes') { Write-Host '  Aborted.'; exit 0 }
 }
-try { podman machine stop `$M 2>`$null } catch {}
-try { podman machine rm -f `$M 2>`$null } catch {}
+try { podman machine stop `$B 2>`$null } catch {}
+try { podman machine rm -f `$B 2>`$null } catch {}
 try { wsl --unregister `$B 2>`$null } catch {}
 foreach (`$p in @(`$I,`$D,`$S)) { if (Test-Path `$p) { Remove-Item `$p -Recurse -Force } }
 if (Test-Path `$K) { Remove-Item `$K -Recurse -Force }
@@ -415,7 +413,7 @@ Write-Ok "uninstall.ps1 written"
 Write-Phase "Phase 9 — Building MiOS OCI image"
 Write-Info "Base image : $($HW.BaseImage)"
 Write-Info "AI model   : $($HW.AiModel)"
-Write-Info "Build host : $BuilderMachine (Podman machine, $($HW.RamGB)GB RAM / $($HW.Cpus) CPUs)"
+Write-Info "Build host : $BuilderDistro (Podman machine, $($HW.RamGB)GB RAM / $($HW.Cpus) CPUs)"
 Write-Info "Est. time  : 15-30 min on first run (OCI layers cached after)"
 Write-Host ""
 
@@ -430,13 +428,13 @@ if ($rc -eq 0) {
     Write-Host "  |  MiOS built successfully!                      |" -ForegroundColor Green
     Write-Host "  +================================================+" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Image    : localhost/mios:latest (in $BuilderMachine)" -ForegroundColor White
-    Write-Host "  Builder  : $BuilderMachine (Podman machine, default)" -ForegroundColor DarkGray
+    Write-Host "  Image    : localhost/mios:latest (in $BuilderDistro)" -ForegroundColor White
+    Write-Host "  Builder  : $BuilderDistro (Podman machine, default)" -ForegroundColor DarkGray
     Write-Host "  Base     : $($HW.BaseImage)" -ForegroundColor DarkGray
     Write-Host "  AI model : $($HW.AiModel)" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  Start Menu > MiOS Build          — pull latest + rebuild at any time" -ForegroundColor DarkGray
-    Write-Host "             > MiOS Podman Machine — podman machine ssh $BuilderMachine" -ForegroundColor DarkGray
+    Write-Host "             > MiOS Podman Machine — podman machine ssh $BuilderDistro" -ForegroundColor DarkGray
     Write-Host "             > MiOS WSL Terminal   — root shell in $BuilderDistro" -ForegroundColor DarkGray
 } else {
     Write-Host "  +================================================+" -ForegroundColor Red

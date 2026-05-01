@@ -1,7 +1,7 @@
 # VARIABLES.md
 
 > Every prompt the bootstrap installer asks, with defaults and notes.
-> Snapshot v0.2.0.
+> Snapshot v0.2.2.
 
 ## Defaults convention
 
