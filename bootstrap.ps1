@@ -156,6 +156,38 @@ autoProxy=true
 Write-Host ""
 
 # ============================================================================
+# Quick-path: detect existing MiOS setup in podman-machine-default and build
+# ============================================================================
+Write-Host "  Checking for existing MiOS setup in podman-machine-default..." -ForegroundColor Gray
+try {
+    $wslDistros = (wsl --list --quiet 2>$null) -join " "
+    if ($wslDistros -match "podman-machine-default") {
+        $miosReady = (wsl -d podman-machine-default -- bash -c "test -f /Justfile && echo ready" 2>$null).Trim()
+        if ($miosReady -eq "ready") {
+            Write-Host "  [OK] MiOS repo found at / in podman-machine-default." -ForegroundColor Green
+            Write-Host ""
+            Write-Host "  ════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host "  Running: just build inside podman-machine-default" -ForegroundColor Cyan
+            Write-Host "  ════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+            Write-Host ""
+            # Ensure just is available and run the build
+            wsl -d podman-machine-default -- bash -lc "command -v just &>/dev/null || sudo dnf install -y just &>/dev/null; cd / && sudo just build"
+            $buildExit = $LASTEXITCODE
+            Write-Host ""
+            if ($buildExit -eq 0) {
+                Write-Host "  [OK] Build complete." -ForegroundColor Green
+            } else {
+                Write-Host "  [!] Build exited with code $buildExit — check output above." -ForegroundColor Red
+            }
+            exit $buildExit
+        }
+    }
+} catch {
+    Write-Host "  [!] WSL detection failed (non-fatal) — continuing wizard." -ForegroundColor DarkGray
+}
+Write-Host ""
+
+# ============================================================================
 # Phase 3: Collect ALL Variables Upfront
 # ============================================================================
 
@@ -168,8 +200,14 @@ Write-Host ""
 Write-Host "  ┌─ User Account ────────────────────────────────────────────────┐" -ForegroundColor Cyan
 $MIOS_USER = Read-WithDefault "Admin username:" "mios"
 while ($true) {
-    $pw1 = Read-Secret "Admin password:"
-    if (-not $pw1) { Write-Host "  [!] Password cannot be empty." -ForegroundColor Red; continue }
+    $pw1 = Read-Secret "Admin password (Enter for default 'mios'):"
+    if (-not $pw1) {
+        $pw1 = "mios"
+        Write-Host "    Using default password: mios" -ForegroundColor DarkGray
+        $MIOS_PASSWORD = $pw1
+        $MIOS_PASSWORD_HASH = Get-SHA512Hash $pw1
+        break
+    }
     $pw2 = Read-Secret "Confirm password:"
     if ($pw1 -eq $pw2) {
         $MIOS_PASSWORD = $pw1
@@ -193,17 +231,17 @@ Write-Host ""
 # GitHub Access (for private MiOS repository)
 Write-Host "  ┌─ GitHub Access ───────────────────────────────────────────────┐" -ForegroundColor Cyan
 Write-Host "  " -NoNewline
-Write-Host "MiOS is a private repository - GitHub credentials required" -ForegroundColor Yellow
+Write-Host "MiOS repositories are public — GitHub credentials are optional." -ForegroundColor DarkGray
+Write-Host "  Provide a PAT only if you need to push or access private forks." -ForegroundColor DarkGray
 Write-Host ""
-$GITHUB_USER = Read-Host "  GitHub username"
+$GITHUB_USER = Read-WithDefault "GitHub username (Enter to skip):" ""
 if ([string]::IsNullOrWhiteSpace($GITHUB_USER)) {
-    Write-Host "  [!] GitHub username is required to clone MiOS repository." -ForegroundColor Red
-    exit 1
-}
-$GITHUB_TOKEN = Read-Secret "GitHub PAT (with repo scope):"
-if ([string]::IsNullOrWhiteSpace($GITHUB_TOKEN)) {
-    Write-Host "  [!] GitHub token is required to clone MiOS repository." -ForegroundColor Red
-    exit 1
+    Write-Host "    Using anonymous git access (public repos)" -ForegroundColor DarkGray
+    $GITHUB_USER  = ""
+    $GITHUB_TOKEN = ""
+} else {
+    $GITHUB_TOKEN = Read-Secret "GitHub PAT (repo scope, Enter to skip):"
+    if ([string]::IsNullOrWhiteSpace($GITHUB_TOKEN)) { $GITHUB_TOKEN = "" }
 }
 Write-Host "  └───────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
