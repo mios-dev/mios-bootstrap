@@ -84,39 +84,72 @@ toml_get_array_csv() {
     ' "$file"
 }
 
-# Resolve the active profile card path: /etc/mios/profile.toml first (a
-# previous install), then this repo's checkout copy.
-resolve_profile_card() {
-    if [[ -f "$PROFILE_CARD" ]]; then
-        echo "$PROFILE_CARD"; return
-    fi
+# Three-layer profile resolution. Each layer overlays the one above.
+# Returned as a space-separated list of paths (lowest precedence first).
+#
+#   1. /usr/share/mios/profile.toml        vendor defaults (mios.git)
+#   2. <bootstrap-checkout>/etc/mios/profile.toml  user-edit overrides (this repo)
+#   3. /etc/mios/profile.toml              host-installed user-edit (re-run case)
+#   4. /etc/mios/install.env (legacy)      previous-install identity env
+#
+# Empty strings in higher layers do NOT override non-empty defaults below
+# them — that's how this implements "user-set fields supersede defaults"
+# without requiring sparse TOML files.
+resolve_profile_layers() {
+    local layers=()
+    [[ -f /usr/share/mios/profile.toml ]] && layers+=(/usr/share/mios/profile.toml)
     local repo_card; repo_card="$(dirname "${BASH_SOURCE[0]}")/etc/mios/profile.toml"
-    if [[ -f "$repo_card" ]]; then
-        echo "$repo_card"; return
-    fi
-    echo ""
+    [[ -f "$repo_card" ]] && layers+=("$repo_card")
+    [[ -f "$PROFILE_CARD" && "$PROFILE_CARD" != "$repo_card" ]] && layers+=("$PROFILE_CARD")
+    printf '%s\n' "${layers[@]}"
 }
 
-# Override DEFAULT_* from the resolved profile card (if any).
+# Read a single key, walking layers in order. Higher layers override lower.
+toml_get_layered() {
+    local section="$1" key="$2" array_mode="${3:-}"
+    local fn="toml_get"
+    [[ "$array_mode" == "array" ]] && fn="toml_get_array_csv"
+    local result=""
+    while IFS= read -r card; do
+        local v; v="$($fn "$card" "$section" "$key")"
+        [[ -n "$v" ]] && result="$v"
+    done < <(resolve_profile_layers)
+    echo "$result"
+}
+
+# Override DEFAULT_* from the merged profile-card layers.
 load_profile_defaults() {
-    local card; card="$(resolve_profile_card)"
-    [[ -n "$card" ]] || return 0
-    log_info "Seeding defaults from profile card: ${card}"
+    local layers; layers=$(resolve_profile_layers | tr '\n' ' ')
+    [[ -n "$layers" ]] || return 0
+    log_info "Loading profile layers (lowest→highest precedence):"
+    while IFS= read -r card; do log_info "  · ${card}"; done < <(resolve_profile_layers)
 
     local v
-    v="$(toml_get "$card" identity username)";  [[ -n "$v" ]] && DEFAULT_USER="$v"
-    v="$(toml_get "$card" identity hostname)";  [[ -n "$v" ]] && DEFAULT_HOST="$v"
-    v="$(toml_get "$card" identity fullname)";  [[ -n "$v" ]] && DEFAULT_USER_FULLNAME="$v"
-    v="$(toml_get "$card" identity shell)";     [[ -n "$v" ]] && DEFAULT_USER_SHELL="$v"
-    v="$(toml_get_array_csv "$card" identity groups)"; [[ -n "$v" ]] && DEFAULT_USER_GROUPS="$v"
-    v="$(toml_get "$card" auth ssh_key_type)";  [[ -n "$v" ]] && DEFAULT_SSH_KEY_TYPE="$v"
-    v="$(toml_get "$card" image ref)";          [[ -n "$v" ]] && DEFAULT_IMAGE="$v"
-    v="$(toml_get "$card" image branch)";       [[ -n "$v" ]] && DEFAULT_BRANCH="$v"
-    v="$(toml_get "$card" locale timezone)";    [[ -n "$v" ]] && DEFAULT_TIMEZONE="$v"
-    v="$(toml_get "$card" locale keyboard_layout)"; [[ -n "$v" ]] && DEFAULT_KEYBOARD="$v"
-    v="$(toml_get "$card" locale language)";    [[ -n "$v" ]] && DEFAULT_LANG="$v"
-    v="$(toml_get "$card" bootstrap mios_repo)";      [[ -n "$v" ]] && MIOS_REPO="$v"
-    v="$(toml_get "$card" bootstrap bootstrap_repo)"; [[ -n "$v" ]] && BOOTSTRAP_REPO="$v"
+    v="$(toml_get_layered identity username)";        [[ -n "$v" ]] && DEFAULT_USER="$v"
+    v="$(toml_get_layered identity hostname)";        [[ -n "$v" ]] && DEFAULT_HOST="$v"
+    v="$(toml_get_layered identity fullname)";        [[ -n "$v" ]] && DEFAULT_USER_FULLNAME="$v"
+    v="$(toml_get_layered identity shell)";           [[ -n "$v" ]] && DEFAULT_USER_SHELL="$v"
+    v="$(toml_get_layered identity groups array)";    [[ -n "$v" ]] && DEFAULT_USER_GROUPS="$v"
+    v="$(toml_get_layered auth ssh_key_type)";        [[ -n "$v" ]] && DEFAULT_SSH_KEY_TYPE="$v"
+    v="$(toml_get_layered image ref)";                [[ -n "$v" ]] && DEFAULT_IMAGE="$v"
+    v="$(toml_get_layered image branch)";             [[ -n "$v" ]] && DEFAULT_BRANCH="$v"
+    v="$(toml_get_layered locale timezone)";          [[ -n "$v" ]] && DEFAULT_TIMEZONE="$v"
+    v="$(toml_get_layered locale keyboard_layout)";   [[ -n "$v" ]] && DEFAULT_KEYBOARD="$v"
+    v="$(toml_get_layered locale language)";          [[ -n "$v" ]] && DEFAULT_LANG="$v"
+    v="$(toml_get_layered bootstrap mios_repo)";      [[ -n "$v" ]] && MIOS_REPO="$v"
+    v="$(toml_get_layered bootstrap bootstrap_repo)"; [[ -n "$v" ]] && BOOTSTRAP_REPO="$v"
+
+    # Legacy .env.mios fallback (deprecated; sourced last so explicit TOML wins).
+    local legacy_env; legacy_env="$(dirname "${BASH_SOURCE[0]}")/.env.mios"
+    if [[ -f "$legacy_env" ]]; then
+        log_info "Sourcing legacy ${legacy_env} (deprecated; migrate to profile.toml)"
+        # shellcheck source=/dev/null
+        set +u; source "$legacy_env"; set -u
+        [[ -n "${MIOS_DEFAULT_USER:-}" ]] && DEFAULT_USER="${MIOS_DEFAULT_USER}"
+        [[ -n "${MIOS_DEFAULT_HOST:-}" ]] && DEFAULT_HOST="${MIOS_DEFAULT_HOST}"
+        [[ -n "${MIOS_IMAGE_NAME:-}" && -n "${MIOS_IMAGE_TAG:-}" ]] && \
+            DEFAULT_IMAGE="${MIOS_IMAGE_NAME}:${MIOS_IMAGE_TAG}"
+    fi
 }
 
 # ============================================================================
@@ -376,45 +409,72 @@ deploy_system_prompt() {
     fi
     log_ok "Host system prompt deployed: /etc/mios/ai/system-prompt.md"
 
-    # Stage per-user copies for every existing human account (uid >= 1000,
-    # excluding nobody/65534). Each user gets their own editable copy at
-    # ~/.config/mios/system-prompt.md alongside ~/.config/mios/profile.toml.
-    local home u
-    while IFS=: read -r u _ uid _ _ home _; do
+    # Stage per-user copies for every existing human account
+    # (uid 1000–65533). Single helper avoids duplicate logic across
+    # deploy_system_prompt + stage_user_profile_artifacts; the call sites
+    # remain distinct so the bootstrap-created user still gets the
+    # name-bearing log line.
+    seed_user_skel_for_all_accounts
+}
+
+# ============================================================================
+# Multi-user seeder: copy /etc/skel/.config/mios/* into every existing user's
+# home, owned by that user. Called from deploy_system_prompt (after the host
+# /etc/mios/ai/system-prompt.md is in place) and again from
+# stage_user_profile_artifacts (after the bootstrap-created user is added).
+# Idempotent: install(1) overwrites with current content, mode is enforced.
+# ============================================================================
+seed_user_skel_for_all_accounts() {
+    local skel_root=/etc/skel/.config/mios
+    [[ -d "$skel_root" ]] || {
+        log_warn "etc/skel/.config/mios missing — per-user staging skipped"
+        return 0
+    }
+
+    local u home uid sh
+    while IFS=: read -r u _ uid _ _ home sh; do
         [[ "$uid" -ge 1000 && "$uid" -lt 65534 && -d "$home" ]] || continue
-        sudo -u "$u" install -d -m 0755 "${home}/.config/mios"
-        install -o "$u" -g "$u" -m 0644 \
-            /etc/mios/ai/system-prompt.md "${home}/.config/mios/system-prompt.md"
-        log_ok "User system prompt staged: ${home}/.config/mios/system-prompt.md"
+        sudo -u "$u" install -d -m 0755 "${home}/.config" "${home}/.config/mios"
+        local f
+        for f in "$skel_root"/*; do
+            [[ -f "$f" ]] || continue
+            install -o "$u" -g "$u" -m 0644 "$f" "${home}/.config/mios/$(basename "$f")"
+        done
+        log_ok "Seeded ${home}/.config/mios/ for ${u} (uid ${uid})"
     done < /etc/passwd
 }
 
 # ============================================================================
 # Phase-3 (continued): stage per-user profile card + system prompt for the
-# bootstrap-created user. Called from trigger_mios_install after the new
-# Linux user exists.
+# bootstrap-created user. Reads from /etc/skel/.config/mios/, the FHS-native
+# template surface that mios-bootstrap.git populates from etc/skel/.
 # ============================================================================
 stage_user_profile_artifacts() {
     log_phase "Phase-3 — Stage per-user MiOS artifacts"
     local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
-    [[ -n "$home" && -d "$home" ]] || { log_warn "User home not found; skipping per-user staging"; return 0; }
+    [[ -n "$home" && -d "$home" ]] || {
+        log_warn "User home not found; skipping per-user staging"
+        return 0
+    }
 
-    sudo -u "${LINUX_USER}" install -d -m 0755 "${home}/.config/mios"
+    sudo -u "${LINUX_USER}" install -d -m 0755 "${home}/.config" "${home}/.config/mios"
 
-    local repo_card; repo_card="$(dirname "${BASH_SOURCE[0]}")/profile/.config/mios/profile.toml"
-    if [[ -f "$repo_card" ]]; then
-        install -o "${LINUX_USER}" -g "${LINUX_USER}" -m 0644 \
-            "$repo_card" "${home}/.config/mios/profile.toml"
-        log_ok "User profile card: ${home}/.config/mios/profile.toml"
+    local skel_root=/etc/skel/.config/mios
+    if [[ -d "$skel_root" ]]; then
+        local f
+        for f in "$skel_root"/*; do
+            [[ -f "$f" ]] || continue
+            install -o "${LINUX_USER}" -g "${LINUX_USER}" -m 0644 \
+                "$f" "${home}/.config/mios/$(basename "$f")"
+            log_ok "User artifact: ${home}/.config/mios/$(basename "$f")"
+        done
     else
-        log_warn "profile/.config/mios/profile.toml missing in bootstrap repo"
+        log_warn "etc/skel/.config/mios missing — bootstrap user staging skipped"
     fi
 
-    if [[ -f /etc/mios/ai/system-prompt.md ]]; then
-        install -o "${LINUX_USER}" -g "${LINUX_USER}" -m 0644 \
-            /etc/mios/ai/system-prompt.md "${home}/.config/mios/system-prompt.md"
-        log_ok "User system prompt: ${home}/.config/mios/system-prompt.md"
-    fi
+    # Re-run the multi-user pass so a newly added user picks up the same
+    # content as everyone else (idempotent).
+    seed_user_skel_for_all_accounts
 }
 
 # ============================================================================

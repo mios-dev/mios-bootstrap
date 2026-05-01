@@ -29,12 +29,9 @@
 !VARIABLES.md
 !llms.txt
 
-# Profile skeleton (dotfiles, per-user systemd units, system prompt, profile card)
-!profile/
-!profile/**
-
-# Bootstrap-owned overlay subtrees that get merged into / on FHS hosts
-# (system-prompt host copy, manifest, RAG, knowledge graphs, snapshots).
+# Bootstrap-owned overlay subtrees merged into / on FHS hosts and
+# baked into the image on bootc. Per-user templates live under etc/skel
+# (FHS standard skel directory — populated into ~/<user>/ on useradd -m).
 !etc/
 !etc/**
 !usr/

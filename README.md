@@ -1,81 +1,111 @@
-# MiOS-bootstrap
+# mios-bootstrap
 
-> Interactive ignition installer for MiOS. The user-facing entry point.
+Interactive installer for MiOS. End-user entry point and the
+user-editable layer of the three-layer profile model.
 
 **Version:** v0.2.0
-**System repo:** https://github.com/MiOS-DEV/MiOS
+**System repo:** <https://github.com/mios-dev/mios>
 
----
+## Contents
 
-## What this is
-
-This repository is the **installer** for MiOS. It's the only thing end users
-interact with directly. It contains:
-
-- `install.sh` -- the interactive installer (run as root). Prompts for
-  Linux username, hostname, password, SSH key, GitHub PAT, and image tag --
+- `install.sh` — interactive Phase-0..4 orchestrator. Prompts for Linux
+  username, hostname, password, SSH key, GitHub PAT, and image tag —
   everything defaults to `mios` until the user overrides.
-- `system-prompt.md` -- the **SSOT for AI behavior** on every MiOS host.
-  Bootstrap deploys this to `/etc/mios/ai/system-prompt.md` during install,
-  where LocalAI loads it as the system prompt for all chat completions.
-  Customize per host (edit the deployed file) or fleet-wide (fork bootstrap).
-- User-space env templates (`.env.mios`, `identity.env.example`)
-- User-facing docs (`USER-SPACE-GUIDE.md`, `VARIABLES.md`)
-- A `profile/` skeleton for dotfiles and per-user systemd units (populate
-  as the project grows)
+- `etc/mios/profile.toml` — user-editable profile (TOML) that overlays
+  the vendor defaults shipped by `mios.git` at
+  `/usr/share/mios/profile.toml`.
+- `etc/skel/.config/mios/{profile.toml,system-prompt.md}` — per-user
+  templates seeded into every Linux user's home (uid ≥ 1000) by
+  `install.sh:seed_user_skel_for_all_accounts` and by `useradd -m` for
+  future users.
+- `system-prompt.md` — host AI prompt redirector. Bootstrap deploys this
+  to `/etc/mios/ai/system-prompt.md`; LocalAI loads it for chat
+  completions. Per-user copies live at `~/.config/mios/system-prompt.md`.
+- `.env.mios` (deprecated, legacy) — env-style user defaults; sourced
+  by `install.sh` after TOML layers so explicit TOML wins. Migrate to
+  `etc/mios/profile.toml`.
+- `etc/mios/{manifest.json,rag-manifest.yaml}` — installation metadata.
+- `usr/share/mios/knowledge/*` — RAG knowledge graphs.
 
-## What this is NOT
+## Install
 
-- Not the OS image. Pre-built images live at `ghcr.io/MiOS-DEV/mios:latest`.
-- Not the build infrastructure. Containerfile, Justfile, build scripts, and
-  the FHS overlay all live in https://github.com/MiOS-DEV/MiOS.
-- Not a Docker / OCI thing. Bootstrap runs on a target Fedora host, not in
-  a container.
-
-## Install one-liner
-
-On a fresh Fedora bootc-capable host (Fedora Server 41+ or Fedora bootc):
+On any Fedora bootc-capable host (Fedora Server 41+ or Fedora bootc):
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/install.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.sh)"
 ```
 
-Bootstrap prompts for installation profile, applies it, then either:
+The installer:
 
-- `bootc switch ghcr.io/MiOS-DEV/mios:latest` (bootc hosts), or
-- Clones MiOS and runs its FHS overlay installer (non-bootc hosts).
+1. **Phase-0** — preflight, profile-card load (three-layer overlay),
+   interactive identity capture (defaults from layered profile).
+2. **Phase-1** — Total Root Merge: clone `mios.git` into `/`, copy
+   bootstrap overlays (`etc/`, `usr/`, `var/`) on top.
+3. **Phase-2** — build: `dnf install` from `usr/share/mios/PACKAGES.md`
+   SSOT (FHS path) or `bootc switch ghcr.io/mios-dev/mios:latest` (bootc
+   path).
+4. **Phase-3** — apply: `systemd-sysusers`, `systemd-tmpfiles`,
+   `daemon-reload`, services; create the bootstrap user; seed every
+   uid ≥ 1000 home from `/etc/skel/.config/mios/`.
+5. **Phase-4** — reboot prompt.
 
-Reboot when prompted. MiOS is now running.
+## Profile resolution
+
+Three layers, higher precedence first:
+
+1. `~/.config/mios/profile.toml` — per-user (seeded from
+   `/etc/skel/.config/mios/profile.toml`)
+2. `/etc/mios/profile.toml` — host (this repo's editable copy)
+3. `/usr/share/mios/profile.toml` — vendor defaults (mios.git)
+
+`install.sh:resolve_profile_layers` walks all three at install time and
+field-level overlays them into the runtime defaults. User-set fields
+in higher layers win. Empty strings do NOT override non-empty values
+below them.
 
 ## Defaults
 
-| Variable | Default |
-|---|---|
-| Linux username | `mios` |
-| Hostname | `mios` |
-| Full name (GECOS) | `MiOS User` |
-| Login shell | `/bin/bash` |
-| Sudo groups | `wheel,libvirt,kvm,video,render,input,dialout` |
-| SSH key | generate ed25519 |
-| GitHub PAT | skip |
-| MiOS image | `ghcr.io/MiOS-DEV/mios:latest` |
+The shipped defaults are identical between `etc/mios/profile.toml`
+(this repo) and `/usr/share/mios/profile.toml` (mios.git). Edit
+`etc/mios/profile.toml` here, or `/etc/mios/profile.toml` on a deployed
+host, to override per-host. Edit `~/.config/mios/profile.toml` per
+user.
 
-The user is prompted for each; pressing Enter accepts the default.
+| Field | Default |
+|---|---|
+| `[identity] username` | `mios` |
+| `[identity] hostname` | `mios` |
+| `[identity] fullname` | `MiOS User` |
+| `[identity] shell` | `/bin/bash` |
+| `[identity] groups` | `wheel,libvirt,kvm,video,render,input,dialout,docker` |
+| `[auth] ssh_key_type` | `ed25519` |
+| `[auth] ssh_key_action` | `generate` |
+| `[image] ref` | `ghcr.io/mios-dev/mios:latest` |
+| `[ai] endpoint` | `http://localhost:8080/v1` |
+
+Pressing Enter at any prompt accepts the resolved layered default.
 
 ## What gets persisted
 
-- `/etc/mios/install.env` -- non-secret installation metadata (mode 0640)
-- `~mios/.ssh/id_ed25519` -- generated SSH key (mode 0600)
-- `~mios/.git-credentials` -- if a GitHub PAT was provided (mode 0600)
+- `/etc/mios/install.env` — non-secret installation metadata (mode 0640)
+- `/etc/mios/profile.toml` — user-edit overlay (writable; preserved across `bootc upgrade`)
+- `/etc/mios/ai/system-prompt.md` — host AI prompt
+- `~/.config/mios/profile.toml` (per user) — per-user overlay
+- `~/.config/mios/system-prompt.md` (per user) — per-user AI prompt
+- `~mios/.ssh/id_ed25519` — generated SSH key (mode 0600)
+- `~mios/.git-credentials` — only if a GitHub PAT was provided (mode 0600)
 
-Passwords go through `chpasswd` and are never written to disk in plaintext.
+Passwords are piped to `chpasswd` and never written to disk in plaintext.
 
 ## Idempotency
 
-Re-running the installer with the same answers updates rather than duplicates.
-Existing users are amended (not recreated); existing SSH keys are not
-overwritten by the "generate" path (use a different keypair name to layer).
+Re-running the installer with the same answers updates rather than
+duplicates. Existing users are amended (not recreated); existing SSH
+keys are not overwritten by the `generate` path (use a different keypair
+name to layer). `seed_user_skel_for_all_accounts` re-runs every
+install — every uid ≥ 1000 user gets the latest
+`~/.config/mios/{profile.toml,system-prompt.md}` content.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See `LICENSE`.
