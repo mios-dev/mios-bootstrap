@@ -6,8 +6,52 @@
   "ai_endpoint": "http://localhost:8080/v1",
 
   "repos": {
-    "system":    "https://github.com/mios-dev/mios",
+    "system":    "https://github.com/mios-dev/MiOS",
     "bootstrap": "https://github.com/mios-dev/mios-bootstrap"
+  },
+
+  "repo_split": {
+    "description": "gitignore uses whitelist-inversion (/* blocks all, !/path allows). Two repos track strictly disjoint path sets.",
+    "rule": "If a path is read-only system config, it belongs in system_repo. If a path is AI data, user config, knowledge, or installer, it belongs in bootstrap_repo.",
+    "system_repo": {
+      "remote": "git@github.com:mios-dev/MiOS.git",
+      "branch": "master",
+      "tracks": "Build scripts and system FHS overlay — files baked into the OCI image",
+      "paths": [
+        "/Containerfile",
+        "/Justfile",
+        "/VERSION",
+        "/automation/",
+        "/usr/share/mios/PACKAGES.md",
+        "/usr/share/mios/env.defaults",
+        "/usr/share/mios/profile.toml",
+        "/usr/lib/systemd/",
+        "/usr/lib/dracut/",
+        "/usr/lib/NetworkManager/",
+        "/usr/lib/firewalld/",
+        "/usr/lib/bootc/",
+        "/usr/lib/tmpfiles.d/",
+        "/usr/lib/sysusers.d/",
+        "/etc/containers/systemd/"
+      ]
+    },
+    "bootstrap_repo": {
+      "remote": "git@github.com:mios-dev/mios-bootstrap.git",
+      "branch": "main",
+      "tracks": "AI runtime files, knowledge graphs, user-space config, and installers — deployed at provision time, not baked into the image",
+      "paths": [
+        "/usr/share/mios/ai/",
+        "/usr/share/mios/knowledge/",
+        "/usr/share/mios/memory/",
+        "/usr/share/mios/user-preferences.md",
+        "/etc/mios/",
+        "/etc/skel/.config/mios/",
+        "/install.sh",
+        "/install.ps1",
+        "/bootstrap.sh",
+        "/bootstrap.ps1"
+      ]
+    }
   },
 
   "architectural_laws": [
@@ -20,22 +64,64 @@
   ],
 
   "directory_map": {
-    "/usr/bin/mios":                       "OpenAI-compatible CLI client",
-    "/usr/share/mios/PACKAGES.md":         "SSOT for all RPM packages (fenced packages-<category> blocks)",
-    "/usr/share/mios/env.defaults":        "all MIOS_* variable definitions — single definition point",
-    "/usr/share/mios/profile.toml":        "vendor identity/locale/feature defaults",
-    "/usr/share/mios/ai/system.md":        "canonical agent system prompt",
-    "/usr/share/mios/ai/models.json":      "OpenAI /v1/models catalog",
-    "/usr/share/mios/ai/mcp.json":         "MCP server registry",
-    "/usr/share/mios/ai/vars.json":        "global variables index (all version pins, ports, paths)",
-    "/etc/mios/profile.toml":              "host/admin profile overrides",
-    "/etc/mios/install.env":               "runtime identity (MIOS_USER, MIOS_HOSTNAME, mode 0640)",
-    "/etc/mios/ai/system-prompt.md":       "host-local system prompt override",
-    "/etc/mios/ai/config.json":            "host-local AI inference config",
-    "/var/lib/mios/ai/memory/":            "persistent agent memory (sqlite WAL)",
-    "/var/lib/mios/ai/scratch/":           "volatile inter-agent scratchpad (rotated daily)",
-    "/var/lib/mios/ai/journal.md":         "chronological action log (append-only)",
-    "/srv/ai/models/":                     "GGUF/safetensors model weights"
+    "system_repo": {
+      "/usr/bin/mios":                    "OpenAI-compatible CLI client",
+      "/usr/share/mios/PACKAGES.md":      "SSOT for all RPM packages (fenced packages-<category> blocks)",
+      "/usr/share/mios/env.defaults":     "all MIOS_* variable definitions — single definition point",
+      "/usr/share/mios/profile.toml":     "vendor identity/locale/feature defaults",
+      "/usr/lib/dracut/":                 "dracut initramfs builder — binaries, modules, configs",
+      "/usr/lib/NetworkManager/conf.d/":  "NetworkManager system defaults (wifi-mac, nvme-nbft)",
+      "/usr/lib/NetworkManager/dispatcher.d/": "NM dispatcher hooks (chrony, nvme-nbft-connect)",
+      "/usr/lib/firewalld/zones/":        "firewalld zone definitions",
+      "/usr/lib/systemd/system/":         "MiOS systemd units and drop-in overrides"
+    },
+    "bootstrap_repo": {
+      "/usr/share/mios/ai/system.md":     "canonical agent system prompt",
+      "/usr/share/mios/ai/models.json":   "OpenAI /v1/models catalog",
+      "/usr/share/mios/ai/mcp.json":      "MCP server registry",
+      "/usr/share/mios/ai/vars.json":     "global variables index (all version pins, ports, paths)",
+      "/usr/share/mios/knowledge/":       "RAG knowledge graphs and agent navigation artifacts",
+      "/etc/mios/profile.toml":           "host/admin profile overrides",
+      "/etc/mios/install.env":            "runtime identity (MIOS_USER, MIOS_HOSTNAME, mode 0640)",
+      "/etc/mios/ai/system-prompt.md":    "host-local system prompt override",
+      "/etc/mios/ai/config.json":         "host-local AI inference config"
+    },
+    "runtime_only": {
+      "/var/lib/mios/ai/memory/":         "persistent agent memory (sqlite WAL) — not in git",
+      "/var/lib/mios/ai/scratch/":        "volatile inter-agent scratchpad (rotated daily) — not in git",
+      "/var/lib/mios/ai/journal.md":      "chronological action log (append-only) — not in git",
+      "/srv/ai/models/":                  "GGUF/safetensors model weights — not in git"
+    }
+  },
+
+  "openai_api": {
+    "spec": "OpenAI API v1 (LocalAI backend)",
+    "base_url": "http://localhost:8080/v1",
+    "env_var": "MIOS_AI_ENDPOINT",
+    "endpoints": {
+      "GET  /v1/models":             "list available models; static catalog at /usr/share/mios/ai/models.json",
+      "POST /v1/chat/completions":   "chat inference; default model $MIOS_AI_MODEL",
+      "POST /v1/completions":        "legacy text completions",
+      "POST /v1/embeddings":         "text embeddings; default model $MIOS_AI_EMBED_MODEL",
+      "GET  /v1/mcp":                "MCP tool registry; config at /usr/share/mios/ai/mcp.json"
+    },
+    "agent_env": {
+      "OPENAI_BASE_URL":  "http://localhost:8080/v1",
+      "OPENAI_API_KEY":   "not-required — local endpoint accepts any non-empty value",
+      "model":            "$MIOS_AI_MODEL (default: qwen2.5-coder:7b)",
+      "embed_model":      "$MIOS_AI_EMBED_MODEL (default: nomic-embed-text)"
+    },
+    "discovery": {
+      "models":   "/usr/share/mios/ai/models.json",
+      "mcp":      "/usr/share/mios/ai/mcp.json",
+      "vars":     "/usr/share/mios/ai/vars.json",
+      "system":   "/usr/share/mios/ai/system.md"
+    },
+    "notes": [
+      "All MIOS_AI_* vars must resolve to http://localhost:8080/v1 — no vendor endpoints in committed files",
+      "Agent tools that accept OPENAI_BASE_URL work unmodified against this endpoint",
+      "MCP server: /usr/bin/mios-status --mcp-mode (registered in mcp.json)"
+    ]
   },
 
   "variables": {
