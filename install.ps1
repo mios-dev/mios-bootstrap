@@ -283,6 +283,18 @@ function New-BuilderDistro([hashtable]$HW) {
     & podman machine set --default $BuilderDistro 2>&1 | Out-Null
     Log-Ok "MiOS-BUILDER created and set as default Podman machine"
 
+    # Wait up to 90 s for WSL2 to register the distro (podman machine init --now is async)
+    Set-Step "Waiting for $BuilderDistro WSL2 distro to register..."
+    $deadline = (Get-Date).AddSeconds(90)
+    $ready = $false
+    while ((Get-Date) -lt $deadline) {
+        $r = (& wsl.exe -d $BuilderDistro --exec bash -c "echo ok" 2>$null) -join ""
+        if ($r.Trim() -eq "ok") { $ready = $true; break }
+        Start-Sleep -Seconds 3
+    }
+    if (-not $ready) { throw "$BuilderDistro not accessible after 90 s -- check: wsl --list" }
+    Log-Ok "$BuilderDistro WSL2 distro is accessible"
+
     Set-Step "Installing dev stack (git just podman buildah skopeo openssl python3)"
     $pkgs = "git just podman buildah skopeo openssl python3 fuse-overlayfs shadow-utils podman-compose"
     & wsl.exe -d $BuilderDistro --user root --exec bash -c `
@@ -491,6 +503,7 @@ guiApplications=true
         & wsl.exe -d $BuilderDistro --user root --exec bash -c `
             "git init / && git -C / remote add origin '$MiosRepoUrl' && git -C / fetch --depth=1 origin main && git -C / reset --hard FETCH_HEAD" `
             2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "mios.git clone to / failed (exit $LASTEXITCODE)" }
         Log-Ok "mios.git seeded to /"
     }
     End-Phase 5
@@ -509,19 +522,13 @@ guiApplications=true
 
     # ── Phase 7 -- Write identity ─────────────────────────────────────────────
     Start-Phase 7
-    $tmpEnv = Join-Path $env:TEMP "mios-install.env"
-    @"
-MIOS_USER="$MiosUser"
-MIOS_HOSTNAME="$MiosHostname"
-MIOS_USER_PASSWORD_HASH="$MiosHash"
-"@ | Set-Content $tmpEnv -Encoding UTF8
-    try {
-        $wslTmp = ConvertTo-WslPath $tmpEnv
-        & wsl.exe -d $BuilderDistro --user root --exec bash -c `
-            "mkdir -p /etc/mios && cp '$wslTmp' /etc/mios/install.env && chmod 0640 /etc/mios/install.env"
-        Log-Ok "/etc/mios/install.env written"
-    } catch { Log-Warn "Could not write install.env (non-fatal)" }
-    Remove-Item $tmpEnv -EA SilentlyContinue
+    # Pipe via stdin -- Podman machine rootfs does not mount the Windows drive
+    $envContent = "MIOS_USER=`"$MiosUser`"`nMIOS_HOSTNAME=`"$MiosHostname`"`nMIOS_USER_PASSWORD_HASH=`"$MiosHash`""
+    $envContent | & wsl.exe -d $BuilderDistro --user root --exec bash -c `
+        "mkdir -p /etc/mios && cat > /etc/mios/install.env && chmod 0640 /etc/mios/install.env" `
+        2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { Log-Ok "/etc/mios/install.env written" } `
+    else { Log-Warn "install.env write failed (non-fatal -- set MIOS_* vars manually)" }
     End-Phase 7
 
     # ── Phase 8 -- App registration + Start Menu ──────────────────────────────
@@ -538,8 +545,8 @@ MIOS_USER_PASSWORD_HASH="$MiosHash"
         UninstallString=$uninstCmd; QuietUninstallString="$uninstCmd -Quiet"
         URLInfoAbout="https://github.com/mios-dev/mios"; NoModify=[int]1; NoRepair=[int]1
     }.GetEnumerator() | ForEach-Object {
-        Set-ItemProperty -Path $UninstallRegKey -Name $_.Key -Value $_.Value `
-            -Type (if ($_.Value -is [int]) {"DWord"} else {"String"})
+        $regType = if ($_.Value -is [int]) { "DWord" } else { "String" }
+        Set-ItemProperty -Path $UninstallRegKey -Name $_.Key -Value $_.Value -Type $regType
     }
 
     if (-not (Test-Path $StartMenuDir)) { New-Item -ItemType Directory -Path $StartMenuDir -Force | Out-Null }
