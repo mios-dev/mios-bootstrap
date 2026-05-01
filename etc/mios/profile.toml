@@ -68,7 +68,7 @@ embed_model     = "nomic-embed-text"
 api_key         = ""              # empty = unauthenticated localhost
 enable_ollama   = true
 enable_localai  = true
-mcp_registry    = "/usr/share/mios/ai/v1/mcp.json"
+mcp_registry    = "/usr/share/mios/ai/mcp.json"
 
 #------------------------------------------------------------------------------
 # Desktop session preferences. GNOME 50 Wayland is the only supported session.
