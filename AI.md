@@ -1,65 +1,60 @@
-# MiOS Bootstrap — User Overlay AI Entry Point
+# MiOS Bootstrap — AI Entry Point
 
-> Merge order: `mios.git` (system defaults) ← `mios-bootstrap.git` (user overlay). Bootstrap always wins at build ignition.
+Merge order: `mios.git` (system layer) ← `mios-bootstrap.git` (user overlay). Bootstrap profile values, AI files, and skel templates overlay the vendor defaults at install time.
 
-This repo owns all user-configurable surfaces: installer, user identity, AI configuration, flatpak selections, and the per-host profile overlay merged into the system image at build or applied via `install.sh` post-boot.
-
-## What mios-bootstrap.git owns (user + AI layer)
+## What mios-bootstrap.git owns
 
 | Path | Purpose |
 |---|---|
-| `/install.sh` | Linux installer entry point |
+| `/install.sh` | Linux installer |
 | `/install.ps1` | Windows installer (Podman machine + WSL2 + build pipeline) |
-| `/etc/mios/profile.toml` | **Host-local profile** — edit to customize this deployment |
+| `/etc/mios/profile.toml` | Host-local profile — edit to customize this deployment |
 | `/etc/skel/.config/mios/` | User dotfile templates (seeded on `useradd -m`) |
-| `/usr/share/mios/ai/system.md` | Canonical agent system prompt |
-| `/usr/share/mios/ai/models.json` | OpenAI `/v1/models` format model catalog |
+| `/usr/share/mios/ai/system.md` | Agent system prompt (host-override layer) |
+| `/usr/share/mios/ai/models.json` | OpenAI `/v1/models` model catalog |
 | `/usr/share/mios/ai/mcp.json` | MCP server registry |
-| `/usr/share/mios/memory/` | Episodic AI journal (JSONL, agent-writable) |
+| `/usr/share/mios/ai/vars.json` | Global variables index (all version pins, ports, paths) |
 | `/usr/share/mios/knowledge/` | RAG knowledge graphs |
 
-## User customization surface (`etc/mios/profile.toml`)
-
-All user choices live here:
+## User customization (`etc/mios/profile.toml`)
 
 | Section | Key fields |
 |---|---|
 | `[identity]` | `username`, `fullname`, `hostname`, `shell`, `groups` |
 | `[locale]` | `timezone`, `keyboard_layout`, `language` |
 | `[auth]` | `ssh_key_action`, `password_policy`, `github_pat` |
-| `[ai]` | `endpoint`, `model`, `embed_model`, `enable_ollama`, `enable_localai` |
-| `[desktop]` | `session`, `color_scheme`, `flatpaks` (list of Flatpak app IDs) |
+| `[ai]` | `endpoint`, `model`, `embed_model`, `enable_localai` |
+| `[desktop]` | `session`, `color_scheme`, `flatpaks` |
 | `[image]` | `ref`, `branch` (bootc switch target) |
 | `[bootstrap]` | `mode` (`auto`/`bootc`/`fhs`), repo URLs, `reboot_on_finish` |
 | `[quadlets.enable]` | Per-Quadlet enable/disable flags |
 
-**Secrets** (`password_hash`, `luks_passphrase`, `github_pat`) are never committed — the installer prompts interactively and writes to root-owned `0600` files.
+Secrets (`password_hash`, `luks_passphrase`, `github_pat`) are never committed.
 
 ## Profile resolution (three layers, higher wins)
 
 ```
-~/.config/mios/profile.toml     ← per-user  (highest)
-/etc/mios/profile.toml          ← host-local (this file)
-/usr/share/mios/profile.toml    ← vendor defaults (lowest)
+~/.config/mios/profile.toml     per-user  (highest)
+/etc/mios/profile.toml          host-local
+/usr/share/mios/profile.toml    vendor defaults (lowest)
 ```
 
-## AI system prompt resolution (three layers, higher wins)
+## AI system prompt resolution
 
 ```
-~/.config/mios/system-prompt.md     ← per-user dotfile redirect  (highest)
-/etc/mios/ai/system-prompt.md       ← host-local override
-/usr/share/mios/ai/system.md        ← canonical image-baked prompt (lowest)
+$MIOS_AI_SYSTEM_PROMPT > ~/.config/mios/system-prompt.md > /etc/mios/ai/system-prompt.md > /usr/share/mios/ai/system.md
 ```
 
 ## Local AI stack
 
-- **Endpoint:** `http://localhost:8080/v1` (LocalAI v2.20.0, OpenAI-compatible)
-- **Inference model:** `qwen2.5-coder:7b`
-- **Embedding model:** `nomic-embed-text`
-- **Models registry:** `/usr/share/mios/ai/models.json`
+- **base_url:** `http://localhost:8080/v1` (`MIOS_AI_ENDPOINT`)
+- **model:** `qwen2.5-coder:7b` (`MIOS_AI_MODEL`)
+- **embed_model:** `nomic-embed-text` (`MIOS_AI_EMBED_MODEL`)
+- **models registry:** `/usr/share/mios/ai/models.json`
 - **MCP registry:** `/usr/share/mios/ai/mcp.json`
-- **Inference config:** `/etc/mios/ai/config.json`
+- **inference config:** `/etc/mios/ai/config.json`
+- **global vars:** `/usr/share/mios/ai/vars.json`
 
-## Bootstrap merge at build ignition
+## Full agent context
 
-At install/build time this repo is overlaid onto `mios.git` via `automation/00-bootstrap-merge.sh`. User profile values, AI files, and skel templates replace the vendor defaults in the system image. Bootstrap is the final layer — it always wins.
+Load `/usr/share/mios/ai/system.md` for the complete prompt. For the image-baked authoritative version, see `/usr/share/mios/ai/system.md` in the deployed image (same file, image layer).

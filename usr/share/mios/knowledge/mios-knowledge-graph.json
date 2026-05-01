@@ -2,16 +2,16 @@
   "project": "MiOS",
   "version": "0.2.2",
   "type": "bootc-immutable-os",
-  "base": "Fedora CoreOS 44 + ucore-hci:stable",
+  "base": "Fedora CoreOS 44 + ucore-hci:stable-nvidia",
   "ai_endpoint": "http://localhost:8080/v1",
 
   "repos": {
-    "system": "https://github.com/mios-dev/mios",
+    "system":    "https://github.com/mios-dev/mios",
     "bootstrap": "https://github.com/mios-dev/mios-bootstrap"
   },
 
   "architectural_laws": [
-    "USR-OVER-ETC: static config in /usr/lib/<component>.d/; /etc/ for admin overrides only",
+    "USR-OVER-ETC: static config in /usr/lib/<component>.d/; /etc/ = admin overrides only",
     "NO-MKDIR-IN-VAR: every /var/ path declared via usr/lib/tmpfiles.d/*.conf",
     "BOUND-IMAGES: every Quadlet sidecar image symlinked in /usr/lib/bootc/bound-images.d/",
     "BOOTC-CONTAINER-LINT: RUN bootc container lint is the final Containerfile instruction",
@@ -20,26 +20,52 @@
   ],
 
   "directory_map": {
-    "/usr/bin/mios": "OpenAI-compatible CLI client",
-    "/usr/share/mios/PACKAGES.md": "SSOT for all RPM packages (fenced packages-<category> blocks)",
-    "/usr/share/mios/env.defaults": "vendor MIOS_* defaults (lowest precedence)",
-    "/usr/share/mios/profile.toml": "vendor identity/locale/feature defaults",
-    "/usr/share/mios/ai/system.md": "canonical agent system prompt",
-    "/usr/share/mios/ai/models.json": "OpenAI /v1/models catalog",
-    "/usr/share/mios/ai/mcp.json": "MCP server registry",
-    "/etc/mios/profile.toml": "host/admin profile overrides",
-    "/etc/mios/install.env": "runtime identity (MIOS_USER, MIOS_HOSTNAME, MIOS_USER_PASSWORD_HASH)",
-    "/etc/mios/ai/system-prompt.md": "host-local system prompt override",
-    "/etc/mios/ai/config.json": "host-local AI inference config (base_url, models)",
-    "/var/lib/mios/ai/memory/": "persistent episodic memory",
-    "/var/lib/mios/ai/scratch/": "volatile inter-agent scratchpad",
-    "/var/lib/mios/ai/journal.md": "chronological action log",
-    "/srv/ai/models/": "GGUF/safetensors model weights"
+    "/usr/bin/mios":                       "OpenAI-compatible CLI client",
+    "/usr/share/mios/PACKAGES.md":         "SSOT for all RPM packages (fenced packages-<category> blocks)",
+    "/usr/share/mios/env.defaults":        "all MIOS_* variable definitions — single definition point",
+    "/usr/share/mios/profile.toml":        "vendor identity/locale/feature defaults",
+    "/usr/share/mios/ai/system.md":        "canonical agent system prompt",
+    "/usr/share/mios/ai/models.json":      "OpenAI /v1/models catalog",
+    "/usr/share/mios/ai/mcp.json":         "MCP server registry",
+    "/usr/share/mios/ai/vars.json":        "global variables index (all version pins, ports, paths)",
+    "/etc/mios/profile.toml":              "host/admin profile overrides",
+    "/etc/mios/install.env":               "runtime identity (MIOS_USER, MIOS_HOSTNAME, mode 0640)",
+    "/etc/mios/ai/system-prompt.md":       "host-local system prompt override",
+    "/etc/mios/ai/config.json":            "host-local AI inference config",
+    "/var/lib/mios/ai/memory/":            "persistent agent memory (sqlite WAL)",
+    "/var/lib/mios/ai/scratch/":           "volatile inter-agent scratchpad (rotated daily)",
+    "/var/lib/mios/ai/journal.md":         "chronological action log (append-only)",
+    "/srv/ai/models/":                     "GGUF/safetensors model weights"
+  },
+
+  "variables": {
+    "MIOS_VERSION":            "0.2.2",
+    "MIOS_DEFAULT_USER":       "mios",
+    "MIOS_DEFAULT_HOST":       "mios",
+    "MIOS_IMAGE_REF":          "ghcr.io/mios-dev/mios:latest",
+    "MIOS_BASE_IMAGE":         "ghcr.io/ublue-os/ucore-hci:stable-nvidia",
+    "MIOS_LOCALAI_VERSION":    "v2.20.0",
+    "MIOS_LOCALAI_IMAGE":      "localai/localai:v2.20.0",
+    "MIOS_K3S_VERSION":        "v1.32.1-k3s1",
+    "MIOS_K3S_IMAGE":          "rancher/k3s:v1.32.1-k3s1",
+    "MIOS_CEPH_VERSION":       "v18",
+    "MIOS_CEPH_IMAGE":         "quay.io/ceph/ceph:v18",
+    "MIOS_AI_ENDPOINT":        "http://localhost:8080/v1",
+    "MIOS_AI_MODEL":           "qwen2.5-coder:7b",
+    "MIOS_AI_EMBED_MODEL":     "nomic-embed-text",
+    "MIOS_AI_PORT":            "8080",
+    "MIOS_QUADLET_SUBNET":     "10.89.0.0/24",
+    "MIOS_SSH_PORT":           "22",
+    "MIOS_COCKPIT_PORT":       "9090",
+    "MIOS_K3S_API_PORT":       "6443",
+    "MIOS_RECHUNK_MAX_LAYERS": "67",
+    "MIOS_WSL_DISTRO":         "MiOS",
+    "MIOS_BUILDER_DISTRO":     "MiOS-BUILDER"
   },
 
   "env_cascade": {
     "order": "~/.config/mios/env > /etc/mios/install.env > /etc/mios/env.d/*.env > /usr/share/mios/env.defaults",
-    "key_vars": ["MIOS_AI_ENDPOINT", "MIOS_AI_MODEL", "MIOS_AI_EMBED_MODEL", "MIOS_AI_KEY", "MIOS_BASE_IMAGE", "MIOS_VERSION"]
+    "all_vars_defined_at": "/usr/share/mios/env.defaults"
   },
 
   "system_prompt_cascade": {
@@ -51,47 +77,50 @@
   },
 
   "ai_stack": {
-    "endpoint": "http://localhost:8080/v1",
-    "inference_model": "qwen2.5-coder:7b",
-    "embed_model": "nomic-embed-text",
+    "base_url":     "http://localhost:8080/v1",
+    "model":        "qwen2.5-coder:7b",
+    "embed_model":  "nomic-embed-text",
     "quadlet_unit": "mios-ai.container",
-    "port": 8080,
+    "port":         8080,
     "model_volume": "/srv/ai/models"
   },
 
   "quadlet_sidecars": {
-    "network": "mios.network (10.89.0.0/24)",
+    "network": "mios.network",
+    "subnet":  "10.89.0.0/24",
     "units": [
-      {"name": "mios-ai.container", "port": 8080, "condition": "PathIsDirectory=/etc/mios/ai"},
-      {"name": "mios-k3s.container", "condition": "!wsl !container", "privileged": true},
-      {"name": "mios-ceph.container", "condition": "PathExists=/etc/ceph/ceph.conf !container", "privileged": true}
+      {"name": "mios-ai.container",   "image": "localai/localai:v2.20.0",    "port": 8080,  "condition": "PathIsDirectory=/etc/mios/ai"},
+      {"name": "mios-k3s.container",  "image": "rancher/k3s:v1.32.1-k3s1",  "port": 6443,  "condition": "!wsl !container", "privileged": true},
+      {"name": "mios-ceph.container", "image": "quay.io/ceph/ceph:v18",      "port": null,  "condition": "PathExists=/etc/ceph/ceph.conf !container", "privileged": true}
     ]
   },
 
   "build_pipeline": {
-    "entry": "Containerfile -> 08-system-files-overlay.sh -> automation/build.sh -> numbered scripts -> bootc container lint",
-    "package_ssot": "/usr/share/mios/PACKAGES.md (fenced packages-<category> blocks)",
-    "script_range": "01-repos through 99-postcheck (45 scripts; 08/37-ollama/99 run from Containerfile only)",
+    "entry":             "Containerfile -> 08-system-files-overlay.sh -> automation/build.sh -> numbered scripts -> bootc container lint",
+    "package_ssot":      "/usr/share/mios/PACKAGES.md (fenced packages-<category> blocks)",
+    "script_count":      45,
+    "containerfile_only_scripts": ["08-system-files-overlay", "37-ollama-prep", "99-postcheck"],
     "non_fatal_scripts": ["05","13","19","21","22","23","26","36-akmod","37-aichat","38","42","43","44","50","52","53"]
   },
 
   "install_surfaces": {
-    "windows": "install.ps1 via irm | iex",
+    "windows":     "install.ps1 via irm | iex",
     "linux_bootc": "bootc switch ghcr.io/mios-dev/mios:latest",
-    "linux_fhs": "install.sh via curl | bash (Total Root Merge)"
+    "linux_fhs":   "install.sh via curl | bash (Total Root Merge)"
   },
 
   "day2_operations": [
     "sudo bootc upgrade && sudo systemctl reboot",
     "sudo bootc switch <ref>",
     "sudo bootc rollback",
+    "sudo bootc status",
     "mios \"<prompt>\""
   ],
 
   "core_concepts": {
-    "bootc": "OCI image -> bootable OS, atomic updates, composefs backend",
-    "immutability": "/usr read-only, /etc + /var mutable, composefs integrity",
-    "multi_surface": "WSL2, Hyper-V, QEMU, bare metal, k3s nodes from single OCI image",
-    "security": "SELinux enforcing, fapolicyd, composefs-verity, cosign signing"
+    "bootc":        "OCI image → bootable OS, atomic updates, composefs backend",
+    "immutability": "/usr read-only at runtime, /etc + /var mutable, composefs integrity",
+    "multi_surface":"WSL2, Hyper-V, QEMU, bare metal, k3s nodes from single OCI image",
+    "security":     "SELinux enforcing, fapolicyd, composefs-verity, cosign signing"
   }
 }

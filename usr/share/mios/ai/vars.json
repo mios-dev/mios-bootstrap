@@ -1,0 +1,101 @@
+{
+  "object": "config",
+  "version": "0.2.2",
+  "description": "MiOS global variables index. All version pins, ports, paths, and defaults. Edit values here to propagate changes system-wide.",
+  "source": "usr/share/mios/ai/vars.json",
+  "env_defaults": "usr/share/mios/env.defaults",
+  "variables": {
+    "MIOS_VERSION":            { "value": "0.2.2",                                    "type": "string", "description": "MiOS release version" },
+    "MIOS_DEFAULT_USER":       { "value": "mios",                                     "type": "string", "description": "Default Linux username" },
+    "MIOS_DEFAULT_HOST":       { "value": "mios",                                     "type": "string", "description": "Default hostname" },
+    "MIOS_DEFAULT_SHELL":      { "value": "/bin/bash",                                "type": "string", "description": "Default login shell" },
+    "MIOS_DEFAULT_TIMEZONE":   { "value": "UTC",                                      "type": "string", "description": "Default timezone (tzdata name)" },
+    "MIOS_DEFAULT_LOCALE":     { "value": "en_US.UTF-8",                             "type": "string", "description": "Default system locale" },
+    "MIOS_DEFAULT_GROUPS":     { "value": "wheel,libvirt,kvm,video,render,input,dialout,docker", "type": "string", "description": "Comma-separated supplementary groups" },
+    "MIOS_IMAGE_NAME":         { "value": "ghcr.io/mios-dev/mios",                   "type": "string", "description": "OCI image registry path" },
+    "MIOS_IMAGE_TAG":          { "value": "latest",                                   "type": "string", "description": "OCI image tag" },
+    "MIOS_IMAGE_REF":          { "value": "ghcr.io/mios-dev/mios:latest",            "type": "string", "description": "Full bootc image reference" },
+    "MIOS_BRANCH":             { "value": "main",                                     "type": "string", "description": "Git branch" },
+    "MIOS_REPO_URL":           { "value": "https://github.com/mios-dev/mios",        "type": "string", "description": "System layer git repo" },
+    "MIOS_BOOTSTRAP_REPO_URL": { "value": "https://github.com/mios-dev/mios-bootstrap", "type": "string", "description": "Bootstrap layer git repo" },
+    "MIOS_BASE_IMAGE":         { "value": "ghcr.io/ublue-os/ucore-hci:stable-nvidia","type": "string", "description": "Containerfile FROM base image" },
+    "MIOS_LOCAL_TAG":          { "value": "localhost/mios:latest",                   "type": "string", "description": "Local build output tag" },
+    "MIOS_BIB_IMAGE":          { "value": "quay.io/centos-bootc/bootc-image-builder:latest", "type": "string", "description": "bootc-image-builder image ref" },
+    "MIOS_LOCALAI_VERSION":    { "value": "v2.20.0",                                 "type": "string", "description": "LocalAI sidecar version" },
+    "MIOS_LOCALAI_IMAGE":      { "value": "localai/localai:v2.20.0",                 "type": "string", "description": "LocalAI container image ref" },
+    "MIOS_K3S_VERSION":        { "value": "v1.32.1-k3s1",                            "type": "string", "description": "k3s version" },
+    "MIOS_K3S_IMAGE":          { "value": "rancher/k3s:v1.32.1-k3s1",               "type": "string", "description": "k3s container image ref" },
+    "MIOS_CEPH_VERSION":       { "value": "v18",                                      "type": "string", "description": "Ceph version" },
+    "MIOS_CEPH_IMAGE":         { "value": "quay.io/ceph/ceph:v18",                  "type": "string", "description": "Ceph container image ref" },
+    "MIOS_AI_ENDPOINT":        { "value": "http://localhost:8080/v1",                "type": "string", "description": "OpenAI-compatible API base URL (LAW 5)" },
+    "MIOS_AI_MODEL":           { "value": "qwen2.5-coder:7b",                        "type": "string", "description": "Default inference model id" },
+    "MIOS_AI_EMBED_MODEL":     { "value": "nomic-embed-text",                        "type": "string", "description": "Default embedding model id" },
+    "MIOS_AI_KEY":             { "value": "",                                         "type": "string", "description": "API key (empty = no auth for local stack)" },
+    "MIOS_AI_PORT":            { "value": "8080",                                     "type": "integer", "description": "LocalAI service port" },
+    "MIOS_QUADLET_SUBNET":     { "value": "10.89.0.0/24",                            "type": "string", "description": "Quadlet container network subnet" },
+    "MIOS_SSH_PORT":           { "value": "22",                                       "type": "integer", "description": "SSH port" },
+    "MIOS_COCKPIT_PORT":       { "value": "9090",                                     "type": "integer", "description": "Cockpit web console port" },
+    "MIOS_K3S_API_PORT":       { "value": "6443",                                     "type": "integer", "description": "k3s API server port" },
+    "MIOS_FIREWALLD_ZONE":     { "value": "drop",                                     "type": "string", "description": "Default firewalld zone" },
+    "MIOS_AI_DIR":             { "value": "/usr/share/mios/ai",                      "type": "string", "description": "AI files directory (image-baked)" },
+    "MIOS_AI_MODELS_DIR":      { "value": "/srv/ai/models",                          "type": "string", "description": "Model weights storage path" },
+    "MIOS_AI_SCRATCH_DIR":     { "value": "/var/lib/mios/ai/scratch",                "type": "string", "description": "Volatile inter-agent scratchpad" },
+    "MIOS_AI_MEMORY_DIR":      { "value": "/var/lib/mios/ai/memory",                 "type": "string", "description": "Persistent agent memory (sqlite)" },
+    "MIOS_AI_JOURNAL":         { "value": "/var/lib/mios/ai/journal.md",             "type": "string", "description": "Append-only chronological action log" },
+    "MIOS_INSTALL_ENV":        { "value": "/etc/mios/install.env",                   "type": "string", "description": "Bootstrap-persisted identity (mode 0640)" },
+    "MIOS_RECHUNK_MAX_LAYERS": { "value": "67",                                       "type": "integer", "description": "bootc-base-imagectl rechunk layer cap" },
+    "MIOS_WSL_DISTRO":         { "value": "MiOS",                                    "type": "string", "description": "WSL2 distro name for the deployed MiOS instance" },
+    "MIOS_BUILDER_DISTRO":     { "value": "MiOS-BUILDER",                            "type": "string", "description": "WSL2 Podman machine distro name (system-level)" }
+  },
+  "windows_constants": {
+    "MiosVersion":      "v0.2.2",
+    "MiosInstallDir":   "%LOCALAPPDATA%\\Programs\\MiOS",
+    "MiosRepoDir":      "%LOCALAPPDATA%\\Programs\\MiOS\\repo",
+    "MiosDistroDir":    "%LOCALAPPDATA%\\Programs\\MiOS\\distros",
+    "MiosConfigDir":    "%APPDATA%\\MiOS",
+    "MiosDataDir":      "%LOCALAPPDATA%\\MiOS",
+    "MiosLogDir":       "%LOCALAPPDATA%\\MiOS\\logs",
+    "MiosRepoUrl":      "https://github.com/mios-dev/mios.git",
+    "MiosBootstrapUrl": "https://github.com/mios-dev/mios-bootstrap.git",
+    "BuilderDistro":    "MiOS-BUILDER",
+    "MiosWslDistro":    "MiOS",
+    "LegacyDistro":     "podman-machine-default"
+  },
+  "dotfiles": {
+    "~/.config/mios/env":              "per-user env overrides (highest precedence)",
+    "~/.config/mios/profile.toml":    "per-user profile overrides",
+    "~/.config/mios/system-prompt.md":"per-user AI system prompt override",
+    "~/.ssh/id_ed25519":              "generated SSH key (mode 0600)",
+    "~/.git-credentials":             "GitHub PAT store (mode 0600, if provided)",
+    "/etc/mios/install.env":          "host identity record (MIOS_USER, MIOS_HOSTNAME, mode 0640)",
+    "/etc/mios/profile.toml":         "host-level profile overrides",
+    "/etc/mios/ai/system-prompt.md":  "host-level AI system prompt override",
+    "/etc/mios/ai/config.json":       "host-level AI inference config"
+  },
+  "profile_cascade": {
+    "description": "Three-layer profile merge, highest wins at field level",
+    "order": [
+      "~/.config/mios/profile.toml",
+      "/etc/mios/profile.toml",
+      "/usr/share/mios/profile.toml"
+    ]
+  },
+  "env_cascade": {
+    "description": "Environment variable resolution order, first non-empty wins",
+    "order": [
+      "~/.config/mios/env",
+      "/etc/mios/install.env",
+      "/etc/mios/env.d/*.env",
+      "/usr/share/mios/env.defaults"
+    ]
+  },
+  "system_prompt_cascade": {
+    "description": "AI system prompt resolution order, highest wins",
+    "order": [
+      "$MIOS_AI_SYSTEM_PROMPT",
+      "~/.config/mios/system-prompt.md",
+      "/etc/mios/ai/system-prompt.md",
+      "/usr/share/mios/ai/system.md"
+    ]
+  }
+}
