@@ -67,6 +67,9 @@ $script:ScriptStart  = [datetime]::Now
 $script:DashRow      = 0
 $script:DashHeight   = 0
 $script:FinalRc      = 0
+$script:BuildSubTotal = 48   # updated from build.sh "+- STEP NN/TT" header
+$script:BuildSubDone  = 0
+$script:BuildSubStep  = ""
 
 # ── Dashboard functions ───────────────────────────────────────────────────────
 function fmtSpan([timespan]$s) {
@@ -81,6 +84,18 @@ function pbar([int]$done,[int]$total,[int]$width) {
     return "[{0}] {1,3}%  {2}/{3}" -f $bar.PadRight($width),$pct,$done,$total
 }
 
+function Update-BuildSubPhase([string]$line) {
+    # Step start: "+- STEP NN/TT : scriptname" (with optional BuildKit "#NN ELAPSED " prefix)
+    if ($line -match '\+- STEP \d+/(\d+)\s*:\s*(\S+)') {
+        $script:BuildSubTotal = [int]$Matches[1]
+        $script:BuildSubStep  = $Matches[2] -replace '\.sh$',''
+        $script:CurStep       = "Build: $($script:BuildSubStep)"
+    # Step end: "+-- [ DONE ] / +-- [FAILED] / +-- [ WARN ]"
+    } elseif ($line -match '\+--\s+\[') {
+        $script:BuildSubDone = [math]::Min($script:BuildSubDone + 1, $script:BuildSubTotal)
+    }
+}
+
 function Show-Dashboard {
     try {
     $w  = [int]$script:DW
@@ -90,6 +105,8 @@ function Show-Dashboard {
 
     $done  = [int]($script:PhStat | Where-Object { $_ -eq 2 } | Measure-Object).Count
     $fail  = [int]($script:PhStat | Where-Object { $_ -eq 3 } | Measure-Object).Count
+    $globalDone  = $done + $script:BuildSubDone
+    $globalTotal = $script:TotalPhases + $script:BuildSubTotal
     $elapsed = [datetime]::Now - $script:ScriptStart
     $elStr   = fmtSpan $elapsed
 
@@ -99,12 +116,15 @@ function Show-Dashboard {
 
     $curName = if ($script:CurPhase -ge 0) { [string]$script:PhaseNames[$script:CurPhase] } else { "Initializing" }
     $phLabel = "[$($script:CurPhase)/$($script:TotalPhases-1)] $curName"
+    if ($script:CurPhase -eq ($script:TotalPhases-1) -and $script:BuildSubTotal -gt 0) {
+        $phLabel += "  ($($script:BuildSubDone)/$($script:BuildSubTotal) steps)"
+    }
 
     $step = [string]$script:CurStep
     if ($step.Length -gt $in) { $step = $step.Substring(0,$in-3)+"..." }
 
     $barW   = [math]::Max(10, $in - 12)
-    $barStr = pbar $done $script:TotalPhases $barW
+    $barStr = pbar $globalDone $globalTotal $barW
 
     $statStr = "Errors:$($script:ErrCount)  Warns:$($script:WarnCount)  Status:$statusStr"
 
@@ -370,9 +390,7 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
         if ($null -eq $line) { break }
         $line | Out-File $BuildLogFile -Append -Encoding UTF8 -EA SilentlyContinue
         $lineCount++
-        if ($line.Trim() -ne "" -and $line -notmatch '^[-=+]{5,}$') {
-            $script:CurStep = "[L$lineCount] " + ($line.TrimStart()).Substring(0, [math]::Min($line.TrimStart().Length, 52))
-        }
+        Update-BuildSubPhase $line
         if ($sw.ElapsedMilliseconds -ge 1000) { Show-Dashboard; $sw.Restart() }
     }
     $proc.WaitForExit()
@@ -437,15 +455,8 @@ function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
         if ($null -eq $line) { break }
         $line | Out-File $BuildLogFile -Append -Encoding UTF8 -EA SilentlyContinue
         $lineCount++
-        # Show last meaningful line in Step (skip blank/separator lines)
-        if ($line.Trim() -ne "" -and $line -notmatch '^[-=+]{5,}$') {
-            $script:CurStep = "[L$lineCount] " + ($line.TrimStart()).Substring(0, [math]::Min($line.TrimStart().Length, 52))
-        }
-        # Refresh dashboard at most once per second
-        if ($sw.ElapsedMilliseconds -ge 1000) {
-            Show-Dashboard
-            $sw.Restart()
-        }
+        Update-BuildSubPhase $line
+        if ($sw.ElapsedMilliseconds -ge 1000) { Show-Dashboard; $sw.Restart() }
     }
 
     $proc.WaitForExit()
