@@ -258,6 +258,8 @@ function Get-PasswordHash([string]$Plain) {
 
 function Get-Hardware {
     $ramGB = try { [math]::Round((Get-CimInstance Win32_PhysicalMemory|Measure-Object Capacity -Sum).Sum/1GB) } catch { 16 }
+    # OS-reported RAM (bytes) -- this is what podman validates against; may be less than nominal GB count
+    $osTotalRamMB = try { [math]::Floor((Get-CimInstance Win32_ComputerSystem -EA Stop).TotalPhysicalMemory / 1MB) } catch { $ramGB * 1024 }
     $cpus  = [Environment]::ProcessorCount
     $gpu   = try { Get-CimInstance Win32_VideoController | Where-Object { $_.Name -notmatch "Microsoft Basic" } | Select-Object -First 1 } catch { $null }
     $gpuName   = if ($gpu) { $gpu.Name } else { "Unknown" }
@@ -266,7 +268,7 @@ function Get-Hardware {
     $aiModel   = if ($ramGB -ge 32) { "qwen2.5-coder:14b" } elseif ($ramGB -ge 12) { "qwen2.5-coder:7b" } else { "phi4-mini:3.8b-q4_K_M" }
     $diskFreeGB    = try { [math]::Floor((Get-PSDrive C -EA Stop).Free/1GB) } catch { 200 }
     $builderDiskGB = [math]::Max(80, $diskFreeGB - 20)
-    return @{ RamGB=$ramGB; Cpus=$cpus; GpuName=$gpuName; HasNvidia=$hasNvidia
+    return @{ RamGB=$ramGB; OsTotalRamMB=$osTotalRamMB; Cpus=$cpus; GpuName=$gpuName; HasNvidia=$hasNvidia
               BaseImage=$baseImage; AiModel=$aiModel; DiskGB=$builderDiskGB }
 }
 
@@ -291,9 +293,9 @@ function Sync-RepoToDistro([string]$Distro, [string]$WinPath) {
 
 function New-BuilderDistro([hashtable]$HW) {
     Set-Step "Initializing MiOS-BUILDER ($($HW.Cpus) CPUs / $($HW.RamGB)GB / $($HW.DiskGB)GB disk)"
-    # Reserve 2 GB for the host kernel/BIOS -- physical RAM is always slightly less
-    # than the nominal GB count, so allocating RamGB*1024 MB overcommits and fails.
-    $ramMB = [math]::Max(4096, $HW.RamGB * 1024 - 2048)
+    # Cap at the OS-reported physical RAM (what podman validates) minus 512 MB safety margin.
+    # Nominal $HW.RamGB rounds up from actual hardware, causing podman to reject the request.
+    $ramMB = [math]::Max(4096, [math]::Min($HW.OsTotalRamMB - 512, $HW.RamGB * 1024 - 512))
     & podman machine init $BuilderDistro `
         --cpus $HW.Cpus --memory $ramMB --disk-size $HW.DiskGB `
         --rootful --now 2>&1 | ForEach-Object { Write-Log "podman-init: $_" }
