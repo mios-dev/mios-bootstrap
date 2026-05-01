@@ -1,0 +1,153 @@
+{
+  "object": "knowledge",
+  "version": "0.2.2",
+  "description": "Upstream tooling gaps, hardware workarounds, and open implementation items. Decisions documented here override upstream defaults in the MiOS build pipeline.",
+
+  "tooling_gaps": [
+    {
+      "id": "cosign-v3-incompatibility",
+      "area": "supply-chain",
+      "severity": "blocking",
+      "summary": "rpm-ostree cannot consume OCI 1.1 bundle format produced by cosign v3",
+      "workaround": "Pin cosign to v2.x. Enforced in automation/42-cosign-policy.sh and PACKAGES.md packages-supply-chain block.",
+      "affected_vars": ["MIOS_COSIGN_VERSION"],
+      "status": "active-workaround"
+    },
+    {
+      "id": "bib-squash-all-metadata-loss",
+      "area": "build",
+      "severity": "blocking",
+      "summary": "--squash-all on podman build or bootc-image-builder strips ostree.final-diffid OCI metadata, breaking the bootc update chain",
+      "workaround": "Never pass --squash-all. Enforced in Hard Rules (system.md) and Containerfile.",
+      "status": "active-workaround"
+    },
+    {
+      "id": "bootc-fetch-apply-updates-narrow",
+      "area": "update",
+      "severity": "functional",
+      "summary": "bootc-fetch-apply-updates.timer ignores Flatpaks and Distrobox containers",
+      "workaround": "Replaced with uupd (Universal Blue unified updater). Installed in automation/43-uupd-installer.sh.",
+      "status": "resolved-by-uupd"
+    },
+    {
+      "id": "dnf5-weak-deps-syntax",
+      "area": "build",
+      "severity": "silent-failure",
+      "summary": "DNF4 install_weakdeps option is silently ignored by DNF5; correct DNF5 form is install_weak_deps (underscore)",
+      "workaround": "All automation scripts use install_weak_deps=False. Enforced in system.md hard rules and .cursorrules.",
+      "status": "active-workaround"
+    },
+    {
+      "id": "fedora44-filesystem-scriptlet-bug",
+      "area": "build",
+      "severity": "build-failure",
+      "summary": "Fedora 44 filesystem package %posttrans Lua scriptlet fails in containerized OCI builds",
+      "workaround": "Two-phase distro-sync: phase 1 installs core libs, phase 2 installs userspace. Implemented in automation/01-repos.sh.",
+      "status": "active-workaround"
+    }
+  ],
+
+  "hardware_gaps": [
+    {
+      "id": "nvidia-blackwell-vfio-reset",
+      "area": "gpu",
+      "severity": "functional",
+      "summary": "NVIDIA RTX 50-series (Blackwell) reset bug with VFIO passthrough",
+      "workaround": "Kernel arg vfio_pci.disable_idle_d3=1 injected via usr/lib/bootc/kargs.d/13-rtx50-vfio-workaround.toml.",
+      "status": "active-workaround"
+    },
+    {
+      "id": "wsl2-nftables-missing",
+      "area": "networking",
+      "severity": "functional",
+      "summary": "WSL2 kernel lacks nftables support; firewalld nftables backend fails silently in WSL2",
+      "workaround": "Image includes iptables-legacy. WSL2 deployments fall back to iptables-legacy backend automatically.",
+      "status": "active-workaround"
+    },
+    {
+      "id": "gtk4-theme-env-broken",
+      "area": "desktop",
+      "severity": "ui",
+      "summary": "GTK_THEME environment variable does not apply to GTK4/libadwaita apps",
+      "workaround": "Use ADW_DEBUG_COLOR_SCHEME=prefer-dark and dconf color-scheme='prefer-dark'. GTK_THEME=Adwaita-dark is banned in all MiOS scripts.",
+      "status": "resolved-by-convention"
+    },
+    {
+      "id": "gnome-malcontent-hard-dep",
+      "area": "desktop",
+      "severity": "packaging",
+      "summary": "malcontent parental control package is a hard dependency of gnome-shell; removing it uninstalls the entire GNOME desktop",
+      "workaround": "malcontent is retained in the image. Do not remove it from PACKAGES.md packages-gnome block.",
+      "status": "active-workaround"
+    }
+  ],
+
+  "planned_integrations": [
+    {
+      "id": "uki-composefs-boot",
+      "area": "boot",
+      "target_version": "0.3.0",
+      "summary": "Full composefs + UKI (Unified Kernel Image) boot chain",
+      "current_state": "Prep script exists (automation/23-uki-render.sh, non-fatal). Awaiting upstream bootloader stabilization.",
+      "status": "partial"
+    },
+    {
+      "id": "tpm2-measured-boot",
+      "area": "security",
+      "target_version": "0.3.0",
+      "summary": "Full measured boot attestation via sbsigntools and tpm2-tss",
+      "current_state": "TPM2 tooling present in image. Full attestation partially implemented; awaiting upstream stabilization.",
+      "status": "partial"
+    },
+    {
+      "id": "ai-model-staging-ci",
+      "area": "ai",
+      "target_version": "0.3.0",
+      "summary": "Automated model pull (LocalAI/Ollama) in CI pipeline",
+      "current_state": "Skipped in CI due to runner resource constraints (automation/37-ollama-prep.sh Containerfile-only). Models are a Day-2 post-install step.",
+      "affected_vars": ["MIOS_LOCALAI_VERSION", "MIOS_AI_MODEL", "MIOS_AI_EMBED_MODEL"],
+      "status": "day2-only"
+    }
+  ],
+
+  "openai_api_surface": {
+    "description": "All AI API endpoints follow OpenAI v1 spec. No vendor-specific extensions.",
+    "base_url": "http://localhost:8080/v1",
+    "endpoints": {
+      "GET /v1/models":              "static catalog from /usr/share/mios/ai/v1/models.json",
+      "POST /v1/chat/completions":   "LocalAI container on MIOS_AI_PORT=8080",
+      "POST /v1/embeddings":         "LocalAI container, model=MIOS_AI_EMBED_MODEL",
+      "MCP":                         "/usr/share/mios/ai/v1/mcp.json -> /usr/bin/mios-status --mcp-mode"
+    },
+    "resolution_chain": {
+      "system_prompt": [
+        "$MIOS_AI_SYSTEM_PROMPT",
+        "~/.config/mios/system-prompt.md",
+        "/etc/mios/ai/system-prompt.md",
+        "/usr/share/mios/ai/system.md"
+      ],
+      "env_vars": [
+        "~/.config/mios/env",
+        "/etc/mios/install.env",
+        "/etc/mios/env.d/*.env",
+        "/usr/share/mios/env.defaults"
+      ],
+      "profile": [
+        "~/.config/mios/profile.toml",
+        "/etc/mios/profile.toml",
+        "/usr/share/mios/profile.toml"
+      ]
+    },
+    "fhs_paths": {
+      "/usr/share/mios/ai/system.md":      "canonical system prompt (image-baked)",
+      "/usr/share/mios/ai/v1/models.json": "GET /v1/models static catalog",
+      "/usr/share/mios/ai/v1/mcp.json":    "MCP server registry",
+      "/usr/share/mios/ai/v1/config.json": "client config (base_url, model, embed_model)",
+      "/usr/share/mios/ai/vars.json":      "global variables index (all MIOS_* definitions)",
+      "/etc/mios/ai/system-prompt.md":     "host-local system prompt override",
+      "/etc/mios/ai/config.json":          "host-local inference config override",
+      "~/.config/mios/system-prompt.md":  "per-user system prompt override (highest precedence)",
+      "~/.config/mios/env":               "per-user MIOS_* variable overrides"
+    }
+  }
+}
