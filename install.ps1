@@ -28,13 +28,17 @@ $LegacyDistro     = "podman-machine-default"
 $UninstallRegKey  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS"
 $StartMenuDir     = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\MiOS"
 
-# ── Log file ──────────────────────────────────────────────────────────────────
+# ── Log files ─────────────────────────────────────────────────────────────────
 $null = New-Item -ItemType Directory -Path $MiosLogDir -Force -ErrorAction SilentlyContinue
-$LogStamp = [datetime]::Now.ToString("yyyyMMdd-HHmmss")
-$LogFile  = Join-Path $MiosLogDir "mios-install-$LogStamp.log"
-# Unified log — all build output (including podman build lines) goes to the same file
-$BuildLogFile = $LogFile
+$LogStamp       = [datetime]::Now.ToString("yyyyMMdd-HHmmss")
+$LogFile        = Join-Path $MiosLogDir "mios-install-$LogStamp.log"
+# Separate raw build-output log — NOT the transcript file.
+# Start-Transcript locks $LogFile exclusively; any Out-File/Add-Content to the
+# same path throws a TerminatingError that -EA SilentlyContinue cannot suppress.
+# Build lines are appended here via [IO.File]::AppendAllText (no lock conflict).
+$BuildDetailLog = Join-Path $MiosLogDir "mios-build-$LogStamp.log"
 [Environment]::SetEnvironmentVariable("MIOS_UNIFIED_LOG", $LogFile)
+[Environment]::SetEnvironmentVariable("MIOS_BUILD_LOG",   $BuildDetailLog)
 try { Start-Transcript -Path $LogFile -Append -Force | Out-Null } catch {}
 
 function Write-Log {
@@ -48,39 +52,42 @@ function Write-Log {
 }
 
 # ── Dashboard state ───────────────────────────────────────────────────────────
-$script:DW         = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 2), 80))
 $script:PhaseNames = @(
-    "Hardware + Prerequisites",   # 0
-    "Detecting environment",       # 1
-    "Directories and repos",       # 2
-    "MiOS-BUILDER distro",         # 3
-    "WSL2 configuration",          # 4
-    "Verifying build context",     # 5
-    "Identity",                    # 6
-    "Writing identity",            # 7
-    "App registration",            # 8
-    "Building OCI image",          # 9
-    "Exporting WSL2 image",        # 10
-    "Registering MiOS WSL2",       # 11
-    "Building disk images",        # 12
-    "Deploying Hyper-V VM"         # 13
+    "Hardware + Prerequisites",
+    "Detecting environment",
+    "Directories and repos",
+    "MiOS-BUILDER distro",
+    "WSL2 configuration",
+    "Verifying build context",
+    "Identity",
+    "Writing identity",
+    "App registration",
+    "Building OCI image",
+    "Exporting WSL2 image",
+    "Registering MiOS WSL2",
+    "Building disk images",
+    "Deploying Hyper-V VM"
 )
-$script:TotalPhases  = $script:PhaseNames.Count
-$script:PhStat       = @(0,0,0,0,0,0,0,0,0,0,0,0,0,0)   # 0=wait 1=run 2=ok 3=fail 4=warn
-$script:PhStart      = @{}
-$script:PhEnd        = @{}
-$script:CurPhase     = -1
-$script:CurStep      = "Starting..."
-$script:ErrCount     = 0
-$script:WarnCount    = 0
-$script:ScriptStart  = [datetime]::Now
-$script:DashRow      = 0
-$script:DashHeight   = 0
-$script:FinalRc      = 0
-$script:BuildSubTotal = 48   # updated from build.sh "+- STEP NN/TT" header
+$script:TotalPhases   = $script:PhaseNames.Count
+$script:PhStat        = @(0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+$script:PhStart       = @{}
+$script:PhEnd         = @{}
+$script:CurPhase      = -1
+$script:CurStep       = "Starting..."
+$script:ErrCount      = 0
+$script:WarnCount     = 0
+$script:ScriptStart   = [datetime]::Now
+$script:DashRow       = 0
+$script:DashHeight    = 0
+$script:FinalRc       = 0
+$script:BuildSubTotal = 48
 $script:BuildSubDone  = 0
 $script:BuildSubStep  = ""
-$script:GhcrToken     = ""   # GitHub PAT for ghcr.io; set in phase 6 or from env
+$script:GhcrToken     = ""
+# Live build tracking — updated each loop tick; shown in debug row
+$script:DebugLine     = ""
+$script:LineCount     = 0
+$script:HWInfo        = ""   # set after Get-Hardware; shown in dashboard info row
 
 # ── Dashboard functions ───────────────────────────────────────────────────────
 function fmtSpan([timespan]$s) {
@@ -96,97 +103,127 @@ function pbar([int]$done,[int]$total,[int]$width) {
 }
 
 function Update-BuildSubPhase([string]$line) {
-    # Strip BuildKit "#N 0.123 " prefix so bare content reaches the matchers
+    # Strip BuildKit "#N 0.123 " prefix
     $stripped = ($line -replace '^\s*#\d+\s+[\d.]+\s+', '').TrimStart()
+    $script:LineCount++
 
-    # Step start: "+- STEP NN/TT : scriptname"
     if ($stripped -match '\+-\s*STEP\s+(\d+)/(\d+)\s*:\s*(\S+)') {
+        # Step start marker: "+- STEP NN/TT : scriptname.sh"
         $script:BuildSubTotal = [int]$Matches[2]
         $script:BuildSubStep  = $Matches[3] -replace '\.sh$', ''
         $script:BuildSubDone  = [math]::Max(0, [int]$Matches[1] - 1)
-        $script:CurStep       = "Step $($Matches[1])/$($Matches[2]) — $($script:BuildSubStep)"
-    # Step end: "+-- [ DONE ] / +-- [FAILED] / +-- [ WARN ]"
+        $script:CurStep       = "Step $($Matches[1])/$($Matches[2]) -- $($script:BuildSubStep)"
+        $script:DebugLine     = $stripped
     } elseif ($stripped -match '\+--\s+\[') {
+        # Step end marker
         $script:BuildSubDone = [math]::Min($script:BuildSubDone + 1, $script:BuildSubTotal)
-    } else {
-        # Every other non-empty line updates Op: live — this is the frozen-dashboard fix.
-        # Without this, Op: shows the static "podman build (Windows client → ...)" for the
-        # entire build duration because no other branch ever touched $script:CurStep.
-        if (-not [string]::IsNullOrWhiteSpace($stripped)) {
-            $c = ($stripped -replace '\s+', ' ').Trim()
-            if ($c.Length -gt 80) { $c = $c.Substring(0, 77) + '...' }
-            $script:CurStep = $c
-        }
+        $script:DebugLine    = $stripped
+    } elseif (-not [string]::IsNullOrWhiteSpace($stripped)) {
+        $c = ($stripped -replace '\s+', ' ').Trim()
+        if ($c.Length -gt 120) { $c = $c.Substring(0, 117) + '...' }
+        $script:CurStep   = $c
+        $script:DebugLine = $c
     }
 }
 
 function Show-Dashboard {
     try {
-    $w  = [int]$script:DW
-    if ($w -lt 66) { $w = 66 }
-    $in = $w - 4          # usable inner width (inside "| " and " |")
-    $sep = "+" + ("-" * ($w - 2)) + "+"
+    # ── Sizing ────────────────────────────────────────────────────────────────
+    $winW = try { [Console]::WindowWidth  } catch { 80 }
+    $bufH = try { [Console]::BufferHeight } catch { 9999 }
+    $w    = [math]::Max(66, [math]::Min($winW, 82))
+    $in   = $w - 4   # inner width between "| " and " |"
+    $sepD = "+" + ("-" * ($w - 2)) + "+"
+    $sepE = "+" + ("=" * ($w - 2)) + "+"
 
-    $done  = [int]($script:PhStat | Where-Object { $_ -eq 2 } | Measure-Object).Count
-    $fail  = [int]($script:PhStat | Where-Object { $_ -eq 3 } | Measure-Object).Count
-    $globalDone  = $done + $script:BuildSubDone
-    $globalTotal = $script:TotalPhases + $script:BuildSubTotal
+    # ── State ─────────────────────────────────────────────────────────────────
+    $phDone = [int]($script:PhStat | Where-Object { $_ -ge 2 } | Measure-Object).Count
+    $phFail = [int]($script:PhStat | Where-Object { $_ -eq 3 } | Measure-Object).Count
     $elapsed = [datetime]::Now - $script:ScriptStart
     $elStr   = fmtSpan $elapsed
-
-    $statusStr = if ($fail -gt 0) { "FAILED" } `
+    $statusStr = if ($phFail -gt 0) { "FAILED" } `
                  elseif ($script:CurPhase -ge 0 -and $script:PhStat[$script:CurPhase] -eq 1) { "RUNNING" } `
                  else { "IDLE" }
-
     $curName = if ($script:CurPhase -ge 0) { [string]$script:PhaseNames[$script:CurPhase] } else { "Initializing" }
-    $phLabel = "[$($script:CurPhase)/$($script:TotalPhases-1)] $curName"
-    if ($script:CurPhase -eq 9 -and $script:BuildSubTotal -gt 0) {
-        $phLabel += "  ($($script:BuildSubDone)/$($script:BuildSubTotal) steps)"
+
+    # Spinner — driven by wall-clock so it keeps moving even when build output
+    # stalls (mirror timeouts, long RPM transactions, etc.)
+    $spinChars = @('|', '/', '-', '\')
+    $spinChar  = $spinChars[[int]($elapsed.TotalMilliseconds / 200) % 4]
+
+    $step = ([string]$script:CurStep) -replace '\s+', ' '
+    $stepMax = $in - 8
+    if ($step.Length -gt $stepMax) { $step = $step.Substring(0, $stepMax - 3) + "..." }
+
+    # ── Progress bars ─────────────────────────────────────────────────────────
+    $barW   = [math]::Max(8, $in - 18)
+    $phPct  = if ($script:TotalPhases -gt 0) { [int](($phDone / $script:TotalPhases) * 100) } else { 0 }
+    $phF    = if ($script:TotalPhases -gt 0) { [int](($phDone / $script:TotalPhases) * $barW) } else { 0 }
+    $phBar  = (if ($phF -gt 0) { ("=" * [math]::Max(0,$phF-1)) + ">" } else { "" }).PadRight($barW)
+    $phBarL = "Ph:[{0}] {1,3}%  {2}/{3} phases" -f $phBar,$phPct,$phDone,$script:TotalPhases
+
+    $stDone  = $script:BuildSubDone
+    $stTotal = [math]::Max(1, $script:BuildSubTotal)
+    $stPct   = [int](($stDone / $stTotal) * 100)
+    $stF     = [int](($stDone / $stTotal) * $barW)
+    $stBar   = (if ($stF -gt 0) { ("=" * [math]::Max(0,$stF-1)) + ">" } else { "" }).PadRight($barW)
+    $stBarL  = "St:[{0}] {1,3}%  {2}/{3} steps " -f $stBar,$stPct,$stDone,$stTotal
+
+    # ── Phase table col widths ────────────────────────────────────────────────
+    $nameW = [math]::Max(8, $in - 15)   # " NN [XX]  " = 9, "  MM:SS" = 7
+
+    # ── Build row list ────────────────────────────────────────────────────────
+    $rows = [System.Collections.Generic.List[string]]::new()
+
+    function frow([string]$inner) {
+        $s = "| " + $inner.PadRight($in) + " |"
+        return $s.PadRight($w).Substring(0, $w)
     }
 
-    $spinChars = @('|', '/', '-', '\')
-    $spinChar  = $spinChars[[int](([datetime]::Now - $script:ScriptStart).TotalMilliseconds / 250) % 4]
-    $step = [string]$script:CurStep
-    $stepMax = $in - 10
-    if ($step.Length -gt $stepMax) { $step = $step.Substring(0,$stepMax-3)+"..." }
-    $stepLine = "$spinChar $step"
-
-    $barW   = [math]::Max(10, $in - 12)
-    $barStr = pbar $globalDone $globalTotal $barW
-
-    $statStr = "Errors:$($script:ErrCount)  Warns:$($script:WarnCount)  Status:$statusStr"
-
-    # Phase table col widths
-    $nameW = [math]::Max(8, $in - 16)
-
-    $rows = [System.Collections.Generic.List[string]]::new()
-    $rows.Add($sep)
-    # Header row: title left, elapsed right
+    # Title bar
+    $rows.Add($sepE)
     $title = " MiOS $MiosVersion  --  Build Dashboard"
     $right = "[ $elStr ] "
-    $mid   = [math]::Max(0, $in - $title.Length - $right.Length + 2)
-    $rows.Add("| $title$(' ' * $mid)$right |".PadRight($w-1).Substring(0,$w-1) + "|")
-    $rows.Add($sep)
-    $rows.Add(("| Ph : " + $phLabel.PadRight($in-6).Substring(0,[math]::Min($phLabel.Length,$in-6)).PadRight($in-6) + " |").PadRight($w))
-    $rows.Add(("| Op : " + $stepLine.PadRight($in-6) + " |").PadRight($w))
-    $rows.Add(("| " + $statStr.PadRight($in) + " |").PadRight($w))
-    $rows.Add($sep)
-    $rows.Add(("| " + $barStr.PadRight($in) + " |").PadRight($w))
-    $rows.Add($sep)
-    # Column headers
-    $hdr = "  # State " + "Phase Name".PadRight($nameW) + " Time"
-    $rows.Add(("| " + $hdr.PadRight($in) + " |").PadRight($w))
-    $div = "--- ----- " + ("-" * $nameW) + " -----"
-    $rows.Add(("| " + $div.PadRight($in) + " |").PadRight($w))
+    $gap   = [math]::Max(0, $in - $title.Length - $right.Length + 2)
+    $rows.Add(("| $title" + (" " * $gap) + "$right |").PadRight($w).Substring(0,$w))
+    $rows.Add($sepE)
 
+    # Hardware info (set after Get-Hardware; empty during early phases)
+    if ($script:HWInfo) {
+        $hw = ([string]$script:HWInfo)
+        if ($hw.Length -gt $in) { $hw = $hw.Substring(0,$in-3)+"..." }
+        $rows.Add((frow $hw))
+        $rows.Add($sepD)
+    }
+
+    # Current phase + step
+    $phTag = switch ([int]$script:PhStat[[math]::Max(0,$script:CurPhase)]) {
+        1 { "[>>]" } 2 { "[OK]" } 3 { "[XX]" } 4 { "[!!]" } default { "[ ]" }
+    }
+    $phLine = "Phase [$($script:CurPhase)/$($script:TotalPhases-1)] $curName  $phTag"
+    if ($script:CurPhase -eq 9 -and $script:BuildSubDone -gt 0) {
+        $phLine += "  (step $($script:BuildSubDone)/$($script:BuildSubTotal))"
+    }
+    $rows.Add((frow $phLine))
+    $rows.Add((frow "Op $spinChar : $step"))
+    $rows.Add((frow "Errs:$($script:ErrCount)  Warns:$($script:WarnCount)  Lines:$($script:LineCount)  Status:$statusStr"))
+    $rows.Add($sepD)
+
+    # Progress bars
+    $rows.Add((frow $phBarL))
+    $rows.Add((frow $stBarL))
+    $rows.Add($sepD)
+
+    # Phase table header
+    $hdr = " # [Stat]  " + "Phase Name".PadRight($nameW) + "  Time"
+    $rows.Add((frow $hdr))
+    $div = "-- ------  " + ("-" * $nameW) + "  -----"
+    $rows.Add((frow $div))
+
+    # Phase rows
     for ($i = 0; $i -lt $script:TotalPhases; $i++) {
         $st = switch ([int]$script:PhStat[$i]) {
-            0 { "[ ]  " }
-            1 { "[>>] " }
-            2 { "[OK] " }
-            3 { "[XX] " }
-            4 { "[!!] " }
-            default { "[??] " }
+            0 { "[ ]  " } 1 { "[>>] " } 2 { "[OK] " } 3 { "[XX] " } 4 { "[!!] " } default { "[??] " }
         }
         $nm = [string]$script:PhaseNames[$i]
         if ($nm.Length -gt $nameW) { $nm = $nm.Substring(0,$nameW-3)+"..." }
@@ -195,37 +232,38 @@ function Show-Dashboard {
             try {
                 $ps = [datetime]$script:PhStart[$i]
                 $pe = if ($null -ne $script:PhEnd[$i]) { [datetime]$script:PhEnd[$i] } else { [datetime]::Now }
-                $t = fmtSpan ($pe - $ps)
+                $t  = fmtSpan ($pe - $ps)
             } catch { $t = "--:--" }
         }
-        $phRow = ("{0,3} {1} {2} {3,5}" -f $i,$st,$nm.PadRight($nameW),$t)
-        $rows.Add(("| " + $phRow.PadRight($in) + " |").PadRight($w))
+        $rows.Add((frow ("{0,2} {1} {2}  {3,5}" -f $i,$st,$nm.PadRight($nameW),$t)))
     }
-    $rows.Add($sep)
-    $logShort = try { Split-Path $LogFile -Leaf } catch { $LogFile }
-    $logInner = $in - 5
-    if ($logShort.Length -gt $logInner) { $logShort = "..."+$logShort.Substring($logShort.Length-($logInner-3)) }
-    $rows.Add(("| Log: " + $logShort.PadRight($logInner) + " |").PadRight($w))
-    $rows.Add($sep)
+    $rows.Add($sepD)
 
-    # Redraw at saved position
-    try {
-        $bufH = try { [Console]::BufferHeight } catch { 9999 }
-        $dashStart = [math]::Min($script:DashRow, $bufH - 1)
-        [Console]::SetCursorPosition(0, $dashStart)
-        foreach ($row in $rows) {
-            if ($row.Length -lt $w) { $row = $row.PadRight($w) }
-            elseif ($row.Length -gt $w) { $row = $row.Substring(0,$w) }
-            [Console]::Write($row)
-            [Console]::Write([Environment]::NewLine)
-        }
-        $script:DashHeight = $rows.Count
-        $dashEnd = [math]::Min($dashStart + $script:DashHeight, $bufH - 1)
-        [Console]::SetCursorPosition(0, $dashEnd)
-    } catch { <# non-interactive / piped -- skip cursor ops #> }
+    # Debug row: last build line + total line count
+    $dbgPfx = "DBG[$($script:LineCount)]: "
+    $dbgTxt = [string]$script:DebugLine
+    $dbgMax = $in - $dbgPfx.Length
+    if ($dbgTxt.Length -gt $dbgMax) { $dbgTxt = $dbgTxt.Substring(0,[math]::Max(0,$dbgMax-3))+"..." }
+    $rows.Add((frow ($dbgPfx + $dbgTxt)))
+
+    # Log file row
+    $logLeaf = try { Split-Path $LogFile -Leaf } catch { "?" }
+    $rows.Add((frow "Log: $logLeaf  |  Detail: $(Split-Path $BuildDetailLog -Leaf)"))
+    $rows.Add($sepE)
+
+    # ── Render: SetCursorPosition then overwrite FULL terminal width per line ─
+    # Padding to [Console]::WindowWidth ensures any content previously written
+    # to the right of the box border is blanked out, preventing bleed.
+    $dashStart = [math]::Min($script:DashRow, [math]::Max(0, $bufH - $rows.Count - 2))
+    [Console]::SetCursorPosition(0, $dashStart)
+    foreach ($row in $rows) {
+        [Console]::Write($row.PadRight($winW).Substring(0,$winW))
+        [Console]::Write([Environment]::NewLine)
+    }
+    $script:DashHeight = $rows.Count
+    [Console]::SetCursorPosition(0, [math]::Min($dashStart + $script:DashHeight, $bufH - 1))
 
     } catch {
-        # Dashboard render error -- log and continue; never let dashboard kill the script
         Write-Host "[$([datetime]::Now.ToString('HH:mm:ss.fff'))][WARN] dashboard render error: $_"
     }
 }
@@ -443,17 +481,18 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
 
     $proc = [System.Diagnostics.Process]::Start($psi)
     $sw   = [System.Diagnostics.Stopwatch]::StartNew()
-    $lineCount = 0
     while (-not $proc.StandardOutput.EndOfStream) {
         $line = $proc.StandardOutput.ReadLine()
         if ($null -eq $line) { break }
-        Write-Host $line
-        $lineCount++
+        # Write to detail log only — no Write-Host here.
+        # Printing raw build lines to the console scrolls the terminal buffer
+        # and drifts the dashboard position on every tick.
+        try { [System.IO.File]::AppendAllText($BuildDetailLog, $line + "`n", [Text.Encoding]::UTF8) } catch {}
         Update-BuildSubPhase $line
         if ($sw.ElapsedMilliseconds -ge 250) { Show-Dashboard; $sw.Restart() }
     }
     $proc.WaitForExit()
-    Write-Log "BUILD END  exit=$($proc.ExitCode)  lines=$lineCount"
+    Write-Log "BUILD END (Windows)  exit=$($proc.ExitCode)  lines=$($script:LineCount)"
     return $proc.ExitCode
 }
 
@@ -514,20 +553,18 @@ function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
 
     $proc = [System.Diagnostics.Process]::Start($psi)
     $sw   = [System.Diagnostics.Stopwatch]::StartNew()
-    $lineCount = 0
 
     while (-not $proc.StandardOutput.EndOfStream) {
         $line = $proc.StandardOutput.ReadLine()
         if ($null -eq $line) { break }
-        Write-Host $line
-        $lineCount++
+        try { [System.IO.File]::AppendAllText($BuildDetailLog, $line + "`n", [Text.Encoding]::UTF8) } catch {}
         Update-BuildSubPhase $line
         if ($sw.ElapsedMilliseconds -ge 250) { Show-Dashboard; $sw.Restart() }
     }
 
     $proc.WaitForExit()
     $rc = $proc.ExitCode
-    Write-Log "BUILD END  exit=$rc  lines=$lineCount"
+    Write-Log "BUILD END (WSL/SSH)  exit=$rc  lines=$($script:LineCount)"
     return $rc
 }
 
@@ -807,6 +844,9 @@ Start-Phase 0
 $HW = Get-Hardware
 Write-Log "hw: CPU=$($HW.Cpus)  RAM=$($HW.RamGB)GB  Disk=$($HW.DiskGB)GB  GPU=$($HW.GpuName)"
 Write-Log "hw: Base=$($HW.BaseImage)  Model=$($HW.AiModel)"
+$gpuShort = $HW.GpuName -replace 'NVIDIA GeForce ','RTX ' -replace 'NVIDIA Quadro ','Quadro '
+$script:HWInfo = "Host:$($env:COMPUTERNAME)  RAM:$($HW.RamGB)GB  CPU:$($HW.Cpus)c  GPU:$gpuShort  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')"
+Show-Dashboard
 
 $preOk = $true
 if (Get-Command git    -EA SilentlyContinue) { Log-Ok "Git $((& git --version 2>&1) -replace 'git version ','')" }
@@ -1162,9 +1202,9 @@ Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -Foreground
     } else {
         Write-Host $b -ForegroundColor Red
         Write-Host ("| BUILD FAILED (exit $ExitCode)  --  Errors: $($script:ErrCount)".PadRight($script:DW - 1) + "|") -ForegroundColor Red
-        Write-Host ("| Full log: $LogFile".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
-        Write-Host ("| Full log: $LogFile".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
-        Write-Host ("| Re-run: podman build --no-cache -t localhost/mios:latest $MiosRepoDir\mios".PadRight($script:DW - 1) + "|") -ForegroundColor DarkGray
+        Write-Host ("| Log    : $LogFile".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
+        Write-Host ("| Detail : $BuildDetailLog".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
+        Write-Host ("| Re-run : podman build --no-cache -t localhost/mios:latest $MiosRepoDir\mios".PadRight($script:DW - 1) + "|") -ForegroundColor DarkGray
         Write-Host $b -ForegroundColor Red
     }
     Write-Host ""
