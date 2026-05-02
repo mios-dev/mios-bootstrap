@@ -89,6 +89,7 @@ $script:GhcrToken     = ""
 $script:DebugLine     = ""
 $script:LineCount     = 0
 $script:HWInfo        = ""   # set after Get-Hardware; shown in dashboard info row
+$script:IdentInfo     = ""   # set after phase 6 identity; User/Host/Base/Model row
 
 # ── Dashboard functions ───────────────────────────────────────────────────────
 function fmtSpan([timespan]$s) {
@@ -129,13 +130,21 @@ function Update-BuildSubPhase([string]$line) {
 
 function Show-Dashboard {
     try {
-    # ── Sizing ────────────────────────────────────────────────────────────────
+    # ── Sizing — max 80 cols (standard tty0/console) ──────────────────────────
     $winW = try { [Console]::WindowWidth  } catch { 80 }
     $bufH = try { [Console]::BufferHeight } catch { 9999 }
-    $w    = [math]::Max(66, [math]::Min($winW, 82))
-    $in   = $w - 4   # inner content width ( "| " + content + " |" )
-    $sepD = "+" + ("-" * ($w - 2)) + "+"
-    $sepE = "+" + ("=" * ($w - 2)) + "+"
+    # Always 1 char narrower than actual terminal so old content to the right
+    # of the box is blanked on overwrite; capped at 80 for tty0 portability.
+    $w  = [math]::Max(40, [math]::Min(80, $winW - 1))
+    $in = $w - 4   # inner content width: "| " + content + " |"
+    $sepD = ("+" + ("-" * ($w - 2)) + "+").PadRight($winW)
+    $sepE = ("+" + ("=" * ($w - 2)) + "+").PadRight($winW)
+
+    # ── Row helper — script block closes over $in/$winW from caller scope ─────
+    $mkRow = {
+        param([string]$c)
+        ("| " + $c.PadRight($in) + " |").PadRight($winW)
+    }
 
     # ── State ─────────────────────────────────────────────────────────────────
     $phDone = [int]($script:PhStat | Where-Object { $_ -ge 2 } | Measure-Object).Count
@@ -147,29 +156,25 @@ function Show-Dashboard {
                  else { "IDLE" }
     $curName   = if ($script:CurPhase -ge 0) { [string]$script:PhaseNames[$script:CurPhase] } else { "Initializing" }
 
-    # Spinner — ticks off wall-clock time; keeps animating even when build stalls
-    $spinChar = @('|','/','-','\')[[int]($elapsed.TotalMilliseconds / 200) % 4]
+    # Spinner — 500ms tick; visible on slow/remote consoles, animates even when
+    # build output is silent.
+    $spinChar = @('|','/','-','\')[[int]($elapsed.TotalMilliseconds / 500) % 4]
 
     $step = (([string]$script:CurStep) -replace '\s+', ' ').Trim()
     $stepMax = [math]::Max(3, $in - 8)
     if ($step.Length -gt $stepMax) { $step = $step.Substring(0, $stepMax - 3) + "..." }
 
-    # ── Progress bars — compute fill strings into variables first, never inline ─
-    $barW  = [math]::Max(4, $in - 22)
-    $phPct = if ($script:TotalPhases -gt 0) { [int](($phDone / $script:TotalPhases) * 100) } else { 0 }
-    $phF   = if ($script:TotalPhases -gt 0) { [int](($phDone / $script:TotalPhases) * $barW) } else { 0 }
-    $phF   = [math]::Max(0, $phF)
-    if ($phF -gt 0) { $phFill = ("=" * ($phF - 1)) + ">" } else { $phFill = "" }
-    $phFill = $phFill.PadRight($barW)
-    $phBarL = "Ph:[{0}] {1,3}%  {2}/{3} phases" -f $phFill,$phPct,$phDone,$script:TotalPhases
-
+    # ── Single unified progress bar (phases + build steps = one global count) ─
     $stDone  = [math]::Max(0, $script:BuildSubDone)
     $stTotal = [math]::Max(1, $script:BuildSubTotal)
-    $stPct   = [int](($stDone / $stTotal) * 100)
-    $stF     = [math]::Max(0, [int](($stDone / $stTotal) * $barW))
-    if ($stF -gt 0) { $stFill = ("=" * ($stF - 1)) + ">" } else { $stFill = "" }
-    $stFill  = $stFill.PadRight($barW)
-    $stBarL  = "St:[{0}] {1,3}%  {2}/{3} steps " -f $stFill,$stPct,$stDone,$stTotal
+    $glDone  = $phDone + $stDone
+    $glTotal = $script:TotalPhases + $stTotal
+    $barW    = [math]::Max(4, $in - 24)
+    $glPct   = if ($glTotal -gt 0) { [int](($glDone / $glTotal) * 100) } else { 0 }
+    $glF     = [math]::Max(0, if ($glTotal -gt 0) { [int](($glDone / $glTotal) * $barW) } else { 0 })
+    if ($glF -gt 0) { $glFill = ("=" * ($glF - 1)) + ">" } else { $glFill = "" }
+    $glFill  = $glFill.PadRight($barW)
+    $glBarL  = "[{0}] {1,3}%  {2}/{3}" -f $glFill,$glPct,$glDone,$glTotal
 
     # ── Phase table col widths ────────────────────────────────────────────────
     $nameW = [math]::Max(8, $in - 15)
@@ -177,30 +182,32 @@ function Show-Dashboard {
     # ── Assemble rows ─────────────────────────────────────────────────────────
     $rows = [System.Collections.Generic.List[string]]::new()
 
-    # Header
+    # Header — gap computed so total row width = $w, then padded to $winW
     $rows.Add($sepE)
     $title = " MiOS $MiosVersion  --  Build Dashboard"
     $right = "[ $elStr ] "
-    $gap   = [math]::Max(0, $in - $title.Length - $right.Length + 2)
-    $rows.Add(("| $title" + (" " * $gap) + "$right |").PadRight($winW).Substring(0,$winW))
+    $gap   = [math]::Max(0, $in - $title.Length - $right.Length)
+    $hdr   = "| $title" + (" " * $gap) + "$right |"
+    $rows.Add($hdr.PadRight($winW))
     $rows.Add($sepE)
-
-    # Helper: wrap $r in a box row, padded to full terminal width so any old
-    # content to the right of the box is blanked.  Defined as a script block so
-    # it closes over $in and $winW from the current function scope — unlike a
-    # nested `function` or `filter`, script blocks invoked with & use the
-    # caller's variable scope.
-    $mkRow = { ("| " + ([string]$args[0]).PadRight($in) + " |").PadRight($winW).Substring(0,$winW) }
 
     # Hardware info row (populated after Get-Hardware; blank during early phases)
     if ($script:HWInfo) {
         $hw = ([string]$script:HWInfo)
         if ($hw.Length -gt $in) { $hw = $hw.Substring(0,$in-3)+"..." }
         $rows.Add((& $mkRow $hw))
-        $rows.Add($sepD)
     }
 
-    # Current operation
+    # Identity row (populated after phase 6; blank before)
+    if ($script:IdentInfo) {
+        $id = ([string]$script:IdentInfo)
+        if ($id.Length -gt $in) { $id = $id.Substring(0,$in-3)+"..." }
+        $rows.Add((& $mkRow $id))
+    }
+
+    if ($script:HWInfo -or $script:IdentInfo) { $rows.Add($sepD) }
+
+    # Current phase + live operation stream
     $phTag = switch ([int]$script:PhStat[[math]::Max(0,$script:CurPhase)]) {
         1 { "[>>]" } 2 { "[OK]" } 3 { "[XX]" } 4 { "[!!]" } default { "[ ]" }
     }
@@ -213,9 +220,8 @@ function Show-Dashboard {
     $rows.Add((& $mkRow "Errs:$($script:ErrCount)  Warns:$($script:WarnCount)  Lines:$($script:LineCount)  Status:$statusStr"))
     $rows.Add($sepD)
 
-    # Progress bars
-    $rows.Add((& $mkRow $phBarL))
-    $rows.Add((& $mkRow $stBarL))
+    # Unified progress bar
+    $rows.Add((& $mkRow $glBarL))
     $rows.Add($sepD)
 
     # Phase table
@@ -240,17 +246,9 @@ function Show-Dashboard {
     }
     $rows.Add($sepD)
 
-    # Debug row — last significant build line + running line count
-    $dbgPfx = "DBG[$($script:LineCount)]: "
-    $dbgTxt = (([string]$script:DebugLine) -replace '\s+', ' ').Trim()
-    $dbgMax = [math]::Max(0, $in - $dbgPfx.Length - 3)
-    if ($dbgTxt.Length -gt $dbgMax) { $dbgTxt = $dbgTxt.Substring(0, $dbgMax) + "..." }
-    $rows.Add((& $mkRow ($dbgPfx + $dbgTxt)))
-
-    # Log file row
+    # Log footer — unified log only ($BuildDetailLog is merged in at exit)
     $logLeaf = try { Split-Path $LogFile -Leaf } catch { "?" }
-    $detLeaf = try { Split-Path $BuildDetailLog -Leaf } catch { "?" }
-    $rows.Add((& $mkRow "Log: $logLeaf  |  Detail: $detLeaf"))
+    $rows.Add((& $mkRow "Log: $logLeaf"))
     $rows.Add($sepE)
 
     # ── Render at fixed position; full-width overwrite eliminates bleed ────────
@@ -845,7 +843,8 @@ $HW = Get-Hardware
 Write-Log "hw: CPU=$($HW.Cpus)  RAM=$($HW.RamGB)GB  Disk=$($HW.DiskGB)GB  GPU=$($HW.GpuName)"
 Write-Log "hw: Base=$($HW.BaseImage)  Model=$($HW.AiModel)"
 $gpuShort = $HW.GpuName -replace 'NVIDIA GeForce ','RTX ' -replace 'NVIDIA Quadro ','Quadro '
-$script:HWInfo = "Host:$($env:COMPUTERNAME)  RAM:$($HW.RamGB)GB  CPU:$($HW.Cpus)c  GPU:$gpuShort  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')"
+$script:HWInfo    = "Host:$($env:COMPUTERNAME)  RAM:$($HW.RamGB)GB  CPU:$($HW.Cpus)c  GPU:$gpuShort  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')"
+$script:IdentInfo = "Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')  Model:$($HW.AiModel)"
 Show-Dashboard
 
 $preOk = $true
@@ -1066,6 +1065,7 @@ if ($activeDistro) {
                         else { Read-Line "GitHub PAT for ghcr.io base image pull (github.com/settings/tokens)" "" }
     $tokStatus = if ($script:GhcrToken) { "provided (masked)" } else { "none -- anonymous pull (may fail)" }
     Log-Ok "Identity: user=$MiosUser  host=$MiosHostname  password=(hashed)  ghcr=$tokStatus"
+    $script:IdentInfo = "User:$MiosUser  Host:$MiosHostname  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')  Model:$($HW.AiModel)"
     End-Phase 6
 
     # ── Phase 7 -- Write identity ─────────────────────────────────────────────
@@ -1202,8 +1202,7 @@ Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -Foreground
     } else {
         Write-Host $b -ForegroundColor Red
         Write-Host ("| BUILD FAILED (exit $ExitCode)  --  Errors: $($script:ErrCount)".PadRight($script:DW - 1) + "|") -ForegroundColor Red
-        Write-Host ("| Log    : $LogFile".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
-        Write-Host ("| Detail : $BuildDetailLog".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
+        Write-Host ("| Log  : $LogFile".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
         Write-Host ("| Re-run : podman build --no-cache -t localhost/mios:latest $MiosRepoDir\mios".PadRight($script:DW - 1) + "|") -ForegroundColor DarkGray
         Write-Host $b -ForegroundColor Red
     }
@@ -1215,5 +1214,26 @@ Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -Foreground
         $null = Read-Host
     }
     try { Stop-Transcript | Out-Null } catch {}
+    # Merge raw build output into unified log (transcript lock now released)
+    if (Test-Path $BuildDetailLog) {
+        try {
+            [System.IO.File]::AppendAllText($LogFile, "`n`n---- BUILD OUTPUT ----`n", [Text.Encoding]::UTF8)
+            $detail = [System.IO.File]::ReadAllText($BuildDetailLog, [Text.Encoding]::UTF8)
+            [System.IO.File]::AppendAllText($LogFile, $detail, [Text.Encoding]::UTF8)
+            Remove-Item $BuildDetailLog -Force -ErrorAction SilentlyContinue
+        } catch {}
+    }
+    # Inject unified log into OCI image at /usr/share/mios/build-log.txt
+    if ($ExitCode -eq 0) {
+        try {
+            $cid = (& podman create localhost/mios:latest 2>$null) -join ""
+            if ($LASTEXITCODE -eq 0 -and $cid.Trim()) {
+                $cid = $cid.Trim()
+                & podman cp $LogFile "${cid}:/usr/share/mios/build-log.txt" 2>$null
+                & podman commit --quiet $cid localhost/mios:latest 2>$null | Out-Null
+                & podman rm -f $cid 2>$null | Out-Null
+            }
+        } catch {}
+    }
     exit $ExitCode
 }
