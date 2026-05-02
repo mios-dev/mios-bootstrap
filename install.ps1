@@ -190,13 +190,13 @@ function Show-Dashboard {
     # it closes over $in and $winW from the current function scope — unlike a
     # nested `function` or `filter`, script blocks invoked with & use the
     # caller's variable scope.
-    $R = { ("| " + ([string]$args[0]).PadRight($in) + " |").PadRight($winW).Substring(0,$winW) }
+    $mkRow = { ("| " + ([string]$args[0]).PadRight($in) + " |").PadRight($winW).Substring(0,$winW) }
 
     # Hardware info row (populated after Get-Hardware; blank during early phases)
     if ($script:HWInfo) {
         $hw = ([string]$script:HWInfo)
         if ($hw.Length -gt $in) { $hw = $hw.Substring(0,$in-3)+"..." }
-        $rows.Add((& $R $hw))
+        $rows.Add((& $mkRow $hw))
         $rows.Add($sepD)
     }
 
@@ -208,19 +208,19 @@ function Show-Dashboard {
     if ($script:CurPhase -eq 9 -and $script:BuildSubDone -gt 0) {
         $phLine += "  (step $($script:BuildSubDone)/$($script:BuildSubTotal))"
     }
-    $rows.Add((& $R $phLine))
-    $rows.Add((& $R "Op $spinChar : $step"))
-    $rows.Add((& $R "Errs:$($script:ErrCount)  Warns:$($script:WarnCount)  Lines:$($script:LineCount)  Status:$statusStr"))
+    $rows.Add((& $mkRow $phLine))
+    $rows.Add((& $mkRow "Op $spinChar : $step"))
+    $rows.Add((& $mkRow "Errs:$($script:ErrCount)  Warns:$($script:WarnCount)  Lines:$($script:LineCount)  Status:$statusStr"))
     $rows.Add($sepD)
 
     # Progress bars
-    $rows.Add((& $R $phBarL))
-    $rows.Add((& $R $stBarL))
+    $rows.Add((& $mkRow $phBarL))
+    $rows.Add((& $mkRow $stBarL))
     $rows.Add($sepD)
 
     # Phase table
-    $rows.Add((& $R (" # [Stat]  " + "Phase Name".PadRight($nameW) + "  Time")))
-    $rows.Add((& $R ("-- ------  " + ("-" * $nameW) + "  -----")))
+    $rows.Add((& $mkRow (" # [Stat]  " + "Phase Name".PadRight($nameW) + "  Time")))
+    $rows.Add((& $mkRow ("-- ------  " + ("-" * $nameW) + "  -----")))
     for ($i = 0; $i -lt $script:TotalPhases; $i++) {
         $st = switch ([int]$script:PhStat[$i]) {
             0 { "[ ]  " } 1 { "[>>] " } 2 { "[OK] " } 3 { "[XX] " } 4 { "[!!] " } default { "[??] " }
@@ -236,7 +236,7 @@ function Show-Dashboard {
             } catch { $t = "--:--" }
         }
         $r = "{0,2} {1} {2}  {3,5}" -f $i,$st,$nm.PadRight($nameW),$t
-        $rows.Add((& $R $r))
+        $rows.Add((& $mkRow $r))
     }
     $rows.Add($sepD)
 
@@ -245,12 +245,12 @@ function Show-Dashboard {
     $dbgTxt = (([string]$script:DebugLine) -replace '\s+', ' ').Trim()
     $dbgMax = [math]::Max(0, $in - $dbgPfx.Length - 3)
     if ($dbgTxt.Length -gt $dbgMax) { $dbgTxt = $dbgTxt.Substring(0, $dbgMax) + "..." }
-    $rows.Add((& $R ($dbgPfx + $dbgTxt)))
+    $rows.Add((& $mkRow ($dbgPfx + $dbgTxt)))
 
     # Log file row
     $logLeaf = try { Split-Path $LogFile -Leaf } catch { "?" }
     $detLeaf = try { Split-Path $BuildDetailLog -Leaf } catch { "?" }
-    $rows.Add((& $R "Log: $logLeaf  |  Detail: $detLeaf"))
+    $rows.Add((& $mkRow "Log: $logLeaf  |  Detail: $detLeaf"))
     $rows.Add($sepE)
 
     # ── Render at fixed position; full-width overwrite eliminates bleed ────────
