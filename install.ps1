@@ -40,7 +40,9 @@ try { Start-Transcript -Path $LogFile -Append -Force | Out-Null } catch {}
 function Write-Log {
     param([string]$M, [string]$L = "INFO")
     $ts = [datetime]::Now.ToString("HH:mm:ss.fff")
-    "[$ts][$L] $M" | Out-File $LogFile -Append -Encoding UTF8 -EA SilentlyContinue
+    # Write-Host is captured by Start-Transcript; Out-File to the same path causes
+    # a TerminatingError (file lock) that -EA SilentlyContinue cannot suppress.
+    Write-Host "[$ts][$L] $M"
     if ($L -eq "ERROR") { $script:ErrCount++ }
     if ($L -eq "WARN")  { $script:WarnCount++ }
 }
@@ -224,7 +226,7 @@ function Show-Dashboard {
 
     } catch {
         # Dashboard render error -- log and continue; never let dashboard kill the script
-        try { "[$([datetime]::Now.ToString('HH:mm:ss.fff'))][WARN] dashboard render error: $_" | Out-File $LogFile -Append -Encoding UTF8 -EA SilentlyContinue } catch {}
+        Write-Host "[$([datetime]::Now.ToString('HH:mm:ss.fff'))][WARN] dashboard render error: $_"
     }
 }
 
@@ -445,7 +447,7 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
     while (-not $proc.StandardOutput.EndOfStream) {
         $line = $proc.StandardOutput.ReadLine()
         if ($null -eq $line) { break }
-        $line | Out-File $BuildLogFile -Append -Encoding UTF8 -EA SilentlyContinue
+        Write-Host $line
         $lineCount++
         Update-BuildSubPhase $line
         if ($sw.ElapsedMilliseconds -ge 250) { Show-Dashboard; $sw.Restart() }
@@ -517,7 +519,7 @@ function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
     while (-not $proc.StandardOutput.EndOfStream) {
         $line = $proc.StandardOutput.ReadLine()
         if ($null -eq $line) { break }
-        $line | Out-File $BuildLogFile -Append -Encoding UTF8 -EA SilentlyContinue
+        Write-Host $line
         $lineCount++
         Update-BuildSubPhase $line
         if ($sw.ElapsedMilliseconds -ge 250) { Show-Dashboard; $sw.Restart() }
