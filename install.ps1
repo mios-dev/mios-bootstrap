@@ -90,6 +90,15 @@ $script:DebugLine     = ""
 $script:LineCount     = 0
 $script:HWInfo        = ""   # set after Get-Hardware; shown in dashboard info row
 $script:IdentInfo     = ""   # set after phase 6 identity; User/Host/Base/Model row
+# Shared state between main thread and background spinner runspace.
+# SpinnerRow = -1 means unknown (spinner write suppressed until first render).
+$script:DashSync = [hashtable]::Synchronized(@{
+    Running    = $true
+    SpinnerRow = -1
+    SpinnerCol = 5     # "| Op X" — spinner char is always at col 5
+})
+$script:BgPs = $null
+$script:BgRs = $null
 
 # ── Dashboard functions ───────────────────────────────────────────────────────
 function fmtSpan([timespan]$s) {
@@ -216,6 +225,9 @@ function Show-Dashboard {
         $phLine += "  (step $($script:BuildSubDone)/$($script:BuildSubTotal))"
     }
     $rows.Add((& $mkRow $phLine))
+    # Record which row index the spinner char will be on so the background
+    # heartbeat runspace can animate it independently of the main thread.
+    $opRowIdx = $rows.Count
     $rows.Add((& $mkRow "Op $spinChar : $step"))
     $rows.Add((& $mkRow "Errs:$($script:ErrCount)  Warns:$($script:WarnCount)  Lines:$($script:LineCount)  Status:$statusStr"))
     $rows.Add($sepD)
@@ -253,6 +265,9 @@ function Show-Dashboard {
 
     # ── Render at fixed position; full-width overwrite eliminates bleed ────────
     $dashStart = [math]::Min($script:DashRow, [math]::Max(0, $bufH - $rows.Count - 2))
+    # Tell the background heartbeat where to animate the spinner before rendering
+    # so it never writes a stale row number.
+    $script:DashSync.SpinnerRow = $dashStart + $opRowIdx
     [Console]::SetCursorPosition(0, $dashStart)
     foreach ($row in $rows) {
         [Console]::Write($row)
@@ -418,7 +433,7 @@ function New-BuilderDistro([hashtable]$HW) {
         --cpus $HW.Cpus --memory $ramMB --disk-size $HW.DiskGB `
         --rootful --now 2>&1 | ForEach-Object {
             Write-Log "podman-init: $_"
-            if ($initSw.ElapsedMilliseconds -ge 400) {
+            if ($initSw.ElapsedMilliseconds -ge 150) {
                 $clean = ($_ -replace '\x1b\[[0-9;]*[mGKHFJ]','').Trim()
                 if ($clean) { $script:CurStep = $clean.Substring(0,[math]::Min($clean.Length,80)) }
                 Show-Dashboard
@@ -487,7 +502,7 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
         # and drifts the dashboard position on every tick.
         try { [System.IO.File]::AppendAllText($BuildDetailLog, $line + "`n", [Text.Encoding]::UTF8) } catch {}
         Update-BuildSubPhase $line
-        if ($sw.ElapsedMilliseconds -ge 250) { Show-Dashboard; $sw.Restart() }
+        if ($sw.ElapsedMilliseconds -ge 150) { Show-Dashboard; $sw.Restart() }
     }
     $proc.WaitForExit()
     Write-Log "BUILD END (Windows)  exit=$($proc.ExitCode)  lines=$($script:LineCount)"
@@ -557,7 +572,7 @@ function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
         if ($null -eq $line) { break }
         try { [System.IO.File]::AppendAllText($BuildDetailLog, $line + "`n", [Text.Encoding]::UTF8) } catch {}
         Update-BuildSubPhase $line
-        if ($sw.ElapsedMilliseconds -ge 250) { Show-Dashboard; $sw.Restart() }
+        if ($sw.ElapsedMilliseconds -ge 150) { Show-Dashboard; $sw.Restart() }
     }
 
     $proc.WaitForExit()
@@ -835,6 +850,36 @@ Write-Host ""
 
 # Capture the row where the dashboard will be drawn (right after banner)
 $script:DashRow = try { [Console]::CursorTop } catch { 0 }
+
+# ── Background heartbeat — keeps spinner animating independently ──────────────
+# Runs on a dedicated runspace so the operator always sees spinner movement.
+# A frozen spinner means a true fault/hang/timeout, not just a slow operation.
+$script:BgRs = [runspacefactory]::CreateRunspace()
+$script:BgRs.Open()
+$script:BgRs.SessionStateProxy.SetVariable('dashSync', $script:DashSync)
+$script:BgPs = [powershell]::Create()
+$script:BgPs.Runspace = $script:BgRs
+$null = $script:BgPs.AddScript({
+    $chars = @('|', '/', '-', '\')
+    $i = 0
+    while ($dashSync.Running) {
+        [System.Threading.Thread]::Sleep(120)
+        $row = $dashSync.SpinnerRow
+        $col = $dashSync.SpinnerCol
+        if ($row -ge 0) {
+            try {
+                $prevTop = [Console]::CursorTop
+                $prevLeft = [Console]::CursorLeft
+                [Console]::SetCursorPosition($col, $row)
+                [Console]::Write($chars[$i % 4])
+                [Console]::SetCursorPosition($prevLeft, $prevTop)
+            } catch {}
+            $i++
+        }
+    }
+})
+$script:BgHandle = $script:BgPs.BeginInvoke()
+
 Show-Dashboard   # draw initial (all phases pending)
 
 # ── Phase 0 -- Hardware + Prerequisites ──────────────────────────────────────
@@ -1213,6 +1258,13 @@ Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -Foreground
         Write-Host "  Press Enter to close..." -ForegroundColor DarkGray -NoNewline
         $null = Read-Host
     }
+    # Stop background heartbeat runspace cleanly before closing transcript
+    try {
+        $script:DashSync.Running = $false
+        [System.Threading.Thread]::Sleep(200)   # let background loop exit its Sleep(120)
+        if ($script:BgPs)  { try { $script:BgPs.Stop() }    catch {}; try { $script:BgPs.Dispose() }  catch {} }
+        if ($script:BgRs)  { try { $script:BgRs.Close() }   catch {} }
+    } catch {}
     try { Stop-Transcript | Out-Null } catch {}
     # Merge raw build output into unified log (transcript lock now released)
     if (Test-Path $BuildDetailLog) {
