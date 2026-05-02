@@ -825,6 +825,11 @@ if ($activeDistro) {
     }
     Show-Dashboard
 
+    # Collect GHCR token in rebuild path (phase 6 is skipped above).
+    $script:GhcrToken = if ($env:MIOS_GITHUB_TOKEN) { $env:MIOS_GITHUB_TOKEN }
+                        elseif ($env:GITHUB_TOKEN)   { $env:GITHUB_TOKEN }
+                        else { Read-Line "GitHub PAT for ghcr.io base image pull" "" }
+
     Start-Phase 9
     $rc = Invoke-WslBuild -Distro $activeDistro -BaseImage $HW.BaseImage -AiModel $HW.AiModel
     if ($rc -eq 0) {
