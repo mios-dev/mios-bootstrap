@@ -30,9 +30,12 @@ $StartMenuDir     = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Program
 
 # ── Log file ──────────────────────────────────────────────────────────────────
 $null = New-Item -ItemType Directory -Path $MiosLogDir -Force -ErrorAction SilentlyContinue
-$LogStamp     = [datetime]::Now.ToString("yyyyMMdd-HHmmss")
-$LogFile      = Join-Path $MiosLogDir "mios-install-$LogStamp.log"
-$BuildLogFile = Join-Path $MiosLogDir "mios-build-$LogStamp.log"
+$LogStamp = [datetime]::Now.ToString("yyyyMMdd-HHmmss")
+$LogFile  = Join-Path $MiosLogDir "mios-install-$LogStamp.log"
+# Unified log — all build output (including podman build lines) goes to the same file
+$BuildLogFile = $LogFile
+[Environment]::SetEnvironmentVariable("MIOS_UNIFIED_LOG", $LogFile)
+try { Start-Transcript -Path $LogFile -Append -Force | Out-Null } catch {}
 
 function Write-Log {
     param([string]$M, [string]$L = "INFO")
@@ -91,14 +94,27 @@ function pbar([int]$done,[int]$total,[int]$width) {
 }
 
 function Update-BuildSubPhase([string]$line) {
-    # Step start: "+- STEP NN/TT : scriptname" (with optional BuildKit "#NN ELAPSED " prefix)
-    if ($line -match '\+- STEP \d+/(\d+)\s*:\s*(\S+)') {
-        $script:BuildSubTotal = [int]$Matches[1]
-        $script:BuildSubStep  = $Matches[2] -replace '\.sh$',''
-        $script:CurStep       = "Build: $($script:BuildSubStep)"
+    # Strip BuildKit "#N 0.123 " prefix so bare content reaches the matchers
+    $stripped = ($line -replace '^\s*#\d+\s+[\d.]+\s+', '').TrimStart()
+
+    # Step start: "+- STEP NN/TT : scriptname"
+    if ($stripped -match '\+-\s*STEP\s+(\d+)/(\d+)\s*:\s*(\S+)') {
+        $script:BuildSubTotal = [int]$Matches[2]
+        $script:BuildSubStep  = $Matches[3] -replace '\.sh$', ''
+        $script:BuildSubDone  = [math]::Max(0, [int]$Matches[1] - 1)
+        $script:CurStep       = "Step $($Matches[1])/$($Matches[2]) — $($script:BuildSubStep)"
     # Step end: "+-- [ DONE ] / +-- [FAILED] / +-- [ WARN ]"
-    } elseif ($line -match '\+--\s+\[') {
+    } elseif ($stripped -match '\+--\s+\[') {
         $script:BuildSubDone = [math]::Min($script:BuildSubDone + 1, $script:BuildSubTotal)
+    } else {
+        # Every other non-empty line updates Op: live — this is the frozen-dashboard fix.
+        # Without this, Op: shows the static "podman build (Windows client → ...)" for the
+        # entire build duration because no other branch ever touched $script:CurStep.
+        if (-not [string]::IsNullOrWhiteSpace($stripped)) {
+            $c = ($stripped -replace '\s+', ' ').Trim()
+            if ($c.Length -gt 80) { $c = $c.Substring(0, 77) + '...' }
+            $script:CurStep = $c
+        }
     }
 }
 
@@ -411,7 +427,7 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
     # Run via cmd.exe so 2>&1 merges stderr (podman build progress) into stdout stream
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = "cmd.exe"
-    $psi.Arguments = ("/c podman build --no-cache " +
+    $psi.Arguments = ("/c podman build --progress=plain --no-cache " +
                       "--build-arg `"BASE_IMAGE=$BaseImage`" " +
                       "--build-arg `"MIOS_USER=$MiosUser`" " +
                       "--build-arg `"MIOS_HOSTNAME=$MiosHostname`" " +
@@ -432,7 +448,7 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
         $line | Out-File $BuildLogFile -Append -Encoding UTF8 -EA SilentlyContinue
         $lineCount++
         Update-BuildSubPhase $line
-        if ($sw.ElapsedMilliseconds -ge 1000) { Show-Dashboard; $sw.Restart() }
+        if ($sw.ElapsedMilliseconds -ge 250) { Show-Dashboard; $sw.Restart() }
     }
     $proc.WaitForExit()
     Write-Log "BUILD END  exit=$($proc.ExitCode)  lines=$lineCount"
@@ -504,7 +520,7 @@ function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
         $line | Out-File $BuildLogFile -Append -Encoding UTF8 -EA SilentlyContinue
         $lineCount++
         Update-BuildSubPhase $line
-        if ($sw.ElapsedMilliseconds -ge 1000) { Show-Dashboard; $sw.Restart() }
+        if ($sw.ElapsedMilliseconds -ge 250) { Show-Dashboard; $sw.Restart() }
     }
 
     $proc.WaitForExit()
@@ -1145,7 +1161,7 @@ Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -Foreground
         Write-Host $b -ForegroundColor Red
         Write-Host ("| BUILD FAILED (exit $ExitCode)  --  Errors: $($script:ErrCount)".PadRight($script:DW - 1) + "|") -ForegroundColor Red
         Write-Host ("| Full log: $LogFile".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
-        Write-Host ("| Build log: $BuildLogFile".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
+        Write-Host ("| Full log: $LogFile".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
         Write-Host ("| Re-run: podman build --no-cache -t localhost/mios:latest $MiosRepoDir\mios".PadRight($script:DW - 1) + "|") -ForegroundColor DarkGray
         Write-Host $b -ForegroundColor Red
     }
@@ -1156,5 +1172,6 @@ Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -Foreground
         Write-Host "  Press Enter to close..." -ForegroundColor DarkGray -NoNewline
         $null = Read-Host
     }
+    try { Stop-Transcript | Out-Null } catch {}
     exit $ExitCode
 }
