@@ -75,6 +75,7 @@ $script:FinalRc      = 0
 $script:BuildSubTotal = 48   # updated from build.sh "+- STEP NN/TT" header
 $script:BuildSubDone  = 0
 $script:BuildSubStep  = ""
+$script:GhcrToken     = ""   # GitHub PAT for ghcr.io; set in phase 6 or from env
 
 # ── Dashboard functions ───────────────────────────────────────────────────────
 function fmtSpan([timespan]$s) {
@@ -390,6 +391,18 @@ function New-BuilderDistro([hashtable]$HW) {
     Log-Ok "MiOS-BUILDER Podman API ready"
 }
 
+function Invoke-GhcrLogin([string]$Token) {
+    if ([string]::IsNullOrWhiteSpace($Token)) {
+        Write-Log "ghcr-login: no token (set MIOS_GITHUB_TOKEN or provide one in phase 6)"
+        return
+    }
+    Set-Step "Authenticating podman to ghcr.io..."
+    $Token | & podman login ghcr.io --username "mios-dev" --password-stdin 2>&1 |
+        ForEach-Object { Write-Log "ghcr-login: $_" }
+    if ($LASTEXITCODE -eq 0) { Log-Ok "Authenticated to ghcr.io" }
+    else { Log-Warn "ghcr.io login failed -- build may fail pulling base image" }
+}
+
 function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [string]$MiosHostname) {
     $repoPath = Join-Path $MiosRepoDir "mios"
     Set-Step "podman build (Windows client → $BuilderDistro)"
@@ -428,6 +441,13 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
 
 function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
                           [string]$MiosUser = "mios", [string]$MiosHostname = "mios") {
+    # Authenticate to ghcr.io before any pull/build.  GHCR now returns 403 on
+    # anonymous bearer-token requests for ublue-os images; a GitHub PAT is required.
+    $tok = if ($env:MIOS_GITHUB_TOKEN) { $env:MIOS_GITHUB_TOKEN }
+           elseif ($env:GITHUB_TOKEN)  { $env:GITHUB_TOKEN }
+           else                         { $script:GhcrToken }
+    Invoke-GhcrLogin -Token $tok
+
     # Detect access method: wsl.exe > podman machine ssh > Windows podman build
     $useWsl      = $false
     $useSsh      = $false
@@ -924,7 +944,13 @@ guiApplications=true
     $pwPlain      = Read-Password "Password"
     if ([string]::IsNullOrWhiteSpace($pwPlain)) { $pwPlain = "mios" }
     $MiosHash     = Get-PasswordHash $pwPlain
-    Log-Ok "Identity: user=$MiosUser  host=$MiosHostname  password=(hashed)"
+    # GitHub PAT is required to pull ghcr.io/ublue-os/ucore-hci (GHCR anon bearer token returns 403).
+    # Check env first; fall back to prompt so interactive installs work without pre-setting the var.
+    $script:GhcrToken = if ($env:MIOS_GITHUB_TOKEN) { $env:MIOS_GITHUB_TOKEN }
+                        elseif ($env:GITHUB_TOKEN)   { $env:GITHUB_TOKEN }
+                        else { Read-Line "GitHub PAT for ghcr.io base image pull (github.com/settings/tokens)" "" }
+    $tokStatus = if ($script:GhcrToken) { "provided (masked)" } else { "none -- anonymous pull (may fail)" }
+    Log-Ok "Identity: user=$MiosUser  host=$MiosHostname  password=(hashed)  ghcr=$tokStatus"
     End-Phase 6
 
     # ── Phase 7 -- Write identity ─────────────────────────────────────────────
