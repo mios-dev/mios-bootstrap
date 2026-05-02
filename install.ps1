@@ -52,6 +52,7 @@ function Write-Log {
 }
 
 # ── Dashboard state ───────────────────────────────────────────────────────────
+$script:DW         = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 2), 80))
 $script:PhaseNames = @(
     "Hardware + Prerequisites",
     "Detecting environment",
@@ -132,71 +133,74 @@ function Show-Dashboard {
     $winW = try { [Console]::WindowWidth  } catch { 80 }
     $bufH = try { [Console]::BufferHeight } catch { 9999 }
     $w    = [math]::Max(66, [math]::Min($winW, 82))
-    $in   = $w - 4   # inner width between "| " and " |"
+    $in   = $w - 4   # inner content width ( "| " + content + " |" )
     $sepD = "+" + ("-" * ($w - 2)) + "+"
     $sepE = "+" + ("=" * ($w - 2)) + "+"
 
     # ── State ─────────────────────────────────────────────────────────────────
     $phDone = [int]($script:PhStat | Where-Object { $_ -ge 2 } | Measure-Object).Count
     $phFail = [int]($script:PhStat | Where-Object { $_ -eq 3 } | Measure-Object).Count
-    $elapsed = [datetime]::Now - $script:ScriptStart
-    $elStr   = fmtSpan $elapsed
+    $elapsed   = [datetime]::Now - $script:ScriptStart
+    $elStr     = fmtSpan $elapsed
     $statusStr = if ($phFail -gt 0) { "FAILED" } `
                  elseif ($script:CurPhase -ge 0 -and $script:PhStat[$script:CurPhase] -eq 1) { "RUNNING" } `
                  else { "IDLE" }
-    $curName = if ($script:CurPhase -ge 0) { [string]$script:PhaseNames[$script:CurPhase] } else { "Initializing" }
+    $curName   = if ($script:CurPhase -ge 0) { [string]$script:PhaseNames[$script:CurPhase] } else { "Initializing" }
 
-    # Spinner — driven by wall-clock so it keeps moving even when build output
-    # stalls (mirror timeouts, long RPM transactions, etc.)
-    $spinChars = @('|', '/', '-', '\')
-    $spinChar  = $spinChars[[int]($elapsed.TotalMilliseconds / 200) % 4]
+    # Spinner — ticks off wall-clock time; keeps animating even when build stalls
+    $spinChar = @('|','/','-','\')[[int]($elapsed.TotalMilliseconds / 200) % 4]
 
-    $step = ([string]$script:CurStep) -replace '\s+', ' '
-    $stepMax = $in - 8
+    $step = (([string]$script:CurStep) -replace '\s+', ' ').Trim()
+    $stepMax = [math]::Max(3, $in - 8)
     if ($step.Length -gt $stepMax) { $step = $step.Substring(0, $stepMax - 3) + "..." }
 
-    # ── Progress bars ─────────────────────────────────────────────────────────
-    $barW   = [math]::Max(8, $in - 18)
-    $phPct  = if ($script:TotalPhases -gt 0) { [int](($phDone / $script:TotalPhases) * 100) } else { 0 }
-    $phF    = if ($script:TotalPhases -gt 0) { [int](($phDone / $script:TotalPhases) * $barW) } else { 0 }
-    $phBar  = (if ($phF -gt 0) { ("=" * [math]::Max(0,$phF-1)) + ">" } else { "" }).PadRight($barW)
-    $phBarL = "Ph:[{0}] {1,3}%  {2}/{3} phases" -f $phBar,$phPct,$phDone,$script:TotalPhases
+    # ── Progress bars — compute fill strings into variables first, never inline ─
+    $barW  = [math]::Max(4, $in - 22)
+    $phPct = if ($script:TotalPhases -gt 0) { [int](($phDone / $script:TotalPhases) * 100) } else { 0 }
+    $phF   = if ($script:TotalPhases -gt 0) { [int](($phDone / $script:TotalPhases) * $barW) } else { 0 }
+    $phF   = [math]::Max(0, $phF)
+    if ($phF -gt 0) { $phFill = ("=" * ($phF - 1)) + ">" } else { $phFill = "" }
+    $phFill = $phFill.PadRight($barW)
+    $phBarL = "Ph:[{0}] {1,3}%  {2}/{3} phases" -f $phFill,$phPct,$phDone,$script:TotalPhases
 
-    $stDone  = $script:BuildSubDone
+    $stDone  = [math]::Max(0, $script:BuildSubDone)
     $stTotal = [math]::Max(1, $script:BuildSubTotal)
     $stPct   = [int](($stDone / $stTotal) * 100)
-    $stF     = [int](($stDone / $stTotal) * $barW)
-    $stBar   = (if ($stF -gt 0) { ("=" * [math]::Max(0,$stF-1)) + ">" } else { "" }).PadRight($barW)
-    $stBarL  = "St:[{0}] {1,3}%  {2}/{3} steps " -f $stBar,$stPct,$stDone,$stTotal
+    $stF     = [math]::Max(0, [int](($stDone / $stTotal) * $barW))
+    if ($stF -gt 0) { $stFill = ("=" * ($stF - 1)) + ">" } else { $stFill = "" }
+    $stFill  = $stFill.PadRight($barW)
+    $stBarL  = "St:[{0}] {1,3}%  {2}/{3} steps " -f $stFill,$stPct,$stDone,$stTotal
 
     # ── Phase table col widths ────────────────────────────────────────────────
-    $nameW = [math]::Max(8, $in - 15)   # " NN [XX]  " = 9, "  MM:SS" = 7
+    $nameW = [math]::Max(8, $in - 15)
 
-    # ── Build row list ────────────────────────────────────────────────────────
+    # ── Assemble rows ─────────────────────────────────────────────────────────
     $rows = [System.Collections.Generic.List[string]]::new()
 
-    function frow([string]$inner) {
-        $s = "| " + $inner.PadRight($in) + " |"
-        return $s.PadRight($w).Substring(0, $w)
-    }
-
-    # Title bar
+    # Header
     $rows.Add($sepE)
     $title = " MiOS $MiosVersion  --  Build Dashboard"
     $right = "[ $elStr ] "
     $gap   = [math]::Max(0, $in - $title.Length - $right.Length + 2)
-    $rows.Add(("| $title" + (" " * $gap) + "$right |").PadRight($w).Substring(0,$w))
+    $rows.Add(("| $title" + (" " * $gap) + "$right |").PadRight($winW).Substring(0,$winW))
     $rows.Add($sepE)
 
-    # Hardware info (set after Get-Hardware; empty during early phases)
+    # Helper: wrap $r in a box row, padded to full terminal width so any old
+    # content to the right of the box is blanked.  Defined as a script block so
+    # it closes over $in and $winW from the current function scope — unlike a
+    # nested `function` or `filter`, script blocks invoked with & use the
+    # caller's variable scope.
+    $R = { ("| " + ([string]$args[0]).PadRight($in) + " |").PadRight($winW).Substring(0,$winW) }
+
+    # Hardware info row (populated after Get-Hardware; blank during early phases)
     if ($script:HWInfo) {
         $hw = ([string]$script:HWInfo)
         if ($hw.Length -gt $in) { $hw = $hw.Substring(0,$in-3)+"..." }
-        $rows.Add((frow $hw))
+        $rows.Add((& $R $hw))
         $rows.Add($sepD)
     }
 
-    # Current phase + step
+    # Current operation
     $phTag = switch ([int]$script:PhStat[[math]::Max(0,$script:CurPhase)]) {
         1 { "[>>]" } 2 { "[OK]" } 3 { "[XX]" } 4 { "[!!]" } default { "[ ]" }
     }
@@ -204,23 +208,19 @@ function Show-Dashboard {
     if ($script:CurPhase -eq 9 -and $script:BuildSubDone -gt 0) {
         $phLine += "  (step $($script:BuildSubDone)/$($script:BuildSubTotal))"
     }
-    $rows.Add((frow $phLine))
-    $rows.Add((frow "Op $spinChar : $step"))
-    $rows.Add((frow "Errs:$($script:ErrCount)  Warns:$($script:WarnCount)  Lines:$($script:LineCount)  Status:$statusStr"))
+    $rows.Add((& $R $phLine))
+    $rows.Add((& $R "Op $spinChar : $step"))
+    $rows.Add((& $R "Errs:$($script:ErrCount)  Warns:$($script:WarnCount)  Lines:$($script:LineCount)  Status:$statusStr"))
     $rows.Add($sepD)
 
     # Progress bars
-    $rows.Add((frow $phBarL))
-    $rows.Add((frow $stBarL))
+    $rows.Add((& $R $phBarL))
+    $rows.Add((& $R $stBarL))
     $rows.Add($sepD)
 
-    # Phase table header
-    $hdr = " # [Stat]  " + "Phase Name".PadRight($nameW) + "  Time"
-    $rows.Add((frow $hdr))
-    $div = "-- ------  " + ("-" * $nameW) + "  -----"
-    $rows.Add((frow $div))
-
-    # Phase rows
+    # Phase table
+    $rows.Add((& $R (" # [Stat]  " + "Phase Name".PadRight($nameW) + "  Time")))
+    $rows.Add((& $R ("-- ------  " + ("-" * $nameW) + "  -----")))
     for ($i = 0; $i -lt $script:TotalPhases; $i++) {
         $st = switch ([int]$script:PhStat[$i]) {
             0 { "[ ]  " } 1 { "[>>] " } 2 { "[OK] " } 3 { "[XX] " } 4 { "[!!] " } default { "[??] " }
@@ -235,29 +235,29 @@ function Show-Dashboard {
                 $t  = fmtSpan ($pe - $ps)
             } catch { $t = "--:--" }
         }
-        $rows.Add((frow ("{0,2} {1} {2}  {3,5}" -f $i,$st,$nm.PadRight($nameW),$t)))
+        $r = "{0,2} {1} {2}  {3,5}" -f $i,$st,$nm.PadRight($nameW),$t
+        $rows.Add((& $R $r))
     }
     $rows.Add($sepD)
 
-    # Debug row: last build line + total line count
+    # Debug row — last significant build line + running line count
     $dbgPfx = "DBG[$($script:LineCount)]: "
-    $dbgTxt = [string]$script:DebugLine
-    $dbgMax = $in - $dbgPfx.Length
-    if ($dbgTxt.Length -gt $dbgMax) { $dbgTxt = $dbgTxt.Substring(0,[math]::Max(0,$dbgMax-3))+"..." }
-    $rows.Add((frow ($dbgPfx + $dbgTxt)))
+    $dbgTxt = (([string]$script:DebugLine) -replace '\s+', ' ').Trim()
+    $dbgMax = [math]::Max(0, $in - $dbgPfx.Length - 3)
+    if ($dbgTxt.Length -gt $dbgMax) { $dbgTxt = $dbgTxt.Substring(0, $dbgMax) + "..." }
+    $rows.Add((& $R ($dbgPfx + $dbgTxt)))
 
     # Log file row
     $logLeaf = try { Split-Path $LogFile -Leaf } catch { "?" }
-    $rows.Add((frow "Log: $logLeaf  |  Detail: $(Split-Path $BuildDetailLog -Leaf)"))
+    $detLeaf = try { Split-Path $BuildDetailLog -Leaf } catch { "?" }
+    $rows.Add((& $R "Log: $logLeaf  |  Detail: $detLeaf"))
     $rows.Add($sepE)
 
-    # ── Render: SetCursorPosition then overwrite FULL terminal width per line ─
-    # Padding to [Console]::WindowWidth ensures any content previously written
-    # to the right of the box border is blanked out, preventing bleed.
+    # ── Render at fixed position; full-width overwrite eliminates bleed ────────
     $dashStart = [math]::Min($script:DashRow, [math]::Max(0, $bufH - $rows.Count - 2))
     [Console]::SetCursorPosition(0, $dashStart)
     foreach ($row in $rows) {
-        [Console]::Write($row.PadRight($winW).Substring(0,$winW))
+        [Console]::Write($row)
         [Console]::Write([Environment]::NewLine)
     }
     $script:DashHeight = $rows.Count
