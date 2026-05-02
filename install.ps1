@@ -180,7 +180,8 @@ function Show-Dashboard {
     $glTotal = $script:TotalPhases + $stTotal
     $barW    = [math]::Max(4, $in - 24)
     $glPct   = if ($glTotal -gt 0) { [int](($glDone / $glTotal) * 100) } else { 0 }
-    $glF     = [math]::Max(0, if ($glTotal -gt 0) { [int](($glDone / $glTotal) * $barW) } else { 0 })
+    $glFRaw  = if ($glTotal -gt 0) { [int](($glDone / $glTotal) * $barW) } else { 0 }
+    $glF     = [math]::Max(0, $glFRaw)
     if ($glF -gt 0) { $glFill = ("=" * ($glF - 1)) + ">" } else { $glFill = "" }
     $glFill  = $glFill.PadRight($barW)
     $glBarL  = "[{0}] {1,3}%  {2}/{3}" -f $glFill,$glPct,$glDone,$glTotal
