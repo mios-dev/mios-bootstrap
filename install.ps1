@@ -911,21 +911,73 @@ if ($activeDistro) {
     # ── Phase 4 -- WSL2 .wslconfig ───────────────────────────────────────────
     Start-Phase 4
     $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
-    if ((Test-Path $wslCfg) -and ((Get-Content $wslCfg -Raw) -match "\[wsl2\]")) {
-        Log-Ok ".wslconfig already configured"
-    } else {
-        @"
 
-[wsl2]
-# MiOS-managed -- all host resources allocated to MiOS-BUILDER
-memory=$($HW.RamGB)GB
-processors=$($HW.Cpus)
-swap=4GB
-localhostForwarding=true
-networkingMode=mirrored
-guiApplications=true
-"@ | Add-Content -Path $wslCfg
-        Log-Ok ".wslconfig: $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
+    # Required keys — always ensure these are present regardless of existing config.
+    # Mirrored networking + localhostForwarding are essential for Cockpit (port 9090)
+    # and general WSL2 → Windows host reachability.
+    $requiredKeys = [ordered]@{
+        memory              = "$($HW.RamGB)GB"
+        processors          = "$($HW.Cpus)"
+        swap                = "4GB"
+        localhostForwarding = "true"
+        networkingMode      = "mirrored"
+        guiApplications     = "true"
+    }
+
+    $cfgRaw = if (Test-Path $wslCfg) { Get-Content $wslCfg -Raw } else { "" }
+
+    if ($cfgRaw -notmatch "\[wsl2\]") {
+        # No [wsl2] section at all — append one wholesale
+        $block = "`n[wsl2]`n# MiOS-managed -- host resources for MiOS-BUILDER`n"
+        foreach ($kv in $requiredKeys.GetEnumerator()) { $block += "$($kv.Key)=$($kv.Value)`n" }
+        Add-Content -Path $wslCfg -Value $block
+        Log-Ok ".wslconfig: wrote [wsl2] — $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
+    } else {
+        # [wsl2] exists — patch each required key in place; append missing ones
+        $lines    = (Get-Content $wslCfg)
+        $inWsl2   = $false
+        $patched  = [System.Collections.Generic.List[string]]::new()
+        $inserted = [System.Collections.Generic.HashSet[string]]::new()
+
+        foreach ($line in $lines) {
+            if ($line -match "^\[wsl2\]") { $inWsl2 = $true }
+            elseif ($line -match "^\[")   { $inWsl2 = $false }
+
+            if ($inWsl2 -and $line -match "^(\w+)\s*=") {
+                $key = $Matches[1]
+                if ($requiredKeys.Contains($key)) {
+                    $patched.Add("$key=$($requiredKeys[$key])")
+                    $null = $inserted.Add($key)
+                    continue
+                }
+            }
+            $patched.Add($line)
+
+            # After [wsl2] header, inject any keys not yet seen in the section
+            if ($line -match "^\[wsl2\]") {
+                foreach ($kv in $requiredKeys.GetEnumerator()) {
+                    if (-not $inserted.Contains($kv.Key)) {
+                        # We will add them below after scanning the full section;
+                        # set a sentinel so the post-loop block fires once.
+                    }
+                }
+            }
+        }
+
+        # Append any required keys that never appeared in [wsl2]
+        $missing = $requiredKeys.Keys | Where-Object { -not $inserted.Contains($_) }
+        if ($missing) {
+            # Find insertion point: after [wsl2] header line
+            $insertIdx = ($patched | Select-String -Pattern "^\[wsl2\]" | Select-Object -First 1).LineNumber
+            $offset = 0
+            foreach ($key in $missing) {
+                $patched.Insert($insertIdx + $offset, "$key=$($requiredKeys[$key])")
+                $offset++
+            }
+        }
+
+        Set-Content -Path $wslCfg -Value $patched -Encoding UTF8
+        Log-Ok ".wslconfig: merged [wsl2] — $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
     }
     End-Phase 4
 
