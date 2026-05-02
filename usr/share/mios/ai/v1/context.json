@@ -1,0 +1,38 @@
+{
+  "object": "mios.context",
+  "version": "v0.2.2",
+  "image": "ghcr.io/mios-dev/mios:latest",
+  "description": "Immutable bootc-native Fedora workstation OS distributed as an OCI image.",
+  "ai": {
+    "endpoint": "http://localhost:8080/v1",
+    "model_env": "MIOS_AI_MODEL",
+    "embed_model_env": "MIOS_AI_EMBED_MODEL",
+    "key_env": "MIOS_AI_KEY",
+    "backend": "docker.io/localai/localai:v2.20.0",
+    "models": "/usr/share/mios/ai/v1/models.json",
+    "mcp": "/usr/share/mios/ai/v1/mcp.json"
+  },
+  "prompts": {
+    "system": "/usr/share/mios/ai/system.md",
+    "host_override": "/etc/mios/ai/system-prompt.md",
+    "user_override": "~/.config/mios/system-prompt.md"
+  },
+  "paths": {
+    "ai_dir": "/usr/share/mios/ai",
+    "models": "/srv/ai/models",
+    "mcp_data": "/srv/ai/mcp",
+    "memory": "/var/lib/mios/ai/memory",
+    "scratch": "/var/lib/mios/ai/scratch",
+    "journal": "/var/lib/mios/ai/journal.md",
+    "packages": "/usr/share/mios/PACKAGES.md",
+    "env_defaults": "/usr/share/mios/env.defaults"
+  },
+  "laws": [
+    "USR-OVER-ETC: static config in /usr/lib/<component>.d/; /etc/ for admin overrides only",
+    "NO-MKDIR-IN-VAR: every /var/ path declared via usr/lib/tmpfiles.d/*.conf",
+    "BOUND-IMAGES: every Quadlet image symlinked in /usr/lib/bootc/bound-images.d/",
+    "BOOTC-CONTAINER-LINT: RUN bootc container lint is the final Containerfile instruction",
+    "UNIFIED-AI-REDIRECTS: MIOS_AI_ENDPOINT/MODEL/KEY target http://localhost:8080/v1; zero vendor URLs",
+    "UNPRIVILEGED-QUADLETS: every Quadlet defines User=, Group=, Delegate=yes"
+  ]
+}
