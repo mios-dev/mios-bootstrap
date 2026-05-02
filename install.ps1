@@ -167,7 +167,7 @@ function Show-Dashboard {
 
     # Spinner — 500ms tick; visible on slow/remote consoles, animates even when
     # build output is silent.
-    $spinChar = @('|','/','-','\')[[int]($elapsed.TotalMilliseconds / 500) % 4]
+    $spinChar = @('|','/','-',[char]92)[[int]($elapsed.TotalMilliseconds / 500) % 4]
 
     $step = (([string]$script:CurStep) -replace '\s+', ' ').Trim()
     $stepMax = [math]::Max(3, $in - 8)
@@ -179,8 +179,8 @@ function Show-Dashboard {
     $glDone  = $phDone + $stDone
     $glTotal = $script:TotalPhases + $stTotal
     $barW    = [math]::Max(4, $in - 24)
-    $glPct   = if ($glTotal -gt 0) { [int](($glDone / $glTotal) * 100) } else { 0 }
-    $glFRaw  = if ($glTotal -gt 0) { [int](($glDone / $glTotal) * $barW) } else { 0 }
+    $glPct = 0; if ($glTotal -gt 0) { $glPct = [int](($glDone / $glTotal) * 100) }
+    $glFRaw = 0; if ($glTotal -gt 0) { $glFRaw = [int](($glDone / $glTotal) * $barW) }
     $glF     = [math]::Max(0, $glFRaw)
     if ($glF -gt 0) { $glFill = ("=" * ($glF - 1)) + ">" } else { $glFill = "" }
     $glFill  = $glFill.PadRight($barW)
@@ -861,7 +861,7 @@ $script:BgRs.SessionStateProxy.SetVariable('dashSync', $script:DashSync)
 $script:BgPs = [powershell]::Create()
 $script:BgPs.Runspace = $script:BgRs
 $null = $script:BgPs.AddScript({
-    $chars = @('|', '/', '-', '\')
+    $chars = @('|', '/', '-', [char]92)
     $i = 0
     while ($dashSync.Running) {
         [System.Threading.Thread]::Sleep(120)
