@@ -32,8 +32,19 @@ user-editable layer of the three-layer profile model.
 ### Windows 11 (Podman Desktop + WSL2)
 
 ```powershell
-irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.ps1 | iex
+# Canonical one-liner (admin PowerShell):
+irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex
+
+# Or the direct invocation if you prefer to skip the wrapper:
+irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/build-mios.ps1 | iex
+
+# The legacy install.ps1 URL still works (now a redirector to build-mios.ps1).
 ```
+
+Each interactive prompt auto-accepts the resolved-from-`mios.toml`
+default after **90 seconds** idle. Override with
+`$env:MIOS_PROMPT_TIMEOUT` (seconds; `0` waits forever, `1` is the
+fastest unattended setting).
 
 One script -- all phases in sequence, fully idempotent:
 
@@ -55,8 +66,14 @@ Prerequisites: [Git](https://git-scm.com/download/win), [Podman Desktop](https:/
 On any Fedora bootc-capable host (Fedora Server 41+ or Fedora bootc):
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.sh)"
+# Canonical one-liner (legacy install.sh URL also works as a redirector):
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/build-mios.sh)"
 ```
+
+Each interactive prompt auto-accepts the resolved-from-`mios.toml`
+default after **90 seconds** idle. Override with
+`MIOS_PROMPT_TIMEOUT=` (seconds; `0` waits forever, `1` is the fastest
+unattended setting).
 
 The installer:
 

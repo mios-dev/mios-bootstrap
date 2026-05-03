@@ -276,12 +276,12 @@ install_prerequisites() {
 
 # ============================================================================
 # Prompts -- the "mios" defaults are baked in; user just hits Enter to accept,
-# or stays idle for $MIOS_PROMPT_TIMEOUT seconds (default 180 = 3 minutes) for
-# the prompt to auto-accept the default. Set MIOS_PROMPT_TIMEOUT=0 to disable
-# the timeout (wait forever); set MIOS_PROMPT_TIMEOUT=1 in CI for fastest
-# unattended runs.
+# or stays idle for $MIOS_PROMPT_TIMEOUT seconds (default 90 = 1.5 minutes)
+# for the prompt to auto-accept the default. Set MIOS_PROMPT_TIMEOUT=0 to
+# disable the timeout (wait forever); set MIOS_PROMPT_TIMEOUT=1 in CI for
+# fastest unattended runs.
 # ============================================================================
-: "${MIOS_PROMPT_TIMEOUT:=180}"
+: "${MIOS_PROMPT_TIMEOUT:=90}"
 
 prompt_default() {
     local question="$1" default="$2" answer
