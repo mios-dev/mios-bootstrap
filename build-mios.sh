@@ -360,6 +360,14 @@ gather_user_choices() {
         GH_TOKEN=""
     fi
 
+    # mios-forge admin (Forgejo). Defaults derive from the linux user so
+    # the locally-hosted .git = ./ pattern works out of the box. Empty
+    # password means the firstboot service will generate a 24-byte
+    # URL-safe random password and write it to /etc/mios/forge/admin-
+    # password (root-owned, mode 0600).
+    FORGE_ADMIN_USER="$(prompt_default 'Forge admin username (Forgejo)' "${LINUX_USER}")"
+    FORGE_ADMIN_EMAIL="$(prompt_default 'Forge admin email' "${LINUX_USER}@${HOSTNAME_VAL}.local")"
+
     local hostkind
     hostkind="$(detect_host_kind)"
     if [[ "$hostkind" == "bootc" ]]; then
@@ -458,6 +466,14 @@ MIOS_INSTALL_MODE="${INSTALL_MODE}"
 MIOS_IMAGE_TAG="${IMAGE_TAG}"
 MIOS_INSTALLED_AT="$(date -u --iso-8601=seconds)"
 MIOS_BOOTSTRAP_VERSION="0.2.0"
+
+# mios-forge (Forgejo) -- consumed by /usr/libexec/mios/forge-firstboot.sh
+# at first boot to create the admin user. Empty password = generate
+# random 24-byte URL-safe at first boot, write to mode-0600 file at
+# /etc/mios/forge/admin-password.
+MIOS_FORGE_ADMIN_USER="${FORGE_ADMIN_USER:-${LINUX_USER}}"
+MIOS_FORGE_ADMIN_EMAIL="${FORGE_ADMIN_EMAIL:-${LINUX_USER}@${HOSTNAME_VAL}.local}"
+MIOS_FORGE_ADMIN_PASSWORD=""
 EOF
     chmod 0640 "${PROFILE_FILE}"
     log_ok "Profile env written: ${PROFILE_FILE}"
