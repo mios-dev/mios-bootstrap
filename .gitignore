@@ -11,7 +11,11 @@
 !bootstrap.ps1
 !install.sh
 !install.ps1
+!AGENTS.md
 !AI.md
+!API.md
+!CLAUDE.md
+!GEMINI.md
 !system-prompt.md
 !IMPLEMENTATION-SUMMARY.md
 
@@ -27,6 +31,12 @@
 !.gitignore
 !.github/
 !.github/**
+
+# Agent identity dotfiles -- mirror MiOS so Cline/Cursor/Codex etc. resolve
+# the same canonical system prompt (/usr/share/mios/ai/system.md) regardless
+# of which repo they were invoked from.
+!.clinerules
+!.cursorrules
 
 # Documentation (user-facing)
 !USER-SPACE-GUIDE.md
