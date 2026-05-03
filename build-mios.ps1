@@ -183,7 +183,7 @@ $script:IdentInfo     = ""   # set after phase 6 identity; User/Host/Base/Model 
 $script:DashSync = [hashtable]::Synchronized(@{
     Running    = $true
     SpinnerRow = -1
-    SpinnerCol = 5     # "| Op X" -- spinner char is always at col 5
+    SpinnerCol = 2     # "| X" -- spinner is the first char inside the row body
 })
 $script:BgPs = $null
 $script:BgRs = $null
@@ -305,24 +305,35 @@ function Show-Dashboard {
 
     if ($script:HWInfo -or $script:IdentInfo) { $rows.Add($sepD) }
 
-    # Current phase + live operation stream
+    # ── ONE counter, ONE bar ──────────────────────────────────────────────────
+    # Single global step counter (phases + build sub-steps) rendered as
+    # one progress bar. The textual "Phase [N/Total]" and "(step X/Y)"
+    # rows used to duplicate this same metric three different ways and
+    # are intentionally gone -- the bar's "N/M" suffix is THE counter.
+    # Current operation + spinner share one row above the bar so the
+    # operator sees what's running without a second phase-counter line.
     $phTag = switch ([int]$script:PhStat[[math]::Max(0,$script:CurPhase)]) {
         1 { "[>>]" } 2 { "[OK]" } 3 { "[XX]" } 4 { "[!!]" } default { "[ ]" }
     }
-    $phLine = "Phase [$($script:CurPhase)/$($script:TotalPhases-1)] $curName  $phTag"
-    if ($script:CurPhase -eq 9 -and $script:BuildSubDone -gt 0) {
-        $phLine += "  (step $($script:BuildSubDone)/$($script:BuildSubTotal))"
-    }
-    $rows.Add((& $mkRow $phLine))
-    # Record which row index the spinner char will be on so the background
-    # heartbeat runspace can animate it independently of the main thread.
+    # Now-line: phase name + live operation stream + spinner. No
+    # numeric counters here -- those live in the bar below.
     $opRowIdx = $rows.Count
-    $rows.Add((& $mkRow "Op $spinChar : $step"))
-    $rows.Add((& $mkRow "Errs:$($script:ErrCount)  Warns:$($script:WarnCount)  Lines:$($script:LineCount)  Status:$statusStr"))
+    $nowLine  = "$spinChar  $phTag $curName -- $step"
+    if ($nowLine.Length -gt $in) { $nowLine = $nowLine.Substring(0, $in - 3) + "..." }
+    $rows.Add((& $mkRow $nowLine))
     $rows.Add($sepD)
 
-    # Unified progress bar
+    # The single global counter -- bar + percent + N/M of the unified
+    # phase+substep total. This is THE counter; nothing else displays
+    # progress numerically.
     $rows.Add((& $mkRow $glBarL))
+    $rows.Add($sepD)
+
+    # Side notes (not counters): error/warning tally + status. Errors
+    # are not progress, so they get their own one-line row separate from
+    # the counter row above. "Lines" was meaningless to operators and
+    # was contributing to the visual noise -- dropped.
+    $rows.Add((& $mkRow "Errors:$($script:ErrCount)  Warnings:$($script:WarnCount)  Status:$statusStr"))
     $rows.Add($sepD)
 
     # Phase table
