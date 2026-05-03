@@ -1,4 +1,4 @@
-# 'MiOS' Bootstrap — AI Entry Point
+# 'MiOS' Bootstrap -- AI Entry Point
 
 Merge order: `mios.git` (system layer) ← `mios-bootstrap.git` (user overlay). Bootstrap profile values, AI files, and skel templates overlay the vendor defaults at install time.
 
@@ -8,7 +8,7 @@ Merge order: `mios.git` (system layer) ← `mios-bootstrap.git` (user overlay). 
 |---|---|
 | `/install.sh` | Linux installer |
 | `/install.ps1` | Windows installer (Podman machine + WSL2 + build pipeline) |
-| `/etc/mios/profile.toml` | Host-local profile — edit to customize this deployment |
+| `/etc/mios/profile.toml` | Host-local profile -- edit to customize this deployment |
 | `/etc/skel/.config/mios/` | User dotfile templates (seeded on `useradd -m`) |
 | `/usr/share/mios/ai/system.md` | Agent system prompt (host-override layer) |
 | `/usr/share/mios/ai/models.json` | OpenAI `/v1/models` model catalog |

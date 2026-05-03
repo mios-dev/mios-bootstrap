@@ -1,5 +1,5 @@
 #!/bin/bash
-# 'MiOS' Public Bootstrap — Linux / WSL2
+# 'MiOS' Public Bootstrap -- Linux / WSL2
 # Repository: MiOS-DEV/MiOS-bootstrap
 # Usage: curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/bootstrap.sh | bash
 set -euo pipefail
@@ -11,7 +11,7 @@ _r=$'\033[0m'; _b=$'\033[1m'; _dim=$'\033[2m'; _c=$'\033[36m'; _g=$'\033[32m'; _
 
 echo ""
 echo "  ${_c}╔══════════════════════════════════════════════════════════════╗${_r}"
-echo "  ${_c}║  'MiOS' — Local Build Configuration                           ║${_r}"
+echo "  ${_c}║  'MiOS' -- Local Build Configuration                           ║${_r}"
 echo "  ${_c}╚══════════════════════════════════════════════════════════════╝${_r}"
 echo ""
 
@@ -58,10 +58,10 @@ if [[ -z "${MIOS_PASSWORD:-}" ]]; then
         [[ -z "${MIOS_PASSWORD:-}" ]] && { echo "  ${_red}[!] Password cannot be empty.${_r}"; continue; }
         read -rsp "  Confirm password: " _c2 </dev/tty; echo ""
         [[ "$MIOS_PASSWORD" == "$_c2" ]] && break
-        echo "  ${_red}[!] Mismatch — try again.${_r}"
+        echo "  ${_red}[!] Mismatch -- try again.${_r}"
     done
 else
-    echo "  Admin password: ${_dim}(env — masked)${_r}"
+    echo "  Admin password: ${_dim}(env -- masked)${_r}"
 fi
 export MIOS_PASSWORD
 

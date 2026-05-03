@@ -1,4 +1,4 @@
-<!-- 'MiOS' User Preferences Card — LAW 3: JSON-embedded Markdown SSOT -->
+<!-- 'MiOS' User Preferences Card -- LAW 3: JSON-embedded Markdown SSOT -->
 <!-- This file is the canonical record of user-defined build parameters.  -->
 <!-- It is read by automation/build.sh and tools/load-user-env.sh.        -->
 <!-- Blank fields are auto-populated with 'MiOS' current defaults at build. -->
@@ -8,7 +8,7 @@
 ```json
 {
   "schema_version": "1",
-  "description": "MiOS User Preferences — Single Source of Truth for all user-configurable build parameters.",
+  "description": "MiOS User Preferences -- Single Source of Truth for all user-configurable build parameters.",
   "fields": {
     "MIOS_USER": {
       "value": "",
@@ -58,10 +58,10 @@
 
 ## How this card is consumed
 
-1. **Build entry** — `automation/build.sh` sources `tools/load-user-env.sh`, which reads this card.
+1. **Build entry** -- `automation/build.sh` sources `tools/load-user-env.sh`, which reads this card.
    Any field with an empty `value` falls back to its `default`.
-2. **Justfile** — `_load_env` at the top of the Justfile runs `tools/load-user-env.sh` to export all `MIOS_*` variables.
-3. **Bootstrap** — `automation/bootstrap.sh` prompts for missing values and saves them back to
+2. **Justfile** -- `_load_env` at the top of the Justfile runs `tools/load-user-env.sh` to export all `MIOS_*` variables.
+3. **Bootstrap** -- `automation/bootstrap.sh` prompts for missing values and saves them back to
    `$XDG_CONFIG_HOME/mios/mios-build.env`, which is sourced on subsequent runs.
 
 ## Editing

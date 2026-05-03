@@ -6,9 +6,9 @@
 
 Three TOML layers overlay at runtime (higher precedence first):
 
-1. `~/.config/mios/profile.toml` — per-user (seeded from `/etc/skel/.config/mios/`)
-2. `/etc/mios/profile.toml` — host admin override (this repo's editable copy)
-3. `/usr/share/mios/profile.toml` — vendor defaults (baked into image by `mios.git`)
+1. `~/.config/mios/profile.toml` -- per-user (seeded from `/etc/skel/.config/mios/`)
+2. `/etc/mios/profile.toml` -- host admin override (this repo's editable copy)
+3. `/usr/share/mios/profile.toml` -- vendor defaults (baked into image by `mios.git`)
 
 Empty string values do NOT override non-empty values in lower layers.
 
@@ -19,7 +19,7 @@ Same resolution order:
 1. `${MIOS_AI_SYSTEM_PROMPT}` (env var)
 2. `~/.config/mios/system-prompt.md`
 3. `/etc/mios/ai/system-prompt.md`
-4. `/usr/share/mios/ai/system.md` (canonical — this repo)
+4. `/usr/share/mios/ai/system.md` (canonical -- this repo)
 
 ## Key profile fields
 

@@ -10,19 +10,19 @@
 # Global pipeline phases (numbered; reused everywhere this project speaks of
 # "phases"):
 #
-#   Phase-0  mios-bootstrap    — preflight, profile load, host detection,
+#   Phase-0  mios-bootstrap    -- preflight, profile load, host detection,
 #                                interactive identity capture (this script).
-#   Phase-1  overlay-merge     — clone mios.git into /, copy bootstrap
+#   Phase-1  overlay-merge     -- clone mios.git into /, copy bootstrap
 #                                overlays (etc/, usr/, var/, profile/) on top.
-#   Phase-2  build             — optional self-build: `podman build` an OCI
+#   Phase-2  build             -- optional self-build: `podman build` an OCI
 #                                image from the merged tree. The numbered
 #                                automation/[0-9][0-9]-*.sh scripts inside
 #                                Containerfile are sub-phases of Phase-2.
-#   Phase-3  apply             — systemd-sysusers, systemd-tmpfiles, daemon
+#   Phase-3  apply             -- systemd-sysusers, systemd-tmpfiles, daemon
 #                                reload; create the Linux user; stage
 #                                ~/.config/mios/{profile.toml,system-prompt.md}
 #                                + ~/.ssh/; deploy /etc/mios/ai/system-prompt.md.
-#   Phase-4  reboot            — interactive y/N to `systemctl reboot`.
+#   Phase-4  reboot            -- interactive y/N to `systemctl reboot`.
 #
 # Idempotent: re-running with the same answers updates rather than duplicates.
 # load_profile_defaults() reads /etc/mios/profile.toml on a previously-
@@ -32,7 +32,7 @@
 set -euo pipefail
 
 # ============================================================================
-# Defaults — sourced from the user profile card (etc/mios/profile.toml in
+# Defaults -- sourced from the user profile card (etc/mios/profile.toml in
 # this repo, or /etc/mios/profile.toml on a previously-bootstrapped host).
 # load_profile_defaults() below parses the TOML on-the-fly with sed/grep so
 # we don't pull in any TOML library at install time.
@@ -93,7 +93,7 @@ toml_get_array_csv() {
 #   4. /etc/mios/install.env (legacy)      previous-install identity env
 #
 # Empty strings in higher layers do NOT override non-empty defaults below
-# them — that's how this implements "user-set fields supersede defaults"
+# them -- that's how this implements "user-set fields supersede defaults"
 # without requiring sparse TOML files.
 resolve_profile_layers() {
     local layers=()
@@ -122,7 +122,7 @@ load_profile_defaults() {
     local layers; layers=$(resolve_profile_layers | tr '\n' ' ')
     [[ -n "$layers" ]] || return 0
     log_info "Loading profile layers (lowest→highest precedence):"
-    while IFS= read -r card; do log_info "  · ${card}"; done < <(resolve_profile_layers)
+    while IFS= read -r card; do log_info "  * ${card}"; done < <(resolve_profile_layers)
 
     local v
     v="$(toml_get_layered identity username)";        [[ -n "$v" ]] && DEFAULT_USER="$v"
@@ -288,7 +288,7 @@ prompt_yesno() {
 # Phase-0 (continued): gather installation profile
 # ============================================================================
 gather_user_choices() {
-    log_phase "Phase-0 — Installation profile"
+    log_phase "Phase-0 -- Installation profile"
     log_info "Press Enter to accept defaults (everything defaults to 'MiOS')."
     echo
 
@@ -329,7 +329,7 @@ gather_user_choices() {
 # Phase-0 (continued): confirm before applying
 # ============================================================================
 print_summary() {
-    log_phase "Phase-0 — Review profile"
+    log_phase "Phase-0 -- Review profile"
     cat <<EOF
   ${_BOLD}Linux user${_RESET}     : ${LINUX_USER}  (full name: ${USER_FULLNAME})
   ${_BOLD}Sudo groups${_RESET}    : ${DEFAULT_USER_GROUPS}
@@ -350,7 +350,7 @@ EOF
 # Phase-3: apply profile to host
 # ============================================================================
 apply_user_profile() {
-    log_phase "Phase-3 — Apply profile to host"
+    log_phase "Phase-3 -- Apply profile to host"
     mkdir -p "${PROFILE_DIR}"
     chmod 0750 "${PROFILE_DIR}"
 
@@ -430,7 +430,7 @@ EOF
 # Phase-3 (continued): deploy AI system prompt to host AND user home
 # ============================================================================
 deploy_system_prompt() {
-    log_phase "Phase-3 — Deploy AI system prompt"
+    log_phase "Phase-3 -- Deploy AI system prompt"
     install -d -m 0755 /etc/mios/ai
 
     local src_local prompt_url
@@ -457,7 +457,7 @@ deploy_system_prompt() {
     log_ok "Host system prompt deployed: /etc/mios/ai/system-prompt.md"
 
     # Stage per-user copies for every existing human account
-    # (uid 1000–65533). Single helper avoids duplicate logic across
+    # (uid 1000-65533). Single helper avoids duplicate logic across
     # deploy_system_prompt + stage_user_profile_artifacts; the call sites
     # remain distinct so the bootstrap-created user still gets the
     # name-bearing log line.
@@ -474,7 +474,7 @@ deploy_system_prompt() {
 seed_user_skel_for_all_accounts() {
     local skel_root=/etc/skel/.config/mios
     [[ -d "$skel_root" ]] || {
-        log_warn "etc/skel/.config/mios missing — per-user staging skipped"
+        log_warn "etc/skel/.config/mios missing -- per-user staging skipped"
         return 0
     }
 
@@ -497,7 +497,7 @@ seed_user_skel_for_all_accounts() {
 # template surface that mios-bootstrap.git populates from etc/skel/.
 # ============================================================================
 stage_user_profile_artifacts() {
-    log_phase "Phase-3 — Stage per-user 'MiOS' artifacts"
+    log_phase "Phase-3 -- Stage per-user 'MiOS' artifacts"
     local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
     [[ -n "$home" && -d "$home" ]] || {
         log_warn "User home not found; skipping per-user staging"
@@ -516,7 +516,7 @@ stage_user_profile_artifacts() {
             log_ok "User artifact: ${home}/.config/mios/$(basename "$f")"
         done
     else
-        log_warn "etc/skel/.config/mios missing — bootstrap user staging skipped"
+        log_warn "etc/skel/.config/mios missing -- bootstrap user staging skipped"
     fi
 
     # Re-run the multi-user pass so a newly added user picks up the same
@@ -532,7 +532,7 @@ stage_user_profile_artifacts() {
 # on bootc hosts Phase-2 is `bootc switch` to a pre-built image.
 # ============================================================================
 trigger_mios_install() {
-    log_phase "Phase-1 — Total Root Merge"
+    log_phase "Phase-1 -- Total Root Merge"
     
     case "${INSTALL_MODE}" in
         bootc)
@@ -575,9 +575,9 @@ trigger_mios_install() {
 
             # 3. Phase-2: RPM package install from PACKAGES.md SSOT.
             # Build-only blocks (kernel kmods, selinux policy source, looking-glass
-            # build deps, cockpit plugin build deps) are excluded — they only make
+            # build deps, cockpit plugin build deps) are excluded -- they only make
             # sense inside the OCI build pipeline, not on a running FHS host.
-            log_phase "Phase-2 — FHS package install (from PACKAGES.md)"
+            log_phase "Phase-2 -- FHS package install (from PACKAGES.md)"
             local packages_md="/usr/share/mios/PACKAGES.md"
             if [[ -f "$packages_md" ]]; then
                 # Excluded block names: build-time / image-only groups
@@ -630,13 +630,13 @@ trigger_mios_install() {
                     log_warn "No packages extracted from PACKAGES.md"
                 fi
             else
-                log_err "PACKAGES.md not found at ${packages_md} — package installation skipped"
+                log_err "PACKAGES.md not found at ${packages_md} -- package installation skipped"
             fi
 
             # 4. Phase-3: systemd-sysusers, systemd-tmpfiles, daemon-reload.
             # This wires up 'MiOS' user/group definitions and creates /var/ paths
             # declared in usr/lib/tmpfiles.d/mios*.conf.
-            log_phase "Phase-3 — System init (sysusers + tmpfiles + daemon-reload)"
+            log_phase "Phase-3 -- System init (sysusers + tmpfiles + daemon-reload)"
             spin_start "Running systemd-sysusers"
             systemctl-sysusers 2>/dev/null || systemd-sysusers 2>/dev/null || log_warn "systemd-sysusers not available"
             spin_stop
@@ -658,7 +658,7 @@ trigger_mios_install() {
 # Phase-4: reboot prompt
 # ============================================================================
 reboot_prompt() {
-    log_phase "Phase-4 — Reboot"
+    log_phase "Phase-4 -- Reboot"
     if prompt_yesno 'Reboot now to activate 'MiOS'?' y; then
         log_info "Rebooting in 3s..."
         sleep 3
@@ -673,7 +673,7 @@ reboot_prompt() {
 # ============================================================================
 main() {
     require_root
-    log_phase "Phase-0 — mios-bootstrap (Total Root Merge Mode)"
+    log_phase "Phase-0 -- mios-bootstrap (Total Root Merge Mode)"
 
     local hostkind
     hostkind="$(detect_host_kind)"

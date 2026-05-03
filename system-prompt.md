@@ -1,6 +1,6 @@
 # 'MiOS' Host System Prompt
 
-Redirector — canonical prompt is at `/usr/share/mios/ai/system.md`.
+Redirector -- canonical prompt is at `/usr/share/mios/ai/system.md`.
 
 Active rules:
 - Ground all responses in concrete FHS file paths.

@@ -10,14 +10,14 @@ AI/knowledge assets that are written to the deployed host at install time.
 
 ## Key files
 
-- `install.ps1`       — Windows unified installer (irm | iex, no prompts after launch)
-- `install.sh`        — Linux/Fedora installer (curl | bash)
-- `etc/mios/profile.toml`             — User profile card (identity, locale, auth, AI, desktop)
-- `usr/share/mios/ai/system.md`       — Deployed compact agent prompt (SSOT)
-- `usr/share/mios/ai/models.json`     — OpenAI /v1/models catalog
-- `usr/share/mios/ai/mcp.json`        — MCP server registry
-- `usr/share/mios/PACKAGES.md`        — (symlinked from mios.git) RPM package SSOT
-- `CLAUDE.md`                         — Agent CLI entry point (redirects to system.md)
+- `install.ps1`       -- Windows unified installer (irm | iex, no prompts after launch)
+- `install.sh`        -- Linux/Fedora installer (curl | bash)
+- `etc/mios/profile.toml`             -- User profile card (identity, locale, auth, AI, desktop)
+- `usr/share/mios/ai/system.md`       -- Deployed compact agent prompt (SSOT)
+- `usr/share/mios/ai/models.json`     -- OpenAI /v1/models catalog
+- `usr/share/mios/ai/mcp.json`        -- MCP server registry
+- `usr/share/mios/PACKAGES.md`        -- (symlinked from mios.git) RPM package SSOT
+- `CLAUDE.md`                         -- Agent CLI entry point (redirects to system.md)
 
 ## Install commands
 

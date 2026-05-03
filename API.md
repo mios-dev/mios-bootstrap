@@ -6,7 +6,7 @@
 > 'MiOS' targets via `MIOS_AI_ENDPOINT=http://localhost:8080/v1`
 > (Architectural Law 5: UNIFIED-AI-REDIRECTS). Implementation is provided by
 > the `mios-ai.container` Quadlet running LocalAI; per-endpoint *served*
-> status is **unverified** in the current codebase — verify against the
+> status is **unverified** in the current codebase -- verify against the
 > deployed LocalAI build with `GET /v1/models` and the per-endpoint probes
 > below before relying on any specific endpoint in production.
 >
@@ -23,7 +23,7 @@
 http://localhost:8080/v1   # in-image
 http://<host>:8080/v1      # cross-host
 ```
-The endpoint binds to localhost via `etc/containers/systemd/mios-ai.container` (`PublishPort=8080:8080`). All clients (CLI tools, the `mios` agent, IDE plugins) MUST resolve through `MIOS_AI_ENDPOINT` — vendor-hardcoded URLs are a Law-5 violation and fail audit.
+The endpoint binds to localhost via `etc/containers/systemd/mios-ai.container` (`PublishPort=8080:8080`). All clients (CLI tools, the `mios` agent, IDE plugins) MUST resolve through `MIOS_AI_ENDPOINT` -- vendor-hardcoded URLs are a Law-5 violation and fail audit.
 
 ### Authentication
 OpenAI's protocol expects `Authorization: Bearer <token>` on every request. LocalAI (and other OpenAI-compatible servers) accept any non-empty token by default. 'MiOS' deployments SHOULD set a non-trivial bearer in `etc/containers/systemd/mios-ai.container.d/auth.conf` or via `Environment=API_KEY=...` and require it via reverse-proxy gating; the spec below assumes the token is supplied even when it is currently a no-op.
@@ -34,7 +34,7 @@ Content-Type:  application/json
 ```
 
 ### Versioning
-All paths under `/v1`. Newer surfaces (Responses API, Realtime) are also `/v1`. Beta/admin surfaces require additional headers — noted per-endpoint.
+All paths under `/v1`. Newer surfaces (Responses API, Realtime) are also `/v1`. Beta/admin surfaces require additional headers -- noted per-endpoint.
 
 ### Pagination
 List endpoints accept `limit` (default 20, max 100), `order` (`asc`|`desc`), `after`, `before`. Responses include `data[]`, `first_id`, `last_id`, `has_more`.
@@ -59,10 +59,10 @@ Endpoints supporting `stream: true` emit Server-Sent Events with `data:` lines t
 ## Compatibility Matrix
 
 `'MiOS' Status` values:
-- `Unverified` — endpoint defined in this spec but not yet probed against the deployed LocalAI image. Default for the current build.
-- `Served` — confirmed reachable and protocol-conformant.
-- `Proxied` — request is forwarded to an upstream that may or may not be MiOS-resident.
-- `Unsupported` — definitively not implemented by the current LocalAI build; client SHOULD short-circuit.
+- `Unverified` -- endpoint defined in this spec but not yet probed against the deployed LocalAI image. Default for the current build.
+- `Served` -- confirmed reachable and protocol-conformant.
+- `Proxied` -- request is forwarded to an upstream that may or may not be MiOS-resident.
+- `Unsupported` -- definitively not implemented by the current LocalAI build; client SHOULD short-circuit.
 
 | Group | Endpoint | 'MiOS' Status |
 |---|---|---|
@@ -75,16 +75,16 @@ Endpoints supporting `stream: true` emit Server-Sent Events with `data:` lines t
 | Images | `POST /v1/images/generations`, `POST /v1/images/edits`, `POST /v1/images/variations` | Unverified |
 | Files | `POST /v1/files`, `GET /v1/files`, `GET /v1/files/{id}`, `DELETE /v1/files/{id}`, `GET /v1/files/{id}/content` | Unverified |
 | Uploads | `POST /v1/uploads`, `POST /v1/uploads/{id}/parts`, `POST /v1/uploads/{id}/complete`, `POST /v1/uploads/{id}/cancel` | Unverified |
-| Vector Stores | `POST/GET/DELETE /v1/vector_stores`, `…/{id}` | Unverified |
+| Vector Stores | `POST/GET/DELETE /v1/vector_stores`, `.../{id}` | Unverified |
 | VS Files | `POST/GET/DELETE /v1/vector_stores/{id}/files[/{file_id}]` | Unverified |
-| VS File Batches | `POST/GET /v1/vector_stores/{id}/file_batches[/{batch_id}]`, `…/cancel`, `…/files` | Unverified |
+| VS File Batches | `POST/GET /v1/vector_stores/{id}/file_batches[/{batch_id}]`, `.../cancel`, `.../files` | Unverified |
 | Assistants | `POST/GET/DELETE /v1/assistants[/{id}]` | Unverified |
 | Threads | `POST/GET/DELETE /v1/threads[/{id}]` | Unverified |
 | Messages | `POST/GET/DELETE /v1/threads/{tid}/messages[/{mid}]` | Unverified |
-| Runs | `POST/GET /v1/threads/{tid}/runs[/{rid}]`, `…/cancel`, `…/submit_tool_outputs` | Unverified |
+| Runs | `POST/GET /v1/threads/{tid}/runs[/{rid}]`, `.../cancel`, `.../submit_tool_outputs` | Unverified |
 | Run Steps | `GET /v1/threads/{tid}/runs/{rid}/steps[/{sid}]` | Unverified |
-| Batches | `POST/GET /v1/batches[/{id}]`, `…/cancel` | Unverified |
-| Fine-tuning | `POST/GET /v1/fine_tuning/jobs[/{id}]`, `…/cancel`, `…/events`, `…/checkpoints` | Unverified |
+| Batches | `POST/GET /v1/batches[/{id}]`, `.../cancel` | Unverified |
+| Fine-tuning | `POST/GET /v1/fine_tuning/jobs[/{id}]`, `.../cancel`, `.../events`, `.../checkpoints` | Unverified |
 | Moderations | `POST /v1/moderations` | Unverified |
 | Realtime | `WS /v1/realtime`, `POST /v1/realtime/sessions` | Unverified |
 | Admin | `/v1/organization/*` | Unsupported (single-tenant deployment) |
@@ -128,7 +128,7 @@ Request:
   "messages":         [Message, ...],            // required
   "max_completion_tokens": 0,                    // newer; replaces max_tokens for o-series
   "max_tokens":       0,                         // legacy; still accepted
-  "temperature":      1.0,                       // 0–2
+  "temperature":      1.0,                       // 0-2
   "top_p":            1.0,
   "n":                1,
   "stream":           false,
@@ -144,7 +144,7 @@ Request:
   "tool_choice":      "none | auto | required | { type: 'function', function: { name } }",
   "parallel_tool_calls": true,
   "response_format":  { "type": "text | json_object | json_schema",
-                        "json_schema": { "name": "...", "strict": true, "schema": { … } } },
+                        "json_schema": { "name": "...", "strict": true, "schema": { ... } } },
   "seed":             0,
   "service_tier":     "auto | default",
   "store":            false,
@@ -177,10 +177,10 @@ Request:
 Response (non-stream):
 ```jsonc
 {
-  "id":"chatcmpl-…", "object":"chat.completion", "created":0, "model":"string",
+  "id":"chatcmpl-...", "object":"chat.completion", "created":0, "model":"string",
   "choices":[
     { "index":0,
-      "message":{ "role":"assistant", "content":"string|null", "tool_calls":[…], "refusal":null },
+      "message":{ "role":"assistant", "content":"string|null", "tool_calls":[...], "refusal":null },
       "logprobs":null,
       "finish_reason":"stop|length|tool_calls|content_filter|function_call" }
   ],
@@ -225,8 +225,8 @@ Request:
   "input": "string | InputItem[]",                 // text or structured items
   "instructions": "string",                        // system-style preamble
   "previous_response_id": "string",                // chain prior turn for state reuse
-  "tools": [ Tool, ... ],                          // function | file_search | web_search_preview | computer_use | …
-  "tool_choice": "auto | none | required | { … }",
+  "tools": [ Tool, ... ],                          // function | file_search | web_search_preview | computer_use | ...
+  "tool_choice": "auto | none | required | { ... }",
   "parallel_tool_calls": true,
   "stream": false,
   "stream_options": { "include_obfuscation": false },
@@ -240,7 +240,7 @@ Request:
   "store": true,
   "background": false,
   "reasoning": { "effort":"low|medium|high", "summary":"auto|concise|detailed" },
-  "text": { "format":{ "type":"text|json_schema|json_object", "json_schema":{ … } } },
+  "text": { "format":{ "type":"text|json_schema|json_object", "json_schema":{ ... } } },
   "truncation": "auto | disabled",
   "service_tier": "auto | default | flex"
 }
@@ -251,7 +251,7 @@ Request:
 Response:
 ```jsonc
 {
-  "id":"resp_…", "object":"response", "created_at":0, "model":"string",
+  "id":"resp_...", "object":"response", "created_at":0, "model":"string",
   "status":"completed | in_progress | incomplete | failed | cancelled",
   "output":[ /* ordered list of output items: messages, tool calls, reasoning */ ],
   "output_text":"string",                          // convenience flatten
@@ -260,7 +260,7 @@ Response:
             "output_tokens_details":{"reasoning_tokens":0} },
   "incomplete_details": null,
   "error": null,
-  "metadata": { … },
+  "metadata": { ... },
   "previous_response_id": null,
   "parallel_tool_calls": true,
   "store": true
@@ -299,7 +299,7 @@ Request:
 Response:
 ```json
 { "object":"list",
-  "data":[{ "object":"embedding","index":0,"embedding":[0.0, …] }],
+  "data":[{ "object":"embedding","index":0,"embedding":[0.0, ...] }],
   "model":"string",
   "usage":{ "prompt_tokens":0,"total_tokens":0 } }
 ```
@@ -364,7 +364,7 @@ Multipart. `image`, `model`, `n`, `size`, `response_format`.
 ### `POST /v1/files`
 Multipart form. `file` (any binary), `purpose` (`assistants | batch | fine-tune | vision | user_data | evals`).
 
-Response: `File` object — `{ id, object:"file", bytes, created_at, filename, purpose, status, expires_at, status_details }`.
+Response: `File` object -- `{ id, object:"file", bytes, created_at, filename, purpose, status, expires_at, status_details }`.
 
 ### `GET /v1/files`
 Query: `purpose`, `limit`, `order`, `after`. Returns paginated `File[]`.
@@ -419,7 +419,7 @@ Delete.
 
 ### Vector-store search
 `POST /v1/vector_stores/{vector_store_id}/search`
-`{ query, max_num_results, filters:{ … }, ranking_options:{ ranker:"auto|default-2024-11-15", score_threshold } }` → `{ object:"vector_store.search_results.page", search_query, data:[ { file_id, filename, score, attributes, content:[ { type:"text", text } ] } ], has_more, next_page }`.
+`{ query, max_num_results, filters:{ ... }, ranking_options:{ ranker:"auto|default-2024-11-15", score_threshold } }` → `{ object:"vector_store.search_results.page", search_query, data:[ { file_id, filename, score, attributes, content:[ { type:"text", text } ] } ], has_more, next_page }`.
 
 ---
 
@@ -448,7 +448,7 @@ Stream the parsed/chunked text content the store indexed.
 ## Vector Store File Batches
 
 ### `POST /v1/vector_stores/{vector_store_id}/file_batches`
-`{ file_ids[], attributes, chunking_strategy }` → `VectorStoreFileBatch { id, status, file_counts, … }`.
+`{ file_ids[], attributes, chunking_strategy }` → `VectorStoreFileBatch { id, status, file_counts, ... }`.
 
 ### `GET /v1/vector_stores/{vector_store_id}/file_batches/{batch_id}`
 Status fetch.
@@ -469,12 +469,12 @@ Request:
 {
   "model":"string",
   "name":"string","description":"string","instructions":"string",
-  "tools":[ {"type":"code_interpreter"}, {"type":"file_search","file_search":{ … }},
-            {"type":"function","function":{ … }} ],
-  "tool_resources":{ "code_interpreter":{ "file_ids":[…] },
-                     "file_search":{ "vector_store_ids":[…] } },
-  "metadata":{ … }, "temperature":1.0, "top_p":1.0,
-  "response_format":"auto | { type:'text|json_object|json_schema', … }",
+  "tools":[ {"type":"code_interpreter"}, {"type":"file_search","file_search":{ ... }},
+            {"type":"function","function":{ ... }} ],
+  "tool_resources":{ "code_interpreter":{ "file_ids":[...] },
+                     "file_search":{ "vector_store_ids":[...] } },
+  "metadata":{ ... }, "temperature":1.0, "top_p":1.0,
+  "response_format":"auto | { type:'text|json_object|json_schema', ... }",
   "reasoning_effort":"low|medium|high"
 }
 ```
@@ -497,9 +497,9 @@ Fetch / modify / delete.
 ## Messages
 
 ### `POST /v1/threads/{thread_id}/messages`
-`{ role:"user|assistant", content:"string|ContentPart[]", attachments:[{file_id,tools:[…]}], metadata }` → `Message`.
+`{ role:"user|assistant", content:"string|ContentPart[]", attachments:[{file_id,tools:[...]}], metadata }` → `Message`.
 
-### `GET /v1/threads/{thread_id}/messages` / `GET /v1/threads/{thread_id}/messages/{message_id}` / `POST …` / `DELETE …`
+### `GET /v1/threads/{thread_id}/messages` / `GET /v1/threads/{thread_id}/messages/{message_id}` / `POST ...` / `DELETE ...`
 List / fetch / modify (metadata only) / delete.
 
 ---
@@ -516,14 +516,14 @@ Trigger an assistant turn against a thread.
   "additional_instructions":"string",
   "additional_messages":[ Message ],
   "tools":[ Tool ],                             // override
-  "metadata":{ … },
+  "metadata":{ ... },
   "temperature":1.0, "top_p":1.0,
   "stream":false,
   "max_prompt_tokens":0, "max_completion_tokens":0,
   "truncation_strategy":{ "type":"auto|last_messages","last_messages":0 },
   "tool_choice":"auto|none|required|{ type:'function',function:{name} }",
   "parallel_tool_calls":true,
-  "response_format":"auto | { … }",
+  "response_format":"auto | { ... }",
   "reasoning_effort":"low|medium|high"
 }
 ```
@@ -532,7 +532,7 @@ Response: `Run` (status: `queued | in_progress | requires_action | cancelling | 
 ### `POST /v1/threads/runs`
 Create-thread-and-run combined op. Body merges thread-create and run-create.
 
-### `GET /v1/threads/{thread_id}/runs` / `GET …/{run_id}` / `POST …/{run_id}` (metadata)
+### `GET /v1/threads/{thread_id}/runs` / `GET .../{run_id}` / `POST .../{run_id}` (metadata)
 Standard.
 
 ### `POST /v1/threads/{thread_id}/runs/{run_id}/cancel`
@@ -560,10 +560,10 @@ Asynchronous bulk request execution. Inputs/outputs are JSONL `File`s.
 ### `POST /v1/batches`
 ```json
 {
-  "input_file_id":"file_…",
+  "input_file_id":"file_...",
   "endpoint":"/v1/chat/completions | /v1/embeddings | /v1/responses | /v1/completions",
   "completion_window":"24h",
-  "metadata":{ … }
+  "metadata":{ ... }
 }
 ```
 Response: `Batch { id, object:"batch", endpoint, errors, input_file_id, completion_window, status:"validating|failed|in_progress|finalizing|completed|expired|cancelling|cancelled", output_file_id, error_file_id, created_at, in_progress_at, expires_at, finalizing_at, completed_at, failed_at, expired_at, cancelling_at, cancelled_at, request_counts:{ total, completed, failed }, metadata }`.
@@ -574,7 +574,7 @@ Status / list.
 ### `POST /v1/batches/{batch_id}/cancel`
 Cancel; status transitions through `cancelling` → `cancelled`.
 
-'MiOS' cross-ref: `srv/mios/api/batch.requests.jsonl` is the canonical input format — one JSON object per line, each `{ custom_id, method, url, body }`.
+'MiOS' cross-ref: `srv/mios/api/batch.requests.jsonl` is the canonical input format -- one JSON object per line, each `{ custom_id, method, url, body }`.
 
 ---
 
@@ -583,20 +583,20 @@ Cancel; status transitions through `cancelling` → `cancelled`.
 ### `POST /v1/fine_tuning/jobs`
 ```jsonc
 {
-  "model":"string", "training_file":"file_…", "validation_file":"file_…",
+  "model":"string", "training_file":"file_...", "validation_file":"file_...",
   "method":{ "type":"supervised | dpo | reinforcement",
              "supervised":{ "hyperparameters":{ "n_epochs":"auto|int",
                 "batch_size":"auto|int", "learning_rate_multiplier":"auto|number" } },
-             "dpo":{ "hyperparameters":{ "beta":"auto|number", … } },
-             "reinforcement":{ "hyperparameters":{ … }, "grader":{ … } } },
+             "dpo":{ "hyperparameters":{ "beta":"auto|number", ... } },
+             "reinforcement":{ "hyperparameters":{ ... }, "grader":{ ... } } },
   "suffix":"string", "seed":0,
   "integrations":[ { "type":"wandb", "wandb":{ "project","name","entity","tags":[] } } ],
-  "metadata":{ … }
+  "metadata":{ ... }
 }
 ```
 Response: `FineTuningJob`.
 
-### `GET /v1/fine_tuning/jobs` / `GET …/{id}`
+### `GET /v1/fine_tuning/jobs` / `GET .../{id}`
 List / fetch. Status: `validating_files | queued | running | succeeded | failed | cancelled`.
 
 ### `POST /v1/fine_tuning/jobs/{id}/cancel`
@@ -606,7 +606,7 @@ Cancel.
 Paginated `FineTuningJobEvent[]` (`object:"fine_tuning.job.event"`).
 
 ### `GET /v1/fine_tuning/jobs/{id}/checkpoints`
-Paginated `FineTuningJobCheckpoint[]` — references intermediate models that can be used as `model` in a chat-completions request.
+Paginated `FineTuningJobCheckpoint[]` -- references intermediate models that can be used as `model` in a chat-completions request.
 
 ### `POST /v1/fine_tuning/checkpoints/{permission_id}/permissions` (Admin)
 Grant per-checkpoint sharing. Out of scope for single-tenant MiOS.
@@ -621,13 +621,13 @@ Grant per-checkpoint sharing. Out of scope for single-tenant MiOS.
 ```json
 { "model":"omni-moderation-latest|text-moderation-latest", "input":"string | string[] | InputItem[]" }
 ```
-Response: `{ id, model, results:[ { flagged, categories:{ … }, category_scores:{ … }, category_applied_input_types:{ … } } ] }`.
+Response: `{ id, model, results:[ { flagged, categories:{ ... }, category_scores:{ ... }, category_applied_input_types:{ ... } } ] }`.
 
 ---
 
 ## Realtime
 
-### `WS /v1/realtime?model=…`
+### `WS /v1/realtime?model=...`
 Bidirectional WebSocket for low-latency speech-to-speech and text-to-speech sessions. Client sends/receives event-typed JSON envelopes; audio frames are base64 PCM16 over `input_audio_buffer.append`. Major event types:
 
 - Client → server: `session.update`, `input_audio_buffer.{append,commit,clear}`, `conversation.item.{create,truncate,delete}`, `response.{create,cancel}`.
@@ -643,7 +643,7 @@ Same pattern, scoped to transcription-only sessions.
 
 ## Admin / Organization
 
-`/v1/organization/*` covers user/project/api-key administration, audit logs, costs, and usage. **'MiOS' Status: Unsupported** — single-tenant deployment; auth is enforced at the reverse-proxy layer. If multi-tenant becomes a goal, document the chosen subset in a follow-up `ADMIN.md`.
+`/v1/organization/*` covers user/project/api-key administration, audit logs, costs, and usage. **'MiOS' Status: Unsupported** -- single-tenant deployment; auth is enforced at the reverse-proxy layer. If multi-tenant becomes a goal, document the chosen subset in a follow-up `ADMIN.md`.
 
 ---
 

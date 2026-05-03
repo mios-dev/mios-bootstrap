@@ -16,7 +16,7 @@
     "system_repo": {
       "remote": "git@github.com:mios-dev/MiOS.git",
       "branch": "master",
-      "tracks": "Build scripts and system FHS overlay — files baked into the OCI image",
+      "tracks": "Build scripts and system FHS overlay -- files baked into the OCI image",
       "paths": [
         "/Containerfile",
         "/Justfile",
@@ -38,7 +38,7 @@
     "bootstrap_repo": {
       "remote": "git@github.com:mios-dev/mios-bootstrap.git",
       "branch": "main",
-      "tracks": "AI runtime files, knowledge graphs, user-space config, and installers — deployed at provision time, not baked into the image",
+      "tracks": "AI runtime files, knowledge graphs, user-space config, and installers -- deployed at provision time, not baked into the image",
       "paths": [
         "/usr/share/mios/ai/",
         "/usr/share/mios/knowledge/",
@@ -67,9 +67,9 @@
     "system_repo": {
       "/usr/bin/mios":                    "OpenAI-compatible CLI client",
       "/usr/share/mios/PACKAGES.md":      "SSOT for all RPM packages (fenced packages-<category> blocks)",
-      "/usr/share/mios/env.defaults":     "all MIOS_* variable definitions — single definition point",
+      "/usr/share/mios/env.defaults":     "all MIOS_* variable definitions -- single definition point",
       "/usr/share/mios/profile.toml":     "vendor identity/locale/feature defaults",
-      "/usr/lib/dracut/":                 "dracut initramfs builder — binaries, modules, configs",
+      "/usr/lib/dracut/":                 "dracut initramfs builder -- binaries, modules, configs",
       "/usr/lib/NetworkManager/conf.d/":  "NetworkManager system defaults (wifi-mac, nvme-nbft)",
       "/usr/lib/NetworkManager/dispatcher.d/": "NM dispatcher hooks (chrony, nvme-nbft-connect)",
       "/usr/lib/firewalld/zones/":        "firewalld zone definitions",
@@ -87,10 +87,10 @@
       "/etc/mios/ai/config.json":         "host-local AI inference config"
     },
     "runtime_only": {
-      "/var/lib/mios/ai/memory/":         "persistent agent memory (sqlite WAL) — not in git",
-      "/var/lib/mios/ai/scratch/":        "volatile inter-agent scratchpad (rotated daily) — not in git",
-      "/var/lib/mios/ai/journal.md":      "chronological action log (append-only) — not in git",
-      "/srv/ai/models/":                  "GGUF/safetensors model weights — not in git"
+      "/var/lib/mios/ai/memory/":         "persistent agent memory (sqlite WAL) -- not in git",
+      "/var/lib/mios/ai/scratch/":        "volatile inter-agent scratchpad (rotated daily) -- not in git",
+      "/var/lib/mios/ai/journal.md":      "chronological action log (append-only) -- not in git",
+      "/srv/ai/models/":                  "GGUF/safetensors model weights -- not in git"
     }
   },
 
@@ -107,7 +107,7 @@
     },
     "agent_env": {
       "OPENAI_BASE_URL":  "http://localhost:8080/v1",
-      "OPENAI_API_KEY":   "not-required — local endpoint accepts any non-empty value",
+      "OPENAI_API_KEY":   "not-required -- local endpoint accepts any non-empty value",
       "model":            "$MIOS_AI_MODEL (default: qwen2.5-coder:7b)",
       "embed_model":      "$MIOS_AI_EMBED_MODEL (default: nomic-embed-text)"
     },
@@ -118,7 +118,7 @@
       "system":   "/usr/share/mios/ai/system.md"
     },
     "notes": [
-      "All MIOS_AI_* vars must resolve to http://localhost:8080/v1 — no vendor endpoints in committed files",
+      "All MIOS_AI_* vars must resolve to http://localhost:8080/v1 -- no vendor endpoints in committed files",
       "Agent tools that accept OPENAI_BASE_URL work unmodified against this endpoint",
       "MCP server: /usr/bin/mios-status --mcp-mode (registered in mcp.json)"
     ]

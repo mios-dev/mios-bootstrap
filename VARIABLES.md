@@ -117,7 +117,7 @@ Defined in the `# Paths & constants` block at the top of `install.ps1`.
 | Linux username | `mios` | `MIOS_DEFAULT_USER` → `/etc/mios/install.env` |
 | Hostname | `mios` | `MIOS_DEFAULT_HOST` → `/etc/mios/install.env` |
 | Full name (GECOS) | `'MiOS' User` | `/etc/mios/install.env` |
-| Password | (prompted twice) | SHA-512 hash via `chpasswd` — never written plaintext |
+| Password | (prompted twice) | SHA-512 hash via `chpasswd` -- never written plaintext |
 | SSH key | generate ed25519 | `~/.ssh/id_ed25519` (mode 0600) |
 | GitHub PAT | skip | `~/.git-credentials` (mode 0600, if provided) |
 | Image ref (bootc) | `ghcr.io/mios-dev/mios:latest` | `MIOS_IMAGE_REF` → `bootc switch` |

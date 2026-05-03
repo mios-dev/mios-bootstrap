@@ -32,7 +32,7 @@ $StartMenuDir     = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Program
 $null = New-Item -ItemType Directory -Path $MiosLogDir -Force -ErrorAction SilentlyContinue
 $LogStamp       = [datetime]::Now.ToString("yyyyMMdd-HHmmss")
 $LogFile        = Join-Path $MiosLogDir "mios-install-$LogStamp.log"
-# Separate raw build-output log — NOT the transcript file.
+# Separate raw build-output log -- NOT the transcript file.
 # Start-Transcript locks $LogFile exclusively; any Out-File/Add-Content to the
 # same path throws a TerminatingError that -EA SilentlyContinue cannot suppress.
 # Build lines are appended here via [IO.File]::AppendAllText (no lock conflict).
@@ -85,7 +85,7 @@ $script:BuildSubTotal = 48
 $script:BuildSubDone  = 0
 $script:BuildSubStep  = ""
 $script:GhcrToken     = ""
-# Live build tracking — updated each loop tick; shown in debug row
+# Live build tracking -- updated each loop tick; shown in debug row
 $script:DebugLine     = ""
 $script:LineCount     = 0
 $script:HWInfo        = ""   # set after Get-Hardware; shown in dashboard info row
@@ -95,7 +95,7 @@ $script:IdentInfo     = ""   # set after phase 6 identity; User/Host/Base/Model 
 $script:DashSync = [hashtable]::Synchronized(@{
     Running    = $true
     SpinnerRow = -1
-    SpinnerCol = 5     # "| Op X" — spinner char is always at col 5
+    SpinnerCol = 5     # "| Op X" -- spinner char is always at col 5
 })
 $script:BgPs = $null
 $script:BgRs = $null
@@ -139,7 +139,7 @@ function Update-BuildSubPhase([string]$line) {
 
 function Show-Dashboard {
     try {
-    # ── Sizing — max 80 cols (standard tty0/console) ──────────────────────────
+    # ── Sizing -- max 80 cols (standard tty0/console) ──────────────────────────
     $winW = try { [Console]::WindowWidth  } catch { 80 }
     $bufH = try { [Console]::BufferHeight } catch { 9999 }
     # Always 1 char narrower than actual terminal so old content to the right
@@ -149,7 +149,7 @@ function Show-Dashboard {
     $sepD = ("+" + ("-" * ($w - 2)) + "+").PadRight($winW)
     $sepE = ("+" + ("=" * ($w - 2)) + "+").PadRight($winW)
 
-    # ── Row helper — script block closes over $in/$winW from caller scope ─────
+    # ── Row helper -- script block closes over $in/$winW from caller scope ─────
     $mkRow = {
         param([string]$c)
         ("| " + $c.PadRight($in) + " |").PadRight($winW)
@@ -165,7 +165,7 @@ function Show-Dashboard {
                  else { "IDLE" }
     $curName   = if ($script:CurPhase -ge 0) { [string]$script:PhaseNames[$script:CurPhase] } else { "Initializing" }
 
-    # Spinner — 500ms tick; visible on slow/remote consoles, animates even when
+    # Spinner -- 500ms tick; visible on slow/remote consoles, animates even when
     # build output is silent.
     $spinChar = @('|','/','-',[char]92)[[int]($elapsed.TotalMilliseconds / 500) % 4]
 
@@ -192,7 +192,7 @@ function Show-Dashboard {
     # ── Assemble rows ─────────────────────────────────────────────────────────
     $rows = [System.Collections.Generic.List[string]]::new()
 
-    # Header — gap computed so total row width = $w, then padded to $winW
+    # Header -- gap computed so total row width = $w, then padded to $winW
     $rows.Add($sepE)
     $title = " 'MiOS' $MiosVersion  --  Build Dashboard"
     $right = "[ $elStr ] "
@@ -259,7 +259,7 @@ function Show-Dashboard {
     }
     $rows.Add($sepD)
 
-    # Log footer — unified log only ($BuildDetailLog is merged in at exit)
+    # Log footer -- unified log only ($BuildDetailLog is merged in at exit)
     $logLeaf = try { Split-Path $LogFile -Leaf } catch { "?" }
     $rows.Add((& $mkRow "Log: $logLeaf"))
     $rows.Add($sepE)
@@ -372,7 +372,7 @@ function Get-PasswordHash([string]$Plain) {
         $h = (& podman run --rm docker.io/library/alpine:latest sh -c "apk add -q openssl && openssl passwd -6 -salt '$salt' '$Plain'" 2>$null) -join ""
         if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
     } catch {}
-    throw "Cannot generate sha512crypt hash — install openssl or run from a distro."
+    throw "Cannot generate sha512crypt hash -- install openssl or run from a distro."
 }
 
 function Get-Hardware {
@@ -498,7 +498,7 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
     while (-not $proc.StandardOutput.EndOfStream) {
         $line = $proc.StandardOutput.ReadLine()
         if ($null -eq $line) { break }
-        # Write to detail log only — no Write-Host here.
+        # Write to detail log only -- no Write-Host here.
         # Printing raw build lines to the console scrolls the terminal buffer
         # and drifts the dashboard position on every tick.
         try { [System.IO.File]::AppendAllText($BuildDetailLog, $line + "`n", [Text.Encoding]::UTF8) } catch {}
@@ -858,7 +858,7 @@ Write-Host ""
 # Capture the row where the dashboard will be drawn (right after banner)
 $script:DashRow = try { [Console]::CursorTop } catch { 0 }
 
-# ── Background heartbeat — keeps spinner animating independently ──────────────
+# ── Background heartbeat -- keeps spinner animating independently ──────────────
 # Runs on a dedicated runspace so the operator always sees spinner movement.
 # A frozen spinner means a true fault/hang/timeout, not just a slow operation.
 $script:BgRs = [runspacefactory]::CreateRunspace()
@@ -994,7 +994,7 @@ if ($activeDistro) {
                 if ($LASTEXITCODE -eq 0) {
                     $machineRunning = $true; Log-Ok "$BuilderDistro started"
                 } elseif (($startOut -join " ") -match "DISTRO_NOT_FOUND|bootstrap script failed|WSL_E_DISTRO") {
-                    # Stale Podman machine metadata — WSL distro was deleted but Podman registry entry remains.
+                    # Stale Podman machine metadata -- WSL distro was deleted but Podman registry entry remains.
                     # Force-remove the stale entry so New-BuilderDistro can re-init cleanly.
                     Write-Log "podman-start: stale machine registration detected -- removing $BuilderDistro" "WARN"
                     & podman machine rm --force $BuilderDistro 2>&1 | ForEach-Object { Write-Log "podman-rm: $_" }
@@ -1021,7 +1021,7 @@ if ($activeDistro) {
     Start-Phase 4
     $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
 
-    # Required keys — always ensure these are present regardless of existing config.
+    # Required keys -- always ensure these are present regardless of existing config.
     # Mirrored networking + localhostForwarding are essential for Cockpit (port 9090)
     # and general WSL2 → Windows host reachability.
     $requiredKeys = [ordered]@{
@@ -1036,13 +1036,13 @@ if ($activeDistro) {
     $cfgRaw = if (Test-Path $wslCfg) { Get-Content $wslCfg -Raw } else { "" }
 
     if ($cfgRaw -notmatch "\[wsl2\]") {
-        # No [wsl2] section at all — append one wholesale
+        # No [wsl2] section at all -- append one wholesale
         $block = "`n[wsl2]`n# MiOS-managed -- host resources for MiOS-BUILDER`n"
         foreach ($kv in $requiredKeys.GetEnumerator()) { $block += "$($kv.Key)=$($kv.Value)`n" }
         Add-Content -Path $wslCfg -Value $block
-        Log-Ok ".wslconfig: wrote [wsl2] — $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
+        Log-Ok ".wslconfig: wrote [wsl2] -- $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
     } else {
-        # [wsl2] exists — patch each required key in place; append missing ones
+        # [wsl2] exists -- patch each required key in place; append missing ones
         $lines    = (Get-Content $wslCfg)
         $inWsl2   = $false
         $patched  = [System.Collections.Generic.List[string]]::new()
@@ -1086,7 +1086,7 @@ if ($activeDistro) {
         }
 
         Set-Content -Path $wslCfg -Value $patched -Encoding UTF8
-        Log-Ok ".wslconfig: merged [wsl2] — $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
+        Log-Ok ".wslconfig: merged [wsl2] -- $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
     }
     End-Phase 4
 

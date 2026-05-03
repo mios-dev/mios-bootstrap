@@ -1,4 +1,4 @@
-# 'MiOS' Bootstrap — Architecture Summary
+# 'MiOS' Bootstrap -- Architecture Summary
 
 **Version:** v0.2.2
 
@@ -17,7 +17,7 @@
 ```powershell
 irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.ps1 | iex
 ```
-Creates `MiOS-BUILDER` Podman machine (all host resources), clones repos, builds OCI image. Fully automated — no input required after launch.
+Creates `MiOS-BUILDER` Podman machine (all host resources), clones repos, builds OCI image. Fully automated -- no input required after launch.
 
 **Linux** (Fedora bootc):
 ```bash
@@ -26,9 +26,9 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/mios-dev/mios-boots
 
 ## Profile resolution (three layers, higher wins)
 
-1. `~/.config/mios/profile.toml` — per-user
-2. `/etc/mios/profile.toml` — host (this repo's editable copy)
-3. `/usr/share/mios/profile.toml` — vendor defaults (`mios.git`)
+1. `~/.config/mios/profile.toml` -- per-user
+2. `/etc/mios/profile.toml` -- host (this repo's editable copy)
+3. `/usr/share/mios/profile.toml` -- vendor defaults (`mios.git`)
 
 ## AI file locations (flat structure, OpenAI-compatible)
 
