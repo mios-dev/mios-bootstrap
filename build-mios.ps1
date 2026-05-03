@@ -425,6 +425,70 @@ function Read-Line([string]$Prompt, [string]$Default = "") {
     return (([string]::IsNullOrWhiteSpace($v)) ? $Default : $v)
 }
 
+function Read-Model([string]$Default = "qwen2.5-coder:7b") {
+    # AI model menu prompt -- feature parity with build-mios.sh's
+    # prompt_model. Drives MIOS_OLLAMA_BAKE_MODELS at build time and
+    # MIOS_AI_MODEL in install.env at runtime. Same auto-accept
+    # semantics as the rest of the Phase-6 prompts.
+    Move-BelowDash
+    Write-Host ""
+    Write-Host "  AI model (Architectural Law 5 -- baked into the image):" -ForegroundColor White
+    Write-Host "    1) qwen2.5-coder:7b   -- 12 GB RAM, code-specialized, default" -ForegroundColor DarkGray
+    Write-Host "    2) qwen2.5-coder:14b  -- 24+ GB RAM, larger code reasoning" -ForegroundColor DarkGray
+    Write-Host "    3) llama3.2:3b        -- 8 GB RAM, fast" -ForegroundColor DarkGray
+    Write-Host "    4) custom             -- enter your own ollama model id" -ForegroundColor DarkGray
+    $choice = Read-Line "Choice [1-4]" "1"
+    switch ($choice) {
+        "1"     { return "qwen2.5-coder:7b" }
+        ""      { return "qwen2.5-coder:7b" }
+        "2"     { return "qwen2.5-coder:14b" }
+        "3"     { return "llama3.2:3b" }
+        "4"     { return (Read-Line "Custom model id (e.g. mistral:7b)" $Default) }
+        default { Write-Host "  invalid choice '$choice'; using default '$Default'" -ForegroundColor Yellow; return $Default }
+    }
+}
+
+function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
+    # Read [ai].model / [ai].embed_model / [ai].bake_models out of the
+    # unified mios.toml dotfile. Walks the same layered overlay
+    # build-mios.sh's resolve_profile_layers walks, so per-host edits
+    # to /etc/mios/mios.toml or ~/.config/mios/mios.toml seed the
+    # interactive prompt without re-cloning. Pure regex parser; no TOML
+    # library dependency. Returns a hashtable -- caller picks fields.
+    $defaults = @{
+        Model       = "qwen2.5-coder:7b"
+        EmbedModel  = "nomic-embed-text"
+        BakeModels  = "qwen2.5-coder:7b,nomic-embed-text"
+    }
+    $layers = @()
+    foreach ($p in @(
+        (Join-Path $RepoDir       "mios-bootstrap\mios.toml"),
+        (Join-Path $env:APPDATA   "MiOS\mios.toml"),
+        (Join-Path $env:USERPROFILE ".config\mios\mios.toml")
+    )) { if (Test-Path $p) { $layers += $p } }
+
+    foreach ($card in $layers) {
+        try {
+            $text = Get-Content -Raw -Path $card -ErrorAction Stop
+        } catch { continue }
+        # Extract the [ai] section body up to the next [section] header
+        # or end-of-file. (?ms) for multiline + dot-matches-newline.
+        $m = [regex]::Match($text, '(?ms)^\[ai\]\s*$(.*?)(?=^\[|\z)')
+        if (-not $m.Success) { continue }
+        $body = $m.Groups[1].Value
+        foreach ($kv in @(
+            @{ Key='model';        Slot='Model' },
+            @{ Key='embed_model';  Slot='EmbedModel' },
+            @{ Key='bake_models';  Slot='BakeModels' }
+        )) {
+            $rx = [regex]::new('(?m)^\s*' + [regex]::Escape($kv.Key) + '\s*=\s*"([^"]*)"')
+            $hit = $rx.Match($body)
+            if ($hit.Success) { $defaults[$kv.Slot] = $hit.Groups[1].Value }
+        }
+    }
+    return $defaults
+}
+
 function Read-Password([string]$Prompt = "Password") {
     Move-BelowDash
     Write-Host "  $Prompt [default: mios]: " -NoNewline -ForegroundColor White
@@ -561,12 +625,19 @@ function Invoke-GhcrLogin([string]$Token) {
     else { Log-Warn "ghcr.io login failed -- build may fail pulling base image" }
 }
 
-function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [string]$MiosHostname) {
+function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [string]$MiosHostname,
+                                   [string]$AiModel = "qwen2.5-coder:7b",
+                                   [string]$EmbedModel = "nomic-embed-text",
+                                   [string]$BakeModels = "qwen2.5-coder:7b,nomic-embed-text") {
     $repoPath = Join-Path $MiosRepoDir "mios"
     Set-Step "podman build (Windows client → $BuilderDistro)"
-    Write-Log "BUILD START (Windows API build)  base=$BaseImage  user=$MiosUser  host=$MiosHostname"
+    Write-Log "BUILD START (Windows API build)  base=$BaseImage  user=$MiosUser  host=$MiosHostname  ai=$AiModel"
 
-    # Run via cmd.exe so 2>&1 merges stderr (podman build progress) into stdout stream
+    # Run via cmd.exe so 2>&1 merges stderr (podman build progress) into stdout stream.
+    # Build args propagate operator selections from the Phase-6 prompts
+    # (or layered mios.toml [ai] defaults) into the Containerfile ARGs of
+    # the same name. 37-ollama-prep.sh reads MIOS_OLLAMA_BAKE_MODELS to
+    # decide which model set to bake into /usr/share/ollama/models.
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = "cmd.exe"
     $psi.Arguments = ("/c podman build --progress=plain --no-cache " +
@@ -574,6 +645,9 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
                       "--build-arg `"MIOS_USER=$MiosUser`" " +
                       "--build-arg `"MIOS_HOSTNAME=$MiosHostname`" " +
                       "--build-arg `"MIOS_FLATPAKS=`" " +
+                      "--build-arg `"MIOS_AI_MODEL=$AiModel`" " +
+                      "--build-arg `"MIOS_AI_EMBED_MODEL=$EmbedModel`" " +
+                      "--build-arg `"MIOS_OLLAMA_BAKE_MODELS=$BakeModels`" " +
                       "-t localhost/mios:latest . 2>&1")
     $psi.WorkingDirectory       = $repoPath
     $psi.RedirectStandardOutput = $true
@@ -599,7 +673,12 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
 }
 
 function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
-                          [string]$MiosUser = "mios", [string]$MiosHostname = "mios") {
+                          [string]$MiosUser = "mios", [string]$MiosHostname = "mios",
+                          [string]$EmbedModel = "nomic-embed-text",
+                          [string]$BakeModels = "") {
+    if ([string]::IsNullOrWhiteSpace($BakeModels)) {
+        $BakeModels = "$AiModel,$EmbedModel"
+    }
     # Authenticate to ghcr.io before any pull/build.  GHCR now returns 403 on
     # anonymous bearer-token requests for ublue-os images; a GitHub PAT is required.
     $tok = if ($env:MIOS_GITHUB_TOKEN) { $env:MIOS_GITHUB_TOKEN }
@@ -624,7 +703,8 @@ function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
     if (-not $useWsl -and -not $useSsh) { $useWinBuild = $true }
 
     if ($useWinBuild) {
-        return Invoke-WindowsPodmanBuild -BaseImage $BaseImage -MiosUser $MiosUser -MiosHostname $MiosHostname
+        return Invoke-WindowsPodmanBuild -BaseImage $BaseImage -MiosUser $MiosUser -MiosHostname $MiosHostname `
+                                          -AiModel $AiModel -EmbedModel $EmbedModel -BakeModels $BakeModels
     }
 
     $justCheck = "command -v just &>/dev/null || dnf install -y just"
@@ -1250,13 +1330,31 @@ if ($activeDistro) {
                         elseif ($env:GITHUB_TOKEN)   { $env:GITHUB_TOKEN }
                         else { Read-Line "GitHub PAT for ghcr.io base image pull (github.com/settings/tokens)" "" }
     $tokStatus = if ($script:GhcrToken) { "provided (masked)" } else { "none -- anonymous pull (may fail)" }
-    Log-Ok "Identity: user=$MiosUser  host=$MiosHostname  password=(hashed)  ghcr=$tokStatus"
-    $script:IdentInfo = "User:$MiosUser  Host:$MiosHostname  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')  Model:$($HW.AiModel)"
+
+    # AI model selection (feature parity with build-mios.sh:prompt_model).
+    # Defaults seed from the layered mios.toml [ai] section so per-host
+    # overrides flow through automatically; Get-Hardware's RAM-driven
+    # suggestion is used as the fallback if mios.toml didn't supply one.
+    $aiDefaults = Resolve-MiosTomlAiDefaults -RepoDir $MiosRepoDir
+    $defaultModel = if ($aiDefaults.Model) { $aiDefaults.Model } else { $HW.AiModel }
+    $MiosAiModel       = Read-Model -Default $defaultModel
+    $MiosAiEmbedModel  = Read-Line "AI embedding model" $aiDefaults.EmbedModel
+    $MiosOllamaBakeModels = "$MiosAiModel,$MiosAiEmbedModel"
+
+    Log-Ok "Identity: user=$MiosUser  host=$MiosHostname  password=(hashed)  ghcr=$tokStatus  ai=$MiosAiModel"
+    $script:IdentInfo = "User:$MiosUser  Host:$MiosHostname  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')  Model:$MiosAiModel"
     End-Phase 6
 
     # ── Phase 7 -- Write identity ─────────────────────────────────────────────
     Start-Phase 7
-    $envContent = "MIOS_USER=`"$MiosUser`"`nMIOS_HOSTNAME=`"$MiosHostname`"`nMIOS_USER_PASSWORD_HASH=`"$MiosHash`""
+    $envContent = @"
+MIOS_USER="$MiosUser"
+MIOS_HOSTNAME="$MiosHostname"
+MIOS_USER_PASSWORD_HASH="$MiosHash"
+MIOS_AI_MODEL="$MiosAiModel"
+MIOS_AI_EMBED_MODEL="$MiosAiEmbedModel"
+MIOS_OLLAMA_BAKE_MODELS="$MiosOllamaBakeModels"
+"@.Trim()
     $writeCmd  = "mkdir -p /etc/mios && cat > /etc/mios/install.env && chmod 0640 /etc/mios/install.env"
     $written = $false
 
@@ -1359,7 +1457,13 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
 
     # ── Phase 9 -- Build ──────────────────────────────────────────────────────
     Start-Phase 9
-    $rc = Invoke-WslBuild -Distro $BuilderDistro -BaseImage $HW.BaseImage -AiModel $HW.AiModel `
+    # Pass the operator-chosen model selection (Phase 6 prompt) through
+    # to the build so 37-ollama-prep.sh bakes the right pair into
+    # /usr/share/ollama/models. MIOS_AI_MODEL takes precedence over the
+    # hardware-driven default in Get-Hardware.
+    $rc = Invoke-WslBuild -Distro $BuilderDistro -BaseImage $HW.BaseImage `
+                          -AiModel $MiosAiModel -EmbedModel $MiosAiEmbedModel `
+                          -BakeModels $MiosOllamaBakeModels `
                           -MiosUser $MiosUser -MiosHostname $MiosHostname
     if ($rc -eq 0) {
         End-Phase 9

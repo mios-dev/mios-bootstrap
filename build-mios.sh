@@ -67,6 +67,12 @@ DEFAULT_BRANCH="main"
 DEFAULT_TIMEZONE="UTC"
 DEFAULT_KEYBOARD="us"
 DEFAULT_LANG="en_US.UTF-8"
+# AI model defaults track the 12 GB-RAM / 8 GB-available baseline
+# documented in mios.toml [ai] and INDEX.md sec 2a. Override via
+# the layered profile-card resolution in load_profile_defaults().
+DEFAULT_AI_MODEL="qwen2.5-coder:7b"
+DEFAULT_AI_EMBED_MODEL="nomic-embed-text"
+DEFAULT_AI_BAKE="qwen2.5-coder:7b,nomic-embed-text"
 
 MIOS_REPO="https://github.com/mios-dev/mios.git"
 BOOTSTRAP_REPO="https://github.com/mios-dev/mios-bootstrap.git"
@@ -167,6 +173,15 @@ load_profile_defaults() {
     v="$(toml_get_layered locale language)";          [[ -n "$v" ]] && DEFAULT_LANG="$v"
     v="$(toml_get_layered bootstrap mios_repo)";      [[ -n "$v" ]] && MIOS_REPO="$v"
     v="$(toml_get_layered bootstrap bootstrap_repo)"; [[ -n "$v" ]] && BOOTSTRAP_REPO="$v"
+
+    # AI model selection (Architectural Law 5). Defaults match the
+    # researched 12 GB-RAM / 8 GB-available baseline. Operators
+    # override via [ai].model / [ai].embed_model / [ai].bake_models
+    # at any layer of the profile-card overlay; the interactive prompt
+    # below seeds from these resolved values.
+    v="$(toml_get_layered ai model)";          [[ -n "$v" ]] && DEFAULT_AI_MODEL="$v"
+    v="$(toml_get_layered ai embed_model)";    [[ -n "$v" ]] && DEFAULT_AI_EMBED_MODEL="$v"
+    v="$(toml_get_layered ai bake_models)";    [[ -n "$v" ]] && DEFAULT_AI_BAKE="$v"
 
     # Legacy .env.mios fallback (deprecated; sourced last so explicit TOML wins).
     local legacy_env; legacy_env="$(dirname "${BASH_SOURCE[0]}")/.env.mios"
@@ -301,6 +316,27 @@ prompt_default() {
     fi
 }
 
+prompt_model() {
+    # AI model menu prompt. Same auto-accept timing as prompt_default;
+    # presents the curated set researched for the 12 GB-RAM baseline
+    # plus a 'custom' escape hatch for free-form model ids.
+    local default="$1"
+    log_info ""
+    log_info "AI model (Architectural Law 5 -- baked into the image):"
+    log_info "  1) qwen2.5-coder:7b   -- 12 GB RAM, code-specialized, default"
+    log_info "  2) qwen2.5-coder:14b  -- 24+ GB RAM, larger code reasoning"
+    log_info "  3) llama3.2:3b        -- 8 GB RAM, fast"
+    log_info "  4) custom             -- enter your own ollama model id"
+    local choice; choice="$(prompt_default 'Choice [1-4]' '1')"
+    case "$choice" in
+        1|"")    echo "qwen2.5-coder:7b" ;;
+        2)       echo "qwen2.5-coder:14b" ;;
+        3)       echo "llama3.2:3b" ;;
+        4)       prompt_default 'Custom model id (e.g. mistral:7b)' "${default}" ;;
+        *)       log_warn "invalid choice '${choice}'; using default '${default}'"; echo "${default}" ;;
+    esac
+}
+
 prompt_password() {
     local prompt="$1" pw1 pw2
     while :; do
@@ -367,6 +403,14 @@ gather_user_choices() {
     # password (root-owned, mode 0600).
     FORGE_ADMIN_USER="$(prompt_default 'Forge admin username (Forgejo)' "${LINUX_USER}")"
     FORGE_ADMIN_EMAIL="$(prompt_default 'Forge admin email' "${LINUX_USER}@${HOSTNAME_VAL}.local")"
+
+    # AI model selection. Drives MIOS_OLLAMA_BAKE_MODELS (build-time)
+    # and MIOS_AI_MODEL / MIOS_AI_EMBED_MODEL in install.env (runtime).
+    # The chosen pair is what mios-ollama-firstboot.service confirms on
+    # first boot, so it carries through end-to-end.
+    AI_MODEL_VAL="$(prompt_model "${DEFAULT_AI_MODEL}")"
+    AI_EMBED_VAL="$(prompt_default 'AI embedding model' "${DEFAULT_AI_EMBED_MODEL}")"
+    AI_BAKE_LIST="${AI_MODEL_VAL},${AI_EMBED_VAL}"
 
     local hostkind
     hostkind="$(detect_host_kind)"
@@ -474,6 +518,15 @@ MIOS_BOOTSTRAP_VERSION="0.2.0"
 MIOS_FORGE_ADMIN_USER="${FORGE_ADMIN_USER:-${LINUX_USER}}"
 MIOS_FORGE_ADMIN_EMAIL="${FORGE_ADMIN_EMAIL:-${LINUX_USER}@${HOSTNAME_VAL}.local}"
 MIOS_FORGE_ADMIN_PASSWORD=""
+
+# AI model selection (Architectural Law 5). MIOS_OLLAMA_BAKE_MODELS is
+# the comma-separated list 37-ollama-prep.sh consumes at build time;
+# MIOS_AI_MODEL / MIOS_AI_EMBED_MODEL are the runtime selection
+# mios-ollama-firstboot.service confirms post-deploy. Operators can
+# swap them later via /etc/mios/mios.toml [ai] without rebuilding.
+MIOS_AI_MODEL="${AI_MODEL_VAL:-${DEFAULT_AI_MODEL}}"
+MIOS_AI_EMBED_MODEL="${AI_EMBED_VAL:-${DEFAULT_AI_EMBED_MODEL}}"
+MIOS_OLLAMA_BAKE_MODELS="${AI_BAKE_LIST:-${DEFAULT_AI_BAKE}}"
 EOF
     chmod 0640 "${PROFILE_FILE}"
     log_ok "Profile env written: ${PROFILE_FILE}"
