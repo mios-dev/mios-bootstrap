@@ -340,7 +340,44 @@ the source of truth for a given concern. When in doubt, these win:
 | `etc/skel/.config/mios/` | User dotfile templates seeded on `useradd -m` | <https://github.com/mios-dev/mios-bootstrap/tree/main/etc/skel> |
 | `image-versions.yml` | Mirror of base-image digest pins | <https://github.com/mios-dev/mios-bootstrap/blob/main/image-versions.yml> |
 
-## 22. Where each thing came from (origin summary)
+## 22. AI agents used in this project
+
+Coding/development AI agents that have first-class identity files in this
+repo. Each resolves the same canonical 'MiOS' system prompt at
+`/usr/share/mios/ai/system.md` (overridable via `/etc/mios/ai/system-prompt.md`
+and `~/.config/mios/system-prompt.md`); the agent-specific files below are
+thin pointers, not separate prompts.
+
+| Agent | Vendor | Identity file in this repo | Vendor / docs |
+|---|---|---|---|
+| **Claude / Claude Code** | Anthropic | `CLAUDE.md`, `.claude/settings.local.json` | <https://www.anthropic.com/> -- <https://docs.claude.com/en/docs/claude-code/overview> |
+| **GitHub Copilot** | GitHub | `.github/ai-instructions.md` | <https://github.com/features/copilot> -- <https://docs.github.com/en/copilot> |
+| **Cline** (VS Code) | Cline | `.clinerules` | <https://cline.bot/> -- <https://github.com/cline/cline> |
+| **Cursor** (editor) | Cursor / Anysphere | `.cursorrules` | <https://cursor.com/> -- <https://docs.cursor.com/> |
+| **Google Gemini / Gemini CLI** | Google | `GEMINI.md` | <https://gemini.google.com/> -- <https://github.com/google-gemini/gemini-cli> |
+| **OpenAI Codex CLI** (and any agents.md-aware tool) | OpenAI / community | `AGENTS.md` (agents.md standard) | <https://github.com/openai/codex> -- <https://agents.md/> |
+
+Aliasing files that all point to the same canonical prompt:
+
+| Alias / pointer | Purpose |
+|---|---|
+| `system-prompt.md` | Repo-root pointer to the canonical prompt |
+| `system.md` | Short root-level pointer (`usr/share/mios/ai/system.md`) |
+| `AI.md` (mios-bootstrap) | Bootstrap-side AI entry point + path index |
+| `usr/share/mios/ai/system.md` | The single canonical agent system prompt (image-baked, deployed from `mios-bootstrap`) |
+| `usr/share/mios/ai/v1/models.json` | OpenAI-shaped `/v1/models` catalog the agents discover |
+| `usr/share/mios/ai/v1/mcp.json` | MCP server registry the agents call out to |
+
+### 'MiOS'-internal agent surfaces (runtime, not editor-time)
+
+| Surface | Role | Where |
+|---|---|---|
+| `mios-ai.container` | LocalAI-served `/v1` endpoint that all in-image agents call | `etc/containers/systemd/mios-ai.container` |
+| `mios-mcp.service` | Local MCP server runtime | `usr/lib/systemd/system/mios-mcp.service`, `usr/libexec/mios/mcp-server-runner` |
+| `mios-mcp-init.sh` | MCP pre-flight (sqlite vault + dirs) | `usr/libexec/mios/mcp-init.sh` |
+| `usr/bin/mios` | Single CLI entrypoint that resolves `MIOS_AI_ENDPOINT` for every agent | `usr/bin/mios` |
+
+## 23. Where each thing came from (origin summary)
 
 For people scanning quickly:
 
