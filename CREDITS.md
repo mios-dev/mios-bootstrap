@@ -192,7 +192,7 @@ subset. Every URL below is the source-of-truth for the named surface.
 | uupd | Unified updater (replaces `bootc-fetch-apply-updates.timer`) | <https://github.com/ublue-os/uupd> |
 | bootupd | Unified bootloader updater | <https://github.com/coreos/bootupd> |
 
-## 11. Storage / cluster
+## 11. Storage / cluster / source-control forge
 
 | Component | Role | Upstream |
 |---|---|---|
@@ -209,6 +209,9 @@ subset. Every URL below is the source-of-truth for the named surface.
 | virtio-win | Windows-guest paravirt drivers | <https://github.com/virtio-win/virtio-win-pkg-automation> |
 | `virt-viewer` / `virt-manager` | VM consoles + GUI | <https://gitlab.com/virt-viewer/virt-viewer> -- <https://virt-manager.org/> |
 | FreeRDP | RDP client used for `cloudws-guacamole` integration | <https://www.freerdp.com/> |
+| Forgejo | Self-hosted Git forge served by `mios-forge.container` (HTTP 3000, git+ssh 2222); SQLite-default; matches MiOS-BUILDER's resource budget without a separate PostgreSQL | <https://forgejo.org/> -- <https://codeberg.org/forgejo/forgejo> -- governance: Codeberg e.V. (German non-profit), GPLv3+ |
+| Forgejo Runner | GitHub-Actions-compatible CI runner that authenticates against `mios-forge` and executes `.github/workflows/` / `.forgejo/workflows/` jobs in ephemeral Podman containers | <https://code.forgejo.org/forgejo/runner> -- <https://forgejo.org/docs/latest/admin/actions/> |
+| ActivityPub / ForgeFed | Federation protocol for Forgejo: cross-instance issue, PR, and star without surrendering source-code custody | <https://www.w3.org/TR/activitypub/> -- <https://forgefed.org/> |
 
 ## 12. Desktop / graphics
 
@@ -415,6 +418,7 @@ Aliasing files that all point to the same canonical prompt:
 | `usr/bin/mios` | Single CLI entrypoint that resolves `MIOS_AI_ENDPOINT` for every agent | `usr/bin/mios` |
 | `mios-llm` | Vendor-neutral OpenAI `/v1/chat/completions` wrapper (`install-mios-agents.sh`) | `/usr/local/bin/mios-llm` |
 | `mios-agent-claude`, `mios-agent-gemini` | Thin wrappers that pre-load the canonical system prompt before exec'ing the local CLI binary; no vendor logic beyond the exec | `/usr/local/bin/mios-agent-{claude,gemini}` |
+| `mios-forge.container` | Self-hosted Git forge (Forgejo upstream); HTTP `:3000`, git+ssh `:2222`; SQLite-default at `/srv/mios/forge/forgejo.db`; repository bytes at `/srv/mios/forge/git/` | `etc/containers/systemd/mios-forge.container` |
 
 ### `USER` variable resolution at build entry
 

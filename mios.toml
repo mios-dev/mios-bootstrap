@@ -160,6 +160,7 @@ features = ["ai", "virtualization", "k3s"]
 mios-ai            = true
 mios-ceph          = true
 mios-k3s           = true
+mios-forge         = true
 crowdsec-dashboard = true
 ollama             = true
 cloudws-guacamole  = true

@@ -84,6 +84,7 @@ referencing this file when it starts.
 | `./install-mios-agents.sh` | mios.git | Agent-launcher installer |
 | `./build-mios.sh`, `./build-mios.ps1` | mios-bootstrap.git | Canonical user-facing entry points (formerly `install.{sh,ps1}` / `bootstrap.{sh,ps1}`; old names are now redirector stubs) |
 | `mios`, `mios-llm`, `mios-agent-claude`, `mios-agent-gemini` | deployed image | Runtime CLI surface |
+| `git push http://localhost:3000/<user>/<repo>` | deployed image | Self-hosted Git forge (Forgejo) served by `mios-forge.container`; the locally hosted `.git = ./` pattern lives here |
 | `bootc upgrade`, `bootc switch ghcr.io/mios-dev/mios` | deployed image | OS lifecycle commands operating on a 'MiOS' image |
 
 If you do not agree with the terms inventoried in `LICENSE`,
