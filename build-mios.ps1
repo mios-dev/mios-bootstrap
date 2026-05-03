@@ -182,8 +182,13 @@ $script:IdentInfo     = ""   # set after phase 6 identity; User/Host/Base/Model 
 # SpinnerRow = -1 means unknown (spinner write suppressed until first render).
 $script:DashSync = [hashtable]::Synchronized(@{
     Running    = $true
+    Rendering  = $false   # set by the main thread around Show-Dashboard's
+                          # buffer writes so the background heartbeat skips
+                          # its spinner stamp during render -- prevents the
+                          # spinner from bleeding into separator rows when
+                          # the row count changes between renders.
     SpinnerRow = -1
-    SpinnerCol = 2     # "| X" -- spinner is the first char inside the row body
+    SpinnerCol = 2        # "| X" -- spinner is the first char inside the row body
 })
 $script:BgPs = $null
 $script:BgRs = $null
@@ -275,7 +280,17 @@ function Show-Dashboard {
     $glBarL  = "[{0}] {1,3}%  {2}/{3}" -f $glFill,$glPct,$glDone,$glTotal
 
     # ── Phase table col widths ────────────────────────────────────────────────
-    $nameW = [math]::Max(8, $in - 15)
+    # Single table layout used by header / divider / data rows:
+    #
+    #   "{0,2} {1,-6} {2,-nameW} {3,5}"
+    #     idx  tag   name        time
+    #     2  +1+ 6  +1+ nameW   +1+ 5  = 16 + nameW
+    #
+    # Setting nameW = $in - 16 makes every row land at exactly $in
+    # characters of content, so the right "|" border sits in the same
+    # column on all three rows -- no more zigzag right edge.
+    $nameW = [math]::Max(8, $in - 16)
+    $tableFmt = "{0,2} {1,-6} {2,-${nameW}} {3,5}"
 
     # ── Assemble rows ─────────────────────────────────────────────────────────
     $rows = [System.Collections.Generic.List[string]]::new()
@@ -336,12 +351,15 @@ function Show-Dashboard {
     $rows.Add((& $mkRow "Errors:$($script:ErrCount)  Warnings:$($script:WarnCount)  Status:$statusStr"))
     $rows.Add($sepD)
 
-    # Phase table
-    $rows.Add((& $mkRow (" # [Stat]  " + "Phase Name".PadRight($nameW) + "  Time")))
-    $rows.Add((& $mkRow ("-- ------  " + ("-" * $nameW) + "  -----")))
+    # Phase table -- header, divider, and data rows ALL go through the
+    # single $tableFmt printf template so the right border lands at
+    # the same column on every row. Status tags are padded to 6 chars
+    # to align under the "[Stat]" header column.
+    $rows.Add((& $mkRow ($tableFmt -f " #", "[Stat]", "Phase Name", " Time")))
+    $rows.Add((& $mkRow ($tableFmt -f "--", "------", ("-" * $nameW), "-----")))
     for ($i = 0; $i -lt $script:TotalPhases; $i++) {
         $st = switch ([int]$script:PhStat[$i]) {
-            0 { "[ ]  " } 1 { "[>>] " } 2 { "[OK] " } 3 { "[XX] " } 4 { "[!!] " } default { "[??] " }
+            0 { "[ ]"  } 1 { "[>>]" } 2 { "[OK]" } 3 { "[XX]" } 4 { "[!!]" } default { "[??]" }
         }
         $nm = [string]$script:PhaseNames[$i]
         if ($nm.Length -gt $nameW) { $nm = $nm.Substring(0,$nameW-3)+"..." }
@@ -353,8 +371,7 @@ function Show-Dashboard {
                 $t  = fmtSpan ($pe - $ps)
             } catch { $t = "--:--" }
         }
-        $r = "{0,2} {1} {2}  {3,5}" -f $i,$st,$nm.PadRight($nameW),$t
-        $rows.Add((& $mkRow $r))
+        $rows.Add((& $mkRow ($tableFmt -f $i, $st, $nm, $t)))
     }
     $rows.Add($sepD)
 
@@ -365,16 +382,23 @@ function Show-Dashboard {
 
     # ── Render at fixed position; full-width overwrite eliminates bleed ────────
     $dashStart = [math]::Min($script:DashRow, [math]::Max(0, $bufH - $rows.Count - 2))
-    # Tell the background heartbeat where to animate the spinner before rendering
-    # so it never writes a stale row number.
-    $script:DashSync.SpinnerRow = $dashStart + $opRowIdx
-    [Console]::SetCursorPosition(0, $dashStart)
-    foreach ($row in $rows) {
-        [Console]::Write($row)
-        [Console]::Write([Environment]::NewLine)
+    # Lock out the background heartbeat for the duration of the buffer
+    # writes so the spinner can't stamp a "/" or "-" into a separator
+    # row mid-render. The heartbeat sees Rendering=$true on its next
+    # 120 ms tick and skips its [Console]::Write.
+    $script:DashSync.Rendering = $true
+    try {
+        $script:DashSync.SpinnerRow = $dashStart + $opRowIdx
+        [Console]::SetCursorPosition(0, $dashStart)
+        foreach ($row in $rows) {
+            [Console]::Write($row)
+            [Console]::Write([Environment]::NewLine)
+        }
+        $script:DashHeight = $rows.Count
+        [Console]::SetCursorPosition(0, [math]::Min($dashStart + $script:DashHeight, $bufH - 1))
+    } finally {
+        $script:DashSync.Rendering = $false
     }
-    $script:DashHeight = $rows.Count
-    [Console]::SetCursorPosition(0, [math]::Min($dashStart + $script:DashHeight, $bufH - 1))
 
     } catch {
         Write-Host "[$([datetime]::Now.ToString('HH:mm:ss.fff'))][WARN] dashboard render error: $_"
@@ -1129,10 +1153,22 @@ $script:BgRs.SessionStateProxy.SetVariable('dashSync', $script:DashSync)
 $script:BgPs = [powershell]::Create()
 $script:BgPs.Runspace = $script:BgRs
 $null = $script:BgPs.AddScript({
+    # Background spinner heartbeat. Writes a single character at
+    # (SpinnerRow, SpinnerCol) every 120 ms so the operator sees the
+    # script is still alive even when the main render loop is blocked
+    # on a long sub-process.
+    #
+    # Race protection: dashSync.Rendering is set to $true by the main
+    # thread immediately before Show-Dashboard writes its rows, and
+    # cleared afterwards. The heartbeat skips its write while that
+    # flag is set, which prevents the previous spinner-bleed bug
+    # where the heartbeat stamped a "/" or "-" into a separator row
+    # that had just been drawn over the row the spinner used to occupy.
     $chars = @('|', '/', '-', [char]92)
     $i = 0
     while ($dashSync.Running) {
         [System.Threading.Thread]::Sleep(120)
+        if ($dashSync.Rendering) { continue }
         $row = $dashSync.SpinnerRow
         $col = $dashSync.SpinnerCol
         if ($row -ge 0) {
