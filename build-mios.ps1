@@ -40,24 +40,47 @@ $UninstallRegKey  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\M
 $StartMenuDir     = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\MiOS"
 
 # ── Log files ─────────────────────────────────────────────────────────────────
+# UNIFIED COUNTING SYSTEM: there is exactly one logged counter timeline --
+# the Write-Log entries written to $LogFile by [IO.File]::AppendAllText.
+# Show-Dashboard writes directly to the console (in-place repaint via
+# SetCursorPosition) and is NEVER captured to the log file. This keeps
+# the log a single chronological event stream instead of being flooded
+# by hundreds of repainted dashboard frames per minute.
+#
+# Why no Start-Transcript: Start-Transcript wraps stdout at the host
+# layer, so [Console]::Write calls from Show-Dashboard get captured.
+# Each 150ms repaint then duplicates the entire ~20-row dashboard into
+# the log. Direct file append-only logging avoids this entirely.
 $null = New-Item -ItemType Directory -Path $MiosLogDir -Force -ErrorAction SilentlyContinue
 $LogStamp       = [datetime]::Now.ToString("yyyyMMdd-HHmmss")
 $LogFile        = Join-Path $MiosLogDir "mios-install-$LogStamp.log"
-# Separate raw build-output log -- NOT the transcript file.
-# Start-Transcript locks $LogFile exclusively; any Out-File/Add-Content to the
-# same path throws a TerminatingError that -EA SilentlyContinue cannot suppress.
-# Build lines are appended here via [IO.File]::AppendAllText (no lock conflict).
 $BuildDetailLog = Join-Path $MiosLogDir "mios-build-$LogStamp.log"
 [Environment]::SetEnvironmentVariable("MIOS_UNIFIED_LOG", $LogFile)
 [Environment]::SetEnvironmentVariable("MIOS_BUILD_LOG",   $BuildDetailLog)
-try { Start-Transcript -Path $LogFile -Append -Force | Out-Null } catch {}
+
+# Initialize the unified log with a session header so post-mortem readers
+# can identify the run boundary the same way Start-Transcript used to.
+try {
+    [System.IO.File]::AppendAllText(
+        $LogFile,
+        ("=" * 78 + "`n" +
+         "MiOS install session  start=$LogStamp  pid=$PID  user=$env:USERNAME  host=$env:COMPUTERNAME`n" +
+         "=" * 78 + "`n"),
+        [Text.Encoding]::UTF8)
+} catch {}
 
 function Write-Log {
     param([string]$M, [string]$L = "INFO")
     $ts = [datetime]::Now.ToString("HH:mm:ss.fff")
-    # Write-Host is captured by Start-Transcript; Out-File to the same path causes
-    # a TerminatingError (file lock) that -EA SilentlyContinue cannot suppress.
-    Write-Host "[$ts][$L] $M"
+    $line = "[$ts][$L] $M"
+    # Append to the unified log directly. No transcript -> dashboard
+    # frames cannot leak in. This is THE single canonical counting
+    # system for the run; every event flows through here.
+    try { [System.IO.File]::AppendAllText($LogFile, ($line + "`n"), [Text.Encoding]::UTF8) } catch {}
+    # Mirror to the live console for operator visibility. Show-Dashboard
+    # repaints over these rows on its next tick, which is fine -- the log
+    # file already has the canonical record.
+    Write-Host $line
     if ($L -eq "ERROR") { $script:ErrCount++ }
     if ($L -eq "WARN")  { $script:WarnCount++ }
 }
@@ -1276,15 +1299,17 @@ Write-Host ''; Write-Host "  'MiOS' removed. Config at `$C preserved." -Foregrou
         Write-Host "  Press Enter to close..." -ForegroundColor DarkGray -NoNewline
         $null = Read-Host
     }
-    # Stop background heartbeat runspace cleanly before closing transcript
+    # Stop the background heartbeat runspace cleanly before exit. There is
+    # no transcript to close (the unified log is written directly via
+    # [IO.File]::AppendAllText), so dashboard frames never reach the log.
     try {
         $script:DashSync.Running = $false
         [System.Threading.Thread]::Sleep(200)   # let background loop exit its Sleep(120)
         if ($script:BgPs)  { try { $script:BgPs.Stop() }    catch {}; try { $script:BgPs.Dispose() }  catch {} }
         if ($script:BgRs)  { try { $script:BgRs.Close() }   catch {} }
     } catch {}
-    try { Stop-Transcript | Out-Null } catch {}
-    # Merge raw build output into unified log (transcript lock now released)
+    # Merge raw build output (BuildDetailLog) into the unified log so a
+    # post-mortem reader has a single file with the full picture.
     if (Test-Path $BuildDetailLog) {
         try {
             [System.IO.File]::AppendAllText($LogFile, "`n`n---- BUILD OUTPUT ----`n", [Text.Encoding]::UTF8)
