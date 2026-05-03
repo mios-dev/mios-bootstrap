@@ -1,4 +1,4 @@
-# MiOS — Cline agent entry point.
+# MiOS -- Cline agent entry point.
 # Canonical prompt: /usr/share/mios/ai/system.md (deployed from mios-bootstrap).
 # Apply /etc/mios/ai/system-prompt.md as host-local override if present.
 # Apply ~/.config/mios/system-prompt.md as per-user override if present.

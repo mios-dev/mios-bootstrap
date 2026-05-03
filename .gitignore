@@ -46,7 +46,7 @@
 
 # Bootstrap-owned overlay subtrees merged into / on FHS hosts and
 # baked into the image on bootc. Per-user templates live under etc/skel
-# (FHS standard skel directory — populated into ~/<user>/ on useradd -m).
+# (FHS standard skel directory -- populated into ~/<user>/ on useradd -m).
 !etc/
 !etc/**
 !usr/
@@ -54,7 +54,7 @@
 !var/
 !var/**
 
-# profile/ — bootstrap profile staging area (Phase-3 contributor: writes
+# profile/ -- bootstrap profile staging area (Phase-3 contributor: writes
 # ~/.config/mios/{profile.toml,system-prompt.md} per-user from these)
 !profile/
 !profile/**
