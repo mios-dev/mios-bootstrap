@@ -1,4 +1,4 @@
-# /etc/mios/profile.toml — MiOS User Profile Card
+# /etc/mios/profile.toml -- 'MiOS' User Profile Card
 #
 # Edit any field below before installing, or after at any time. The bootstrap
 # installer (install.sh) reads this file to seed prompt defaults; the
@@ -12,7 +12,7 @@
 # Format: TOML 1.0 (https://toml.io/en/v1.0.0).
 
 #------------------------------------------------------------------------------
-# Identity — Linux account, hostname, GECOS, login shell, group membership.
+# Identity -- Linux account, hostname, GECOS, login shell, group membership.
 #------------------------------------------------------------------------------
 [identity]
 username  = "mios"
@@ -22,7 +22,7 @@ shell     = "/bin/bash"
 groups    = ["wheel", "libvirt", "kvm", "video", "render", "input", "dialout", "docker"]
 
 #------------------------------------------------------------------------------
-# Locale — system-wide defaults applied via systemd-localed at first boot.
+# Locale -- system-wide defaults applied via systemd-localed at first boot.
 #------------------------------------------------------------------------------
 [locale]
 timezone        = "UTC"
@@ -57,9 +57,9 @@ allow_cockpit          = true   # opens 9090/tcp
 allow_libvirt_bridge   = true   # for VM networking
 
 #------------------------------------------------------------------------------
-# Local AI surface (LAW 5 — UNIFIED-AI-REDIRECTS).
+# Local AI surface (LAW 5 -- UNIFIED-AI-REDIRECTS).
 # Endpoint MUST stay on localhost; vendor URLs are forbidden by the canonical
-# system prompt §6.
+# system prompt S6.
 #------------------------------------------------------------------------------
 [ai]
 endpoint        = "http://localhost:8080/v1"
@@ -84,7 +84,7 @@ flatpaks      = [
 ]
 
 #------------------------------------------------------------------------------
-# Image reference — overrides the default ghcr ref baked into the image.
+# Image reference -- overrides the default ghcr ref baked into the image.
 # Used by `bootc switch` on bootc-managed hosts.
 #------------------------------------------------------------------------------
 [image]

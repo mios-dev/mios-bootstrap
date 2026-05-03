@@ -1,4 +1,4 @@
-# MiOS Bootstrap — Architecture Summary
+# 'MiOS' Bootstrap — Architecture Summary
 
 **Version:** v0.2.2
 

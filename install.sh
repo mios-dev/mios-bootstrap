@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# MiOS Bootstrap -- Interactive Ignition Installer
+# 'MiOS' Bootstrap -- Interactive Ignition Installer
 #
 # Usage:
 #   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/install.sh)"
@@ -289,7 +289,7 @@ prompt_yesno() {
 # ============================================================================
 gather_user_choices() {
     log_phase "Phase-0 — Installation profile"
-    log_info "Press Enter to accept defaults (everything defaults to MiOS)."
+    log_info "Press Enter to accept defaults (everything defaults to 'MiOS')."
     echo
 
     LINUX_USER="$(prompt_default 'Linux username' "${DEFAULT_USER}")"
@@ -401,7 +401,7 @@ apply_user_profile() {
     fi
 
     cat > "${PROFILE_FILE}" <<EOF
-# MiOS install profile -- written by mios-bootstrap install.sh
+# 'MiOS' install profile -- written by mios-bootstrap install.sh
 # Non-secret installation metadata. Passwords/tokens are NOT stored here.
 MIOS_LINUX_USER="${LINUX_USER}"
 MIOS_HOSTNAME="${HOSTNAME_VAL}"
@@ -497,7 +497,7 @@ seed_user_skel_for_all_accounts() {
 # template surface that mios-bootstrap.git populates from etc/skel/.
 # ============================================================================
 stage_user_profile_artifacts() {
-    log_phase "Phase-3 — Stage per-user MiOS artifacts"
+    log_phase "Phase-3 — Stage per-user 'MiOS' artifacts"
     local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
     [[ -n "$home" && -d "$home" ]] || {
         log_warn "User home not found; skipping per-user staging"
@@ -544,8 +544,8 @@ trigger_mios_install() {
             local dnf_cmd="dnf"
             command -v dnf5 >/dev/null 2>&1 && dnf_cmd="dnf5"
 
-            # 1. Initialize / as the git root for MiOS core
-            log_info "Staging MiOS core repository (mios.git) to /"
+            # 1. Initialize / as the git root for 'MiOS' core
+            log_info "Staging 'MiOS' core repository (mios.git) to /"
             if [[ ! -d "/.git" ]]; then
                 git init /
                 git -C / remote add origin "${MIOS_REPO}"
@@ -619,7 +619,7 @@ trigger_mios_install() {
                         log_ok "Repos configured"
                     fi
 
-                    log_info "Installing full MiOS component stack..."
+                    log_info "Installing full 'MiOS' component stack..."
                     spin_start "dnf install (this takes several minutes)"
                     # shellcheck disable=SC2086
                     $dnf_cmd install -y --skip-unavailable --best $pkgs 2>&1 \
@@ -634,7 +634,7 @@ trigger_mios_install() {
             fi
 
             # 4. Phase-3: systemd-sysusers, systemd-tmpfiles, daemon-reload.
-            # This wires up MiOS user/group definitions and creates /var/ paths
+            # This wires up 'MiOS' user/group definitions and creates /var/ paths
             # declared in usr/lib/tmpfiles.d/mios*.conf.
             log_phase "Phase-3 — System init (sysusers + tmpfiles + daemon-reload)"
             spin_start "Running systemd-sysusers"
@@ -659,7 +659,7 @@ trigger_mios_install() {
 # ============================================================================
 reboot_prompt() {
     log_phase "Phase-4 — Reboot"
-    if prompt_yesno 'Reboot now to activate MiOS?' y; then
+    if prompt_yesno 'Reboot now to activate 'MiOS'?' y; then
         log_info "Rebooting in 3s..."
         sleep 3
         systemctl reboot

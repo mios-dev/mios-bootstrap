@@ -1,9 +1,9 @@
-<!-- MiOS User Preferences Card — LAW 3: JSON-embedded Markdown SSOT -->
+<!-- 'MiOS' User Preferences Card — LAW 3: JSON-embedded Markdown SSOT -->
 <!-- This file is the canonical record of user-defined build parameters.  -->
 <!-- It is read by automation/build.sh and tools/load-user-env.sh.        -->
-<!-- Blank fields are auto-populated with MiOS current defaults at build. -->
+<!-- Blank fields are auto-populated with 'MiOS' current defaults at build. -->
 
-# MiOS User Preferences Card
+# 'MiOS' User Preferences Card
 
 ```json
 {

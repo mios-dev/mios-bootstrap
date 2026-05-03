@@ -1,4 +1,4 @@
-# MiOS User AI Profile — system prompt redirect
+# 'MiOS' User AI Profile — system prompt redirect
 #
 # This file is YOUR personal AI context layer. It is seeded from
 # /etc/skel/.config/mios/system-prompt.md on account creation.

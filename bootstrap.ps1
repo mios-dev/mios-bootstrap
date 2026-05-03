@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# MiOS Bootstrap — redirector
+# 'MiOS' Bootstrap — redirector
 #
 # The unified entry point is now install.ps1.
 # This file is retained so existing shortcuts and docs that reference

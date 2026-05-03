@@ -1,4 +1,4 @@
-# ~/.config/mios/profile.toml — Per-user MiOS profile.
+# ~/.config/mios/profile.toml -- Per-user 'MiOS' profile.
 #
 # Seeded from /etc/mios/profile.toml on first login by `mios init-user-space`.
 # Edit freely; `mios reinit-user-space` overwrites this file from the system

@@ -1,4 +1,4 @@
-# MiOS Host System Prompt
+# 'MiOS' Host System Prompt
 
 Redirector — canonical prompt is at `/usr/share/mios/ai/system.md`.
 

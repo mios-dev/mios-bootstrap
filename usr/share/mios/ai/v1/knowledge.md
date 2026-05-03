@@ -1,4 +1,4 @@
-# MiOS Knowledge Index
+# 'MiOS' Knowledge Index
 
 ## Primary sources (mios.git)
 

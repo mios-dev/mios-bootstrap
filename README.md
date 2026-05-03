@@ -42,7 +42,7 @@ One script — all phases in sequence, fully idempotent:
 3. Configures `%USERPROFILE%\.wslconfig` (memory/CPU/mirrored networking)
 4. Collects identity — username, hostname, password (all default to `mios`, just press Enter)
 5. Writes identity into the WSL2 distro (`/etc/mios/install.env`)
-6. Registers in Add/Remove Programs and creates the **MiOS** Start Menu group
+6. Registers in Add/Remove Programs and creates the **'MiOS'** Start Menu group
 7. Runs `just build` inside `podman-machine-default`
 
 Re-running is safe — if the WSL2 distro already has the repo at `/`, it pulls
@@ -106,7 +106,7 @@ Operators can still set a flag to `false` to force-disable. See
 |---|---|
 | `[identity] username` | `mios` |
 | `[identity] hostname` | `mios` |
-| `[identity] fullname` | `MiOS User` |
+| `[identity] fullname` | `'MiOS' User` |
 | `[identity] shell` | `/bin/bash` |
 | `[identity] groups` | `wheel,libvirt,kvm,video,render,input,dialout,docker` |
 | `[auth] ssh_key_type` | `ed25519` |

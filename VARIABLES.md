@@ -1,6 +1,6 @@
 # VARIABLES.md
 
-Global variable index for MiOS v0.2.2. All values defined here are the single authoritative source. Change a value in `usr/share/mios/env.defaults` (Linux) or the `# Paths & constants` block of `install.ps1` (Windows) to propagate it system-wide.
+Global variable index for 'MiOS' v0.2.2. All values defined here are the single authoritative source. Change a value in `usr/share/mios/env.defaults` (Linux) or the `# Paths & constants` block of `install.ps1` (Windows) to propagate it system-wide.
 
 ---
 
@@ -13,7 +13,7 @@ Machine-readable index: `/usr/share/mios/ai/vars.json`
 
 | Variable | Default | Description |
 |---|---|---|
-| `MIOS_VERSION` | `0.2.2` | MiOS release version |
+| `MIOS_VERSION` | `0.2.2` | 'MiOS' release version |
 | `MIOS_DEFAULT_USER` | `mios` | Default Linux username |
 | `MIOS_DEFAULT_HOST` | `mios` | Default hostname |
 | `MIOS_DEFAULT_SHELL` | `/bin/bash` | Default login shell |
@@ -84,7 +84,7 @@ Machine-readable index: `/usr/share/mios/ai/vars.json`
 | Variable | Default | Description |
 |---|---|---|
 | `MIOS_RECHUNK_MAX_LAYERS` | `67` | bootc-base-imagectl rechunk cap |
-| `MIOS_WSL_DISTRO` | `MiOS` | WSL2 deployed distro name |
+| `MIOS_WSL_DISTRO` | `'MiOS'` | WSL2 deployed distro name |
 | `MIOS_BUILDER_DISTRO` | `MiOS-BUILDER` | WSL2 Podman machine name |
 
 ---
@@ -95,7 +95,7 @@ Defined in the `# Paths & constants` block at the top of `install.ps1`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `$MiosVersion` | `v0.2.2` | MiOS version string |
+| `$MiosVersion` | `v0.2.2` | 'MiOS' version string |
 | `$MiosInstallDir` | `%LOCALAPPDATA%\Programs\MiOS` | Windows install directory |
 | `$MiosRepoDir` | `%LOCALAPPDATA%\Programs\MiOS\repo` | Cloned repo path |
 | `$MiosDistroDir` | `%LOCALAPPDATA%\Programs\MiOS\distros` | WSL2 distro root dirs |
@@ -105,7 +105,7 @@ Defined in the `# Paths & constants` block at the top of `install.ps1`.
 | `$MiosRepoUrl` | `https://github.com/mios-dev/mios.git` | System repo URL |
 | `$MiosBootstrapUrl` | `https://github.com/mios-dev/mios-bootstrap.git` | Bootstrap repo URL |
 | `$BuilderDistro` | `MiOS-BUILDER` | Podman machine WSL distro name |
-| `$MiosWslDistro` | `MiOS` | Deployed MiOS WSL2 distro name |
+| `$MiosWslDistro` | `'MiOS'` | Deployed 'MiOS' WSL2 distro name |
 | `$LegacyDistro` | `podman-machine-default` | Legacy Podman distro name |
 
 ---
@@ -116,7 +116,7 @@ Defined in the `# Paths & constants` block at the top of `install.ps1`.
 |---|---|---|
 | Linux username | `mios` | `MIOS_DEFAULT_USER` → `/etc/mios/install.env` |
 | Hostname | `mios` | `MIOS_DEFAULT_HOST` → `/etc/mios/install.env` |
-| Full name (GECOS) | `MiOS User` | `/etc/mios/install.env` |
+| Full name (GECOS) | `'MiOS' User` | `/etc/mios/install.env` |
 | Password | (prompted twice) | SHA-512 hash via `chpasswd` — never written plaintext |
 | SSH key | generate ed25519 | `~/.ssh/id_ed25519` (mode 0600) |
 | GitHub PAT | skip | `~/.git-credentials` (mode 0600, if provided) |

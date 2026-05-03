@@ -1,4 +1,4 @@
-# MiOS Bootstrap — AI Entry Point
+# 'MiOS' Bootstrap — AI Entry Point
 
 Merge order: `mios.git` (system layer) ← `mios-bootstrap.git` (user overlay). Bootstrap profile values, AI files, and skel templates overlay the vendor defaults at install time.
 

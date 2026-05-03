@@ -1,10 +1,10 @@
 # mios-dev/mios-bootstrap
 
-> Interactive installer for MiOS v0.2.2. User-facing entry point.
+> Interactive installer for 'MiOS' v0.2.2. User-facing entry point.
 > The system layer (Containerfile, FHS overlay, build scripts) lives in
 > https://github.com/mios-dev/mios.git
 
-MiOS is an immutable, bootc-native workstation OS on Fedora CoreOS delivered
+'MiOS' is an immutable, bootc-native workstation OS on Fedora CoreOS delivered
 as an OCI image. This repository contains the bootstrap installer and
 AI/knowledge assets that are written to the deployed host at install time.
 

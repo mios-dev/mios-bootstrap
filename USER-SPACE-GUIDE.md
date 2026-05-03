@@ -1,4 +1,4 @@
-# MiOS User-Space Configuration
+# 'MiOS' User-Space Configuration
 
 **Version:** v0.2.2
 

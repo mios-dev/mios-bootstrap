@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# MiOS Unified Installer & Builder -- Windows 11 / PowerShell
+# 'MiOS' Unified Installer & Builder -- Windows 11 / PowerShell
 #
 #   irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.ps1 | iex
 #
@@ -65,7 +65,7 @@ $script:PhaseNames = @(
     "App registration",
     "Building OCI image",
     "Exporting WSL2 image",
-    "Registering MiOS WSL2",
+    "Registering 'MiOS' WSL2",
     "Building disk images",
     "Deploying Hyper-V VM"
 )
@@ -194,7 +194,7 @@ function Show-Dashboard {
 
     # Header — gap computed so total row width = $w, then padded to $winW
     $rows.Add($sepE)
-    $title = " MiOS $MiosVersion  --  Build Dashboard"
+    $title = " 'MiOS' $MiosVersion  --  Build Dashboard"
     $right = "[ $elStr ] "
     $gap   = [math]::Max(0, $in - $title.Length - $right.Length)
     $hdr   = "| $title" + (" " * $gap) + "$right |"
@@ -392,7 +392,7 @@ function Get-Hardware {
 }
 
 function Find-ActiveDistro {
-    # Check legacy WSL distros (MiOS already applied via bootc switch, has /Justfile)
+    # Check legacy WSL distros ('MiOS' already applied via bootc switch, has /Justfile)
     foreach ($d in @($BuilderDistro, $LegacyDistro)) {
         try {
             $r = (& wsl.exe -d $d --exec bash -c "test -f /Justfile && echo ready" 2>$null) -join ""
@@ -627,7 +627,7 @@ function Export-WslTar([string]$OutFile) {
 }
 
 function Import-MiosWsl([string]$TarFile, [string]$InstallDir) {
-    # Register WSL2 distro from tar (replaces existing MiOS distro if present)
+    # Register WSL2 distro from tar (replaces existing 'MiOS' distro if present)
     if (-not (Test-Path $TarFile)) { throw "WSL2 tar not found: $TarFile" }
     try { & wsl.exe --unregister $MiosWslDistro 2>$null | Out-Null } catch {}
     if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
@@ -650,13 +650,19 @@ function Invoke-BibBuild([string[]]$Types, [string]$MachineOutDir, [int]$Timeout
     Set-Step "BIB: $($Types -join '+')..."
     Write-Log "BIB start: types=$($Types -join ',')  out=$MachineOutDir"
 
-    # Pre-create the output directory inside the machine — podman volume mounts require
-    # the host-side path to exist before the container starts.
-    Set-Step "BIB: creating output dir in machine..."
-    & podman run --rm --privileged --security-opt label=disable `
-        docker.io/library/alpine:latest `
-        mkdir -p $MachineOutDir 2>&1 | ForEach-Object { Write-Log "bib-mkdir: $_" }
-    if ($LASTEXITCODE -ne 0) { Write-Log "WARN: bib mkdir returned $LASTEXITCODE (may still work)" }
+    # Pre-create the output directory on the BUILDER MACHINE filesystem.
+    # podman volume bind-mounts require the host-side path to exist before
+    # the container starts; otherwise crun fails with `statfs ENOENT`.
+    # CRITICAL: must run via `podman machine ssh` -- running `mkdir` inside
+    # a transient alpine container only creates the dir in the container's
+    # ephemeral fs, which evaporates before the BIB container starts.
+    Set-Step "BIB: creating output dir on builder machine..."
+    $machineName = if ($env:MIOS_BUILDER_MACHINE) { $env:MIOS_BUILDER_MACHINE } else { "mios-builder" }
+    & podman machine ssh $machineName -- "sudo mkdir -p '$MachineOutDir' && sudo chmod 0755 '$MachineOutDir'" 2>&1 |
+        ForEach-Object { Write-Log "bib-mkdir: $_" }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "WARN: 'podman machine ssh ... mkdir' returned $LASTEXITCODE -- BIB will likely fail with statfs ENOENT"
+    }
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = "cmd.exe"
@@ -843,7 +849,7 @@ Clear-Host
 $b = "+" + ("=" * ($script:DW - 2)) + "+"
 $pad = [math]::Max(0, $script:DW - 4 - "MiOS $MiosVersion  --  Unified Windows Installer".Length)
 Write-Host $b                                                                       -ForegroundColor Cyan
-Write-Host ("| MiOS $MiosVersion  --  Unified Windows Installer" + (" " * $pad) + " |") -ForegroundColor Cyan
+Write-Host ("| 'MiOS' $MiosVersion  --  Unified Windows Installer" + (" " * $pad) + " |") -ForegroundColor Cyan
 Write-Host ("| Immutable Fedora AI Workstation" + (" " * ($script:DW - 34)) + " |") -ForegroundColor Cyan
 Write-Host ("| WSL2 + Podman  |  Offline Build Pipeline" + (" " * ($script:DW - 43)) + " |") -ForegroundColor Cyan
 Write-Host $b                                                                       -ForegroundColor Cyan
@@ -941,7 +947,7 @@ if ($activeDistro) {
     } else { End-Phase 9 -Fail; $ExitCode = $rc }
 } else {
 
-    if ($BuildOnly) { End-Phase 1 -Fail; throw "-BuildOnly: no MiOS build environment found. Run without -BuildOnly first." }
+    if ($BuildOnly) { End-Phase 1 -Fail; throw "-BuildOnly: no 'MiOS' build environment found. Run without -BuildOnly first." }
     Log-Ok "No existing distro -- starting full install"
     End-Phase 1
 
@@ -996,7 +1002,7 @@ if ($activeDistro) {
             }
         } catch {}
     }
-    # Legacy: accept wsl.exe-accessible distro too (MiOS already applied)
+    # Legacy: accept wsl.exe-accessible distro too ('MiOS' already applied)
     if (-not $machineRunning) {
         try {
             $r = (& wsl.exe -d $BuilderDistro --exec bash -c "echo ok" 2>$null) -join ""
@@ -1120,7 +1126,7 @@ if ($activeDistro) {
     $writeCmd  = "mkdir -p /etc/mios && cat > /etc/mios/install.env && chmod 0640 /etc/mios/install.env"
     $written = $false
 
-    # Try wsl.exe (works when machine runs MiOS after bootc switch)
+    # Try wsl.exe (works when machine runs 'MiOS' after bootc switch)
     $envContent | & wsl.exe -d $BuilderDistro --user root --exec bash -c $writeCmd 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) { $written = $true }
 
@@ -1166,9 +1172,9 @@ if ($activeDistro) {
 
     if (-not (Test-Path $StartMenuDir)) { New-Item -ItemType Directory -Path $StartMenuDir -Force | Out-Null }
     @(
-        @{ F="MiOS Setup.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`"";            D="Re-run full MiOS setup" },
-        @{ F="MiOS Build.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`" -BuildOnly";  D="Pull latest + build MiOS OCI image" },
-        @{ F="MiOS Terminal.lnk";        T="wsl.exe"; A="-d $MiosWslDistro";                                    D="Open MiOS workstation terminal" },
+        @{ F="MiOS Setup.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`"";            D="Re-run full 'MiOS' setup" },
+        @{ F="MiOS Build.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`" -BuildOnly";  D="Pull latest + build 'MiOS' OCI image" },
+        @{ F="MiOS Terminal.lnk";        T="wsl.exe"; A="-d $MiosWslDistro";                                    D="Open 'MiOS' workstation terminal" },
         @{ F="MiOS Builder Shell.lnk";  T="wsl.exe"; A="-d $BuilderDistro --user root";                         D="Open MiOS-BUILDER terminal (root)" },
         @{ F="MiOS Podman Shell.lnk";  T=$pwsh;     A="-NoProfile -Command podman machine ssh $BuilderDistro"; D="SSH into MiOS-BUILDER Podman machine" },
         @{ F="Uninstall MiOS.lnk";     T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$uninstSc`"";           D="Remove MiOS" }
@@ -1182,7 +1188,7 @@ if ($activeDistro) {
 param([switch]`$Quiet)
 `$I='$($MiosInstallDir-replace"'","''")'; `$D='$($MiosDataDir-replace"'","''")'; `$C='$($MiosConfigDir-replace"'","''")'; `$S='$($StartMenuDir-replace"'","''")'; `$K='$($UninstallRegKey-replace"'","''")'; `$B='$B'
 if (-not `$Quiet) {
-    Write-Host ''; Write-Host '  MiOS Uninstaller' -ForegroundColor Red; Write-Host ''
+    Write-Host ''; Write-Host '  'MiOS' Uninstaller' -ForegroundColor Red; Write-Host ''
     Write-Host "  Removes: `$I, `$D, `$B Podman machine, Start Menu"
     Write-Host "  Preserves: `$C (config)"; Write-Host ''
     if ((Read-Host "  Type 'yes' to confirm") -ne 'yes') { Write-Host '  Aborted.'; exit 0 }
@@ -1192,7 +1198,7 @@ try { podman machine rm -f `$B 2>`$null } catch {}
 try { wsl --unregister `$B 2>`$null } catch {}
 foreach (`$p in @(`$I,`$D,`$S)) { if (Test-Path `$p) { Remove-Item `$p -Recurse -Force } }
 if (Test-Path `$K) { Remove-Item `$K -Recurse -Force }
-Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -ForegroundColor Green
+Write-Host ''; Write-Host "  'MiOS' removed. Config at `$C preserved." -ForegroundColor Green
 "@ | Set-Content $uninstSc -Encoding UTF8
     Log-Ok "uninstall.ps1 written"
     End-Phase 8
@@ -1227,7 +1233,7 @@ Write-Host ''; Write-Host "  MiOS removed. Config at `$C preserved." -Foreground
     if ($ExitCode -eq 0) {
         $artifactDir = Join-Path $MiosDistroDir "artifacts"
         Write-Host $b -ForegroundColor Green
-        $l = "| MiOS $MiosVersion built and deployed!  (total: $totalTime)"
+        $l = "| 'MiOS' $MiosVersion built and deployed!  (total: $totalTime)"
         Write-Host ($l.PadRight($script:DW - 1) + "|") -ForegroundColor Green
         Write-Host ("| OCI   : localhost/mios:latest  in $BuilderDistro".PadRight($script:DW - 1) + "|") -ForegroundColor White
         $wslLine = "| WSL2  : wsl -d $MiosWslDistro"
