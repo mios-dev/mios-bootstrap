@@ -535,29 +535,44 @@ deploy_system_prompt() {
 }
 
 # ============================================================================
-# Multi-user seeder: copy /etc/skel/.config/mios/* into every existing user's
-# home, owned by that user. Called from deploy_system_prompt (after the host
-# /etc/mios/ai/system-prompt.md is in place) and again from
-# stage_user_profile_artifacts (after the bootstrap-created user is added).
-# Idempotent: install(1) overwrites with current content, mode is enforced.
+# Multi-user seeder: copy /etc/skel/.config/<subdir>/* into every existing
+# user's home for each MiOS-managed config subdirectory. Called from
+# deploy_system_prompt (after the host /etc/mios/ai/system-prompt.md is in
+# place) and again from stage_user_profile_artifacts. Idempotent: install(1)
+# overwrites with current content, mode is enforced.
+#
+# Subdirs covered:
+#   - mios/      profile.toml + system-prompt.md (per-user MiOS overlay)
+#   - aichat/    config.yaml -- Architectural Law 5 default for sigoden/aichat
+#                and blob42/aichat-ng (both consume the same config path).
 # ============================================================================
 seed_user_skel_for_all_accounts() {
-    local skel_root=/etc/skel/.config/mios
-    [[ -d "$skel_root" ]] || {
-        log_warn "etc/skel/.config/mios missing -- per-user staging skipped"
+    local -a skel_subdirs=(mios aichat)
+    local subdir found_any=0
+    for subdir in "${skel_subdirs[@]}"; do
+        [[ -d "/etc/skel/.config/${subdir}" ]] && { found_any=1; break; }
+    done
+    [[ "$found_any" -eq 1 ]] || {
+        log_warn "etc/skel/.config/{mios,aichat} missing -- per-user staging skipped"
         return 0
     }
 
     local u home uid sh
     while IFS=: read -r u _ uid _ _ home sh; do
         [[ "$uid" -ge 1000 && "$uid" -lt 65534 && -d "$home" ]] || continue
-        sudo -u "$u" install -d -m 0755 "${home}/.config" "${home}/.config/mios"
-        local f
-        for f in "$skel_root"/*; do
-            [[ -f "$f" ]] || continue
-            install -o "$u" -g "$u" -m 0644 "$f" "${home}/.config/mios/$(basename "$f")"
+        sudo -u "$u" install -d -m 0755 "${home}/.config"
+        for subdir in "${skel_subdirs[@]}"; do
+            local skel_root="/etc/skel/.config/${subdir}"
+            [[ -d "$skel_root" ]] || continue
+            sudo -u "$u" install -d -m 0755 "${home}/.config/${subdir}"
+            local f
+            for f in "$skel_root"/*; do
+                [[ -f "$f" ]] || continue
+                install -o "$u" -g "$u" -m 0644 \
+                    "$f" "${home}/.config/${subdir}/$(basename "$f")"
+            done
+            log_ok "Seeded ${home}/.config/${subdir}/ for ${u} (uid ${uid})"
         done
-        log_ok "Seeded ${home}/.config/mios/ for ${u} (uid ${uid})"
     done < /etc/passwd
 }
 
@@ -613,6 +628,30 @@ trigger_mios_install() {
         fhs)
             local dnf_cmd="dnf"
             command -v dnf5 >/dev/null 2>&1 && dnf_cmd="dnf5"
+
+            # Confirm before mutating the host root. 'git init /' followed by
+            # 'reset --hard FETCH_HEAD' is bold by design (it is the canonical
+            # "MiOS-ify a stock Fedora Server" path) but it overwrites every
+            # file the upstream tree owns. Operators must opt in.
+            #
+            # Auto-accept respects MIOS_PROMPT_TIMEOUT (90s default; '0' waits
+            # forever, '1' is the unattended-CI value). Setting
+            # MIOS_FHS_TOTAL_ROOT_MERGE=1 in the environment also bypasses
+            # the prompt for scripted re-runs.
+            if [[ "${MIOS_FHS_TOTAL_ROOT_MERGE:-0}" != "1" ]]; then
+                log_warn "Total Root Merge will run 'git init /' and 'git reset --hard FETCH_HEAD' against this host."
+                log_warn "Files tracked by mios.git will be overwritten with the upstream branch (${DEFAULT_BRANCH})."
+                local confirm
+                confirm="$(prompt_default 'Proceed with Total Root Merge?' 'no')"
+                case "${confirm,,}" in
+                    y|yes|true|1) ;;
+                    *)
+                        log_warn "Total Root Merge declined by operator -- aborting Phase-1."
+                        log_info "Re-run with MIOS_FHS_TOTAL_ROOT_MERGE=1 to bypass this prompt."
+                        return 1
+                        ;;
+                esac
+            fi
 
             # 1. Initialize / as the git root for 'MiOS' core
             log_info "Staging 'MiOS' core repository (mios.git) to /"

@@ -1,0 +1,46 @@
+# ~/.config/aichat/config.yaml -- 'MiOS' AIChat / AIChat-NG default config.
+#
+# Architectural Law 5 (UNIFIED-AI-REDIRECTS): every OpenAI-API-shaped
+# client on a 'MiOS' system targets http://localhost:8080/v1 by default.
+# This file is seeded into every uid >= 1000 home from /etc/skel/ at
+# install time so 'aichat' and 'aichat-ng' resolve the local LocalAI
+# Quadlet (mios-ai.container) without any per-user setup.
+#
+# Spec for this file's schema:
+#   https://github.com/sigoden/aichat/blob/main/config.example.yaml
+#
+# Override per-user by editing this file in $HOME, or system-wide by
+# editing /etc/mios/profile.toml's [ai] section -- the bootstrap layer
+# regenerates this from profile.toml on every install.
+model: openai:qwen2.5-coder:7b
+temperature: null
+top_p: null
+
+save: true
+keybindings: emacs
+editor: null
+wrap: auto
+wrap_code: false
+highlight: true
+light_theme: false
+save_session: null
+compress_threshold: 4000
+
+clients:
+  # Canonical 'MiOS' OpenAI-compatible endpoint (LocalAI Quadlet).
+  - type: openai-compatible
+    name: mios-localai
+    api_base: http://localhost:8080/v1
+    api_key: ""
+    models:
+      - name: qwen2.5-coder:7b
+        max_input_tokens: 32768
+        supports_function_calling: true
+      - name: qwen2.5-coder:14b
+        max_input_tokens: 32768
+        supports_function_calling: true
+      - name: nomic-embed-text
+        type: embedding
+        max_input_tokens: 8192
+        default_chunk_size: 1500
+        max_batch_size: 64
