@@ -7,10 +7,13 @@
 !README.md
 !LICENSE
 !VERSION
+!bootstrap.sh
+!bootstrap.ps1
 !install.sh
 !install.ps1
 !AI.md
 !system-prompt.md
+!IMPLEMENTATION-SUMMARY.md
 
 # User-space env templates and identity examples
 !.env
@@ -39,6 +42,11 @@
 !usr/**
 !var/
 !var/**
+
+# profile/ — bootstrap profile staging area (Phase-3 contributor: writes
+# ~/.config/mios/{profile.toml,system-prompt.md} per-user from these)
+!profile/
+!profile/**
 
 # Re-ignore noise
 **/__pycache__/
