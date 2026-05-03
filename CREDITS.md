@@ -340,19 +340,25 @@ the source of truth for a given concern. When in doubt, these win:
 | `etc/skel/.config/mios/` | User dotfile templates seeded on `useradd -m` | <https://github.com/mios-dev/mios-bootstrap/tree/main/etc/skel> |
 | `image-versions.yml` | Mirror of base-image digest pins | <https://github.com/mios-dev/mios-bootstrap/blob/main/image-versions.yml> |
 
-## 22. AI agents used in this project
+## 22. AI agents used in this project (un-labeled, OpenAI-API-shaped)
 
-> **All agents in this project conform to OpenAI API standards and patterns.**
-> Architectural Law 5 (**UNIFIED-AI-REDIRECTS**): every agent listed below
+> 'MiOS' treats every editor/CLI agent as an *OpenAI-API-compatible client*
+> rather than as a vendor brand. The agent-identity files in this repo
+> (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`, `.clinerules`, `.cursorrules`,
+> `.github/ai-instructions.md`) exist for tooling discovery only -- their
+> filenames are conventions the upstream tools look for; their contents
+> are vendor-neutral pointers to the same canonical prompt.
+>
+> **Architectural Law 5 -- UNIFIED-AI-REDIRECTS.** Every client below
 > resolves through `MIOS_AI_ENDPOINT=http://localhost:8080/v1`, an
-> OpenAI-public-API-compatible surface served by `etc/containers/systemd/mios-ai.container`
-> (LocalAI). Vendor-hardcoded URLs (`api.openai.com`, `api.anthropic.com`,
+> OpenAI-public-API-compatible surface served by
+> `etc/containers/systemd/mios-ai.container` (LocalAI). Vendor-native URLs
+> (`api.openai.com`, `api.anthropic.com`,
 > `generativelanguage.googleapis.com`, `api.cline.bot`, `api.cursor.com`,
 > `api.githubcopilot.com`, etc.) are forbidden in the deployed image and
-> fail audit. Each agent below is therefore a *client* of the same
-> OpenAI-shaped `/v1` surface; differences are presentation-layer only.
+> fail audit. Differences between clients are presentation-layer only.
 >
-> **OpenAI patterns adopted across every agent:**
+> **OpenAI patterns adopted across every client:**
 > Chat Completions (`POST /v1/chat/completions`), Responses
 > (`POST /v1/responses`), function calling / tool-use schema, structured
 > outputs (`response_format: json_schema`, `strict: true`), embeddings
@@ -360,20 +366,20 @@ the source of truth for a given concern. When in doubt, these win:
 > (`GET /v1/models`), JSONL training format, and `Authorization: Bearer ...`
 > auth. Each surface is anchored in section 7 above.
 
-Coding/development AI agents that have first-class identity files in this
-repo. Each resolves the same canonical 'MiOS' system prompt at
-`/usr/share/mios/ai/system.md` (overridable via `/etc/mios/ai/system-prompt.md`
-and `~/.config/mios/system-prompt.md`); the agent-specific files below are
-thin pointers, not separate prompts.
+The discovery files below are listed by **filename convention** (what the
+tool looks for) and **client wiring** (how it resolves to the OpenAI-shaped
+endpoint). Vendor names appear only as the upstream link target so a
+reader can reach the tool's docs; they are not load-bearing in any
+configuration in this repo.
 
-| Agent | Vendor | Identity file in this repo | OpenAI-API conformance | Vendor / docs |
-|---|---|---|---|---|
-| **Claude / Claude Code** | Anthropic | `CLAUDE.md`, `.claude/settings.local.json` | Routed via `MIOS_AI_ENDPOINT` (OpenAI Chat Completions / Responses); native Anthropic Messages API not used in-image | <https://www.anthropic.com/> -- <https://docs.claude.com/en/docs/claude-code/overview> |
-| **GitHub Copilot** | GitHub | `.github/ai-instructions.md` | Repo-side instructions only; in-image AI use re-routed to `MIOS_AI_ENDPOINT` | <https://github.com/features/copilot> -- <https://docs.github.com/en/copilot> |
-| **Cline** (VS Code) | Cline | `.clinerules` | Configured to point its "OpenAI-Compatible" provider at `MIOS_AI_ENDPOINT` | <https://cline.bot/> -- <https://github.com/cline/cline> |
-| **Cursor** (editor) | Cursor / Anysphere | `.cursorrules` | "OpenAI-compatible" custom-model path set to `MIOS_AI_ENDPOINT` | <https://cursor.com/> -- <https://docs.cursor.com/> |
-| **Google Gemini / Gemini CLI** | Google | `GEMINI.md` | Uses Gemini CLI's OpenAI-compatibility flag against `MIOS_AI_ENDPOINT`; native `generativelanguage.googleapis.com` not used in-image | <https://gemini.google.com/> -- <https://github.com/google-gemini/gemini-cli> |
-| **OpenAI Codex CLI** (and any agents.md-aware tool) | OpenAI / community | `AGENTS.md` (agents.md standard) | Native OpenAI client; `OPENAI_BASE_URL` overridden to `MIOS_AI_ENDPOINT` for in-image use | <https://github.com/openai/codex> -- <https://agents.md/> |
+| Discovery file | What looks for it | OpenAI-API client wiring | Upstream docs (link only) |
+|---|---|---|---|
+| `CLAUDE.md`, `.claude/settings.local.json` | A CLI agent that auto-loads `CLAUDE.md` from cwd | Wrapped via `mios-agent-claude` -- prompt injected; no network setting required because the wrapper exec's the local CLI which is configured against `MIOS_AI_ENDPOINT` | <https://docs.claude.com/en/docs/claude-code/overview> |
+| `.github/ai-instructions.md` | Editor assistants that read `.github/` instruction files | Repo-side instructions only; in-image traffic still routes to `MIOS_AI_ENDPOINT` | <https://docs.github.com/en/copilot> |
+| `.clinerules` | A VS Code agent that reads `.clinerules` from project root | "OpenAI-Compatible" provider in the agent's settings points at `MIOS_AI_ENDPOINT` | <https://github.com/cline/cline> |
+| `.cursorrules` | An editor that reads `.cursorrules` from project root | "OpenAI-compatible" custom-model path set to `MIOS_AI_ENDPOINT` | <https://docs.cursor.com/> |
+| `GEMINI.md` | A CLI that auto-loads `GEMINI.md` from cwd | Vendor-CLI's OpenAI-compatibility flag pointed at `MIOS_AI_ENDPOINT`; native vendor endpoint not used in-image | <https://github.com/google-gemini/gemini-cli> |
+| `AGENTS.md` (agents.md standard) | Any agents.md-aware client (Codex CLI, etc.) | `OPENAI_BASE_URL` env var overridden to `MIOS_AI_ENDPOINT` | <https://agents.md/> -- <https://github.com/openai/codex> |
 
 Aliasing files that all point to the same canonical prompt:
 
@@ -394,6 +400,24 @@ Aliasing files that all point to the same canonical prompt:
 | `mios-mcp.service` | Local MCP server runtime | `usr/lib/systemd/system/mios-mcp.service`, `usr/libexec/mios/mcp-server-runner` |
 | `mios-mcp-init.sh` | MCP pre-flight (sqlite vault + dirs) | `usr/libexec/mios/mcp-init.sh` |
 | `usr/bin/mios` | Single CLI entrypoint that resolves `MIOS_AI_ENDPOINT` for every agent | `usr/bin/mios` |
+| `mios-llm` | Vendor-neutral OpenAI `/v1/chat/completions` wrapper (`install-mios-agents.sh`) | `/usr/local/bin/mios-llm` |
+| `mios-agent-claude`, `mios-agent-gemini` | Thin wrappers that pre-load the canonical system prompt before exec'ing the local CLI binary; no vendor logic beyond the exec | `/usr/local/bin/mios-agent-{claude,gemini}` |
+
+### `USER` variable resolution at build entry
+
+Every `USER` token in this codebase is a *placeholder*, not a hardcoded
+identity. Resolution happens at install/build entry:
+
+| Site | Form | Resolved by |
+|---|---|---|
+| Shell scripts (`*.sh`) | `$USER`, `$HOME`, `~` | The login shell at runtime |
+| PowerShell scripts (`*.ps1`) | `$env:USERNAME`, `$env:USERPROFILE` | PowerShell at runtime |
+| Markdown aggregates | literal `USER` | The bootstrap installer's sed pass at install entry (`install.sh` / `install.ps1` reads detected username and substitutes) |
+| Profile / env templates | `MIOS_USER`, `MIOS_HOSTNAME` | `etc/mios/profile.toml` -> `/etc/mios/install.env` -> `~/.config/mios/profile.toml` (three-layer override; highest wins) |
+
+The only other user-related identifiers permitted in the codebase are
+the `MiOS` brand and the `mios` default account name; both are project
+conventions, not personal identities.
 
 ## 23. Where each thing came from (origin summary)
 
