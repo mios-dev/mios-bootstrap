@@ -342,20 +342,38 @@ the source of truth for a given concern. When in doubt, these win:
 
 ## 22. AI agents used in this project
 
+> **All agents in this project conform to OpenAI API standards and patterns.**
+> Architectural Law 5 (**UNIFIED-AI-REDIRECTS**): every agent listed below
+> resolves through `MIOS_AI_ENDPOINT=http://localhost:8080/v1`, an
+> OpenAI-public-API-compatible surface served by `etc/containers/systemd/mios-ai.container`
+> (LocalAI). Vendor-hardcoded URLs (`api.openai.com`, `api.anthropic.com`,
+> `generativelanguage.googleapis.com`, `api.cline.bot`, `api.cursor.com`,
+> `api.githubcopilot.com`, etc.) are forbidden in the deployed image and
+> fail audit. Each agent below is therefore a *client* of the same
+> OpenAI-shaped `/v1` surface; differences are presentation-layer only.
+>
+> **OpenAI patterns adopted across every agent:**
+> Chat Completions (`POST /v1/chat/completions`), Responses
+> (`POST /v1/responses`), function calling / tool-use schema, structured
+> outputs (`response_format: json_schema`, `strict: true`), embeddings
+> (`POST /v1/embeddings`), MCP tool invocation, model discovery
+> (`GET /v1/models`), JSONL training format, and `Authorization: Bearer ...`
+> auth. Each surface is anchored in section 7 above.
+
 Coding/development AI agents that have first-class identity files in this
 repo. Each resolves the same canonical 'MiOS' system prompt at
 `/usr/share/mios/ai/system.md` (overridable via `/etc/mios/ai/system-prompt.md`
 and `~/.config/mios/system-prompt.md`); the agent-specific files below are
 thin pointers, not separate prompts.
 
-| Agent | Vendor | Identity file in this repo | Vendor / docs |
-|---|---|---|---|
-| **Claude / Claude Code** | Anthropic | `CLAUDE.md`, `.claude/settings.local.json` | <https://www.anthropic.com/> -- <https://docs.claude.com/en/docs/claude-code/overview> |
-| **GitHub Copilot** | GitHub | `.github/ai-instructions.md` | <https://github.com/features/copilot> -- <https://docs.github.com/en/copilot> |
-| **Cline** (VS Code) | Cline | `.clinerules` | <https://cline.bot/> -- <https://github.com/cline/cline> |
-| **Cursor** (editor) | Cursor / Anysphere | `.cursorrules` | <https://cursor.com/> -- <https://docs.cursor.com/> |
-| **Google Gemini / Gemini CLI** | Google | `GEMINI.md` | <https://gemini.google.com/> -- <https://github.com/google-gemini/gemini-cli> |
-| **OpenAI Codex CLI** (and any agents.md-aware tool) | OpenAI / community | `AGENTS.md` (agents.md standard) | <https://github.com/openai/codex> -- <https://agents.md/> |
+| Agent | Vendor | Identity file in this repo | OpenAI-API conformance | Vendor / docs |
+|---|---|---|---|---|
+| **Claude / Claude Code** | Anthropic | `CLAUDE.md`, `.claude/settings.local.json` | Routed via `MIOS_AI_ENDPOINT` (OpenAI Chat Completions / Responses); native Anthropic Messages API not used in-image | <https://www.anthropic.com/> -- <https://docs.claude.com/en/docs/claude-code/overview> |
+| **GitHub Copilot** | GitHub | `.github/ai-instructions.md` | Repo-side instructions only; in-image AI use re-routed to `MIOS_AI_ENDPOINT` | <https://github.com/features/copilot> -- <https://docs.github.com/en/copilot> |
+| **Cline** (VS Code) | Cline | `.clinerules` | Configured to point its "OpenAI-Compatible" provider at `MIOS_AI_ENDPOINT` | <https://cline.bot/> -- <https://github.com/cline/cline> |
+| **Cursor** (editor) | Cursor / Anysphere | `.cursorrules` | "OpenAI-compatible" custom-model path set to `MIOS_AI_ENDPOINT` | <https://cursor.com/> -- <https://docs.cursor.com/> |
+| **Google Gemini / Gemini CLI** | Google | `GEMINI.md` | Uses Gemini CLI's OpenAI-compatibility flag against `MIOS_AI_ENDPOINT`; native `generativelanguage.googleapis.com` not used in-image | <https://gemini.google.com/> -- <https://github.com/google-gemini/gemini-cli> |
+| **OpenAI Codex CLI** (and any agents.md-aware tool) | OpenAI / community | `AGENTS.md` (agents.md standard) | Native OpenAI client; `OPENAI_BASE_URL` overridden to `MIOS_AI_ENDPOINT` for in-image use | <https://github.com/openai/codex> -- <https://agents.md/> |
 
 Aliasing files that all point to the same canonical prompt:
 
