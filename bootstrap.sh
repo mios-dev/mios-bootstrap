@@ -4,6 +4,21 @@
 # Usage: curl -fsSL https://raw.githubusercontent.com/MiOS-DEV/MiOS-bootstrap/main/bootstrap.sh | bash
 set -euo pipefail
 
+# Acknowledgment banner. Inlined (not sourced) because this script is
+# typically curl-piped before any repo is on disk. Respects
+# MIOS_AGREEMENT_BANNER=quiet for unattended runs.
+case "${MIOS_AGREEMENT_BANNER:-}" in
+    quiet|silent|off|0|false|FALSE) ;;
+    *)
+        cat >&2 <<'__EOF__'
+[mios] By invoking bootstrap.sh you acknowledge AGREEMENTS.md
+       (Apache-2.0 main + bundled-component licenses in LICENSES.md +
+        attribution in CREDITS.md). 'MiOS' is a research project
+       (pronounced 'MyOS'; generative, seed-script-derived).
+__EOF__
+        ;;
+esac
+
 PRIVATE_INSTALLER="https://raw.githubusercontent.com/MiOS-DEV/mios/main/install.sh"
 _ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/mios/mios-build.env"
 

@@ -3,6 +3,20 @@
 > Attribution registry for every upstream project, dependency, application,
 > repository, file, and pattern that 'MiOS' is built on top of or refers to.
 >
+> **Project nature, recorded once for the file.** 'MiOS' (pronounced
+> *MyOS* -- short for *My OS* / *My Operating System*) is a **research
+> project**. It is *generative*: synthesized from a small set of seed
+> scripts and manually-curated documentation, then iteratively expanded
+> by automated tooling and human review. The names, licenses, and
+> conventions of every upstream listed in this file are preserved
+> verbatim; 'MiOS' claims no authorship of any upstream work and no
+> affiliation with any upstream vendor. Runtime agreements are codified
+> in [`AGREEMENTS.md`](./AGREEMENTS.md); invocation of any entry point
+> listed there is treated as acknowledgment of this attribution
+> registry, the Apache-2.0 main license at
+> [`LICENSE`](./LICENSE), and the bundled-component licenses inventoried
+> in [`LICENSES.md`](./LICENSES.md).
+>
 > **Scope of this file:** *attribution* (what we use and where it came
 > from). License terms live in `LICENSES.md`. Citation/source-of-truth
 > tracking for the `usr/share/doc/mios` knowledge base lives in
@@ -386,7 +400,6 @@ Aliasing files that all point to the same canonical prompt:
 | Alias / pointer | Purpose |
 |---|---|
 | `system-prompt.md` | Repo-root pointer to the canonical prompt |
-| `system.md` | Short root-level pointer (`usr/share/mios/ai/system.md`) |
 | `AI.md` (mios-bootstrap) | Bootstrap-side AI entry point + path index |
 | `usr/share/mios/ai/system.md` | The single canonical agent system prompt (image-baked, deployed from `mios-bootstrap`) |
 | `usr/share/mios/ai/v1/models.json` | OpenAI-shaped `/v1/models` catalog the agents discover |

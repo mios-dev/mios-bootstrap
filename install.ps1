@@ -12,6 +12,17 @@ param([switch]$BuildOnly, [switch]$Unattended)
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = "SilentlyContinue"
 
+# Acknowledgment banner. Inlined (script is irm-piped). Respects
+# $env:MIOS_AGREEMENT_BANNER=quiet for unattended runs.
+if ($env:MIOS_AGREEMENT_BANNER -notin @('quiet','silent','off','0','false','FALSE')) {
+    [Console]::Error.WriteLine(@"
+[mios] By invoking install.ps1 you acknowledge AGREEMENTS.md
+       (Apache-2.0 main + bundled-component licenses in LICENSES.md +
+        attribution in CREDITS.md). 'MiOS' is a research project
+       (pronounced 'MyOS'; generative, seed-script-derived).
+"@)
+}
+
 # ── Paths & constants ─────────────────────────────────────────────────────────
 $MiosVersion      = "v0.2.2"
 $MiosInstallDir   = Join-Path $env:LOCALAPPDATA "Programs\MiOS"

@@ -7,6 +7,11 @@
 #   # or after cloning:
 #   sudo /path/to/MiOS-bootstrap/install.sh
 #
+# By invoking this script you acknowledge AGREEMENTS.md (Apache-2.0
+# main + bundled-component licenses in LICENSES.md + attribution in
+# CREDITS.md). 'MiOS' is a research project (pronounced 'MyOS';
+# generative, seed-script-derived).
+#
 # Global pipeline phases (numbered; reused everywhere this project speaks of
 # "phases"):
 #
@@ -30,6 +35,20 @@
 # re-run picks up edits.
 
 set -euo pipefail
+
+# Acknowledgment banner -- inlined (script is curl-piped). Respects
+# MIOS_AGREEMENT_BANNER=quiet for unattended runs.
+case "${MIOS_AGREEMENT_BANNER:-}" in
+    quiet|silent|off|0|false|FALSE) ;;
+    *)
+        cat >&2 <<'__EOF__'
+[mios] By invoking install.sh you acknowledge AGREEMENTS.md
+       (Apache-2.0 main + bundled-component licenses in LICENSES.md +
+        attribution in CREDITS.md). 'MiOS' is a research project
+       (pronounced 'MyOS'; generative, seed-script-derived).
+__EOF__
+        ;;
+esac
 
 # ============================================================================
 # Defaults -- sourced from the user profile card (etc/mios/profile.toml in

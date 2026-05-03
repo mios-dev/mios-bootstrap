@@ -10,6 +10,17 @@
 
 param([switch]$BuildOnly, [switch]$Unattended)
 
+# Acknowledgment banner. Delegates to install.ps1 which prints its own;
+# kept here for the case where install.ps1 isn't yet on disk.
+if ($env:MIOS_AGREEMENT_BANNER -notin @('quiet','silent','off','0','false','FALSE')) {
+    [Console]::Error.WriteLine(@"
+[mios] By invoking bootstrap.ps1 you acknowledge AGREEMENTS.md
+       (Apache-2.0 main + bundled-component licenses in LICENSES.md +
+        attribution in CREDITS.md). 'MiOS' is a research project
+       (pronounced 'MyOS'; generative, seed-script-derived).
+"@)
+}
+
 $installScript = Join-Path $PSScriptRoot "install.ps1"
 
 if (Test-Path $installScript) {
