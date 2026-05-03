@@ -23,21 +23,75 @@ if ($env:MIOS_AGREEMENT_BANNER -notin @('quiet','silent','off','0','false','FALS
 "@)
 }
 
+# ── Install scope detection ───────────────────────────────────────────────────
+# 'MiOS' installs as a native Windows app. Two scopes:
+#
+#   AllUsers  -- machine-wide install at C:\Program Files\MiOS\
+#                Add/Remove Programs in HKLM. Distros + images in
+#                C:\ProgramData\MiOS. Per-user logs/config still use
+#                %LOCALAPPDATA%\MiOS / %APPDATA%\MiOS so each Windows
+#                account on the box gets its own state.
+#
+#   CurrentUser -- per-user install at %LOCALAPPDATA%\Programs\MiOS\
+#                  Add/Remove Programs in HKCU. Used as a fallback when
+#                  the operator declines UAC elevation, or when the
+#                  installer is invoked under a standard (non-admin)
+#                  account.
+#
+# Detection: a process is "admin" if it holds the Administrators
+# built-in role. The 'irm | iex' one-liner from Get-MiOS.ps1 will refuse
+# to elevate itself (UAC cannot prompt mid-pipeline); operators are
+# expected to run from an elevated PowerShell when AllUsers is desired.
+$script:IsAdmin = $false
+try {
+    $script:IsAdmin = ([Security.Principal.WindowsPrincipal]::new(
+        [Security.Principal.WindowsIdentity]::GetCurrent()
+    )).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+} catch { $script:IsAdmin = $false }
+
+$MiosScope = if ($script:IsAdmin) { "AllUsers" } else { "CurrentUser" }
+
 # ── Paths & constants ─────────────────────────────────────────────────────────
 $MiosVersion      = "v0.2.2"
-$MiosInstallDir   = Join-Path $env:LOCALAPPDATA "Programs\MiOS"
-$MiosRepoDir      = Join-Path $MiosInstallDir "repo"
-$MiosDistroDir    = Join-Path $MiosInstallDir "distros"
-$MiosConfigDir    = Join-Path $env:APPDATA "MiOS"
-$MiosDataDir      = Join-Path $env:LOCALAPPDATA "MiOS"
-$MiosLogDir       = Join-Path $MiosDataDir "logs"
 $MiosRepoUrl      = "https://github.com/mios-dev/mios.git"
 $MiosBootstrapUrl = "https://github.com/mios-dev/mios-bootstrap.git"
 $BuilderDistro    = "MiOS-BUILDER"
 $MiosWslDistro    = "MiOS"
 $LegacyDistro     = "podman-machine-default"
-$UninstallRegKey  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS"
-$StartMenuDir     = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\MiOS"
+
+if ($script:IsAdmin) {
+    # AllUsers (machine-wide native Windows app layout).
+    $MiosInstallDir   = Join-Path ${env:ProgramFiles} "MiOS"            # C:\Program Files\MiOS
+    $MiosProgramData  = Join-Path ${env:ProgramData}  "MiOS"            # C:\ProgramData\MiOS
+    $MiosRepoDir      = Join-Path $MiosInstallDir   "repo"              # code (git checkouts)
+    $MiosBinDir       = Join-Path $MiosInstallDir   "bin"               # entry-point scripts
+    $MiosShareDir     = Join-Path $MiosInstallDir   "share"             # mios-bootstrap etc/usr trees
+    $MiosDistroDir    = Join-Path $MiosProgramData  "distros"           # multi-GB WSL2 artifacts
+    $MiosImagesDir    = Join-Path $MiosProgramData  "images"            # qcow2 / vhdx / iso outputs
+    $MiosMachineCfg   = Join-Path $MiosProgramData  "config"            # global non-secret install.env
+    $StartMenuDir     = Join-Path ${env:ProgramData} "Microsoft\Windows\Start Menu\Programs\MiOS"
+    $UninstallRegKey  = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MiOS"
+} else {
+    # CurrentUser fallback.
+    $MiosInstallDir   = Join-Path ${env:LOCALAPPDATA} "Programs\MiOS"
+    $MiosProgramData  = Join-Path ${env:LOCALAPPDATA} "MiOS\machine-state"
+    $MiosRepoDir      = Join-Path $MiosInstallDir    "repo"
+    $MiosBinDir       = Join-Path $MiosInstallDir    "bin"
+    $MiosShareDir     = Join-Path $MiosInstallDir    "share"
+    $MiosDistroDir    = Join-Path $MiosInstallDir    "distros"
+    $MiosImagesDir    = Join-Path $MiosInstallDir    "images"
+    $MiosMachineCfg   = Join-Path $MiosInstallDir    "config"
+    $StartMenuDir     = Join-Path ${env:APPDATA}     "Microsoft\Windows\Start Menu\Programs\MiOS"
+    $UninstallRegKey  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS"
+}
+
+# Per-user state regardless of scope. These resolve via $env:USERNAME /
+# $env:USERPROFILE so each Windows account on a machine-wide install
+# still gets its own logs and per-user identity overlay -- the "user
+# variables" half of the install contract.
+$MiosConfigDir    = Join-Path ${env:APPDATA}      "MiOS"               # %APPDATA%\MiOS
+$MiosDataDir      = Join-Path ${env:LOCALAPPDATA} "MiOS"               # %LOCALAPPDATA%\MiOS
+$MiosLogDir       = Join-Path $MiosDataDir        "logs"
 
 # ── Log files ─────────────────────────────────────────────────────────────────
 # UNIFIED COUNTING SYSTEM: there is exactly one logged counter timeline --
@@ -987,10 +1041,15 @@ if ($activeDistro) {
 
     # ── Phase 2 -- Directories and repos ─────────────────────────────────────
     Start-Phase 2
-    foreach ($d in @($MiosInstallDir,$MiosRepoDir,$MiosDistroDir,$MiosConfigDir,$MiosDataDir,$MiosLogDir)) {
+    Write-Log "install scope: $MiosScope  install dir: $MiosInstallDir  programdata: $MiosProgramData"
+    foreach ($d in @(
+        $MiosInstallDir, $MiosRepoDir, $MiosBinDir, $MiosShareDir,
+        $MiosProgramData, $MiosDistroDir, $MiosImagesDir, $MiosMachineCfg,
+        $MiosConfigDir, $MiosDataDir, $MiosLogDir
+    )) {
         if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
     }
-    Log-Ok "Directories under $MiosInstallDir"
+    Log-Ok "Directories under $MiosInstallDir ($MiosScope scope)"
 
     foreach ($r in @(
         @{ Path=(Join-Path $MiosRepoDir "mios");           Url=$MiosRepoUrl;      Name="mios.git" },
@@ -1005,6 +1064,47 @@ if ($activeDistro) {
         }
         Log-Ok $r.Name
     }
+
+    # ── Materialize bootstrap files into the install dir ─────────────────────
+    # Both repos are cloned into $MiosRepoDir, but a "native Windows app"
+    # install also exposes the bootstrap-side templates and entry scripts
+    # under predictable, non-git-shaped paths so Windows tooling, shortcuts,
+    # and the uninstaller don't have to traverse a .git working tree.
+    #
+    #   $MiosBinDir                     entry-point .ps1 scripts (Get-MiOS, build-mios, uninstall)
+    #   $MiosShareDir\bootstrap\etc     mios-bootstrap/etc tree (skel templates, mios.toml)
+    #   $MiosShareDir\bootstrap\usr     mios-bootstrap/usr tree (system overlay templates)
+    #   $MiosShareDir\system\usr        mios.git/usr tree (factory FHS overlay; read-only ref)
+    #
+    # robocopy is used over Copy-Item so we get incremental sync semantics
+    # (only changed files re-copy on re-run). /MIR mirrors content + deletes
+    # stale files; /NJH /NJS suppress the header/summary so output stays terse.
+    Set-Step "Materializing bootstrap files into install dir"
+    $bootstrapSrc = Join-Path $MiosRepoDir "mios-bootstrap"
+    $miosSrc      = Join-Path $MiosRepoDir "mios"
+    $copyPairs = @(
+        @{ Src=(Join-Path $bootstrapSrc "etc"); Dst=(Join-Path $MiosShareDir "bootstrap\etc") },
+        @{ Src=(Join-Path $bootstrapSrc "usr"); Dst=(Join-Path $MiosShareDir "bootstrap\usr") },
+        @{ Src=(Join-Path $miosSrc      "usr"); Dst=(Join-Path $MiosShareDir "system\usr")    }
+    )
+    foreach ($p in $copyPairs) {
+        if (Test-Path $p.Src) {
+            $null = New-Item -ItemType Directory -Path $p.Dst -Force -ErrorAction SilentlyContinue
+            & robocopy $p.Src $p.Dst /MIR /NJH /NJS /NFL /NDL /NP 2>&1 | Out-Null
+        }
+    }
+    # Stage entry-point scripts under $MiosBinDir so Start Menu shortcuts
+    # and PATH integration target a stable, non-git location.
+    foreach ($script in @("Get-MiOS.ps1","build-mios.ps1","build-mios.sh","bootstrap.ps1","bootstrap.sh")) {
+        $srcFile = Join-Path $bootstrapSrc $script
+        if (Test-Path $srcFile) {
+            Copy-Item -Path $srcFile -Destination (Join-Path $MiosBinDir $script) -Force
+        }
+    }
+    # Drop a VERSION marker at the install root so external tools (and the
+    # operator) can identify the installed release without a git query.
+    Set-Content -Path (Join-Path $MiosInstallDir "VERSION") -Value $MiosVersion -Encoding ASCII -Force
+    Log-Ok "Bootstrap files materialized under $MiosShareDir"
     End-Phase 2
 
     # ── Phase 3 -- MiOS-BUILDER distro ───────────────────────────────────────
@@ -1189,8 +1289,15 @@ if ($activeDistro) {
     # ── Phase 8 -- App registration + Start Menu ──────────────────────────────
     Start-Phase 8
     $pwsh      = if (Get-Command pwsh -EA SilentlyContinue) { (Get-Command pwsh).Source } else { "powershell.exe" }
-    $selfSc    = Join-Path $MiosRepoDir "mios-bootstrap\install.ps1"
-    $uninstSc  = Join-Path $MiosInstallDir "uninstall.ps1"
+    # Entry-point scripts live under $MiosBinDir (materialized in Phase 2).
+    # Prefer build-mios.ps1 (current canonical entry); fall back to the
+    # legacy install.ps1 redirector if an old install is being re-run.
+    $selfSc    = if (Test-Path (Join-Path $MiosBinDir "build-mios.ps1")) {
+                     Join-Path $MiosBinDir "build-mios.ps1"
+                 } else {
+                     Join-Path $MiosRepoDir "mios-bootstrap\install.ps1"
+                 }
+    $uninstSc  = Join-Path $MiosBinDir "uninstall.ps1"
     $uninstCmd = "$pwsh -ExecutionPolicy Bypass -File `"$uninstSc`""
 
     if (-not (Test-Path $UninstallRegKey)) { New-Item -Path $UninstallRegKey -Force | Out-Null }
@@ -1198,7 +1305,9 @@ if ($activeDistro) {
         DisplayName="MiOS - Immutable Fedora AI Workstation"; DisplayVersion=$MiosVersion
         Publisher="MiOS-DEV"; InstallLocation=$MiosInstallDir
         UninstallString=$uninstCmd; QuietUninstallString="$uninstCmd -Quiet"
-        URLInfoAbout="https://github.com/mios-dev/mios"; NoModify=[int]1; NoRepair=[int]1
+        URLInfoAbout="https://github.com/mios-dev/mios"
+        InstallScope=$MiosScope
+        NoModify=[int]1; NoRepair=[int]1
     }.GetEnumerator() | ForEach-Object {
         $regType = if ($_.Value -is [int]) { "DWord" } else { "String" }
         Set-ItemProperty -Path $UninstallRegKey -Name $_.Key -Value $_.Value -Type $regType
@@ -1215,24 +1324,35 @@ if ($activeDistro) {
     ) | ForEach-Object { New-Shortcut (Join-Path $StartMenuDir $_.F) $_.T $_.A $_.D $MiosInstallDir }
     Log-Ok "Add/Remove Programs + Start Menu created"
 
-    # Uninstaller script
+    # Uninstaller script. Removes the install dir + machine-wide
+    # ProgramData state + Start Menu + registry entry + Podman/WSL2
+    # distros. Preserves per-user config ($MiosConfigDir) so re-installs
+    # pick up the operator's last identity.
     $B = $BuilderDistro
     @"
 #Requires -Version 5.1
 param([switch]`$Quiet)
-`$I='$($MiosInstallDir-replace"'","''")'; `$D='$($MiosDataDir-replace"'","''")'; `$C='$($MiosConfigDir-replace"'","''")'; `$S='$($StartMenuDir-replace"'","''")'; `$K='$($UninstallRegKey-replace"'","''")'; `$B='$B'
+`$I='$($MiosInstallDir-replace"'","''")'
+`$P='$($MiosProgramData-replace"'","''")'
+`$D='$($MiosDataDir-replace"'","''")'
+`$C='$($MiosConfigDir-replace"'","''")'
+`$S='$($StartMenuDir-replace"'","''")'
+`$K='$($UninstallRegKey-replace"'","''")'
+`$B='$B'
+`$M='$MiosWslDistro'
 if (-not `$Quiet) {
-    Write-Host ''; Write-Host '  'MiOS' Uninstaller' -ForegroundColor Red; Write-Host ''
-    Write-Host "  Removes: `$I, `$D, `$B Podman machine, Start Menu"
-    Write-Host "  Preserves: `$C (config)"; Write-Host ''
+    Write-Host ''; Write-Host '  ''MiOS'' Uninstaller' -ForegroundColor Red; Write-Host ''
+    Write-Host "  Removes: `$I, `$P, `$D, ``$B`` + ``$M`` (Podman + WSL2 distros), Start Menu"
+    Write-Host "  Preserves: `$C (per-user config)"; Write-Host ''
     if ((Read-Host "  Type 'yes' to confirm") -ne 'yes') { Write-Host '  Aborted.'; exit 0 }
 }
 try { podman machine stop `$B 2>`$null } catch {}
 try { podman machine rm -f `$B 2>`$null } catch {}
 try { wsl --unregister `$B 2>`$null } catch {}
-foreach (`$p in @(`$I,`$D,`$S)) { if (Test-Path `$p) { Remove-Item `$p -Recurse -Force } }
-if (Test-Path `$K) { Remove-Item `$K -Recurse -Force }
-Write-Host ''; Write-Host "  'MiOS' removed. Config at `$C preserved." -ForegroundColor Green
+try { wsl --unregister `$M 2>`$null } catch {}
+foreach (`$p in @(`$I,`$P,`$D,`$S)) { if (Test-Path `$p) { Remove-Item `$p -Recurse -Force -ErrorAction SilentlyContinue } }
+if (Test-Path `$K) { Remove-Item `$K -Recurse -Force -ErrorAction SilentlyContinue }
+Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." -ForegroundColor Green
 "@ | Set-Content $uninstSc -Encoding UTF8
     Log-Ok "uninstall.ps1 written"
     End-Phase 8
