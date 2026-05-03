@@ -337,6 +337,113 @@ prompt_model() {
     esac
 }
 
+launch_configurator() {
+    # Optional GUI step. Open /usr/share/mios/configurator/index.html
+    # in the operator's default browser, stage a writable mios.toml
+    # template at a known path, and wait for the operator to save
+    # before continuing. The HTML uses the File System Access API to
+    # overwrite the staged file in place (no Downloads detour, no "(1)"
+    # suffix). Skipped on headless / unattended runs.
+    if [[ "${MIOS_NO_CONFIGURATOR:-0}" == "1" ]]; then
+        return 0
+    fi
+    if [[ "${MIOS_PROMPT_TIMEOUT:-90}" == "1" ]]; then
+        # Unattended mode -- never show GUI prompts.
+        return 0
+    fi
+
+    local choice; choice="$(prompt_default 'Open MiOS configurator (HTML) to edit mios.toml in browser?' 'n')"
+    case "${choice,,}" in y|yes|true|1) ;; *) return 0 ;; esac
+
+    local bootstrap_root; bootstrap_root="$(dirname "${BASH_SOURCE[0]}")"
+    # Locate the HTML configurator. Three candidate paths covering the
+    # bootstrap-side checkout, the system overlay (after install), and
+    # the staged mirror under /usr/share/mios/configurator (preferred
+    # post-install location).
+    local html=""
+    for cand in \
+        "${bootstrap_root}/usr/share/mios/configurator/index.html" \
+        "/usr/share/mios/configurator/index.html" \
+        "${bootstrap_root}/../mios/usr/share/mios/configurator/index.html" \
+        "/tmp/mios-bootstrap-src/usr/share/mios/configurator/index.html"
+    do
+        if [[ -f "$cand" ]]; then html="$cand"; break; fi
+    done
+    if [[ -z "$html" ]]; then
+        log_warn "Configurator HTML not found locally -- skipping GUI step"
+        return 0
+    fi
+
+    # Stage a writable mios.toml template the configurator can bind to.
+    # Pick the highest-precedence existing layer; otherwise copy the
+    # repo-shipped template. The operator's browser will overwrite this
+    # path in place via the File System Access API.
+    local staging
+    staging="$(mktemp /tmp/mios-config.XXXXXX.toml)"
+    local src=""
+    for cand in \
+        "${HOME}/.config/mios/mios.toml" \
+        "/etc/mios/mios.toml" \
+        "${bootstrap_root}/mios.toml" \
+        "/usr/share/mios/mios.toml"
+    do
+        if [[ -r "$cand" ]]; then src="$cand"; break; fi
+    done
+    if [[ -n "$src" ]]; then
+        cp -f "$src" "$staging"
+    else
+        : > "$staging"   # empty placeholder; operator can click "Defaults" in the UI
+    fi
+    chmod 0644 "$staging"
+
+    # Pass the staging path to the HTML via a query param so the banner
+    # shows the operator exactly where to save (use Pick file -> select
+    # this file -> edit -> Save).
+    local url="file://${html}?suggested_path=$(printf '%s' "$staging" | sed 's/ /%20/g')"
+
+    log_info ""
+    log_info "Opening configurator: ${url}"
+    log_info "  Staging file: ${staging}"
+    log_info "  After editing: click 'Pick file' -> open the staging file -> Save"
+    log_info ""
+
+    # Pick a browser opener. xdg-open works on most desktop sessions;
+    # sensible-browser on Debian-derived; explicit firefox/chromium as
+    # fallbacks. Detached so the bootstrap tty isn't tied to the
+    # browser process.
+    local opener=""
+    for cand in xdg-open sensible-browser gio firefox chromium google-chrome; do
+        if command -v "$cand" >/dev/null 2>&1; then opener="$cand"; break; fi
+    done
+    if [[ -n "$opener" ]]; then
+        if [[ "$opener" == "gio" ]]; then
+            "$opener" open "$url" </dev/null >/dev/null 2>&1 &
+        else
+            "$opener" "$url" </dev/null >/dev/null 2>&1 &
+        fi
+    else
+        log_warn "No browser opener found (xdg-open/firefox/chromium); please open manually:"
+        log_warn "  ${url}"
+    fi
+
+    # Wait for the operator to finish editing. We don't auto-detect
+    # save (mtime polling is fragile on some filesystems) -- explicit
+    # confirmation is more reliable.
+    prompt_default 'Press Enter when finished editing in the browser' '' >/dev/null
+
+    # Promote the staged file to the per-host layer if the operator
+    # actually saved something. Only the [identity], [ai], [network],
+    # [image] sections are typically edited; secrets stay in install.env.
+    if [[ -s "$staging" ]] && [[ -n "${SUDO_USER:-}" || $EUID -eq 0 ]]; then
+        install -d -m 0755 /etc/mios
+        install -m 0644 -T "$staging" /etc/mios/mios.toml
+        log_ok "Staged ${staging} -> /etc/mios/mios.toml"
+        # Re-resolve the layered defaults so the prompts that follow
+        # default to whatever the operator wrote in the HTML.
+        load_profile_defaults
+    fi
+}
+
 prompt_password() {
     local prompt="$1" pw1 pw2
     while :; do
@@ -848,6 +955,7 @@ main() {
     check_network
     install_prerequisites
     load_profile_defaults
+    launch_configurator
     gather_user_choices
     print_summary
 

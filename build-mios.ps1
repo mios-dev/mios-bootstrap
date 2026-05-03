@@ -500,6 +500,89 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
     return $defaults
 }
 
+function Open-Configurator([string]$RepoDir) {
+    # Optional GUI step. Open /usr/share/mios/configurator/index.html
+    # in the operator's default browser, stage a writable mios.toml at
+    # a known path, and wait for the operator to save before continuing
+    # the build. The HTML uses File System Access API so the save
+    # overwrites in place -- no Downloads detour, no "(1)" suffix.
+    if ($Unattended) { return }
+    if ($env:MIOS_NO_CONFIGURATOR -eq "1") { return }
+
+    $resp = Read-Line "Open MiOS configurator (HTML) to edit mios.toml in browser?" "n"
+    if ($resp -notmatch '^(y|yes|true|1)$') { return }
+
+    # Locate the configurator HTML. Prefer the cloned mios.git copy,
+    # fall back to whatever's installed at the canonical FHS path,
+    # otherwise fall back to the bootstrap's local share/system mirror
+    # staged by Phase-2's robocopy.
+    $candidates = @(
+        (Join-Path $RepoDir "mios\usr\share\mios\configurator\index.html"),
+        (Join-Path $MiosShareDir "system\usr\share\mios\configurator\index.html"),
+        (Join-Path $MiosShareDir "bootstrap\usr\share\mios\configurator\index.html")
+    )
+    $html = $null
+    foreach ($c in $candidates) { if (Test-Path $c) { $html = $c; break } }
+    if (-not $html) {
+        Write-Log "Configurator HTML not found locally -- skipping GUI step" "WARN"
+        return
+    }
+
+    # Stage a writable mios.toml the configurator can bind to. Pick the
+    # highest-precedence existing layer; otherwise copy the cloned
+    # vendor template. The operator's browser will overwrite this file
+    # in place via the FSA write handle.
+    $stagingDir = Join-Path $env:TEMP "mios-configurator"
+    if (-not (Test-Path $stagingDir)) { New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null }
+    $stamp   = [datetime]::Now.ToString("yyyyMMdd-HHmmss")
+    $staging = Join-Path $stagingDir "mios-$stamp.toml"
+    $sources = @(
+        (Join-Path $env:APPDATA "MiOS\mios.toml"),
+        (Join-Path $RepoDir "mios-bootstrap\mios.toml"),
+        (Join-Path $RepoDir "mios\usr\share\mios\mios.toml")
+    )
+    $src = $null
+    foreach ($s in $sources) { if (Test-Path $s) { $src = $s; break } }
+    if ($src) {
+        Copy-Item -Path $src -Destination $staging -Force
+    } else {
+        New-Item -ItemType File -Path $staging -Force | Out-Null
+    }
+
+    # Build the file:// URL with the staging path as a query param so
+    # the HTML banner shows the operator exactly where to save.
+    $stagingForUrl = ($staging -replace '\\', '/' -replace ' ', '%20')
+    $url = "file:///$($html -replace '\\', '/' -replace ' ', '%20')?suggested_path=$stagingForUrl"
+
+    Write-Host ""
+    Write-Host "  Opening configurator:" -ForegroundColor Cyan
+    Write-Host "    $url"
+    Write-Host "  Staging file:" -ForegroundColor Cyan
+    Write-Host "    $staging"
+    Write-Host "  In the browser: click 'Pick file' -> open the staging file -> edit -> Save."
+    Write-Host ""
+
+    # Start-Process honors the user's default browser association.
+    try {
+        Start-Process $url -ErrorAction Stop
+    } catch {
+        Write-Log "Browser launch failed: $($_.Exception.Message). Open manually: $url" "WARN"
+    }
+
+    $null = Read-Host "  Press Enter when finished editing in the browser"
+
+    # Promote the staged file to the per-user layer (%APPDATA%\MiOS).
+    # Per-user has highest precedence in the overlay, so this becomes
+    # the active config without needing admin elevation.
+    if ((Test-Path $staging) -and ((Get-Item $staging).Length -gt 0)) {
+        $userLayer = Join-Path $env:APPDATA "MiOS\mios.toml"
+        $userDir   = Split-Path -Parent $userLayer
+        if (-not (Test-Path $userDir)) { New-Item -ItemType Directory -Path $userDir -Force | Out-Null }
+        Copy-Item -Path $staging -Destination $userLayer -Force
+        Log-Ok "Staged $staging -> $userLayer"
+    }
+}
+
 function Read-Password([string]$Prompt = "Password") {
     Move-BelowDash
     Write-Host "  $Prompt [default: mios]: " -NoNewline -ForegroundColor White
@@ -1326,10 +1409,19 @@ if ($activeDistro) {
     }
     End-Phase 5
 
+    # ── Optional GUI configurator (between Phase 5 and Phase 6) ──────────────
+    # Operator can pre-fill mios.toml fields via the HTML page; the
+    # Phase-6 prompts that follow then default to whatever was saved.
+    # Skipped when -Unattended or MIOS_NO_CONFIGURATOR=1.
+    Open-Configurator -RepoDir $MiosRepoDir
+
     # ── Phase 6 -- Identity ───────────────────────────────────────────────────
     Start-Phase 6
     $script:CurStep = "Waiting for identity input..."
     Show-Dashboard
+    # Re-resolve mios.toml [ai] defaults after the configurator step so
+    # the prompts seed from whatever the operator saved in the GUI.
+    $aiDefaultsPre = Resolve-MiosTomlAiDefaults -RepoDir $MiosRepoDir
     $MiosUser     = Read-Line "Linux username" "mios"
     $MiosHostname = Read-Line "Hostname"       "mios"
     $pwPlain      = Read-Password "Password"
