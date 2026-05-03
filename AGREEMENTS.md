@@ -77,13 +77,12 @@ referencing this file when it starts.
 |---|---|---|
 | `just <target>` | mios.git | All build orchestrator targets (`build`, `iso`, `qcow2`, `vhdx`, `wsl2`, `rechunk`, `sbom`, `init-user-space`, `edit`, `show-env`, ...) |
 | `./preflight.sh`, `./preflight.ps1` | mios.git | Build prerequisite checks |
-| `./mios-build-local.ps1` | mios.git | Windows build orchestrator |
+| `./build-mios.ps1` | mios.git | Windows build orchestrator (formerly `mios-build-local.ps1`) |
 | `./push-to-github.ps1` | mios.git | GHCR push helper |
 | `./Get-MiOS.ps1` | mios.git | Image fetcher |
-| `./install.sh`, `./install.ps1` | mios.git | System-side installers |
+| `./install.sh`, `./install.ps1` | mios.git | System-side installers (Phase-3) |
 | `./install-mios-agents.sh` | mios.git | Agent-launcher installer |
-| `bash bootstrap.sh`, `bootstrap.ps1` | mios-bootstrap.git | Phase-0 bootstrappers |
-| `./install.sh`, `./install.ps1` | mios-bootstrap.git | User-facing installers |
+| `./build-mios.sh`, `./build-mios.ps1` | mios-bootstrap.git | Canonical user-facing entry points (formerly `install.{sh,ps1}` / `bootstrap.{sh,ps1}`; old names are now redirector stubs) |
 | `mios`, `mios-llm`, `mios-agent-claude`, `mios-agent-gemini` | deployed image | Runtime CLI surface |
 | `bootc upgrade`, `bootc switch ghcr.io/mios-dev/mios` | deployed image | OS lifecycle commands operating on a 'MiOS' image |
 

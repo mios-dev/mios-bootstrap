@@ -11,6 +11,8 @@
 !bootstrap.ps1
 !install.sh
 !install.ps1
+!build-mios.sh
+!build-mios.ps1
 !AGENTS.md
 !AGREEMENTS.md
 !AI.md
