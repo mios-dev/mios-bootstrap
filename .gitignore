@@ -21,6 +21,13 @@
 !system-prompt.md
 !IMPLEMENTATION-SUMMARY.md
 
+# Single canonical user-edit dotfile (the one users actually edit).
+# Every script in mios.git and mios-bootstrap.git resolves through this
+# file via tools/lib/userenv.sh (in mios.git). Bootstrap stages this
+# file to /etc/mios/mios.toml at install time; per-user copies are
+# seeded from /etc/skel/.config/mios/mios.toml.
+!mios.toml
+
 # User-space env templates and identity examples
 !.env
 !.env.mios

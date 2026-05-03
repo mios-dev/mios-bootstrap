@@ -71,7 +71,12 @@ DEFAULT_LANG="en_US.UTF-8"
 MIOS_REPO="https://github.com/mios-dev/mios.git"
 BOOTSTRAP_REPO="https://github.com/mios-dev/mios-bootstrap.git"
 PROFILE_DIR="/etc/mios"
-PROFILE_CARD="${PROFILE_DIR}/profile.toml"
+# Canonical user-edit copy lives in mios-bootstrap.git/mios.toml (repo root).
+# /etc/mios/mios.toml is the host-installed copy of that file. Legacy
+# /etc/mios/profile.toml is still recognized by the resolver for
+# pre-unification deployments.
+PROFILE_CARD="${PROFILE_DIR}/mios.toml"
+PROFILE_CARD_LEGACY="${PROFILE_DIR}/profile.toml"
 PROFILE_FILE="${PROFILE_DIR}/install.env"
 LOG_FILE="/var/log/mios-bootstrap.log"
 
@@ -103,23 +108,28 @@ toml_get_array_csv() {
     ' "$file"
 }
 
-# Three-layer profile resolution. Each layer overlays the one above.
-# Returned as a space-separated list of paths (lowest precedence first).
+# Profile resolution. Each layer overlays the one above. Returned as a
+# space-separated list of paths (lowest precedence first).
 #
-#   1. /usr/share/mios/profile.toml        vendor defaults (mios.git)
-#   2. <bootstrap-checkout>/etc/mios/profile.toml  user-edit overrides (this repo)
-#   3. /etc/mios/profile.toml              host-installed user-edit (re-run case)
-#   4. /etc/mios/install.env (legacy)      previous-install identity env
+#   1. /usr/share/mios/mios.toml           vendor defaults (mios.git)
+#   2. /usr/share/mios/profile.toml        legacy vendor defaults (mios.git)
+#   3. <bootstrap-checkout>/mios.toml      user-edit copy at repo root  <-- canonical
+#   4. <bootstrap-checkout>/etc/mios/profile.toml  legacy user-edit copy
+#   5. /etc/mios/mios.toml                 host-installed user-edit (re-run)
+#   6. /etc/mios/profile.toml              legacy host-installed copy
 #
 # Empty strings in higher layers do NOT override non-empty defaults below
 # them -- that's how this implements "user-set fields supersede defaults"
 # without requiring sparse TOML files.
 resolve_profile_layers() {
     local layers=()
+    [[ -f /usr/share/mios/mios.toml ]]    && layers+=(/usr/share/mios/mios.toml)
     [[ -f /usr/share/mios/profile.toml ]] && layers+=(/usr/share/mios/profile.toml)
-    local repo_card; repo_card="$(dirname "${BASH_SOURCE[0]}")/etc/mios/profile.toml"
-    [[ -f "$repo_card" ]] && layers+=("$repo_card")
-    [[ -f "$PROFILE_CARD" && "$PROFILE_CARD" != "$repo_card" ]] && layers+=("$PROFILE_CARD")
+    local bootstrap_root; bootstrap_root="$(dirname "${BASH_SOURCE[0]}")"
+    [[ -f "${bootstrap_root}/mios.toml" ]]              && layers+=("${bootstrap_root}/mios.toml")
+    [[ -f "${bootstrap_root}/etc/mios/profile.toml" ]]  && layers+=("${bootstrap_root}/etc/mios/profile.toml")
+    [[ -f "$PROFILE_CARD" ]]        && layers+=("$PROFILE_CARD")
+    [[ -f "$PROFILE_CARD_LEGACY" ]] && layers+=("$PROFILE_CARD_LEGACY")
     printf '%s\n' "${layers[@]}"
 }
 
@@ -436,11 +446,18 @@ EOF
 
     # Persist the user-editable profile card alongside install.env so future
     # bootstrap re-runs (or `mios edit-env`) can amend defaults in TOML.
+    # The canonical user-edit copy lives at mios-bootstrap.git/mios.toml
+    # (repo root); we stage it to /etc/mios/mios.toml. The legacy
+    # etc/mios/profile.toml is still picked up if present.
     if [[ ! -f "${PROFILE_CARD}" ]]; then
-        local repo_card; repo_card="$(dirname "${BASH_SOURCE[0]}")/etc/mios/profile.toml"
-        if [[ -f "$repo_card" ]]; then
-            install -m 0644 "$repo_card" "${PROFILE_CARD}"
-            log_ok "Profile card seeded: ${PROFILE_CARD}"
+        local bootstrap_root; bootstrap_root="$(dirname "${BASH_SOURCE[0]}")"
+        local src=""
+        if   [[ -f "${bootstrap_root}/mios.toml" ]];               then src="${bootstrap_root}/mios.toml"
+        elif [[ -f "${bootstrap_root}/etc/mios/profile.toml" ]];   then src="${bootstrap_root}/etc/mios/profile.toml"
+        fi
+        if [[ -n "$src" ]]; then
+            install -m 0644 "$src" "${PROFILE_CARD}"
+            log_ok "Profile card seeded from $(basename "$src"): ${PROFILE_CARD}"
         fi
     fi
 }

@@ -1,0 +1,180 @@
+# mios-bootstrap/mios.toml -- 'MiOS' User Profile (single source of user truth)
+#
+# THIS IS THE ONE FILE YOU EDIT. Every script in 'mios.git' and
+# 'mios-bootstrap.git' that needs to know your username, hostname,
+# base image, AI endpoint, flatpaks, profile features, free-form
+# environment variables, etc. resolves through this file via a
+# three-layer overlay:
+#
+#     /usr/share/mios/mios.toml       (vendor defaults, baked into image; lowest)
+#     /etc/mios/mios.toml             (host-local overlay, written by bootstrap)
+#     ~/.config/mios/mios.toml        (per-user overlay; highest)
+#
+# Higher layers shadow lower layers field-by-field. Bootstrap ships THIS
+# file at the repo root as the canonical user-edit copy and stages it
+# into /etc/mios/mios.toml at install time. The per-user copy is seeded
+# from /etc/skel/.config/mios/mios.toml at useradd -m time.
+#
+# Resolver: tools/lib/userenv.sh (reads all three layers, exports MIOS_*
+# env vars, merges [env] table verbatim). Sourced by Justfile,
+# /etc/profile.d, and any tool that needs the resolved values.
+#
+# Format: TOML 1.0 -- https://toml.io/en/v1.0.0.
+#
+# Secrets policy. password_hash, luks_passphrase, and github_pat are
+# NEVER read from a checked-in copy of this file. The bootstrap
+# installer prompts interactively for them and writes them to
+# root-owned mode-0600 files outside this profile. Leave the fields
+# empty here.
+
+# ----------------------------------------------------------------------------
+# [identity] -- Linux account, hostname, GECOS, login shell, group membership.
+# Maps to MIOS_USER, MIOS_HOSTNAME, MIOS_USER_FULLNAME, MIOS_USER_SHELL,
+# MIOS_USER_GROUPS.
+# ----------------------------------------------------------------------------
+[identity]
+username  = "mios"
+fullname  = "'MiOS' User"
+hostname  = "mios"
+shell     = "/bin/bash"
+groups    = ["wheel", "libvirt", "kvm", "video", "render", "input", "dialout", "docker"]
+
+# ----------------------------------------------------------------------------
+# [locale] -- system-wide defaults applied via systemd-localed at first boot.
+# Maps to MIOS_TIMEZONE, MIOS_KEYBOARD, MIOS_LOCALE.
+# ----------------------------------------------------------------------------
+[locale]
+timezone        = "UTC"
+keyboard_layout = "us"
+language        = "en_US.UTF-8"
+
+# ----------------------------------------------------------------------------
+# [auth] -- credential and SSH key policy.
+#   ssh_key_action: generate | existing | skip
+#   password_policy: interactive | hashed | none
+#     - interactive : prompt at install (recommended)
+#     - hashed      : use the literal hash in password_hash (openssl passwd -6)
+#     - none        : no password set; useful for kiosk / CI builds
+# All secret fields stay empty in any tracked copy of this file.
+# ----------------------------------------------------------------------------
+[auth]
+ssh_key_type     = "ed25519"
+ssh_key_action   = "generate"
+existing_ssh_key = ""
+password_policy  = "interactive"
+password_hash    = ""           # never tracked; bootstrap writes mode-0600
+luks_passphrase  = ""           # never tracked; FHS installer + LUKS only
+github_pat       = ""           # never tracked; configures git credential helper
+
+# ----------------------------------------------------------------------------
+# [network] -- firewalld posture.
+# Defaults match SECURITY.md (default zone "drop", ssh + cockpit allowed).
+# ----------------------------------------------------------------------------
+[network]
+firewalld_default_zone = "drop"
+allow_ssh              = true
+allow_cockpit          = true   # opens 9090/tcp
+allow_libvirt_bridge   = true   # for VM networking
+
+# ----------------------------------------------------------------------------
+# [ai] -- Local AI surface (Architectural Law 5: UNIFIED-AI-REDIRECTS).
+# endpoint MUST stay on localhost; vendor cloud URLs are forbidden by audit
+# (postcheck #12 enforces this in the active config).
+# Maps to MIOS_AI_ENDPOINT, MIOS_AI_MODEL, MIOS_AI_EMBED_MODEL, MIOS_AI_KEY,
+# MIOS_SYSTEM_PROMPT_FILE, MIOS_MCP_REGISTRY.
+# ----------------------------------------------------------------------------
+[ai]
+endpoint            = "http://localhost:8080/v1"
+model               = "qwen2.5-coder:7b"
+embed_model         = "nomic-embed-text"
+api_key             = ""                # empty for localhost; cloud needs a key
+enable_ollama       = true
+enable_localai      = true
+mcp_registry        = "/usr/share/mios/ai/v1/mcp.json"
+system_prompt_file  = ""                # optional override; empty = use canonical
+
+# ----------------------------------------------------------------------------
+# [desktop] -- session preferences and Flatpak picks.
+# desktop.flatpaks -> MIOS_FLATPAKS (comma-joined for the Containerfile arg).
+# ----------------------------------------------------------------------------
+[desktop]
+session       = "gnome"
+color_scheme  = "prefer-dark"   # libadwaita / dconf color-scheme
+flatpaks      = [
+    "org.gnome.Epiphany",
+    "com.github.tchx84.Flatseal",
+    "io.github.kolunmi.Bazaar",
+    "com.mattjakeman.ExtensionManager",
+]
+
+# ----------------------------------------------------------------------------
+# [image] -- image references used at every layer of the pipeline.
+#   ref / branch  : Day-2 'bootc switch' target on the deployed host.
+#   base          : OCI base image used by Containerfile FROM.
+#   bib           : bootc-image-builder image used by 'just iso/qcow2/wsl2/...'
+#   name / tag    : remote registry path + tag for 'just push'.
+#   local_tag     : local podman tag for 'just build' output.
+# Maps to MIOS_IMAGE_REF, MIOS_BRANCH, MIOS_BASE_IMAGE, MIOS_BIB_IMAGE,
+# MIOS_IMAGE_NAME, MIOS_IMAGE_TAG, MIOS_LOCAL_TAG.
+# ----------------------------------------------------------------------------
+[image]
+ref       = "ghcr.io/mios-dev/mios:latest"
+branch    = "main"
+base      = "ghcr.io/ublue-os/ucore-hci:stable-nvidia"
+bib       = "quay.io/centos-bootc/bootc-image-builder:latest"
+name      = "ghcr.io/mios-dev/mios"
+tag       = "latest"
+local_tag = "localhost/mios:latest"
+
+# ----------------------------------------------------------------------------
+# [bootstrap] -- behavior of mios-bootstrap.git/install.sh during Phase-0.
+#   mode: auto | bootc | fhs
+#     - auto  : detect host kind, prefer 'bootc switch' when available
+#     - bootc : force 'bootc switch' (fail if not bootc-managed)
+#     - fhs   : force the Total Root Merge path (clone + overlay)
+# Maps to MIOS_BOOTSTRAP_MODE, MIOS_REPO_URL, MIOS_BOOTSTRAP_REPO_URL.
+# ----------------------------------------------------------------------------
+[bootstrap]
+mode             = "auto"
+mios_repo        = "https://github.com/mios-dev/mios.git"
+bootstrap_repo   = "https://github.com/mios-dev/mios-bootstrap.git"
+install_packages = true   # run dnf install on PACKAGES.md after FHS overlay
+reboot_on_finish = true   # interactive y/N prompt at end of install
+
+# ----------------------------------------------------------------------------
+# [profile] -- developer-vs-server-vs-kiosk flavor and feature toggles.
+# Maps to MIOS_PROFILE_ROLE, MIOS_PROFILE_FEATURES (comma-joined).
+# ----------------------------------------------------------------------------
+[profile]
+role     = "developer"
+features = ["ai", "virtualization", "k3s"]
+
+# ----------------------------------------------------------------------------
+# [quadlets.enable] -- per-Quadlet first-boot enablement flags.
+# Defaults are all true; the system never disables a service via static
+# config. Incompatible deployments are gated via systemd Condition*
+# directives in the Quadlet itself. Set a flag to false here only to
+# force-disable a service even when it would otherwise run.
+# ----------------------------------------------------------------------------
+[quadlets.enable]
+mios-ai            = true
+mios-ceph          = true
+mios-k3s           = true
+crowdsec-dashboard = true
+ollama             = true
+cloudws-guacamole  = true
+cloudws-pxe-hub    = true
+guacamole-postgres = true
+guacd              = true
+
+# ----------------------------------------------------------------------------
+# [env] -- free-form environment-variable additions. Keys must match POSIX
+# env-var rules ([A-Za-z_][A-Za-z0-9_]*). Anything you put here is exported
+# verbatim to every script that sources tools/lib/userenv.sh, so it
+# propagates throughout the build / install / runtime chain.
+# Examples:
+#   MIOS_BUILDER_DISTRO = "MiOS-BUILDER"
+#   MIOS_RECHUNK_MAX_LAYERS = "67"
+#   MIOS_AI_GRADER = "o3"
+# ----------------------------------------------------------------------------
+[env]

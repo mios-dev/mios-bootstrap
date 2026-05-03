@@ -1,0 +1,37 @@
+# ~/.config/mios/mios.toml -- Per-user 'MiOS' profile (highest-priority layer).
+#
+# This is the per-user copy of the unified user-config dotfile. The full
+# schema (every field, every default) is in two places you can copy from:
+#   - /usr/share/mios/mios.toml          vendor defaults (image-baked)
+#   - /etc/mios/mios.toml                host overlay (bootstrap-staged)
+# Higher layers overlay lower layers field-by-field, so this file only
+# needs the values that differ from /etc/mios/mios.toml.
+#
+# Seeded from /etc/mios/mios.toml on first login by 'mios init-user-space'.
+# 'mios reinit-user-space' overwrites this file from the system profile,
+# so back up your customizations first.
+
+[identity]
+# `username` is fixed (it's your own login). Override fullname only.
+fullname = "MiOS User"
+
+[locale]
+timezone        = "UTC"
+keyboard_layout = "us"
+language        = "en_US.UTF-8"
+
+[ai]
+# Per-user AI overrides. endpoint MUST stay on localhost (Architectural
+# Law 5: UNIFIED-AI-REDIRECTS). Postcheck #12 enforces this in active config.
+endpoint = "http://localhost:8080/v1"
+model    = "default"
+api_key  = ""
+
+[desktop]
+# Per-user desktop preferences override the system defaults.
+color_scheme = "prefer-dark"
+
+[env]
+# Free-form per-user env overrides. Keys must match POSIX env-var rules
+# ([A-Za-z_][A-Za-z0-9_]*). Anything here is exported verbatim by
+# tools/lib/userenv.sh into every script that sources it.

@@ -154,7 +154,40 @@ console interaction. Operators who want a hard gate can wrap any of
 the entry points in `MIOS_REQUIRE_AGREEMENT_ACK=1 ./entrypoint.sh`
 and supply the corresponding handler in their wrapper.
 
-## 8. Pointers
+## 8. Single canonical user-config dotfile
+
+There is **one** file that holds every user choice (account, hostname,
+groups, locale, auth policy, network posture, AI endpoint and model,
+desktop session, flatpak picks, base image refs, build args, profile
+features, free-form env vars, per-Quadlet enable flags). That file is
+`mios.toml`, present in three layers:
+
+| Layer | Path | Owned by | Mutability |
+|---|---|---|---|
+| Vendor | `/usr/share/mios/mios.toml` | `mios.git` | image-immutable |
+| Host | `/etc/mios/mios.toml` | bootstrap (staged) | admin-editable |
+| Per-user | `~/.config/mios/mios.toml` | per Linux user | user-editable |
+
+The user's editable canonical copy in the bootstrap repository lives at
+`mios-bootstrap.git/mios.toml` (repo root). Bootstrap's `install.sh`
+stages it to `/etc/mios/mios.toml` at install time; the per-user copy
+is seeded from `/etc/skel/.config/mios/mios.toml` on `useradd -m`.
+
+Every script that needs a value -- in `mios.git`, `mios-bootstrap.git`,
+the deployed image's `usr/bin/mios` CLI, the `Justfile`, the entry-point
+scripts -- resolves through `tools/lib/userenv.sh` (in `mios.git`),
+which deep-merges the three layers in order (vendor → host → user) and
+exports `MIOS_*` environment variables plus a verbatim `[env]` table.
+Higher layers shadow lower layers field-by-field; user-set fields
+supersede defaults.
+
+To change anything globally for your deployment, edit
+`mios-bootstrap.git/mios.toml` once and re-run `bootstrap.sh` /
+`install.sh`. To change anything just for yourself on a deployed host,
+edit `~/.config/mios/mios.toml` and run `just init-user-space` (or
+re-source `tools/lib/userenv.sh` in your shell).
+
+## 9. Pointers
 
 - [`LICENSE`](./LICENSE) -- Apache-2.0 main license
 - [`LICENSES.md`](./LICENSES.md) -- bundled-component license inventory
