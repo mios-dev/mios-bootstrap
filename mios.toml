@@ -110,9 +110,11 @@ flatpaks      = [
     "org.gnome.Ptyxis",                                # terminal (replaces RPM)
     "org.gnome.Nautilus",                              # file manager (replaces RPM)
     # ── App store / Flatpak management ──
-    "io.github.kolunmi.Bazaar",                        # primary app store (replaces gnome-software)
+    "org.gnome.Software",                              # native GNOME app store (Flatpak frontend)
     "com.github.tchx84.Flatseal",                      # Flatpak permissions UI
     "com.mattjakeman.ExtensionManager",                # GNOME shell extensions (replaces gnome-tweaks)
+    # ── Developer (FOSS rebuild of VS Code; only IDE shipped globally) ──
+    "com.vscodium.codium",                             # VSCodium (replaces removed VSCodium RPM)
     # ── Virt GUI front-ends (libvirt/qemu daemons stay as RPMs) ──
     "org.virt_manager.Manager",                        # virt-manager (replaces RPM)
     "org.remmina.Remmina",                             # SPICE/VNC/RDP viewer (replaces virt-viewer RPM)
@@ -168,7 +170,7 @@ sections = [
 # MiOS-DEV (podman-WSL2 backend on Windows) minimal-but-complete: every
 # operator/dev/security daemon + GPU CDI plumbing + GNOME Flatpak
 # runtime (portals/audio/theming for WSLg-routed Flatpaks: Ptyxis,
-# Nautilus, Bazaar, Epiphany, Flatseal). NO full GNOME session
+# Nautilus, Software, Epiphany, Flatseal, VSCodium). NO full GNOME session
 # (gnome-shell / GDM / control-center) -- WSLg IS the compositor.
 sections = [
     "base", "security", "utils", "build-toolchain", "containers",

@@ -1508,6 +1508,7 @@ declare -A FLATPAK_SHORT=(
     [org.gnome.Software]=gnome-software
     [com.github.tchx84.Flatseal]=flatseal
     [org.gnome.Epiphany]=epiphany
+    [com.vscodium.codium]=codium
 )
 for ref in "${!FLATPAK_SHORT[@]}"; do
     if ! flatpak list --system --app --columns=application 2>/dev/null | grep -qx "$ref"; then
