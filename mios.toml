@@ -166,13 +166,15 @@ sections = [
 
 [packages.dev_overlay]
 # MiOS-DEV (podman-WSL2 backend on Windows) minimal-but-complete: every
-# operator/dev/security daemon + GPU CDI plumbing, but NO desktop
-# session -- the dev VM is a podman backend, not a workstation; GUIs
-# run as Flatpaks (Ptyxis/Bazaar/Nautilus) routed through WSLg.
+# operator/dev/security daemon + GPU CDI plumbing + GNOME Flatpak
+# runtime (portals/audio/theming for WSLg-routed Flatpaks: Ptyxis,
+# Nautilus, Bazaar, Epiphany, Flatseal). NO full GNOME session
+# (gnome-shell / GDM / control-center) -- WSLg IS the compositor.
 sections = [
     "base", "security", "utils", "build-toolchain", "containers",
     "cockpit", "storage", "virt",
     "gpu-mesa", "gpu-nvidia", "gpu-amd-compute", "gpu-intel-compute",
+    "gnome-flatpak-runtime",
     "ai", "sbom-tools", "self-build", "network-discovery", "updater",
     "cockpit-plugins-build", "k3s-selinux-build", "uki",
 ]

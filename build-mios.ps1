@@ -1119,6 +1119,7 @@ DEFAULT_SECTIONS=(
     base security utils build-toolchain containers
     cockpit storage virt
     gpu-mesa gpu-nvidia gpu-amd-compute gpu-intel-compute
+    gnome-flatpak-runtime
     ai sbom-tools self-build network-discovery updater
     cockpit-plugins-build k3s-selinux-build uki
 )
@@ -1391,10 +1392,18 @@ fi
 # directly. Idempotent (--or-update). Also pulls the few other
 # substrate-class flatpaks (Nautilus, Bazaar, Flatseal) so the
 # emulated MiOS environment carries its file manager and app store.
-echo "[quadlet-overlay] installing Ptyxis terminal + substrate flatpaks (one-time, ~400MB)..."
+echo "[quadlet-overlay] installing GNOME Flatpaks for WSLg portal (one-time, ~600MB)..."
 flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
-for ref in org.gnome.Ptyxis org.gnome.Nautilus io.github.kolunmi.Bazaar com.github.tchx84.Flatseal; do
+# Substrate-class Flatpaks: terminal, file manager, app store, Flatpak
+# permissions UI, default browser. Each routes through WSLg as a Windows
+# desktop window; the gnome-flatpak-runtime RPM section provides the
+# host-side portals/audio/theming these need to render correctly.
+for ref in org.gnome.Ptyxis \
+           org.gnome.Nautilus \
+           io.github.kolunmi.Bazaar \
+           com.github.tchx84.Flatseal \
+           org.gnome.Epiphany; do
     if ! flatpak list --system --app --columns=application 2>/dev/null | grep -qx "$ref"; then
         flatpak install --system --noninteractive --assumeyes --or-update flathub "$ref" \
             2>&1 | grep -E '^(Installing|Updating|Already|Error|Warning)' || true
