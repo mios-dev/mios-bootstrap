@@ -101,33 +101,43 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     if ($Unattended) { $forwardSwitches += " -Unattended" }
     if ($Workflow)   { $forwardSwitches += " -Workflow $Workflow" }
 
-    # Heredoc with HTML-sniff guard so a 404 (which GitHub serves with
-    # an HTML body) doesn't get piped into iex and execute as garbage.
-    # The relaunched window keeps a Read-Host on failure so the operator
-    # can read the diagnostic instead of the window vanishing.
+    # Build the relaunch script as a single string. We pass it to pwsh
+    # via -EncodedCommand (UTF-16LE base64) so embedded quotes, dollar
+    # signs, parens, etc. cannot be mangled by Start-Process /
+    # CreateProcess argument-splitting. The previous -Command path got
+    # tripped up by the apostrophe in "(wrong branch '$Branch')" --
+    # CreateProcess saw the embedded quote and terminated the throw
+    # string mid-message, leaving 'likely' looking like a cmdlet.
+    #
+    # HTML-sniff guard: GitHub serves 404s with an HTML body. Without
+    # this check iex would execute the HTML as garbage CSS/text.
     $relaunchCmd = @"
-`$env:MIOS_GETMIOS_RELAUNCHED='1';
+`$env:MIOS_GETMIOS_RELAUNCHED='1'
 try {
     `$src = Invoke-RestMethod -Uri '$rawUrl' -ErrorAction Stop
     if (-not `$src -or `$src -match '<!DOCTYPE html>|<html\b') {
-        throw "Get-MiOS.ps1 fetch from $rawUrl returned HTML (likely 404 / wrong branch '$Branch')."
+        throw 'Get-MiOS.ps1 fetch returned HTML (404 or wrong branch). URL: $rawUrl'
     }
     & ([scriptblock]::Create(`$src))$forwardSwitches
 } catch {
-    Write-Host ""
-    Write-Host "  [!] Bootstrap failed: `$_" -ForegroundColor Red
-    Write-Host "      URL: $rawUrl" -ForegroundColor DarkGray
-    Write-Host ""
-    Write-Host "  Press Enter to close..." -ForegroundColor DarkGray -NoNewline
+    Write-Host ''
+    Write-Host ('  [!] Bootstrap failed: ' + `$_) -ForegroundColor Red
+    Write-Host '      URL: $rawUrl' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Press Enter to close...' -ForegroundColor DarkGray -NoNewline
     `$null = Read-Host
 }
 "@
+
+    # PowerShell's -EncodedCommand expects UTF-16LE base64.
+    $bytes   = [System.Text.Encoding]::Unicode.GetBytes($relaunchCmd)
+    $encoded = [Convert]::ToBase64String($bytes)
 
     $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
     $startArgs = @(
         '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-NoExit',
-        '-Command', $relaunchCmd
+        '-EncodedCommand', $encoded
     )
     Start-Process $shell -ArgumentList $startArgs -Verb RunAs
     Write-Host "  [+] New pwsh window opened. Continuing the bootstrap there." -ForegroundColor Green
