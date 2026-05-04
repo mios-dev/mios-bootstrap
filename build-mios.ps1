@@ -174,6 +174,77 @@ function Update-MiosInstallPaths {
     # etc.) write to the redirected $MiosLogDir.
 }
 
+function Invoke-MigrateLegacyInstallRoot {
+    # When Update-MiosInstallPaths redirects $MiosInstallDir (typically
+    # C:\MiOS or %LOCALAPPDATA%\MiOS) onto the data disk (M:\MiOS),
+    # any leftover content at the legacy path becomes orphan state.
+    # This function MOVES that content onto the new root so the
+    # operator's pipeline really is a full-partition overlay -- no
+    # split-state across drives, no manual rmdir needed.
+    #
+    # Uses robocopy /MOVE /E with /XO /XN /XC so files that already
+    # exist at the destination are KEPT (the redirected root may
+    # already hold current versions of bin/, icons/, themes/ from a
+    # previous run). Source-only files MOVE in; collisions favor the
+    # destination. Once the move completes, the empty legacy root is
+    # removed.
+    #
+    # Idempotent: legacy root absent or equal to current = no-op.
+    # Bypass: $env:MIOS_SKIP_LEGACY_MIGRATE=1.
+    param([string]$LegacyRoot)
+    if (-not $LegacyRoot) { return }
+    if ($LegacyRoot -ieq $script:MiosInstallDir) { return }
+    if (-not (Test-Path $LegacyRoot)) { return }
+    if ($env:MIOS_SKIP_LEGACY_MIGRATE -in @('1','true','TRUE','yes')) {
+        Log-Warn "MIOS_SKIP_LEGACY_MIGRATE set -- leaving $LegacyRoot in place"
+        return
+    }
+
+    Set-Step "Migrating legacy install $LegacyRoot -> $($script:MiosInstallDir) ..."
+    if (-not (Test-Path $script:MiosInstallDir)) {
+        New-Item -ItemType Directory -Path $script:MiosInstallDir -Force | Out-Null
+    }
+
+    # robocopy exit codes 0-7 are success (any combination of files
+    # copied / mismatches / extra files); 8+ are real errors. All
+    # output via Write-Log so the unified install log keeps the
+    # full record without flooding the console.
+    $rcArgs = @(
+        $LegacyRoot, $script:MiosInstallDir,
+        '/MOVE',           # delete source files after copy
+        '/E',              # include all subdirs incl. empty
+        '/XO', '/XN', '/XC', # skip if dest exists (older / newer / same-size-different)
+        '/NFL', '/NDL', '/NJH', '/NJS',  # quiet output
+        '/R:1', '/W:1'     # 1 retry, 1s wait
+    )
+    & robocopy.exe @rcArgs 2>&1 | ForEach-Object { Write-Log "migrate: $_" }
+    $rc = $LASTEXITCODE
+    if ($rc -ge 8) {
+        Log-Warn "robocopy returned $rc on legacy migration (>= 8 = real error). Some files may remain at $LegacyRoot."
+    }
+
+    # Clean up the legacy root if it's now empty. Files that existed
+    # at the destination won't have moved (robocopy /XO/XN/XC kept
+    # them at source), so the dir may still be populated -- in which
+    # case we leave it alone with a warning rather than risk losing
+    # operator data.
+    if (Test-Path $LegacyRoot) {
+        $remaining = @(Get-ChildItem -Path $LegacyRoot -Recurse -Force -File -ErrorAction SilentlyContinue)
+        if ($remaining.Count -eq 0) {
+            try {
+                Remove-Item $LegacyRoot -Recurse -Force -ErrorAction SilentlyContinue
+                Log-Ok "Migrated and removed legacy install root: $LegacyRoot"
+            } catch {
+                Log-Warn "Could not remove now-empty $LegacyRoot : $_"
+            }
+        } else {
+            Log-Warn "Migration kept $($remaining.Count) file(s) at $LegacyRoot (already-present at destination); review manually if desired."
+        }
+    } else {
+        Log-Ok "Legacy install root $LegacyRoot fully migrated"
+    }
+}
+
 function Invoke-DataDiskBootstrap {
     # Provisions the dedicated MIOS-DEV data disk and re-points all
     # install paths onto it. Idempotent: if M:\ is already a MIOS-DEV-
@@ -217,8 +288,12 @@ function Invoke-DataDiskBootstrap {
     # themes, repos, distros, images, machine-state, logs.
     $newRoot = Join-Path "${driveLetter}:\" 'MiOS'
     if ($newRoot -ne $script:MiosInstallDir) {
-        Log-Ok "Full-partition overlay: redirecting install root $($script:MiosInstallDir) -> $newRoot"
+        $legacyRoot = $script:MiosInstallDir
+        Log-Ok "Full-partition overlay: redirecting install root $legacyRoot -> $newRoot"
         Update-MiosInstallPaths -NewRoot $newRoot
+        # Auto-migrate any leftover content from a previous boot-time
+        # install (C:\MiOS, %LOCALAPPDATA%\MiOS) onto the data disk.
+        Invoke-MigrateLegacyInstallRoot -LegacyRoot $legacyRoot
     }
 }
 
@@ -2524,14 +2599,18 @@ function Install-WindowsBranding {
         return
     }
 
-    # Re-resolve the install root: if Phase 3 provisioned the dedicated
-    # MIOS-DEV data disk (M:\ by default) all Windows-side artifacts
-    # (oh-my-posh, theme, launcher, icons, dash) move there to keep
-    # the install consolidated on the operator-visible MiOS volume.
+    # Re-resolve the install root: if the MIOS-DEV data disk is up
+    # (M:\ by default) ALL install paths move onto it (full-partition
+    # overlay). On a re-run that started before the data disk
+    # existed, this is also where leftover C:\MiOS content gets
+    # auto-migrated onto M:\MiOS so the operator never has to clean
+    # up split-state across drives.
     $resolvedRoot = Resolve-MiosInstallRoot
     if ($resolvedRoot -ne $script:MiosInstallDir) {
-        Log-Ok "MiOS data disk detected -- redirecting Windows install root: $($script:MiosInstallDir) -> $resolvedRoot"
+        $legacyRoot = $script:MiosInstallDir
+        Log-Ok "MiOS data disk detected -- redirecting install root: $legacyRoot -> $resolvedRoot"
         Update-MiosInstallPaths -NewRoot $resolvedRoot
+        Invoke-MigrateLegacyInstallRoot -LegacyRoot $legacyRoot
     }
     Set-Step "Installing oh-my-posh + Geist + Nerd fonts under $($script:MiosInstallDir)..."
 
