@@ -1556,6 +1556,17 @@ SUDO
         || { echo "[quadlet-overlay] WARN: sudoers drop-in failed visudo check; removing"; sudo rm -f /etc/sudoers.d/00-mios-dev; }
 fi
 
+# Default dev passwords for both `user` (uid 1000) and `mios` (uid >=1000
+# system user from sysusers.d) so Cockpit's PAM auth at https://localhost:
+# 9090/ works without manual passwd setup. The MiOS dashboard prints these
+# credentials inline next to the Cockpit endpoint so the operator doesn't
+# have to remember them. Single-tenant dev VM trust model -- documented
+# on the dashboard, never used outside the dev surface.
+echo "${DEV_USER}:mios" | sudo chpasswd 2>/dev/null && \
+    echo "[quadlet-overlay] $DEV_USER password set to 'mios' (Cockpit login)"
+echo "mios:mios" | sudo chpasswd 2>/dev/null && \
+    echo "[quadlet-overlay] mios password set to 'mios'"
+
 sudo install -d -m 0755 /var/lib/mios
 sudo touch "$SENTINEL"
 
