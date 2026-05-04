@@ -120,22 +120,28 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     #
     # HTML-sniff guard: GitHub serves 404s with an HTML body. Without
     # this check iex would execute the HTML as garbage CSS/text.
-    # Note: anchor the HTML-sniff check at the START of the response.
-    # An unanchored '<!DOCTYPE html>' regex would self-match because
-    # the fetched Get-MiOS.ps1 source itself contains the literal
-    # string in this very heredoc (line below) -- so every sniff
-    # would always fire and report the script as HTML. GitHub's 404
-    # page always begins with '<!DOCTYPE html' or '<html' as the very
-    # first characters; a PowerShell script begins with '<#' or
-    # something else PS-specific. StartsWith on a TrimStart'd copy
-    # is unambiguous and avoids the regex self-reference.
+    # HTML-sniff guard for the elevated window's nested fetch.
+    #
+    # IMPORTANT: this entire file MUST NOT contain the literal substring
+    # '<!DOCTYPE' followed by ' html' OR the substring less-than-h-t-m-l
+    # followed by a non-word char. An older deployed version of
+    # Get-MiOS.ps1 had an unanchored regex that scanned the WHOLE
+    # response body for those tokens; if the operator's outer irm hits
+    # a Fastly POP still serving that pre-fix version, the OLD heredoc
+    # runs against THIS file's body. To stay invisible to the legacy
+    # regex during the cache-rollover window we build the marker
+    # strings via char-code concatenation below -- the literal token
+    # never appears anywhere in this source.
     $relaunchCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
 try {
     `$src = Invoke-RestMethod -Uri '$rawUrl' -ErrorAction Stop
     `$head = if (`$src) { `$src.TrimStart().Substring(0, [Math]::Min(64, `$src.TrimStart().Length)) } else { '' }
-    if (-not `$src -or `$head.StartsWith('<!DOCTYPE') -or `$head.StartsWith('<html')) {
-        throw 'Get-MiOS.ps1 fetch returned HTML (404 or wrong branch). URL: $rawUrl'
+    `$lt    = [char]60                              # '<'
+    `$dtTok = `$lt + '!DOC' + 'TYPE'                # '<!' + 'DOCTYPE' (split so this file never contains the joined literal)
+    `$hTok  = `$lt + 'ht' + 'ml'                    # less-than h-t-m-l, also split
+    if (-not `$src -or `$head.StartsWith(`$dtTok) -or `$head.StartsWith(`$hTok)) {
+        throw 'Get-MiOS.ps1 fetch returned a page (404 or wrong branch). URL: $rawUrl'
     }
     & ([scriptblock]::Create(`$src))$forwardSwitches
 } catch {
