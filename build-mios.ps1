@@ -1917,16 +1917,28 @@ fi
     Set-Step "Launching: just build (inside $Distro)"
     Write-Log "BUILD START  base=$BaseImage  model=$AiModel"
 
-    # Stream build output line-by-line: update dashboard Step, write to log
+    # Stream build output line-by-line: update dashboard Step, write to log.
+    #
+    # Quoting note: the bash script body is wrapped in OUTER double
+    # quotes (CreateProcess-recognized) so the script body stays a
+    # single argv element through the wsl.exe / podman.exe handoff.
+    # The inner single quotes around $BaseImage / $AiModel are then
+    # bash-literal quoting -- preserved verbatim because CreateProcess
+    # treats them as ordinary characters inside the "..." block.
+    #
+    # Earlier the script wrapped the whole thing in single quotes
+    # (`'A=''val'' B=''val'' just build'`) which CreateProcess does
+    # NOT recognize as quoting, so it split on the spaces between the
+    # env-var pairs and bash got an unbalanced fragment, failing with:
+    #   MIOS_AI_MODEL='':'-c: line 1: unexpected EOF...
+    $bashScript = "cd / && MIOS_BASE_IMAGE='$BaseImage' MIOS_AI_MODEL='$AiModel' just build 2>&1"
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     if ($useSsh) {
         $psi.FileName  = "podman"
-        $psi.Arguments = "machine ssh $Distro -- bash -c " +
-                         "'cd / && MIOS_BASE_IMAGE=''$BaseImage'' MIOS_AI_MODEL=''$AiModel'' just build 2>&1'"
+        $psi.Arguments = "machine ssh $Distro -- bash -c `"$bashScript`""
     } else {
         $psi.FileName  = "wsl.exe"
-        $psi.Arguments = "-d $Distro --user root --cd / --exec bash -c " +
-                         "'MIOS_BASE_IMAGE=''$BaseImage'' MIOS_AI_MODEL=''$AiModel'' just build 2>&1'"
+        $psi.Arguments = "-d $Distro --user root --cd / --exec bash -c `"$bashScript`""
     }
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError  = $false
@@ -2954,7 +2966,113 @@ else { Write-Host "configurator not found at `$cfg" -ForegroundColor Yellow }
 "@
     Set-Content -Path $cfgPath -Value $cfgScript -Encoding UTF8
 
-    Log-Ok "Bin scripts staged: mios-dash, mios-dev, mios-pull, mios-update, mios-config"
+    # mios.ps1 -- THE MiOS app. Single launcher that replaces the
+    # previous per-verb Start Menu shortcuts. Each verb (Build, Dev VM,
+    # Update, Dashboard, Configurator, ...) is a numbered menu item;
+    # the bin scripts beside this one stay as the actual workers and
+    # the app just dispatches. Self-locates bin/ via $PSScriptRoot so
+    # a re-run picks up the latest verbs without regeneration.
+    $hubPath   = Join-Path $MiosBinDir 'mios.ps1'
+    $hubScript = @'
+# <MiOSRoot>\bin\mios.ps1 -- the MiOS app.
+# Auto-installed by mios-bootstrap (Install-MiosLauncher).
+$ErrorActionPreference = 'SilentlyContinue'
+$Script:MiOSBin  = $PSScriptRoot
+$Script:MiOSRoot = Split-Path -Parent $Script:MiOSBin
+
+try {
+    $sz  = New-Object Management.Automation.Host.Size 90, 36
+    $buf = New-Object Management.Automation.Host.Size 90, 3000
+    $Host.UI.RawUI.BufferSize = $buf
+    $Host.UI.RawUI.WindowSize = $sz
+} catch {}
+
+function Read-MiosVersion {
+    $f = Join-Path $Script:MiOSRoot 'VERSION'
+    if (Test-Path $f) { return (Get-Content $f -Raw).Trim() }
+    return '0.2.2'
+}
+
+function Resolve-MiosDevDistro {
+    $wslList = @()
+    try { $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" | ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ } } catch {}
+    foreach ($c in @('MiOS-DEV', 'podman-MiOS-DEV', 'MiOS-BUILDER', 'podman-MiOS-BUILDER')) {
+        if ($wslList -contains $c) { return $c }
+    }
+    return $null
+}
+
+function Show-MiosApp {
+    Clear-Host
+    $ver  = Read-MiosVersion
+    $bar  = '+' + ('=' * 86) + '+'
+    $thin = '+' + ('-' * 86) + '+'
+    Write-Host $bar -ForegroundColor DarkCyan
+    $title = '|  MiOS v' + $ver
+    Write-Host ($title + (' ' * (87 - $title.Length)) + '|') -ForegroundColor Cyan
+    Write-Host ('|  one launcher; mios.toml is the SSOT for every deployment target' + (' ' * 21) + '|') -ForegroundColor DarkGray
+    Write-Host $bar -ForegroundColor DarkCyan
+    Write-Host ''
+    $items = @(
+        @{ Key = '1'; Name = 'Build MiOS';        Desc = 'build the deployable OCI image (Phase 6+: podman build + deploy)' },
+        @{ Key = '2'; Name = 'Enter Dev VM';      Desc = 'wsl into the MiOS-DEV WSL2 distro (root shell)'                  },
+        @{ Key = '3'; Name = 'Update Overlay';    Desc = 'pull mios.git + bootstrap onto / inside MiOS-DEV (mios-pull)'    },
+        @{ Key = '4'; Name = 'Dashboard';         Desc = 'show the live MiOS system view (services, git tree, fastfetch)'  },
+        @{ Key = '5'; Name = 'Configurator';      Desc = 'edit mios.toml in the GUI (Epiphany via WSLg)'                    },
+        @{ Key = '6'; Name = 'Re-run Bootstrap';  Desc = 'rerun the localhost setup (preflight + dev VM provision)'         },
+        @{ Key = '7'; Name = 'Open Install Root'; Desc = 'open ' + $Script:MiOSRoot + ' in Explorer'                        },
+        @{ Key = 'q'; Name = 'Quit';              Desc = 'exit'                                                             }
+    )
+    foreach ($it in $items) {
+        $line = '  [' + $it.Key + ']  ' + $it.Name.PadRight(22) + $it.Desc
+        if ($line.Length -gt 88) { $line = $line.Substring(0, 87) + [char]0x2026 }
+        $color = if ($it.Key -eq 'q') { 'DarkGray' } else { 'White' }
+        Write-Host $line -ForegroundColor $color
+    }
+    Write-Host ''
+    Write-Host $thin -ForegroundColor DarkCyan
+    $dev = Resolve-MiosDevDistro
+    Write-Host '  Dev distro : ' -NoNewline -ForegroundColor DarkGray
+    if ($dev) { Write-Host $dev -ForegroundColor Green } else { Write-Host 'not registered' -ForegroundColor DarkGray }
+    Write-Host '  Install    : ' -NoNewline -ForegroundColor DarkGray
+    Write-Host $Script:MiOSRoot -ForegroundColor White
+    Write-Host '  SSOT       : ' -NoNewline -ForegroundColor DarkGray
+    Write-Host '~/.config/mios/mios.toml > /etc/mios/mios.toml > /usr/share/mios/mios.toml' -ForegroundColor White
+    Write-Host $bar -ForegroundColor DarkCyan
+    Write-Host ''
+}
+
+function Invoke-Verb {
+    param([string]$Key)
+    switch ($Key) {
+        '1' { & (Join-Path $Script:MiOSBin 'mios-update.ps1') -BuildOnly }
+        '2' { & (Join-Path $Script:MiOSBin 'mios-dev.ps1')                }
+        '3' { & (Join-Path $Script:MiOSBin 'mios-pull.ps1')               }
+        '4' { & (Join-Path $Script:MiOSBin 'mios-dash.ps1')               }
+        '5' { & (Join-Path $Script:MiOSBin 'mios-config.ps1')             }
+        '6' { & (Join-Path $Script:MiOSBin 'mios-update.ps1')             }
+        '7' { Start-Process explorer.exe $Script:MiOSRoot                 }
+        default { Write-Host "  Unknown option '$Key'." -ForegroundColor Yellow; Start-Sleep 1 }
+    }
+}
+
+while ($true) {
+    Show-MiosApp
+    Write-Host -NoNewline '  Choose [1-7,q]: ' -ForegroundColor Cyan
+    $choice = Read-Host
+    if ($choice -in @('q','Q','quit','exit')) { break }
+    Invoke-Verb $choice
+    if ($choice -ne 'q') {
+        Write-Host ''
+        Write-Host -NoNewline '  Press Enter to return to the menu...' -ForegroundColor DarkGray
+        $null = Read-Host
+    }
+}
+'@
+    Set-Content -Path $hubPath -Value $hubScript -Encoding UTF8
+    Log-Ok "MiOS app staged at $hubPath"
+
+    Log-Ok "Bin scripts staged: mios (app), mios-dash, mios-dev, mios-pull, mios-update, mios-config"
 
     # Also drop a VERSION file so mios-dash can render the current ver.
     Set-Content -Path (Join-Path $MiosInstallDir 'VERSION') -Value $MiosVersion.TrimStart('v') -Encoding UTF8
@@ -2972,8 +3090,10 @@ else { Write-Host "configurator not found at `$cfg" -ForegroundColor Yellow }
 $marker
 # Auto-generated by mios-bootstrap/build-mios.ps1. Block is replaced
 # on every re-run between the markers. Functions resolve the bin
-# scripts under $MiosBinDir.
+# scripts under $MiosBinDir. The `mios` function (no suffix) is the
+# canonical entry point -- launches the menu app from any pwsh shell.
 `$Global:MiosBin = "$miosBinForProfile"
+function mios         { & (Join-Path `$Global:MiosBin 'mios.ps1')        @args }
 function mios-dash    { & (Join-Path `$Global:MiosBin 'mios-dash.ps1')   @args }
 function mios-dev     { & (Join-Path `$Global:MiosBin 'mios-dev.ps1')    @args }
 function mios-pull    { & (Join-Path `$Global:MiosBin 'mios-pull.ps1')   @args }
@@ -2997,12 +3117,14 @@ $endMark
         # Preview / store-side-loaded variant
         $wtSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'
     }
-    # Profile commandline -- resizes the console buffer to the dashboard
-    # frame BEFORE rendering (WT has no per-profile init-size knob;
-    # initialCols/Rows is window-global which would clobber other tabs).
-    # Keep Windows-style line continuation (backtick) only inside this
-    # double-quoted heredoc; once written into JSON it's a single line.
-    $miosCmd = 'pwsh.exe -NoExit -Command "& { try { $H=Get-Host; $sz=New-Object Management.Automation.Host.Size 80,32; $H.UI.RawUI.BufferSize=(New-Object Management.Automation.Host.Size 80,3000); $H.UI.RawUI.WindowSize=$sz } catch {}; . $PROFILE; mios-dash }"'
+    # Profile commandline -- resizes the console buffer (WT has no
+    # per-profile init-size knob; initialCols/Rows is window-global
+    # which would clobber other tabs) then launches the MiOS hub. The
+    # hub is the one canonical entry; from there the operator chooses
+    # Build / Dev VM / Update / Dashboard / Configurator. Path is baked
+    # in at install time so no $PROFILE round-trip is needed.
+    $hubPathForJson = $hubPath -replace '\\', '\\'
+    $miosCmd = ('pwsh.exe -NoExit -ExecutionPolicy Bypass -Command "& { try { $H=Get-Host; $H.UI.RawUI.BufferSize=(New-Object Management.Automation.Host.Size 90,3000); $H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 90,36) } catch {}; & ''' + $hubPathForJson + ''' }"')
     if (Test-Path $wtSettings) {
         try {
             $wtJson = Get-Content $wtSettings -Raw | ConvertFrom-Json
@@ -3111,49 +3233,44 @@ $endMark
         return $LnkPath
     }
 
-    # Console-resize prelude shared by all bare-pwsh-launched verbs.
-    $resizeBin = "try { `$H=Get-Host; `$H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 80,32) } catch {}"
-
-    # Primary "MiOS" shortcut (Desktop + Start Menu): prefers wt.exe.
+    # ── ONE shortcut: MiOS (the hub) ─────────────────────────────────
+    # Replaces the previous six per-verb shortcuts. Operators launch
+    # MiOS, get the hub menu, pick a verb. All verbs reachable from
+    # one icon. Desktop and Start Menu both point at the same hub.
+    # Per-verb shortcuts are intentionally not generated -- the Start
+    # Menu noise was a recurring user complaint and the underlying
+    # bin scripts (mios-hub, mios-dash, mios-dev, ...) are still
+    # directly invocable from any pwsh shell as PROFILE functions.
+    $hubResizePrelude = "try { `$H=Get-Host; `$H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 90,36) } catch {}"
     if ($wtExe) {
-        $primaryTarget = $wtExe; $primaryArgs = '-p MiOS'
+        # Prefer Windows Terminal's MiOS profile (correct font + scheme).
+        # WT's profile commandline already resizes the buffer + launches
+        # the MiOS app; here we just ask WT to open that profile.
+        $hubTarget = $wtExe
+        $hubArgs   = '-p MiOS'
     } else {
-        $primaryTarget = $pwshExe
-        $primaryArgs   = "-NoExit -Command `"& { $resizeBin; . `$PROFILE; mios-dash }`""
+        $hubTarget = $pwshExe
+        $hubArgs   = "-NoExit -ExecutionPolicy Bypass -Command `"& { $hubResizePrelude; & '$hubPath' }`""
     }
 
-    # Build MiOS launcher: drives the OCI image build via build-mios.ps1
-    # -BuildOnly. Uses the cloned mios-bootstrap repo at $MiosRepoDir
-    # rather than re-fetching from GitHub so the build matches the
-    # bootstrap that put MiOS-DEV in place.
-    $bootstrapBuildScript = Join-Path $MiosRepoDir 'mios-bootstrap\build-mios.ps1'
-    $buildMiosArgs = "-NoExit -Command `"& { $resizeBin; & '$bootstrapBuildScript' -BuildOnly }`""
+    $hubDesc = 'MiOS -- Immutable Fedora AI workstation. One launcher; all verbs accessible from the menu inside.'
+    $smLnk   = Join-Path $StartMenuDir 'MiOS.lnk'
+    New-MiosShortcut -LnkPath $smLnk -TargetExe $hubTarget -ArgsString $hubArgs -IconFile $icoPath -Description $hubDesc | Out-Null
+    Log-Ok "Start Menu: $smLnk"
 
-    # Per-verb shortcut definitions: name -> @{ verb, icon-key, desc }.
-    # All verbs go through pwsh + the user's profile so the mios-*
-    # functions are defined; pwsh.exe is used directly (no wt -p MiOS)
-    # for the secondary verbs so they can run with their own icons.
-    $shortcuts = @(
-        @{ Name = 'MiOS';              Target = $primaryTarget; Args = $primaryArgs; IconKey = 'mios';        Desc = 'MiOS -- 80x32 launcher window with dashboard' },
-        @{ Name = 'Build MiOS';        Target = $pwshExe;       Args = $buildMiosArgs;                                                   IconKey = 'mios-build';  Desc = 'MiOS -- build the deployable OCI image (drives Phase 6+: identity, podman build, deploy)' },
-        @{ Name = 'MiOS Dev VM';       Target = $pwshExe;       Args = "-NoExit -Command `"& { $resizeBin; . `$PROFILE; mios-dev }`"";   IconKey = 'mios-dev';    Desc = 'MiOS -- enter MiOS-DEV WSL2 distro' },
-        @{ Name = 'MiOS Update';       Target = $pwshExe;       Args = "-NoExit -Command `"& { $resizeBin; . `$PROFILE; mios-pull }`"";  IconKey = 'mios-pull';   Desc = 'MiOS -- pull mios.git overlay onto live root' },
-        @{ Name = 'MiOS Dashboard';    Target = $pwshExe;       Args = "-NoExit -Command `"& { $resizeBin; . `$PROFILE; mios-dash }`"";  IconKey = 'mios-dash';   Desc = 'MiOS -- standalone dashboard view' },
-        @{ Name = 'MiOS Configurator'; Target = $pwshExe;       Args = "-Command `"& { . `$PROFILE; mios-config }`"";                    IconKey = 'mios-config'; Desc = 'MiOS -- open HTML configurator (mios.toml editor)' }
-    )
-
-    foreach ($sc in $shortcuts) {
-        $iconFile = $icoPaths[$sc.IconKey]
-        $smPath = Join-Path $StartMenuDir "$($sc.Name).lnk"
-        New-MiosShortcut -LnkPath $smPath -TargetExe $sc.Target -ArgsString $sc.Args -IconFile $iconFile -Description $sc.Desc | Out-Null
-        Log-Ok "Start Menu: $smPath"
-    }
-
-    # Single primary shortcut on the Desktop (the rest live in Start Menu\MiOS\).
     if (Test-Path $desktopDir) {
         $deskLnk = Join-Path $desktopDir 'MiOS.lnk'
-        New-MiosShortcut -LnkPath $deskLnk -TargetExe $primaryTarget -ArgsString $primaryArgs -IconFile $icoPath -Description 'MiOS -- Immutable Fedora AI Workstation (Podman-WSL2)' | Out-Null
+        New-MiosShortcut -LnkPath $deskLnk -TargetExe $hubTarget -ArgsString $hubArgs -IconFile $icoPath -Description $hubDesc | Out-Null
         Log-Ok "Desktop: $deskLnk"
+    }
+
+    # Garbage-collect any stale per-verb shortcuts left over from
+    # earlier launcher revisions. Idempotent: if absent, skip.
+    foreach ($legacy in @('Build MiOS.lnk','MiOS Dev VM.lnk','MiOS Update.lnk','MiOS Dashboard.lnk','MiOS Configurator.lnk','MiOS Rebuild.lnk','MiOS Build.lnk','MiOS Setup.lnk','MiOS Terminal.lnk','MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','Uninstall MiOS.lnk')) {
+        $stale = Join-Path $StartMenuDir $legacy
+        if (Test-Path $stale) {
+            try { Remove-Item $stale -Force -ErrorAction SilentlyContinue; Log-Ok "Removed legacy shortcut: $legacy" } catch {}
+        }
     }
     [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
 
