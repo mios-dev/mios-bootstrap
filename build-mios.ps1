@@ -1417,6 +1417,33 @@ if ! command -v oh-my-posh >/dev/null 2>&1; then
     fi
 fi
 
+# ollama CLI: not a Fedora RPM -- fetch upstream tarball. Same pattern
+# the build-time automation/37-ollama-prep.sh uses; mirrored here
+# because the dev overlay doesn't run that build phase. The binary
+# binds to OLLAMA_HOST (set in /etc/profile.d/mios-env.sh to
+# http://localhost:11434), which is the MiOS Ollama Quadlet's API.
+# Without this, `ollama list` / `mios-ollama list` fail with
+# command-not-found even though the Ollama Quadlet itself is running.
+if ! command -v ollama >/dev/null 2>&1; then
+    echo "[quadlet-overlay] installing ollama CLI from upstream releases..."
+    olm_arch="amd64"; [[ "$(uname -m)" == "aarch64" ]] && olm_arch="arm64"
+    olm_url="https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${olm_arch}.tgz"
+    olm_tmp="$(mktemp -d)"
+    if curl -fsSL "$olm_url" -o "$olm_tmp/ollama.tgz" 2>/dev/null \
+            && tar -xzf "$olm_tmp/ollama.tgz" -C "$olm_tmp" 2>/dev/null; then
+        olm_bin="$(find "$olm_tmp" -type f -name ollama -perm -u+x 2>/dev/null | head -1)"
+        if [[ -n "$olm_bin" ]]; then
+            sudo install -m 0755 "$olm_bin" /usr/bin/ollama
+            echo "[quadlet-overlay] ollama installed at /usr/bin/ollama"
+        else
+            echo "[quadlet-overlay] WARN: ollama tarball missing executable -- skip"
+        fi
+    else
+        echo "[quadlet-overlay] WARN: ollama download failed -- /usr/bin/ollama not installed"
+    fi
+    rm -rf "$olm_tmp"
+fi
+
 echo "[quadlet-overlay] installing GNOME Flatpaks for WSLg portal (one-time, ~600MB)..."
 flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
