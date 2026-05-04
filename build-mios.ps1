@@ -1322,7 +1322,16 @@ trap 'rm -f "$LIST"' EXIT
     find usr/lib/sysusers.d                                     -name '*mios*' 2>/dev/null
     find usr/lib/tmpfiles.d                                     -name '*mios*' 2>/dev/null
     find usr/libexec/mios                                       -type f 2>/dev/null
+    find usr/bin                           -maxdepth 1          \( -name 'mios' -o -name 'mios-*' -o -name 'iommu-groups' \) 2>/dev/null
     find etc/profile.d                                          -name '*mios*' 2>/dev/null
+    # Branding (fastfetch logo + oh-my-posh theme + fontconfig drop-ins)
+    # -- without these the dashboard renders the upstream Fedora logo
+    # and the prompt stays as the bare bash PS1.
+    find usr/share/mios/branding                                -type f 2>/dev/null
+    find usr/share/mios/fastfetch                               -type f 2>/dev/null
+    find usr/share/mios/oh-my-posh                              -type f 2>/dev/null
+    find usr/share/fontconfig/conf.avail                        -name '*mios*' 2>/dev/null
+    find usr/lib/tmpfiles.d                                     -name 'mios-fontconfig*' 2>/dev/null
     for d in etc/mios/forge etc/mios/ai etc/mios/system-prompts; do
         find "$d" -type f 2>/dev/null
     done
@@ -1392,6 +1401,22 @@ fi
 # directly. Idempotent (--or-update). Also pulls the few other
 # substrate-class flatpaks (Nautilus, Bazaar, Flatseal) so the
 # emulated MiOS environment carries its file manager and app store.
+# oh-my-posh: not in Fedora repos -- fetch upstream binary release.
+# /etc/profile.d/mios-prompt.sh wires it into bash + zsh on every
+# login, sourcing the theme at /usr/share/mios/oh-my-posh/mios.omp.json
+# (which the file list above mirrors from the repo).
+if ! command -v oh-my-posh >/dev/null 2>&1; then
+    echo "[quadlet-overlay] installing oh-my-posh from upstream releases..."
+    omp_arch="amd64"; [[ "$(uname -m)" == "aarch64" ]] && omp_arch="arm64"
+    omp_url="https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-linux-${omp_arch}"
+    if curl -fsSL "$omp_url" -o /tmp/oh-my-posh 2>/dev/null; then
+        sudo install -m 0755 /tmp/oh-my-posh /usr/bin/oh-my-posh && rm -f /tmp/oh-my-posh
+        echo "[quadlet-overlay] oh-my-posh installed at /usr/bin/oh-my-posh"
+    else
+        echo "[quadlet-overlay] WARN: oh-my-posh download failed -- prompt stays bash default"
+    fi
+fi
+
 echo "[quadlet-overlay] installing GNOME Flatpaks for WSLg portal (one-time, ~600MB)..."
 flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
