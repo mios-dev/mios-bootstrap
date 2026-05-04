@@ -1303,60 +1303,78 @@ if [[ -f "$SENTINEL" && "$SENTINEL" -nt "$SRC/Containerfile" ]]; then
     exit 0
 fi
 
-echo "[quadlet-overlay] mirroring FHS overlay from $SRC ..."
+echo "[quadlet-overlay] making / a git working tree of mios.git ($SRC) ..."
 
-# Build a deterministic list of paths to mirror via a single tar pipe.
-# Each find branch is best-effort -- a missing source is simply absent
-# from the list, so the script no-ops on stripped checkouts rather than
-# erroring out.
-LIST="$(mktemp)"
-trap 'rm -f "$LIST"' EXIT
-{
-    cd "$SRC" || exit 1
-    find etc/containers/systemd                                 -type f 2>/dev/null
-    find usr/share/containers/systemd                           -type f 2>/dev/null
-    find usr/lib/systemd/system            -maxdepth 1          -name 'mios-*' 2>/dev/null
-    find usr/lib/systemd/system            -mindepth 2          -name '*mios*.conf' -path '*.service.d/*' 2>/dev/null
-    find usr/lib/systemd/system            -mindepth 2          -name '*.conf' -path 'usr/lib/systemd/system/dbus-broker.service.d/*' 2>/dev/null
-    find usr/lib/systemd/journald.conf.d                        -name '*mios*' 2>/dev/null
-    find usr/lib/sysusers.d                                     -name '*mios*' 2>/dev/null
-    find usr/lib/tmpfiles.d                                     -name '*mios*' 2>/dev/null
-    find usr/libexec/mios                                       -type f 2>/dev/null
-    find usr/bin                           -maxdepth 1          \( -name 'mios' -o -name 'mios-*' -o -name 'iommu-groups' \) 2>/dev/null
-    find etc/profile.d                                          -name '*mios*' 2>/dev/null
-    # Branding (fastfetch logo + oh-my-posh theme + fontconfig drop-ins)
-    # -- without these the dashboard renders the upstream Fedora logo
-    # and the prompt stays as the bare bash PS1.
-    find usr/share/mios/branding                                -type f 2>/dev/null
-    find usr/share/mios/fastfetch                               -type f 2>/dev/null
-    find usr/share/mios/oh-my-posh                              -type f 2>/dev/null
-    find usr/share/fontconfig/conf.avail                        -name '*mios*' 2>/dev/null
-    find usr/lib/tmpfiles.d                                     -name 'mios-fontconfig*' 2>/dev/null
-    for d in etc/mios/forge etc/mios/ai etc/mios/system-prompts; do
-        find "$d" -type f 2>/dev/null
-    done
-} | sort -u > "$LIST"
+# PROJECT INVARIANT: MiOS treats the deployed root `/` AS the git
+# working tree of mios.git on EVERY deploy shape -- bare-metal,
+# Hyper-V, QEMU, WSL distro, AND the Windows-side podman-WSL2 dev VM.
+# `git init` at `/`, point origin at the cloned mios.git checkout
+# (later swappable to the self-hosted Forgejo at localhost:3000),
+# `fetch + reset --hard`, and now every mios.git tracked file is at
+# its FHS path on `/` in one operation -- no tar-list to maintain,
+# no missing-file bugs, full parity with the deployed system.
+#
+# Safety: `git reset --hard FETCH_HEAD` only touches FILES TRACKED
+# IN mios.git. Untracked Fedora-base paths (/etc/passwd, /var/lib/
+# dnf, ~/.bash_history, /var/log, etc.) are left alone -- they are
+# not in mios.git and git's reset doesn't enumerate them. The repo's
+# root .gitignore further declares which `/etc/*`, `/var/*`, etc.
+# subtrees stay host-managed.
 
-count=$(wc -l < "$LIST")
-echo "[quadlet-overlay] $count files to mirror"
-
-if (( count == 0 )); then
-    echo "[quadlet-overlay] nothing to mirror -- mios.git tree may be stripped"
-    exit 0
+# Refresh the local Windows-side mios.git clone to origin/main first
+# so the dev VM sees the latest commits. Without this the dev VM
+# fetches from a stale clone if the Windows side hasn't been pulled
+# since `irm | iex` started.
+if [[ -d "$SRC/.git" ]]; then
+    git -C "$SRC" fetch --depth=1 origin main 2>&1 | tail -2 || true
+    git -C "$SRC" reset --hard origin/main 2>&1 | tail -2 || true
 fi
 
-# Single tar pipe: preserves perms/ownership in archive, extracts onto /
-# under sudo so root-owned destinations (e.g. /etc/mios/) work.
-sudo tar -C "$SRC" -cf - --files-from="$LIST" 2>/dev/null \
-    | sudo tar -C / -xf - 2>&1 \
-    | grep -vE '^tar:' || true
+# Mark `/` as a safe git directory -- root-owned `.git` triggers
+# git's "dubious ownership" rejection when a non-root user later
+# inspects state (`git -C / log`, dashboard's git panel, etc.).
+sudo git config --system --add safe.directory / 2>/dev/null || \
+    sudo git config --global --add safe.directory /
+
+sudo git -C / init -b main 2>&1 | head -1 || true
+sudo git -C / config --bool core.fileMode false
+sudo git -C / config --bool core.autocrlf false
+sudo git -C / config --bool core.symlinks true
+sudo git -C / remote remove origin 2>/dev/null || true
+sudo git -C / remote add origin "$SRC/.git"
+echo "[quadlet-overlay] git fetch ..."
+sudo git -C / fetch --depth=1 origin main 2>&1 | tail -3
+echo "[quadlet-overlay] git reset --hard FETCH_HEAD ..."
+sudo git -C / reset --hard FETCH_HEAD 2>&1 | tail -3
+
+count=$(sudo git -C / ls-tree -r --name-only HEAD 2>/dev/null | wc -l)
+echo "[quadlet-overlay] / now contains $count tracked mios.git files"
+echo "[quadlet-overlay] / HEAD: $(sudo git -C / rev-parse --short HEAD 2>/dev/null)"
 
 # Realize sysusers + tmpfiles, then reload systemd so the new units
 # (and Quadlet-generated *.service files) are visible.
+#
+# Critical: `wsl --exec` lands in the OUTER WSL namespace, not the
+# nested process namespace where systemd actually runs (per the
+# podman-machine welcome banner). Bare `systemctl daemon-reload`
+# from this context fails with "Failed to set unit properties:
+# Transport endpoint is not connected" / "Reload daemon failed".
+# nsenter into systemd's PID with -a (all namespaces) gives the same
+# view an interactive `wsl -d <distro>` session has, so systemctl
+# reaches its bus and units register correctly.
+SYSTEMD_PID=$(pidof systemd 2>/dev/null | tr ' ' '\n' | head -1)
+if [[ -n "$SYSTEMD_PID" ]]; then
+    NS="sudo nsenter -t $SYSTEMD_PID -a"
+    echo "[quadlet-overlay] entering systemd ns (PID $SYSTEMD_PID) for systemctl calls"
+else
+    NS="sudo"
+    echo "[quadlet-overlay] WARN: systemd PID not found -- systemctl calls may fail"
+fi
+
 echo "[quadlet-overlay] realizing sysusers / tmpfiles / daemon-reload ..."
-sudo systemd-sysusers 2>&1 | tail -3 || true
-sudo systemd-tmpfiles --create 2>&1 | tail -3 || true
-sudo systemctl daemon-reload 2>&1 | tail -3 || true
+$NS systemd-sysusers 2>&1 | tail -3 || true
+$NS systemd-tmpfiles --create 2>&1 | tail -3 || true
+$NS systemctl daemon-reload 2>&1 | tail -3 || true
 
 # ALWAYS-ON LIGHTWEIGHT SET: Cockpit (web console at :9090), the
 # Podman-Desktop discovery shim that surfaces MiOS containers in PD's
@@ -1370,14 +1388,29 @@ sudo systemctl daemon-reload 2>&1 | tail -3 || true
 # reports wsl, so it works correctly on the dev VM out of the box.
 # Each enable is best-effort -- a unit that ConditionVirtualization-skips
 # itself just no-ops with status=inactive (success).
-LIGHT_SET=(cockpit.socket mios-cockpit-link.service mios-forge.service \
-           mios-cdi-detect.service nvidia-cdi-refresh.path)
-for svc in "${LIGHT_SET[@]}"; do
-    if systemctl list-unit-files "$svc" 2>/dev/null | grep -q "$svc"; then
+# Quadlet-generated *.service files (from etc/containers/systemd/*.container)
+# live at /run/systemd/generator/ and are AUTO-WANTED via the [Install]
+# section Quadlet's generator already processed at daemon-reload time.
+# `systemctl enable` on them errors with "transient or generated" -- use
+# `start` instead. Native systemd units (cockpit.socket, mios-cdi-detect,
+# nvidia-cdi-refresh.path) take the standard `enable --now` path.
+NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path)
+QUADLET_SET=(mios-cockpit-link.service mios-forge.service)
+
+for svc in "${NATIVE_SET[@]}"; do
+    if $NS systemctl list-unit-files "$svc" 2>/dev/null | grep -q "$svc"; then
         echo "[quadlet-overlay] enable --now $svc"
-        sudo systemctl enable --now "$svc" 2>&1 | grep -vE 'created symlink' || true
+        $NS systemctl enable --now "$svc" 2>&1 | grep -vE 'created symlink' || true
     else
         echo "[quadlet-overlay] skip $svc (unit not present -- pkg may be missing)"
+    fi
+done
+for svc in "${QUADLET_SET[@]}"; do
+    if $NS systemctl cat "$svc" >/dev/null 2>&1; then
+        echo "[quadlet-overlay] start $svc (Quadlet-generated, auto-wanted)"
+        $NS systemctl start "$svc" 2>&1 | grep -vE 'created symlink' || true
+    else
+        echo "[quadlet-overlay] skip $svc (Quadlet not yet rendered)"
     fi
 done
 
@@ -1385,12 +1418,12 @@ done
 # threaded through from the PowerShell side -- defaults to skip so
 # the dev VM doesn't pull multi-GB images on first boot.
 if [[ "${MIOS_DEV_ENABLE_AI:-0}" == "1" ]]; then
-    echo "[quadlet-overlay] enable --now mios-ai + ollama (heavy)"
-    sudo systemctl enable --now mios-ai.service ollama.service 2>&1 | grep -vE 'created symlink' || true
+    echo "[quadlet-overlay] start mios-ai + ollama (Quadlet-generated)"
+    $NS systemctl start mios-ai.service ollama.service 2>&1 || true
 fi
 if [[ "${MIOS_DEV_ENABLE_RUNNER:-0}" == "1" ]]; then
-    echo "[quadlet-overlay] enable --now mios-forgejo-runner (heavy)"
-    sudo systemctl enable --now mios-forgejo-runner.service 2>&1 | grep -vE 'created symlink' || true
+    echo "[quadlet-overlay] start mios-forgejo-runner (Quadlet-generated)"
+    $NS systemctl start mios-forgejo-runner.service 2>&1 || true
 fi
 
 # Install the operator-facing terminal flatpak so MiOS-DEV mirrors a
@@ -1504,7 +1537,7 @@ fi
 sudo install -d -m 0755 /var/lib/mios
 sudo touch "$SENTINEL"
 
-active=$(systemctl --no-legend list-units 'mios-*' 2>/dev/null | wc -l)
+active=$($NS systemctl --no-legend list-units 'mios-*' 2>/dev/null | wc -l)
 echo "[quadlet-overlay] done -- $active mios-* units active"
 echo "[quadlet-overlay] Cockpit:        https://localhost:9090/  (host LAN reachable via mirrored networking)"
 echo "[quadlet-overlay] Podman Desktop: containers under MiOS-DEV machine carry openInBrowser labels"
