@@ -92,9 +92,18 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     # here. Using raw.githubusercontent.com directly is the canonical
     # path for `irm | iex` and avoids the github.com 302 redirect
     # entirely.
+    #
+    # Cache-buster: Fastly serves raw.githubusercontent.com with a
+    # 5-minute max-age. Right after we push a fix, the operator's
+    # next `irm` can still hit the old cached object until that TTL
+    # expires. Appending ?cb=<unix-time> on the NESTED fetch (inside
+    # the relaunch) gives Fastly a fresh cache key, so even if their
+    # OUTER irm gets stale, the elevated window's fetch is fresh and
+    # any mismatch self-corrects on first run.
     $rawBase = $RepoUrl -replace '\.git$', '' `
                        -replace '^https?://github\.com/', 'https://raw.githubusercontent.com/'
-    $rawUrl  = "$rawBase/$Branch/Get-MiOS.ps1"
+    $cacheBust = [int][double]::Parse((Get-Date -UFormat %s))
+    $rawUrl    = "$rawBase/$Branch/Get-MiOS.ps1?cb=$cacheBust"
 
     $forwardSwitches = ""
     if ($FullBuild)  { $forwardSwitches += " -FullBuild" }
