@@ -2162,11 +2162,15 @@ if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
 }
 $endMark
 "@
+        # Marker-delimited block replace (idempotent across re-runs).
+        # The replacement string is fed to .NET Regex.Replace which
+        # treats $0/$1/$& specially -- escape any literal $ inside the
+        # block content so a `$miosTheme` template substring doesn't
+        # accidentally turn into a backreference.
         if ($existing -match [regex]::Escape($marker)) {
-            $pattern = "(?s)$([regex]::Escape($marker)).*?$([regex]::Escape($endMark))"
-            $existing = [regex]::Replace($existing, $pattern, [System.Text.RegularExpressions.Regex]::Escape($block).Replace('\','\\'))
-            # Simpler: just reconstruct by replacing the whole block.
-            $existing = [regex]::Replace((if (Test-Path $profilePath) { Get-Content $profilePath -Raw } else { '' }), $pattern, $block)
+            $pattern  = "(?s)$([regex]::Escape($marker)).*?$([regex]::Escape($endMark))"
+            $safeRepl = $block -replace '\$', '$$$$'
+            $existing = [regex]::Replace($existing, $pattern, $safeRepl)
         } else {
             $existing = ($existing.TrimEnd() + "`n`n" + $block + "`n").TrimStart()
         }
