@@ -17,13 +17,13 @@
 
 The locally hosted models behind `MIOS_AI_ENDPOINT=http://localhost:8080/v1`
 are the orchestrators. External agents defer to them via the OpenAI
-public API surface -- `/v1/chat/completions`, `/v1/responses`,
+public API surface — `/v1/chat/completions`, `/v1/responses`,
 `/v1/embeddings`, function-calling, structured outputs. No vendor-native
 protocols, no proprietary side-channels.
 
 ## Operating context
 
-- **cwd:** `/` is the repo root and system root.
-- **Confirm before:** `git push`, `bootc upgrade`, `dnf install`, `systemctl`, `rm -rf`.
-- **Deliverables:** complete replacement files only.
-- **Memory:** `/var/lib/mios/ai/memory/`
+* **cwd:** `/` is the repo root and system root.
+* **Confirm before:** `git push`, `bootc upgrade`, `dnf install`, `systemctl`, `rm -rf`.
+* **Deliverables:** complete replacement files only.
+* **Memory:** `/var/lib/mios/ai/memory/`

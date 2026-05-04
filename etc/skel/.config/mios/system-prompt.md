@@ -1,21 +1,25 @@
-# 'MiOS' User AI Profile -- system prompt redirect
-#
-# This file is YOUR personal AI context layer. It is seeded from
-# /etc/skel/.config/mios/system-prompt.md on account creation.
-# Run `mios reinit-user-space` to reset to the system default.
-#
-# Resolution order (first match wins -- this file is layer 1):
-#   ~/.config/mios/system-prompt.md    ← YOU ARE HERE (per-user dotfile)
-#   /etc/mios/ai/system-prompt.md      ← host-local override
-#   /usr/share/mios/ai/system.md       ← canonical system prompt (image-baked)
-#
-# Repo-root AI entry points (context layers below this file):
-#   mios.git           → /AI.md    system build/env/architecture layer
-#   mios-bootstrap.git → /AI.md    user overlay layer (profile, flatpaks, accounts)
-#
-# Add personal context, preferred tools, account names, project notes,
-# or agent personas BELOW this header. Your version overrides the canonical copy.
-#
-# ─────────────────────────────────────────────────────────────────────────────
-# USER OVERRIDES (edit below this line)
-# ─────────────────────────────────────────────────────────────────────────────
+# 'MiOS' Per-User System Prompt
+
+> Per-user overlay. Empty by default — uncomment lines below to
+> customize. Higher precedence than `/etc/mios/ai/system-prompt.md`
+> and the canonical `/usr/share/mios/ai/system.md`.
+
+## My preferences (uncomment to enable)
+
+# - Default to terse output unless explicitly asked to elaborate.
+# - When proposing changes, always include the verification command in
+#   the same code fence as the change.
+# - Prefer image-time fixes (rebuild) over runtime mutations
+#   (`bootc kargs --append`, `firewall-cmd --add-port=...`).
+
+## My pinned context
+
+# - Hardware: <CPU> / <GPU> / <network>
+# - Workflow: <e.g. "I primarily develop in WSL2 inside MiOS">
+# - Repos I work on: <list>
+
+## My memory hints
+
+# - <Anything you want the agent to remember across sessions.
+#   Stored in /var/lib/mios/ai/memory/ when the agent decides
+#   it's relevant; this is the seed.>
