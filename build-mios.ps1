@@ -3606,10 +3606,20 @@ if ($activeDistro) {
     Log-Ok "MiOS repo found in $activeDistro"
     $miosRepo = Join-Path $MiosRepoDir "mios"
     if (Test-Path (Join-Path $miosRepo ".git")) {
-        Set-Step "Pulling Windows-side repo and syncing to $activeDistro"
+        # Hard reset to origin/main -- a soft `pull --ff-only` was
+        # silently failing on dirty working trees (e.g. after a
+        # legacy-install migration kept old files at destination)
+        # and the build kept running pre-fix scripts.
+        Set-Step "Updating Windows-side repo (fetch + hard reset) and syncing to $activeDistro"
         Push-Location $miosRepo
-        try { git pull --ff-only -q 2>&1 | Out-Null } catch {}
-        Pop-Location
+        try {
+            & git fetch --depth=1 origin main 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                & git reset --hard FETCH_HEAD 2>&1 | Out-Null
+            } else {
+                Log-Warn "git fetch returned $LASTEXITCODE -- working tree may be stale"
+            }
+        } finally { Pop-Location }
         Sync-RepoToDistro -Distro $activeDistro -WinPath $miosRepo | Out-Null
         Log-Ok "Repo synced to $activeDistro"
     }
@@ -3684,8 +3694,25 @@ if ($activeDistro) {
         @{ Path=(Join-Path $MiosRepoDir "mios-bootstrap"); Url=$MiosBootstrapUrl; Name="mios-bootstrap.git" }
     )) {
         if (Test-Path (Join-Path $r.Path ".git")) {
-            Set-Step "Updating $($r.Name)"
-            Push-Location $r.Path; try { git pull --ff-only -q 2>&1 | Out-Null } catch {}; Pop-Location
+            # Hard-reset to origin/main so the build context always
+            # matches what's on the remote. `git pull --ff-only` was
+            # too soft -- if the working tree had stale files (from a
+            # legacy-install migration where /XO/XN/XC kept older
+            # files at the destination) the pull silently no-op'd
+            # and the build kept running pre-fix scripts.
+            Set-Step "Updating $($r.Name) (fetch + hard reset)"
+            Push-Location $r.Path
+            try {
+                & git fetch --depth=1 origin main 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    & git reset --hard FETCH_HEAD 2>&1 | Out-Null
+                    if ($LASTEXITCODE -ne 0) {
+                        Log-Warn "$($r.Name): git reset --hard returned $LASTEXITCODE"
+                    }
+                } else {
+                    Log-Warn "$($r.Name): git fetch returned $LASTEXITCODE -- working tree may be stale"
+                }
+            } finally { Pop-Location }
         } else {
             Set-Step "Cloning $($r.Name)"
             git clone --depth 1 $r.Url $r.Path 2>&1 | Out-Null
