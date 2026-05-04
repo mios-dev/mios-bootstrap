@@ -1,10 +1,16 @@
 # GEMINI.md
 
-> Agent entry point (un-labeled). Pointer file -- no MiOS-internal
-> documentation. The filename exists for tooling discovery only; the
-> content is vendor-neutral and OpenAI-API-shaped.
+> Agent entry point (un-labeled). The locally hosted MiOS AI models
+> orchestrate all work in this stack; any external agent CLI that
+> discovers this file routes through the same OpenAI-API-compatible
+> endpoint those models serve. Strict adherence to OpenAI API
+> standards and patterns -- no vendor branding, no vendor-native
+> protocols, no proprietary side-channels.
 
-> Canonical prompt: `/usr/share/mios/ai/system.md`.
+> Canonical prompt: `/usr/share/mios/ai/system.md`. The locally hosted
+> models behind `MIOS_AI_ENDPOINT` are the orchestrators; this file
+> exists so the vendor CLI defers to them via its OpenAI-compatibility
+> mode.
 
 ## Loading order
 

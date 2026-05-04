@@ -100,11 +100,30 @@ system_prompt_file  = ""                # optional override; empty = use canonic
 [desktop]
 session       = "gnome"
 color_scheme  = "prefer-dark"   # libadwaita / dconf color-scheme
+# PROJECT INVARIANT: applications ship STRICTLY as Flatpaks. Only system
+# dependencies (drivers, daemons, libraries, kernel, container runtime,
+# system services) ship as RPMs in usr/share/mios/PACKAGES.md. Add every
+# user-facing app here, never to PACKAGES.md.
 flatpaks      = [
-    "org.gnome.Epiphany",
-    "com.github.tchx84.Flatseal",
-    "io.github.kolunmi.Bazaar",
-    "com.mattjakeman.ExtensionManager",
+    # ── Default session apps ──
+    "org.gnome.Epiphany",                              # default browser
+    "org.gnome.Ptyxis",                                # terminal (replaces RPM)
+    "org.gnome.Nautilus",                              # file manager (replaces RPM)
+    # ── App store / Flatpak management ──
+    "io.github.kolunmi.Bazaar",                        # primary app store (replaces gnome-software)
+    "com.github.tchx84.Flatseal",                      # Flatpak permissions UI
+    "com.mattjakeman.ExtensionManager",                # GNOME shell extensions (replaces gnome-tweaks)
+    # ── Virt GUI front-ends (libvirt/qemu daemons stay as RPMs) ──
+    "org.virt_manager.Manager",                        # virt-manager (replaces RPM)
+    "org.remmina.Remmina",                             # SPICE/VNC/RDP viewer (replaces virt-viewer RPM)
+    # ── Gaming clients (Wine/Proton bundled inside Steam + Bottles) ──
+    "com.valvesoftware.Steam",                         # Steam (replaces RPM; bundles Proton)
+    "net.lutris.Lutris",                               # Lutris (replaces RPM)
+    "com.usebottles.bottles",                          # Wine/DXVK/winetricks for non-Steam apps
+    "io.github.dosbox_staging.dosbox-staging",         # DOSBox (replaces RPM)
+    "com.github.Matoking.protontricks",                # protontricks (replaces RPM)
+    # MangoHud ships as a Flatpak extension auto-pulled by Steam/Lutris/Bottles:
+    "org.freedesktop.Platform.VulkanLayer.MangoHud",
 ]
 
 # ----------------------------------------------------------------------------

@@ -856,6 +856,7 @@ trigger_mios_install() {
                     packages-looking-glass-build
                     packages-cockpit-plugins-build
                     packages-self-build
+                    packages-build-toolchain
                 )
                 local exclude_pat
                 exclude_pat=$(printf '|%s' "${exclude_blocks[@]}")

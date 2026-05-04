@@ -1,5 +1,13 @@
 # 'MiOS' Bootstrap -- AI Entry Point
 
+The locally hosted MiOS AI models orchestrate all work in this stack.
+Every agent CLI, IDE plugin, and runtime tool routes through
+`MIOS_AI_ENDPOINT=http://localhost:8080/v1` (Architectural Law 5) and
+defers to those models. Strict adherence to OpenAI API standards and
+patterns -- no vendor branding, no vendor-native protocols, no
+proprietary side-channels. The AI files inventoried below are what
+those locally hosted models load and serve.
+
 Merge order: `mios.git` (system layer) ← `mios-bootstrap.git` (user overlay). Bootstrap profile values, AI files, and skel templates overlay the vendor defaults at install time.
 
 ## What mios-bootstrap.git owns
