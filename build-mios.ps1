@@ -1457,17 +1457,37 @@ fi
 # http://localhost:11434), which is the MiOS Ollama Quadlet's API.
 # Without this, `ollama list` / `mios-ollama list` fail with
 # command-not-found even though the Ollama Quadlet itself is running.
+#
+# Asset name changed upstream (v0.23+): `ollama-linux-<arch>.tar.zst`
+# (zstd-compressed) instead of the older `.tgz`. We try the new name
+# first, then fall back to the old one.
 if ! command -v ollama >/dev/null 2>&1; then
     echo "[quadlet-overlay] installing ollama CLI from upstream releases..."
     olm_arch="amd64"; [[ "$(uname -m)" == "aarch64" ]] && olm_arch="arm64"
-    olm_url="https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${olm_arch}.tgz"
     olm_tmp="$(mktemp -d)"
-    if curl -fsSL "$olm_url" -o "$olm_tmp/ollama.tgz" 2>/dev/null \
-            && tar -xzf "$olm_tmp/ollama.tgz" -C "$olm_tmp" 2>/dev/null; then
-        olm_bin="$(find "$olm_tmp" -type f -name ollama -perm -u+x 2>/dev/null | head -1)"
+    olm_zst="$olm_tmp/ollama.tar.zst"
+    olm_tgz="$olm_tmp/ollama.tgz"
+    olm_extract=""
+    if curl -fsSL "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${olm_arch}.tar.zst" \
+            -o "$olm_zst" 2>/dev/null && tar --zstd -xf "$olm_zst" -C "$olm_tmp" 2>/dev/null; then
+        olm_extract="$olm_tmp"
+    elif curl -fsSL "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${olm_arch}.tgz" \
+            -o "$olm_tgz" 2>/dev/null && tar -xzf "$olm_tgz" -C "$olm_tmp" 2>/dev/null; then
+        olm_extract="$olm_tmp"
+    fi
+    if [[ -n "$olm_extract" ]]; then
+        olm_bin="$(find "$olm_extract" -type f -name ollama -perm -u+x 2>/dev/null | head -1)"
         if [[ -n "$olm_bin" ]]; then
             sudo install -m 0755 "$olm_bin" /usr/bin/ollama
-            echo "[quadlet-overlay] ollama installed at /usr/bin/ollama"
+            # Ollama also ships GPU-passthrough libs alongside the binary
+            # (lib/ollama/* with rocBLAS, miopen etc. for GPU inference).
+            # Copy them too if present so `ollama serve --device gpu`
+            # finds the runtime.
+            if [[ -d "$olm_extract/lib/ollama" ]]; then
+                sudo install -d -m 0755 /usr/lib/ollama
+                sudo cp -a "$olm_extract/lib/ollama/." /usr/lib/ollama/
+            fi
+            echo "[quadlet-overlay] ollama installed: $(/usr/bin/ollama --version 2>&1 | head -1)"
         else
             echo "[quadlet-overlay] WARN: ollama tarball missing executable -- skip"
         fi
@@ -1478,8 +1498,13 @@ if ! command -v ollama >/dev/null 2>&1; then
 fi
 
 echo "[quadlet-overlay] installing GNOME Flatpaks for WSLg portal (one-time, ~600MB)..."
-flatpak remote-add --system --if-not-exists flathub \
+sudo install -d -m 0755 /var/lib/flatpak
+sudo flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+# Refresh the appstream index so the install loop below can resolve
+# the app IDs. Without this step `flatpak install` errors with
+# "Nothing matches <ref> in remote flathub" on a fresh remote.
+sudo flatpak update --system --appstream flathub 2>&1 | tail -3 || true
 # Substrate-class Flatpaks: terminal, file manager, app store, Flatpak
 # permissions UI, default browser. Each routes through WSLg as a Windows
 # desktop window; the gnome-flatpak-runtime RPM section provides the
@@ -1493,7 +1518,11 @@ declare -A FLATPAK_SHORT=(
 )
 for ref in "${!FLATPAK_SHORT[@]}"; do
     if ! flatpak list --system --app --columns=application 2>/dev/null | grep -qx "$ref"; then
-        flatpak install --system --noninteractive --assumeyes --or-update flathub "$ref" \
+        # sudo prefix bypasses polkit's "Deploy not allowed for user"
+        # gate on a fresh dev VM where polkit auth hasn't been
+        # established yet. The sudoers drop-in below grants
+        # passwordless sudo for the dev user, so this is silent.
+        sudo flatpak install --system --noninteractive --assumeyes --or-update flathub "$ref" \
             2>&1 | grep -E '^(Installing|Updating|Already|Error|Warning)' || true
     fi
     # Drop a /usr/local/bin/<short> wrapper so operators can run
