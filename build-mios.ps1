@@ -165,6 +165,48 @@ function Update-MiosInstallPaths {
     # one-time move.
 }
 
+function Test-DashboardCanRedraw {
+    # Verify [Console]::SetCursorPosition actually moves the cursor.
+    # In some hosts (Start-Transcript active, redirected stdout, certain
+    # `irm | iex` parent shells, remote PSSession, captured runspace)
+    # the call silently no-ops or throws -- in either case the dashboard
+    # would just stack frames downward forever. Returns $true only when
+    # we can confidently repaint in place.
+    try {
+        if ([Console]::IsOutputRedirected) { return $false }
+        $origTop  = [Console]::CursorTop
+        $origLeft = [Console]::CursorLeft
+        # Move to col 0 of the SAME row -- a no-op if positioning works,
+        # detectable as a failure if it doesn't.
+        [Console]::SetCursorPosition(0, $origTop)
+        $afterLeft = [Console]::CursorLeft
+        # Restore.
+        [Console]::SetCursorPosition($origLeft, $origTop)
+        return ($afterLeft -eq 0)
+    } catch { return $false }
+}
+
+function Try-ResizeConsole {
+    # Best-effort: set the host window to ~100x40 (slightly larger than
+    # the 80-col dashboard frame so there's breathing room for log
+    # spillover). Silently skipped if the host doesn't allow resize
+    # (e.g. embedded terminals, SSH sessions, fixed-size kiosks).
+    param([int]$Cols = 100, [int]$Rows = 40)
+    try {
+        $sz  = New-Object Management.Automation.Host.Size $Cols, $Rows
+        $buf = New-Object Management.Automation.Host.Size $Cols, 3000
+        # BufferSize must be >= WindowSize on both axes; set buf first.
+        $Host.UI.RawUI.BufferSize = $buf
+        $Host.UI.RawUI.WindowSize = $sz
+    } catch {
+        # Some hosts throw "WindowSize cannot exceed BufferSize" if
+        # buffer wasn't accepted. Try the inverse order as a fallback.
+        try {
+            $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size $Cols, $Rows
+        } catch {}
+    }
+}
+
 # ── Log files ─────────────────────────────────────────────────────────────────
 # UNIFIED COUNTING SYSTEM: there is exactly one logged counter timeline --
 # the Write-Log entries written to $LogFile by [IO.File]::AppendAllText.
@@ -195,6 +237,12 @@ try {
         [Text.Encoding]::UTF8)
 } catch {}
 
+# Dashboard mode is set after $script:DashRow is captured below in MAIN
+# (initial render + Test-DashboardCanRedraw probe). Default to 'log'
+# so any pre-MAIN Write-Log calls don't try to render-over a frame
+# that doesn't exist yet.
+$script:DashboardMode = 'log'
+
 function Write-Log {
     param([string]$M, [string]$L = "INFO")
     $ts = [datetime]::Now.ToString("HH:mm:ss.fff")
@@ -203,10 +251,19 @@ function Write-Log {
     # frames cannot leak in. This is THE single canonical counting
     # system for the run; every event flows through here.
     try { [System.IO.File]::AppendAllText($LogFile, ($line + "`n"), [Text.Encoding]::UTF8) } catch {}
-    # Mirror to the live console for operator visibility. Show-Dashboard
-    # repaints over these rows on its next tick, which is fine -- the log
-    # file already has the canonical record.
-    Write-Host $line
+    # Console mirroring policy depends on $DashboardMode:
+    #   * interactive: Write-Host every line. Show-Dashboard repaints
+    #     over these rows on its next tick (the log file already has
+    #     the canonical record so we can be liberal here).
+    #   * log:         Show-Dashboard is a no-op so anything we Write-Host
+    #     stays on screen forever. Only surface WARN/ERROR (which
+    #     operators must see) and let INFO live in the log file.
+    if ($script:DashboardMode -eq 'interactive') {
+        Write-Host $line
+    } elseif ($L -in @('WARN','ERROR')) {
+        $color = if ($L -eq 'ERROR') { 'Red' } else { 'Yellow' }
+        Write-Host $line -ForegroundColor $color
+    }
     if ($L -eq "ERROR") { $script:ErrCount++ }
     if ($L -eq "WARN")  { $script:WarnCount++ }
 }
@@ -303,6 +360,12 @@ function Update-BuildSubPhase([string]$line) {
 }
 
 function Show-Dashboard {
+    # Linear-log mode: SetCursorPosition is a no-op or the host doesn't
+    # support repaint -- attempting to render the framed dashboard just
+    # stacks frames downward forever (one per Set-Step / phase tick).
+    # Bail entirely; Start-Phase / End-Phase / Set-Step emit their own
+    # one-line log messages in this mode (see those functions below).
+    if ($script:DashboardMode -eq 'log') { return }
     try {
     # ── Sizing -- max 80 cols (standard tty0/console) ──────────────────────────
     $winW = try { [Console]::WindowWidth  } catch { 80 }
@@ -483,7 +546,13 @@ function Start-Phase([int]$i) {
     $script:PhStart[$i] = [datetime]::Now
     $script:CurStep    = $script:PhaseNames[$i]
     Write-Log "START phase $i : $($script:PhaseNames[$i])"
-    Show-Dashboard
+    if ($script:DashboardMode -eq 'log') {
+        $ts = [datetime]::Now.ToString("HH:mm:ss")
+        Write-Host ""
+        Write-Host "[$ts] >> Phase $i/$($script:TotalPhases - 1) -- $($script:PhaseNames[$i])" -ForegroundColor Cyan
+    } else {
+        Show-Dashboard
+    }
 }
 
 function End-Phase([int]$i, [switch]$Fail, [switch]$Warn) {
@@ -495,13 +564,39 @@ function End-Phase([int]$i, [switch]$Fail, [switch]$Warn) {
     $tag     = if ($Fail) { "FAIL" } elseif ($Warn) { "WARN" } else { "OK  " }
     $lvl     = if ($Fail) { "ERROR" } else { "INFO" }
     Write-Log "$tag  phase $i : $($script:PhaseNames[$i]) ($spanStr)" $lvl
-    Show-Dashboard
+    if ($script:DashboardMode -eq 'log') {
+        $ts = [datetime]::Now.ToString("HH:mm:ss")
+        $color = if ($Fail) { 'Red' } elseif ($Warn) { 'Yellow' } else { 'Green' }
+        $mark  = if ($Fail) { 'XX' } elseif ($Warn) { '!!' } else { 'OK' }
+        Write-Host "[$ts] [$mark] Phase $i ($spanStr)  $($script:PhaseNames[$i])" -ForegroundColor $color
+    } else {
+        Show-Dashboard
+    }
 }
 
+# Throttle Set-Step prints in log mode -- the build pipeline calls
+# Set-Step on every line of native output, which would flood the log.
+# Print at most once per 2 seconds OR on a substantially-changed step.
+$script:LastStepLogTime = [datetime]::MinValue
+$script:LastStepLogText = ""
 function Set-Step([string]$T) {
     $script:CurStep = $T
     Write-Log "step: $T"
-    Show-Dashboard
+    if ($script:DashboardMode -eq 'log') {
+        $now = [datetime]::Now
+        $clean = ($T -replace '\s+', ' ').Trim()
+        if ($clean.Length -gt 90) { $clean = $clean.Substring(0, 87) + '...' }
+        $secsSince = ($now - $script:LastStepLogTime).TotalSeconds
+        $isFirst   = ($script:LastStepLogTime -eq [datetime]::MinValue)
+        if ($isFirst -or $secsSince -ge 2 -or $clean -ne $script:LastStepLogText) {
+            $ts = $now.ToString("HH:mm:ss")
+            Write-Host "  [$ts]  $clean" -ForegroundColor DarkGray
+            $script:LastStepLogTime = $now
+            $script:LastStepLogText = $clean
+        }
+    } else {
+        Show-Dashboard
+    }
 }
 
 function Log-Ok([string]$T)   { Write-Log "ok   $T";          Set-Step $T }
@@ -3083,7 +3178,15 @@ $endMark
 $ExitCode = 0
 try {
 
-# ── Banner (printed before dashboard so it doesn't scroll under it) ───────────
+# ── Window resize (best-effort) + dashboard mode probe ───────────────────────
+# Resize first so the SetCursorPosition probe runs against the final
+# console dimensions; then probe whether in-place repaint actually
+# works in this host (Windows Terminal: yes; Start-Transcript active /
+# redirected stdout / certain `irm | iex` parents: no).
+Try-ResizeConsole -Cols 100 -Rows 40
+$script:DashboardMode = if (Test-DashboardCanRedraw) { 'interactive' } else { 'log' }
+
+# ── Banner ───────────────────────────────────────────────────────────────────
 Clear-Host
 $b = "+" + ("=" * ($script:DW - 2)) + "+"
 $pad = [math]::Max(0, $script:DW - 4 - "MiOS $MiosVersion  --  Unified Windows Installer".Length)
@@ -3094,49 +3197,57 @@ Write-Host ("| WSL2 + Podman  |  Offline Build Pipeline" + (" " * ($script:DW - 
 Write-Host $b                                                                       -ForegroundColor Cyan
 Write-Host ""
 
+if ($script:DashboardMode -eq 'log') {
+    Write-Host "Note: console doesn't support in-place repaint -- running in linear log mode." -ForegroundColor Yellow
+    Write-Host "      Phase transitions + throttled step updates print sequentially below." -ForegroundColor DarkYellow
+    Write-Host ""
+}
+
 # Capture the row where the dashboard will be drawn (right after banner)
 $script:DashRow = try { [Console]::CursorTop } catch { 0 }
 
-# ── Background heartbeat -- keeps spinner animating independently ──────────────
-# Runs on a dedicated runspace so the operator always sees spinner movement.
-# A frozen spinner means a true fault/hang/timeout, not just a slow operation.
-$script:BgRs = [runspacefactory]::CreateRunspace()
-$script:BgRs.Open()
-$script:BgRs.SessionStateProxy.SetVariable('dashSync', $script:DashSync)
-$script:BgPs = [powershell]::Create()
-$script:BgPs.Runspace = $script:BgRs
-$null = $script:BgPs.AddScript({
-    # Background spinner heartbeat. Writes a single character at
-    # (SpinnerRow, SpinnerCol) every 120 ms so the operator sees the
-    # script is still alive even when the main render loop is blocked
-    # on a long sub-process.
-    #
-    # Race protection: dashSync.Rendering is set to $true by the main
-    # thread immediately before Show-Dashboard writes its rows, and
-    # cleared afterwards. The heartbeat skips its write while that
-    # flag is set, which prevents the previous spinner-bleed bug
-    # where the heartbeat stamped a "/" or "-" into a separator row
-    # that had just been drawn over the row the spinner used to occupy.
-    $chars = @('|', '/', '-', [char]92)
-    $i = 0
-    while ($dashSync.Running) {
-        [System.Threading.Thread]::Sleep(120)
-        if ($dashSync.Rendering) { continue }
-        $row = $dashSync.SpinnerRow
-        $col = $dashSync.SpinnerCol
-        if ($row -ge 0) {
-            try {
-                $prevTop = [Console]::CursorTop
-                $prevLeft = [Console]::CursorLeft
-                [Console]::SetCursorPosition($col, $row)
-                [Console]::Write($chars[$i % 4])
-                [Console]::SetCursorPosition($prevLeft, $prevTop)
-            } catch {}
-            $i++
+# ── Background heartbeat (interactive mode only) ─────────────────────────────
+# Runs on a dedicated runspace so the spinner animates even when the
+# main render loop is blocked on a long sub-process. Skipped in log
+# mode -- without working SetCursorPosition the heartbeat would just
+# stamp characters at the bottom of the buffer forever.
+if ($script:DashboardMode -eq 'interactive') {
+    $script:BgRs = [runspacefactory]::CreateRunspace()
+    $script:BgRs.Open()
+    $script:BgRs.SessionStateProxy.SetVariable('dashSync', $script:DashSync)
+    $script:BgPs = [powershell]::Create()
+    $script:BgPs.Runspace = $script:BgRs
+    $null = $script:BgPs.AddScript({
+        # Background spinner heartbeat. Writes a single character at
+        # (SpinnerRow, SpinnerCol) every 120 ms so the operator sees the
+        # script is still alive even when the main render loop is blocked
+        # on a long sub-process.
+        #
+        # Race protection: dashSync.Rendering is set to $true by the main
+        # thread immediately before Show-Dashboard writes its rows, and
+        # cleared afterwards. The heartbeat skips its write while that
+        # flag is set.
+        $chars = @('|', '/', '-', [char]92)
+        $i = 0
+        while ($dashSync.Running) {
+            [System.Threading.Thread]::Sleep(120)
+            if ($dashSync.Rendering) { continue }
+            $row = $dashSync.SpinnerRow
+            $col = $dashSync.SpinnerCol
+            if ($row -ge 0) {
+                try {
+                    $prevTop = [Console]::CursorTop
+                    $prevLeft = [Console]::CursorLeft
+                    [Console]::SetCursorPosition($col, $row)
+                    [Console]::Write($chars[$i % 4])
+                    [Console]::SetCursorPosition($prevLeft, $prevTop)
+                } catch {}
+                $i++
+            }
         }
-    }
-})
-$script:BgHandle = $script:BgPs.BeginInvoke()
+    })
+    $script:BgHandle = $script:BgPs.BeginInvoke()
+}
 
 Show-Dashboard   # draw initial (all phases pending)
 
