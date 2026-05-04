@@ -86,20 +86,42 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
         Write-Host "  [*] You'll see a UAC prompt momentarily; approve it to continue." -ForegroundColor DarkGray
     }
 
-    # The new window re-runs Get-MiOS.ps1 via the same web URL so it's
-    # always the latest published version (vs. relying on $PSCommandPath
-    # which is empty under irm|iex).
-    $relaunchCmd = "`$env:MIOS_GETMIOS_RELAUNCHED=1; irm $RepoUrl/raw/$Branch/Get-MiOS.ps1 | iex"
+    # Derive the raw.githubusercontent.com URL from the .git clone URL.
+    # GitHub's "/raw/" path on github.com only works WITHOUT the .git
+    # suffix; the tracked URL has .git for `git clone` so we strip it
+    # here. Using raw.githubusercontent.com directly is the canonical
+    # path for `irm | iex` and avoids the github.com 302 redirect
+    # entirely.
+    $rawBase = $RepoUrl -replace '\.git$', '' `
+                       -replace '^https?://github\.com/', 'https://raw.githubusercontent.com/'
+    $rawUrl  = "$rawBase/$Branch/Get-MiOS.ps1"
+
     $forwardSwitches = ""
     if ($FullBuild)  { $forwardSwitches += " -FullBuild" }
     if ($Unattended) { $forwardSwitches += " -Unattended" }
     if ($Workflow)   { $forwardSwitches += " -Workflow $Workflow" }
-    if ($forwardSwitches) {
-        # iex consumes the script as input; trailing args don't apply.
-        # Bake the switches into a $args splat the relaunched script
-        # can re-parse if it exposes them (it does -- the param block).
-        $relaunchCmd = "`$env:MIOS_GETMIOS_RELAUNCHED=1; & ([scriptblock]::Create((irm $RepoUrl/raw/$Branch/Get-MiOS.ps1)))$forwardSwitches"
+
+    # Heredoc with HTML-sniff guard so a 404 (which GitHub serves with
+    # an HTML body) doesn't get piped into iex and execute as garbage.
+    # The relaunched window keeps a Read-Host on failure so the operator
+    # can read the diagnostic instead of the window vanishing.
+    $relaunchCmd = @"
+`$env:MIOS_GETMIOS_RELAUNCHED='1';
+try {
+    `$src = Invoke-RestMethod -Uri '$rawUrl' -ErrorAction Stop
+    if (-not `$src -or `$src -match '<!DOCTYPE html>|<html\b') {
+        throw "Get-MiOS.ps1 fetch from $rawUrl returned HTML (likely 404 / wrong branch '$Branch')."
     }
+    & ([scriptblock]::Create(`$src))$forwardSwitches
+} catch {
+    Write-Host ""
+    Write-Host "  [!] Bootstrap failed: `$_" -ForegroundColor Red
+    Write-Host "      URL: $rawUrl" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  Press Enter to close..." -ForegroundColor DarkGray -NoNewline
+    `$null = Read-Host
+}
+"@
 
     $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
     $startArgs = @(
