@@ -146,6 +146,38 @@ tag       = "latest"
 local_tag = "localhost/mios:latest"
 
 # ----------------------------------------------------------------------------
+# [packages] -- SSOT mapping mios.toml -> usr/share/mios/PACKAGES.md sections.
+# See mios.git/usr/share/mios/mios.toml for the canonical comment block;
+# this file is the bootstrap-overlay default for new installs.
+# Always-skipped (regardless of selection): kernel, boot, moby, bloat,
+# critical.
+# ----------------------------------------------------------------------------
+[packages]
+sections = [
+    "base", "security", "utils", "build-toolchain", "containers",
+    "cockpit", "storage", "virt", "guests",
+    "gpu-mesa", "gpu-nvidia", "gpu-amd-compute", "gpu-intel-compute",
+    "gnome", "phosh",
+    "ai", "k3s", "k3s-selinux-build", "cockpit-plugins-build",
+    "sbom-tools", "uki", "self-build", "network-discovery", "updater",
+    "wintools", "gaming", "nut", "ceph", "freeipa", "ha",
+    "looking-glass-build", "android",
+]
+
+[packages.dev_overlay]
+# MiOS-DEV (podman-WSL2 backend on Windows) minimal-but-complete: every
+# operator/dev/security daemon + GPU CDI plumbing, but NO desktop
+# session -- the dev VM is a podman backend, not a workstation; GUIs
+# run as Flatpaks (Ptyxis/Bazaar/Nautilus) routed through WSLg.
+sections = [
+    "base", "security", "utils", "build-toolchain", "containers",
+    "cockpit", "storage", "virt",
+    "gpu-mesa", "gpu-nvidia", "gpu-amd-compute", "gpu-intel-compute",
+    "ai", "sbom-tools", "self-build", "network-discovery", "updater",
+    "cockpit-plugins-build", "k3s-selinux-build", "uki",
+]
+
+# ----------------------------------------------------------------------------
 # [bootstrap] -- behavior of mios-bootstrap.git/install.sh during Phase-0.
 #   mode: auto | bootc | fhs
 #     - auto  : detect host kind, prefer 'bootc switch' when available

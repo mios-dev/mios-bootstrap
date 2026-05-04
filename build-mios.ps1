@@ -1064,14 +1064,28 @@ function Invoke-MiosOverlaySeed {
         return
     }
 
-    # Stage PACKAGES.md + the overlay installer inside the distro's /tmp.
-    # Using `wsl --exec cp` from the Windows path avoids podman-machine-cp's
-    # rootful permission quirks.
-    $packagesWslPath = ($packagesMd -replace '\\','/' -replace '^([A-Za-z]):','/mnt/$1' )
-    $packagesWslPath = $packagesWslPath.ToLower() -replace '/mnt/[a-z]:', { "/mnt/$($args[0].Value -replace '/mnt/|:','')" }
-    # Simpler/safer: convert C:\path -> /mnt/c/path
+    # Stage PACKAGES.md + the highest-precedence mios.toml + the overlay
+    # installer inside the distro's /tmp. Using `wsl --exec cp` from the
+    # Windows path avoids podman-machine-cp's rootful permission quirks.
+    # The bash overlay reads [packages.dev_overlay].sections from
+    # /tmp/mios.toml -- this is what consolidates the SSOT (no longer
+    # blanket-installs every PACKAGES.md section; honors operator's
+    # configurator-saved selection).
     $drive = $packagesMd.Substring(0,1).ToLower()
     $packagesWslPath = "/mnt/$drive" + ($packagesMd.Substring(2) -replace '\\','/')
+
+    $tomlSources = @(
+        (Join-Path $env:APPDATA "MiOS\mios.toml"),
+        (Join-Path $MiosRepoDir "mios-bootstrap\mios.toml"),
+        (Join-Path $MiosRepoDir "mios\usr\share\mios\mios.toml")
+    )
+    $tomlPath = $null
+    foreach ($t in $tomlSources) { if (Test-Path $t) { $tomlPath = $t; break } }
+    $tomlWslPath = ""
+    if ($tomlPath) {
+        $td = $tomlPath.Substring(0,1).ToLower()
+        $tomlWslPath = "/mnt/$td" + ($tomlPath.Substring(2) -replace '\\','/')
+    }
 
     $overlayScript = @'
 #!/usr/bin/env bash
@@ -1094,8 +1108,50 @@ fi
 # Normalize CRLF (OneDrive-synced source).
 tr -d '\r' < "$SRC_MD" > "$PACKAGES_MD"
 
-mapfile -t SECTIONS < <(grep -oP '^```packages-\K[a-z0-9-]+' "$PACKAGES_MD" | sort -u)
-echo "[mios-overlay] sections: ${#SECTIONS[@]}"
+# Resolve the dev-overlay section list from the user's mios.toml. The
+# layered resolver (highest wins): per-user (~/.config/mios/mios.toml),
+# host (/etc/mios/mios.toml), bootstrap clone, vendor (PACKAGES.md
+# bootstrap default). The PowerShell side stages the highest-precedence
+# layer at $SRC_TOML before invoking us. Falls back to a hardcoded
+# minimal list if no [packages.dev_overlay].sections array is present.
+SRC_TOML="${SRC_TOML:-/tmp/mios.toml}"
+DEFAULT_SECTIONS=(
+    base security utils build-toolchain containers
+    cockpit storage virt
+    gpu-mesa gpu-nvidia gpu-amd-compute gpu-intel-compute
+    ai sbom-tools self-build network-discovery updater
+    cockpit-plugins-build k3s-selinux-build uki
+)
+
+# Naive TOML scrape: pull the array under [packages.dev_overlay].sections
+# (or [packages].dev_overlay.sections inline form). Tolerates the
+# single-line + multi-line array shapes the configurator emits.
+parse_sections_from_toml() {
+    [[ -r "$SRC_TOML" ]] || return 1
+    awk '
+        /^\[packages\.dev_overlay\][[:space:]]*$/ { in_block=1; next }
+        in_block && /^\[/                        { in_block=0; next }
+        in_block && /^[[:space:]]*sections[[:space:]]*=/ {
+            sub(/^[^=]*=[[:space:]]*/, "", $0); collecting=1
+        }
+        collecting {
+            print
+            if ($0 ~ /\]/) { collecting=0 }
+        }
+    ' "$SRC_TOML" \
+        | tr -d '[]\n' \
+        | tr ',' '\n' \
+        | sed -E 's/^[[:space:]]*"?([^"#]*)"?[[:space:]]*$/\1/' \
+        | sed '/^$/d'
+}
+
+mapfile -t SECTIONS < <(parse_sections_from_toml || true)
+SECTIONS_SOURCE="mios.toml [packages.dev_overlay]"
+if (( ${#SECTIONS[@]} == 0 )); then
+    SECTIONS=("${DEFAULT_SECTIONS[@]}")
+    SECTIONS_SOURCE="hardcoded minimal default"
+fi
+echo "[mios-overlay] sections (${#SECTIONS[@]}, from ${SECTIONS_SOURCE}): ${SECTIONS[*]}"
 
 get_pkgs() {
     sed -n "/^\`\`\`packages-${1}$/,/^\`\`\`$/{/^\`\`\`/d;/^$/d;/^#/d;p}" "$PACKAGES_MD"
@@ -1108,17 +1164,14 @@ sudo dnf5 install -y --skip-unavailable \
     "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${fedver}.noarch.rpm" \
     >"$LOG_DIR/00-rpmfusion.log" 2>&1 || true
 
-# Sections SKIPPED on the dev WSL distro (irrelevant or breakage on WSL):
-#   kernel  -- WSL runs Microsoft kernel; no kernel install allowed
-#   boot    -- UEFI/UKI host-bootable; dev VM has no UEFI surface
-#   moby    -- conflicts with podman (the dev VM IS the podman backend)
-#   bloat   -- anti-pattern fence section (intentionally not installed)
-#   critical -- mixed; we install a curated WSL-safe subset below
-SKIP_RE='^(kernel|boot|moby|bloat|critical)$'
+# Hard always-skip list. This wins even if the operator typed e.g.
+# "kernel" into mios.toml -- those sections are WSL-incompatible or
+# anti-pattern fences and refusing them is the right move.
+ALWAYS_SKIP_RE='^(kernel|boot|moby|bloat|critical)$'
 
 install_section() {
     local sec="$1"
-    [[ "$sec" =~ $SKIP_RE ]] && { echo "[mios-overlay] SKIP $sec"; return; }
+    [[ "$sec" =~ $ALWAYS_SKIP_RE ]] && { echo "[mios-overlay] SKIP $sec (always-skipped)"; return; }
     local pkgs
     pkgs=$(get_pkgs "$sec" | tr '\n' ' ')
     [[ -z "${pkgs// }" ]] && { echo "[mios-overlay] EMPTY $sec"; return; }
@@ -1130,7 +1183,7 @@ install_section() {
     # WSL distros that lack a live system D-Bus -- packages still land.
 }
 
-# Foundation (repos must be first), then everything else.
+# Foundation (repos must be first), then user-selected sections.
 install_section repos
 for sec in "${SECTIONS[@]}"; do
     [[ "$sec" == "repos" ]] && continue
@@ -1176,9 +1229,14 @@ echo "[mios-overlay] manual refresh: sudo mios-dev-seed"
     # directory" -> the entire overlay silently no-ops on the dev VM.
     $overlayScript = $overlayScript -replace "`r`n", "`n" -replace "`r", "`n"
     $b64Script = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($overlayScript))
+    $stageToml = ""
+    if ($tomlWslPath) {
+        $stageToml = "cp '$tomlWslPath' /tmp/mios.toml; "
+    }
     $stage = "set -e; sudo install -d -m 0777 /tmp; " +
              "echo '$b64Script' | base64 -d > /tmp/mios-overlay.sh && chmod +x /tmp/mios-overlay.sh; " +
              "cp '$packagesWslPath' /tmp/PACKAGES.md; " +
+             $stageToml +
              "/tmp/mios-overlay.sh"
     & wsl.exe -d $wslDistro --exec bash -c $stage 2>&1 | ForEach-Object { Write-Log "overlay-seed: $_" }
     if ($LASTEXITCODE -ne 0) {
