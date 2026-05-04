@@ -146,23 +146,80 @@ function Resolve-MiosInstallRoot {
 }
 
 function Update-MiosInstallPaths {
-    # Re-points the script-scope install paths at a new root. Called by
-    # Install-WindowsBranding once the data disk is up so all
-    # subsequent stages (oh-my-posh, theme, launcher, icons, dash)
-    # write under M:\MiOS\ instead of the bootstrap-time default.
+    # Full-partition overlay: re-point EVERY install path at the new
+    # root so the entire MiOS pipeline (Windows app, repos, dev VM
+    # VHDX, build artifacts, machine-state, logs) lives on the same
+    # volume. The `MIOS-DEV` partition is the operator's choice for
+    # "everything MiOS lives here"; we honor that across the board.
+    #
+    # Caller MUST run this BEFORE Phase 2 (repos clone) so the clones
+    # land at M:\MiOS\repo, not at C:\MiOS\repo.
     param([Parameter(Mandatory)] [string] $NewRoot)
-    $script:MiosInstallDir = $NewRoot
-    $script:MiosBinDir     = Join-Path $NewRoot 'bin'
-    $script:MiosShareDir   = Join-Path $NewRoot 'share'
-    $script:MiosIconsDir   = Join-Path $NewRoot 'icons'
-    $script:MiosThemesDir  = Join-Path $NewRoot 'themes'
-    $script:MiosFontsDir   = Join-Path $NewRoot 'fonts'
-    # Note: $MiosRepoDir is intentionally NOT moved here -- the repos
-    # were already cloned under the boot-time root in Phase 2 before
-    # the data disk existed. Migrating them mid-install would break
-    # any in-flight git operations or open file handles. A separate
-    # `mios-update --migrate-to <drive>` verb (future) handles the
-    # one-time move.
+    $script:MiosInstallDir  = $NewRoot
+    $script:MiosBinDir      = Join-Path $NewRoot 'bin'
+    $script:MiosShareDir    = Join-Path $NewRoot 'share'
+    $script:MiosIconsDir    = Join-Path $NewRoot 'icons'
+    $script:MiosThemesDir   = Join-Path $NewRoot 'themes'
+    $script:MiosFontsDir    = Join-Path $NewRoot 'fonts'
+    # State + artifacts also move onto the data disk.
+    $script:MiosProgramData = Join-Path $NewRoot 'machine-state'
+    $script:MiosRepoDir     = Join-Path $NewRoot 'repo'
+    $script:MiosDistroDir   = Join-Path $NewRoot 'distros'
+    $script:MiosImagesDir   = Join-Path $NewRoot 'images'
+    $script:MiosMachineCfg  = Join-Path $NewRoot 'config'
+    $script:MiosLogDir      = Join-Path $NewRoot 'logs'
+    # NOTE: $LogFile (the unified install log opened at script init)
+    # stays on its boot-time path because file handles are already
+    # open. Long-term logs from CLI verbs (mios-pull, mios-update,
+    # etc.) write to the redirected $MiosLogDir.
+}
+
+function Invoke-DataDiskBootstrap {
+    # Provisions the dedicated MIOS-DEV data disk and re-points all
+    # install paths onto it. Idempotent: if M:\ is already a MIOS-DEV-
+    # labeled volume we just redirect; otherwise we shrink C: by the
+    # configured amount and create the partition. Honors:
+    #   $env:MIOS_SKIP_DATA_DISK    - skip everything (legacy C:\MiOS layout)
+    #   $env:MIOS_DATA_DISK_LETTER  - drive letter (default M)
+    #   $env:MIOS_DATA_DISK_MB      - shrink size in MB (default 262144)
+    #
+    # Called BEFORE Phase 2 so the repo clones go directly to the
+    # data disk instead of having to migrate later.
+    param([hashtable]$HW)
+    if ($env:MIOS_SKIP_DATA_DISK -in @('1','true','TRUE','yes')) {
+        Log-Warn "MIOS_SKIP_DATA_DISK set -- using C:\MiOS layout"
+        return
+    }
+    if (-not $script:IsAdmin) {
+        Log-Warn "Not running as admin -- skipping data disk provisioning (would need elevation to shrink C:)"
+        return
+    }
+    $shrinkMB    = if ($env:MIOS_DATA_DISK_MB)     { [int]$env:MIOS_DATA_DISK_MB }     else { 262144 }
+    $driveLetter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER }      else { 'M' }
+    try {
+        $dataRoot = Initialize-MiosDataDisk -ShrinkMB $shrinkMB -DriveLetter $driveLetter -VolumeLabel 'MIOS-DEV'
+        Set-PodmanMachineStorageOn -DataRoot $dataRoot
+        # Clamp the VHDX max-size to fit the new partition.
+        $newFreeGB = [math]::Floor((Get-Volume -DriveLetter $driveLetter).SizeRemaining / 1GB)
+        $clamped   = [math]::Max(80, [math]::Min($HW.DiskGB, $newFreeGB - 8))
+        if ($clamped -ne $HW.DiskGB) {
+            Log-Ok "Clamped VHDX max from $($HW.DiskGB) GB to $clamped GB to fit ${driveLetter}: ($newFreeGB GB free)"
+            $HW.DiskGB = $clamped
+        }
+    } catch {
+        Log-Warn "MiOS data-disk provisioning failed: $_"
+        Log-Warn "Continuing with default %LOCALAPPDATA% storage (set MIOS_SKIP_DATA_DISK=1 to silence this)"
+        return
+    }
+
+    # Redirect ALL install paths onto the new data disk. The full-
+    # partition overlay means M:\MiOS\ is everything: bin, icons,
+    # themes, repos, distros, images, machine-state, logs.
+    $newRoot = Join-Path "${driveLetter}:\" 'MiOS'
+    if ($newRoot -ne $script:MiosInstallDir) {
+        Log-Ok "Full-partition overlay: redirecting install root $($script:MiosInstallDir) -> $newRoot"
+        Update-MiosInstallPaths -NewRoot $newRoot
+    }
 }
 
 function Test-DashboardCanRedraw {
@@ -1133,31 +1190,12 @@ function New-BuilderDistro([hashtable]$HW) {
     # Nominal $HW.RamGB rounds up from actual hardware, causing podman to reject the request.
     $ramMB = [math]::Max(4096, [math]::Min($HW.OsTotalRamMB - 512, $HW.RamGB * 1024 - 512))
 
-    # Provision the dedicated MiOS data disk (shrink C: by 262144 MB, create
-    # NTFS partition for the VHDX) and redirect podman-machine storage onto
-    # it BEFORE `podman machine init`. Honors $env:MIOS_DATA_DISK_LETTER and
-    # $env:MIOS_DATA_DISK_MB env-var overrides; defaults are M:\ and 262144 MB.
+    # Data disk + podman storage redirection happened earlier in
+    # Invoke-DataDiskBootstrap (between Phase 1 and Phase 2). By the
+    # time we reach Phase 3 the partition is provisioned and
+    # CONTAINERS_STORAGE_CONF / podman.connections already point at
+    # the data disk. $HW.DiskGB has also been clamped there.
     $diskGB = $HW.DiskGB
-    if ($env:MIOS_SKIP_DATA_DISK -notin @('1','true','TRUE','yes')) {
-        $shrinkMB    = if ($env:MIOS_DATA_DISK_MB)     { [int]$env:MIOS_DATA_DISK_MB }     else { 262144 }
-        $driveLetter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER }      else { 'M' }
-        try {
-            $dataRoot = Initialize-MiosDataDisk -ShrinkMB $shrinkMB -DriveLetter $driveLetter -VolumeLabel 'MIOS-DEV'
-            Set-PodmanMachineStorageOn -DataRoot $dataRoot
-            # Resize VHDX max to fit the new data disk (free GB minus a small
-            # safety margin). The $HW.DiskGB default was computed against C:'s
-            # free space and would oversubscribe the new partition otherwise.
-            $newFreeGB = [math]::Floor((Get-Volume -DriveLetter $driveLetter).SizeRemaining / 1GB)
-            $clamped   = [math]::Max(80, [math]::Min($HW.DiskGB, $newFreeGB - 8))
-            if ($clamped -ne $HW.DiskGB) {
-                Log-Ok "Clamped VHDX max from $($HW.DiskGB) GB to $clamped GB to fit ${driveLetter}: ($newFreeGB GB free)"
-                $diskGB = $clamped
-            }
-        } catch {
-            Log-Warn "MiOS data-disk provisioning failed: $_"
-            Log-Warn "Continuing with default %LOCALAPPDATA% storage (set MIOS_SKIP_DATA_DISK=1 to silence this)"
-        }
-    }
 
     $initSw = [System.Diagnostics.Stopwatch]::StartNew()
     & podman machine init $BuilderDistro `
@@ -3457,6 +3495,13 @@ if ($activeDistro) {
     if ($BuildOnly) { End-Phase 1 -Fail; throw "-BuildOnly: no 'MiOS' build environment found. Run without -BuildOnly first." }
     Log-Ok "No existing distro -- starting full install"
     End-Phase 1
+
+    # ── Data disk first (full-partition overlay) ─────────────────────────────
+    # Provision M:\ before Phase 2 clones repos, so EVERYTHING (repos,
+    # dev VM VHDX, build artifacts, state, logs) lands on the data
+    # disk instead of needing to migrate later. Phase 3 sees the disk
+    # already in place and skips its own Initialize-MiosDataDisk call.
+    Invoke-DataDiskBootstrap -HW $HW
 
     # ── Phase 2 -- Directories and repos ─────────────────────────────────────
     Start-Phase 2
