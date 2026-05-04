@@ -1282,12 +1282,24 @@ sudo systemctl daemon-reload 2>&1 | tail -3 || true
 # ALWAYS-ON LIGHTWEIGHT SET: Cockpit (web console at :9090), the
 # Podman-Desktop discovery shim that surfaces MiOS containers in PD's
 # UI, and the self-hosted Forgejo forge (small SQLite-backed git host).
+# Plus NVIDIA CDI plumbing (mios-cdi-detect + nvidia-cdi-refresh) so
+# Podman containers on MiOS-DEV can claim /dev/dxg (WSL2 GPU surface)
+# via the same Container Device Interface spec a deployed bare-metal
+# MiOS host uses. mios-cdi-detect.service auto-no-ops when no GPU is
+# present (no /dev/nvidia0 / no /dev/dxg) and explicitly passes
+# --mode=wsl to `nvidia-ctk cdi generate` when systemd-detect-virt
+# reports wsl, so it works correctly on the dev VM out of the box.
 # Each enable is best-effort -- a unit that ConditionVirtualization-skips
 # itself just no-ops with status=inactive (success).
-LIGHT_SET=(cockpit.socket mios-cockpit-link.service mios-forge.service)
+LIGHT_SET=(cockpit.socket mios-cockpit-link.service mios-forge.service \
+           mios-cdi-detect.service nvidia-cdi-refresh.path)
 for svc in "${LIGHT_SET[@]}"; do
-    echo "[quadlet-overlay] enable --now $svc"
-    sudo systemctl enable --now "$svc" 2>&1 | grep -vE 'created symlink' || true
+    if systemctl list-unit-files "$svc" 2>/dev/null | grep -q "$svc"; then
+        echo "[quadlet-overlay] enable --now $svc"
+        sudo systemctl enable --now "$svc" 2>&1 | grep -vE 'created symlink' || true
+    else
+        echo "[quadlet-overlay] skip $svc (unit not present -- pkg may be missing)"
+    fi
 done
 
 # OPT-IN HEAVY SET: AI inference + Forgejo Runner. Gated by env vars
@@ -1302,6 +1314,24 @@ if [[ "${MIOS_DEV_ENABLE_RUNNER:-0}" == "1" ]]; then
     sudo systemctl enable --now mios-forgejo-runner.service 2>&1 | grep -vE 'created symlink' || true
 fi
 
+# Install the operator-facing terminal flatpak so MiOS-DEV mirrors a
+# deployed MiOS host's UX: open Ptyxis on the Windows desktop via WSLg
+# -> default tab spawns into the host shell via flatpak-spawn --host
+# -> the operator types `ollama list`, `mios "..."`, `mios-ollama chat
+# "..."` and hits the Ollama Quadlet on :11434 + LocalAI on :8080
+# directly. Idempotent (--or-update). Also pulls the few other
+# substrate-class flatpaks (Nautilus, Bazaar, Flatseal) so the
+# emulated MiOS environment carries its file manager and app store.
+echo "[quadlet-overlay] installing Ptyxis terminal + substrate flatpaks (one-time, ~400MB)..."
+flatpak remote-add --system --if-not-exists flathub \
+    https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+for ref in org.gnome.Ptyxis org.gnome.Nautilus io.github.kolunmi.Bazaar com.github.tchx84.Flatseal; do
+    if ! flatpak list --system --app --columns=application 2>/dev/null | grep -qx "$ref"; then
+        flatpak install --system --noninteractive --assumeyes --or-update flathub "$ref" \
+            2>&1 | grep -E '^(Installing|Updating|Already|Error|Warning)' || true
+    fi
+done
+
 sudo install -d -m 0755 /var/lib/mios
 sudo touch "$SENTINEL"
 
@@ -1309,6 +1339,8 @@ active=$(systemctl --no-legend list-units 'mios-*' 2>/dev/null | wc -l)
 echo "[quadlet-overlay] done -- $active mios-* units active"
 echo "[quadlet-overlay] Cockpit:        https://localhost:9090/  (host LAN reachable via mirrored networking)"
 echo "[quadlet-overlay] Podman Desktop: containers under MiOS-DEV machine carry openInBrowser labels"
+echo "[quadlet-overlay] Terminal:       Ptyxis flatpak ready -- launch via WSLg, default tab is host shell"
+echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for the local Ollama Quadlet"
 '@
 
     $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($overlayScript))
