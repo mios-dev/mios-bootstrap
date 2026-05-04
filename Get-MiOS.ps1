@@ -120,11 +120,21 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     #
     # HTML-sniff guard: GitHub serves 404s with an HTML body. Without
     # this check iex would execute the HTML as garbage CSS/text.
+    # Note: anchor the HTML-sniff check at the START of the response.
+    # An unanchored '<!DOCTYPE html>' regex would self-match because
+    # the fetched Get-MiOS.ps1 source itself contains the literal
+    # string in this very heredoc (line below) -- so every sniff
+    # would always fire and report the script as HTML. GitHub's 404
+    # page always begins with '<!DOCTYPE html' or '<html' as the very
+    # first characters; a PowerShell script begins with '<#' or
+    # something else PS-specific. StartsWith on a TrimStart'd copy
+    # is unambiguous and avoids the regex self-reference.
     $relaunchCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
 try {
     `$src = Invoke-RestMethod -Uri '$rawUrl' -ErrorAction Stop
-    if (-not `$src -or `$src -match '<!DOCTYPE html>|<html\b') {
+    `$head = if (`$src) { `$src.TrimStart().Substring(0, [Math]::Min(64, `$src.TrimStart().Length)) } else { '' }
+    if (-not `$src -or `$head.StartsWith('<!DOCTYPE') -or `$head.StartsWith('<html')) {
         throw 'Get-MiOS.ps1 fetch returned HTML (404 or wrong branch). URL: $rawUrl'
     }
     & ([scriptblock]::Create(`$src))$forwardSwitches
