@@ -1434,62 +1434,55 @@ fi
 # directly. Idempotent (--or-update). Also pulls the few other
 # substrate-class flatpaks (Nautilus, Bazaar, Flatseal) so the
 # emulated MiOS environment carries its file manager and app store.
-# oh-my-posh: not in Fedora repos -- fetch upstream binary release.
-# /etc/profile.d/mios-prompt.sh wires it into bash + zsh on every
-# login, sourcing the theme at /usr/share/mios/oh-my-posh/mios.omp.json
-# (which the file list above mirrors from the repo).
-if ! command -v oh-my-posh >/dev/null 2>&1; then
-    echo "[quadlet-overlay] installing oh-my-posh from upstream releases..."
-    omp_arch="amd64"; [[ "$(uname -m)" == "aarch64" ]] && omp_arch="arm64"
-    omp_url="https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-linux-${omp_arch}"
-    if curl -fsSL "$omp_url" -o /tmp/oh-my-posh 2>/dev/null; then
-        sudo install -m 0755 /tmp/oh-my-posh /usr/bin/oh-my-posh && rm -f /tmp/oh-my-posh
-        echo "[quadlet-overlay] oh-my-posh installed at /usr/bin/oh-my-posh"
-    else
-        echo "[quadlet-overlay] WARN: oh-my-posh download failed -- prompt stays bash default"
-    fi
-fi
-
-# ollama CLI: not a Fedora RPM -- fetch upstream tarball. Same pattern
-# the build-time automation/37-ollama-prep.sh uses; mirrored here
-# because the dev overlay doesn't run that build phase. The binary
-# binds to OLLAMA_HOST (set in /etc/profile.d/mios-env.sh to
-# http://localhost:11434), which is the MiOS Ollama Quadlet's API.
-# Without this, `ollama list` / `mios-ollama list` fail with
-# command-not-found even though the Ollama Quadlet itself is running.
+# Run the same canonical automation scripts the build pipeline uses,
+# now that `/` IS mios.git's working tree. One install path, no
+# parallel fetch logic to drift. Each script is best-effort
+# (rc != 0 doesn't kill the overlay) and self-skips when the relevant
+# binary already exists.
 #
-# Asset name changed upstream (v0.23+): `ollama-linux-<arch>.tar.zst`
-# (zstd-compressed) instead of the older `.tgz`. We try the new name
-# first, then fall back to the old one.
+# 09-fonts.sh         Geist (Vercel) + Symbols-Only Nerd Font
+# 38-oh-my-posh.sh    Oh-My-Posh static binary -> /usr/bin/oh-my-posh
+# 37-ollama-prep.sh   ollama CLI tarball -> /usr/bin/ollama (build
+#                     pipeline only baked models too; for the dev
+#                     overlay we want the binary only -- the .container
+#                     pulls models on first run)
+echo "[quadlet-overlay] running canonical fetchers (fonts + oh-my-posh + ollama)..."
+for script in /automation/09-fonts.sh \
+              /automation/38-oh-my-posh.sh; do
+    if [[ -x "$script" ]]; then
+        echo "[quadlet-overlay] => $script"
+        sudo bash "$script" 2>&1 | grep -vE '^\+ |^\+\+' | tail -5 || true
+    fi
+done
+
+# ollama CLI: minimal install (binary only, no model bake). The
+# in-build automation/37-ollama-prep.sh starts a transient ollama
+# serve and pulls models -- skip that on the dev overlay; the
+# Ollama Quadlet handles serving + the operator pulls models via
+# `ollama pull <model>` on demand.
 if ! command -v ollama >/dev/null 2>&1; then
-    echo "[quadlet-overlay] installing ollama CLI from upstream releases..."
+    echo "[quadlet-overlay] fetching ollama CLI binary..."
     olm_arch="amd64"; [[ "$(uname -m)" == "aarch64" ]] && olm_arch="arm64"
     olm_tmp="$(mktemp -d)"
-    olm_zst="$olm_tmp/ollama.tar.zst"
-    olm_tgz="$olm_tmp/ollama.tgz"
     olm_extract=""
     if curl -fsSL "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${olm_arch}.tar.zst" \
-            -o "$olm_zst" 2>/dev/null && tar --zstd -xf "$olm_zst" -C "$olm_tmp" 2>/dev/null; then
+            -o "$olm_tmp/ollama.tar.zst" 2>/dev/null \
+            && tar --zstd -xf "$olm_tmp/ollama.tar.zst" -C "$olm_tmp" 2>/dev/null; then
         olm_extract="$olm_tmp"
     elif curl -fsSL "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${olm_arch}.tgz" \
-            -o "$olm_tgz" 2>/dev/null && tar -xzf "$olm_tgz" -C "$olm_tmp" 2>/dev/null; then
+            -o "$olm_tmp/ollama.tgz" 2>/dev/null \
+            && tar -xzf "$olm_tmp/ollama.tgz" -C "$olm_tmp" 2>/dev/null; then
         olm_extract="$olm_tmp"
     fi
     if [[ -n "$olm_extract" ]]; then
         olm_bin="$(find "$olm_extract" -type f -name ollama -perm -u+x 2>/dev/null | head -1)"
         if [[ -n "$olm_bin" ]]; then
             sudo install -m 0755 "$olm_bin" /usr/bin/ollama
-            # Ollama also ships GPU-passthrough libs alongside the binary
-            # (lib/ollama/* with rocBLAS, miopen etc. for GPU inference).
-            # Copy them too if present so `ollama serve --device gpu`
-            # finds the runtime.
             if [[ -d "$olm_extract/lib/ollama" ]]; then
                 sudo install -d -m 0755 /usr/lib/ollama
                 sudo cp -a "$olm_extract/lib/ollama/." /usr/lib/ollama/
             fi
             echo "[quadlet-overlay] ollama installed: $(/usr/bin/ollama --version 2>&1 | head -1)"
-        else
-            echo "[quadlet-overlay] WARN: ollama tarball missing executable -- skip"
         fi
     else
         echo "[quadlet-overlay] WARN: ollama download failed -- /usr/bin/ollama not installed"
