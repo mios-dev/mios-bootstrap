@@ -1401,7 +1401,7 @@ flatpak remote-add --system --if-not-exists flathub \
 # host-side portals/audio/theming these need to render correctly.
 for ref in org.gnome.Ptyxis \
            org.gnome.Nautilus \
-           io.github.kolunmi.Bazaar \
+           org.gnome.Software \
            com.github.tchx84.Flatseal \
            org.gnome.Epiphany; do
     if ! flatpak list --system --app --columns=application 2>/dev/null | grep -qx "$ref"; then
