@@ -2030,6 +2030,155 @@ function New-Shortcut([string]$Path,[string]$Target,[string]$Args="",[string]$De
     $sc.Save()
 }
 
+function Install-WindowsBranding {
+    # Mirror MiOS's Linux branding (Geist + Symbols-Only Nerd Font +
+    # oh-my-posh) onto the Windows host so PowerShell, Windows Terminal,
+    # and any Windows-side terminal that opens MiOS-DEV (Ptyxis flatpak
+    # via WSLg, or just `wsl -d podman-MiOS-DEV`) renders the same
+    # MiOS-themed prompt with the same glyphs.
+    #
+    # Installs:
+    #   1. Geist + Symbols-Only Nerd Font in %LOCALAPPDATA%\Microsoft\
+    #      Windows\Fonts (per-user, no admin needed). Registered via
+    #      HKCU registry so all Windows apps see them.
+    #   2. oh-my-posh.exe in %LOCALAPPDATA%\Programs\oh-my-posh\bin\
+    #      and added to the user's PATH.
+    #   3. PowerShell profile snippet that initializes oh-my-posh with
+    #      the MiOS theme (mios.omp.json from the cloned mios.git repo,
+    #      copied to %APPDATA%\MiOS\mios.omp.json so the profile can
+    #      reach it without depending on $MiosRepoDir resolution).
+    #
+    # Idempotent: each step probes for existing installs first.
+    # Bypass: $env:MIOS_SKIP_WINDOWS_BRANDING=1.
+    if ($env:MIOS_SKIP_WINDOWS_BRANDING -in @('1','true','TRUE','yes')) {
+        Log-Warn "MIOS_SKIP_WINDOWS_BRANDING set -- Windows branding install skipped"
+        return
+    }
+    Set-Step "Installing oh-my-posh + Geist + Nerd fonts on Windows host..."
+
+    # ── 1. Fonts (per-user; no admin needed) ─────────────────────────
+    $fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+    if (-not (Test-Path $fontDir)) { New-Item -ItemType Directory -Path $fontDir -Force | Out-Null }
+    $regKey = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+    if (-not (Test-Path $regKey)) { New-Item -Path $regKey -Force | Out-Null }
+
+    function Install-FontFile([string]$Source) {
+        try {
+            $name = [System.IO.Path]::GetFileName($Source)
+            $dest = Join-Path $fontDir $name
+            if (Test-Path $dest) { return $false }
+            Copy-Item -Path $Source -Destination $dest -Force
+            $ext  = [System.IO.Path]::GetExtension($name).ToLower()
+            $face = [System.IO.Path]::GetFileNameWithoutExtension($name)
+            $regName = if ($ext -eq '.otf') { "$face (OpenType)" } else { "$face (TrueType)" }
+            New-ItemProperty -Path $regKey -Name $regName -Value $dest -PropertyType String -Force | Out-Null
+            return $true
+        } catch { Write-Log "font-install: $name : $($_.Exception.Message)" "WARN"; return $false }
+    }
+
+    # Geist (Vercel) -- shallow clone the upstream repo, copy *.otf + *.ttf
+    $geistTmp = Join-Path $env:TEMP "mios-geist-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+    try {
+        & git clone --depth=1 --quiet https://github.com/vercel/geist-font.git $geistTmp 2>&1 | Out-Null
+        if (Test-Path $geistTmp) {
+            $count = 0
+            Get-ChildItem -Path $geistTmp -Recurse -Include '*.otf','*.ttf' | ForEach-Object {
+                if (Install-FontFile -Source $_.FullName) { $count++ }
+            }
+            Log-Ok "Geist fonts installed (Windows per-user, $count new)"
+        } else { Log-Warn "Geist clone failed -- skipping Windows font install" }
+    } finally {
+        if (Test-Path $geistTmp) { Remove-Item $geistTmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    # Symbols-Only Nerd Font (Powerline + Devicon glyphs the omp theme uses)
+    $nerdTmp = Join-Path $env:TEMP "mios-nerd-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+    New-Item -ItemType Directory -Path $nerdTmp -Force | Out-Null
+    try {
+        $nerdUrl = 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/NerdFontsSymbolsOnly.zip'
+        $nerdZip = Join-Path $nerdTmp 'NerdFontsSymbolsOnly.zip'
+        Invoke-WebRequest -Uri $nerdUrl -OutFile $nerdZip -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -Path $nerdZip -DestinationPath $nerdTmp -Force
+        $count = 0
+        Get-ChildItem -Path $nerdTmp -Recurse -Include '*.otf','*.ttf' | ForEach-Object {
+            if (Install-FontFile -Source $_.FullName) { $count++ }
+        }
+        Log-Ok "Symbols-Only Nerd Font installed (Windows per-user, $count new)"
+    } catch { Log-Warn "Nerd Font fetch failed: $($_.Exception.Message)" }
+    finally { if (Test-Path $nerdTmp) { Remove-Item $nerdTmp -Recurse -Force -ErrorAction SilentlyContinue } }
+
+    # ── 2. oh-my-posh.exe (per-user) ─────────────────────────────────
+    $ompDir  = Join-Path $env:LOCALAPPDATA 'Programs\oh-my-posh\bin'
+    $ompExe  = Join-Path $ompDir 'oh-my-posh.exe'
+    if (-not (Test-Path $ompExe)) {
+        try {
+            New-Item -ItemType Directory -Path $ompDir -Force | Out-Null
+            $arch = if ([Environment]::Is64BitOperatingSystem) {
+                if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+            } else { '386' }
+            $url = "https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-windows-$arch.exe"
+            Invoke-WebRequest -Uri $url -OutFile $ompExe -UseBasicParsing -ErrorAction Stop
+            Log-Ok "oh-my-posh.exe installed at $ompExe"
+        } catch { Log-Warn "oh-my-posh download failed: $($_.Exception.Message)"; return }
+    }
+
+    # Add the install dir to the user's PATH if not already present.
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (-not ($userPath -split ';' | Where-Object { $_ -ieq $ompDir })) {
+        [Environment]::SetEnvironmentVariable('Path', "$userPath;$ompDir", 'User')
+        Log-Ok "Added $ompDir to user PATH"
+    }
+
+    # ── 3. PowerShell profile + theme ────────────────────────────────
+    $miosThemeSrc = Join-Path $MiosRepoDir 'mios\usr\share\mios\oh-my-posh\mios.omp.json'
+    if (-not (Test-Path $miosThemeSrc)) {
+        $miosThemeSrc = Join-Path $MiosRepoDir 'mios-bootstrap\usr\share\mios\oh-my-posh\mios.omp.json'
+    }
+    if (Test-Path $miosThemeSrc) {
+        $themeDst = Join-Path $env:APPDATA 'MiOS\mios.omp.json'
+        New-Item -ItemType Directory -Path (Split-Path $themeDst) -Force | Out-Null
+        Copy-Item -Path $miosThemeSrc -Destination $themeDst -Force
+        Log-Ok "MiOS oh-my-posh theme staged at $themeDst"
+
+        # Inject (or refresh) the init line in the user's PowerShell profile.
+        # Marker comments delimit the MiOS-managed block so re-runs are
+        # idempotent (we replace the block, not append).
+        $profilePath = $PROFILE.CurrentUserAllHosts
+        if (-not $profilePath) { $profilePath = $PROFILE }
+        $profileDir  = Split-Path $profilePath -Parent
+        if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
+        $existing = if (Test-Path $profilePath) { Get-Content $profilePath -Raw } else { '' }
+        $marker   = '# >>> MiOS oh-my-posh init >>>'
+        $endMark  = '# <<< MiOS oh-my-posh init <<<'
+        $block = @"
+$marker
+# Auto-generated by mios-bootstrap/build-mios.ps1. Edit at your own
+# risk -- block is replaced on every re-run between the markers.
+if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
+    `$miosTheme = "`$env:APPDATA\MiOS\mios.omp.json"
+    if (Test-Path `$miosTheme) {
+        oh-my-posh init pwsh --config `$miosTheme | Invoke-Expression
+    }
+}
+$endMark
+"@
+        if ($existing -match [regex]::Escape($marker)) {
+            $pattern = "(?s)$([regex]::Escape($marker)).*?$([regex]::Escape($endMark))"
+            $existing = [regex]::Replace($existing, $pattern, [System.Text.RegularExpressions.Regex]::Escape($block).Replace('\','\\'))
+            # Simpler: just reconstruct by replacing the whole block.
+            $existing = [regex]::Replace((if (Test-Path $profilePath) { Get-Content $profilePath -Raw } else { '' }), $pattern, $block)
+        } else {
+            $existing = ($existing.TrimEnd() + "`n`n" + $block + "`n").TrimStart()
+        }
+        Set-Content -Path $profilePath -Value $existing -Encoding UTF8 -NoNewline
+        Log-Ok "PowerShell profile updated: $profilePath"
+    } else {
+        Log-Warn "MiOS oh-my-posh theme not found in cloned repos -- profile not updated"
+    }
+
+    Log-Ok "Windows-side branding installed (open a NEW pwsh window to see the MiOS prompt)"
+}
+
 # =============================================================================
 # MAIN -- wrapped so the window NEVER closes on error
 # =============================================================================
@@ -2381,6 +2530,12 @@ if ($activeDistro) {
     End-Phase 5
 
     # ── Optional GUI configurator (between Phase 5 and Phase 6) ──────────────
+    # Install oh-my-posh + Geist + Symbols-Only Nerd Font on the
+    # Windows host (per-user, no admin needed) so PowerShell terminals
+    # render the same MiOS-themed prompt the deployed Linux side does.
+    # Idempotent; bypass via $env:MIOS_SKIP_WINDOWS_BRANDING=1.
+    Install-WindowsBranding
+
     # Operator can pre-fill mios.toml fields via the HTML page; the
     # Phase-6 prompts that follow then default to whatever was saved.
     # Skipped when -Unattended or MIOS_NO_CONFIGURATOR=1.
