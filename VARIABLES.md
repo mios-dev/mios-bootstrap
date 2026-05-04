@@ -85,7 +85,10 @@ Machine-readable index: `/usr/share/mios/ai/vars.json`
 |---|---|---|
 | `MIOS_RECHUNK_MAX_LAYERS` | `67` | bootc-base-imagectl rechunk cap |
 | `MIOS_WSL_DISTRO` | `'MiOS'` | WSL2 deployed distro name |
-| `MIOS_BUILDER_DISTRO` | `MiOS-BUILDER` | WSL2 Podman machine name |
+| `MIOS_BUILDER_DISTRO` | `MiOS-DEV` | Podman-WSL2 dev machine name (renamed from MiOS-BUILDER in v0.2.3; legacy still recognized) |
+| `MIOS_DATA_DISK_MB` | `262144` | Size in MB to shrink C: by and create a dedicated MiOS-DEV partition on |
+| `MIOS_DATA_DISK_LETTER` | `M` | Drive letter assigned to the new partition |
+| `MIOS_SKIP_DATA_DISK` | (unset) | Set to `1` to skip the C: shrink + new-partition step entirely |
 
 ---
 
@@ -104,7 +107,9 @@ Defined in the `# Paths & constants` block at the top of `install.ps1`.
 | `$MiosLogDir` | `%LOCALAPPDATA%\MiOS\logs` | Log file directory |
 | `$MiosRepoUrl` | `https://github.com/mios-dev/mios.git` | System repo URL |
 | `$MiosBootstrapUrl` | `https://github.com/mios-dev/mios-bootstrap.git` | Bootstrap repo URL |
-| `$BuilderDistro` | `MiOS-BUILDER` | Podman machine WSL distro name |
+| `$BuilderDistro` | `MiOS-DEV` | Podman machine name (alias of `$DevDistro`, retained for back-compat) |
+| `$DevDistro` | `MiOS-DEV` | Canonical podman-machine name (SSOT) |
+| `$LegacyDevName` | `MiOS-BUILDER` | Legacy name accepted at install-time so prior installs aren't blown away |
 | `$MiosWslDistro` | `'MiOS'` | Deployed 'MiOS' WSL2 distro name |
 | `$LegacyDistro` | `podman-machine-default` | Legacy Podman distro name |
 

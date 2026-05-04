@@ -55,7 +55,13 @@ $MiosScope = if ($script:IsAdmin) { "AllUsers" } else { "CurrentUser" }
 $MiosVersion      = "v0.2.2"
 $MiosRepoUrl      = "https://github.com/mios-dev/mios.git"
 $MiosBootstrapUrl = "https://github.com/mios-dev/mios-bootstrap.git"
-$BuilderDistro    = "MiOS-BUILDER"
+# Podman machine name -- canonical "MiOS-DEV" (was MiOS-BUILDER pre-v0.2.3).
+# Backed by WSL distro `podman-MiOS-DEV` once `podman machine init` runs.
+# Both names are recognized at install-time so existing MiOS-BUILDER
+# distros are accepted (and not destroyed) until the next podman machine rm.
+$DevDistro        = "MiOS-DEV"
+$BuilderDistro    = $DevDistro
+$LegacyDevName    = "MiOS-BUILDER"
 $MiosWslDistro    = "MiOS"
 $LegacyDistro     = "podman-machine-default"
 
@@ -145,7 +151,7 @@ $script:PhaseNames = @(
     "Hardware + Prerequisites",
     "Detecting environment",
     "Directories and repos",
-    "MiOS-BUILDER distro",
+    "MiOS-DEV distro",
     "WSL2 configuration",
     "Verifying build context",
     "Identity",
@@ -525,21 +531,26 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
 }
 
 function Open-Configurator([string]$RepoDir) {
-    # Optional GUI step. Open /usr/share/mios/configurator/index.html
-    # in the operator's default browser, stage a writable mios.toml at
-    # a known path, and wait for the operator to save before continuing
-    # the build. The HTML uses File System Access API so the save
-    # overwrites in place -- no Downloads detour, no "(1)" suffix.
+    # Open /usr/share/mios/configurator/index.html for the operator to
+    # edit the unified mios.toml. Canonical path: launch Epiphany IN
+    # MiOS-DEV via WSLg so the configurator runs inside the same
+    # environment that built it. The window appears on the Windows
+    # desktop; the saved mios.toml lands in the dev VM's FHS-compliant
+    # ~/Downloads (which IS the bootc-style home/user/Downloads
+    # location, since MiOS-DEV mirrors the deployed MiOS layout). The
+    # PowerShell side then picks up that file and overlays it as the
+    # new source for the build pipeline -- so the operator's Epiphany
+    # save IS the build's input.
+    #
+    # Falls back to the operator's default Windows browser if MiOS-DEV
+    # isn't reachable or Epiphany is unavailable (covers fresh installs
+    # before the dev distro has finished provisioning).
     if ($Unattended) { return }
     if ($env:MIOS_NO_CONFIGURATOR -eq "1") { return }
 
-    $resp = Read-Line "Open MiOS configurator (HTML) to edit mios.toml in browser?" "n"
+    $resp = Read-Line "Open MiOS configurator (Epiphany on MiOS-DEV via WSLg)?" "y"
     if ($resp -notmatch '^(y|yes|true|1)$') { return }
 
-    # Locate the configurator HTML. Prefer the cloned mios.git copy,
-    # fall back to whatever's installed at the canonical FHS path,
-    # otherwise fall back to the bootstrap's local share/system mirror
-    # staged by Phase-2's robocopy.
     $candidates = @(
         (Join-Path $RepoDir "mios\usr\share\mios\configurator\index.html"),
         (Join-Path $MiosShareDir "system\usr\share\mios\configurator\index.html"),
@@ -552,10 +563,155 @@ function Open-Configurator([string]$RepoDir) {
         return
     }
 
-    # Stage a writable mios.toml the configurator can bind to. Pick the
-    # highest-precedence existing layer; otherwise copy the cloned
-    # vendor template. The operator's browser will overwrite this file
-    # in place via the FSA write handle.
+    if (Open-ConfiguratorInDev -RepoDir $RepoDir -Html $html) { return }
+    Log-Warn "MiOS-DEV / Epiphany unavailable -- falling back to Windows default browser"
+    Open-ConfiguratorOnWindows -RepoDir $RepoDir -Html $html
+}
+
+function Open-ConfiguratorInDev([string]$RepoDir, [string]$Html) {
+    # Probe MiOS-DEV (canonical name then legacy fallback)
+    $wslDistro = $null
+    foreach ($candidate in @("podman-$DevDistro", $DevDistro, "podman-$LegacyDevName")) {
+        $probe = (& wsl.exe -d $candidate --exec bash -c "echo ok" 2>$null) -join ""
+        if ($probe.Trim() -eq "ok") { $wslDistro = $candidate; break }
+    }
+    if (-not $wslDistro) { return $false }
+
+    # Find the regular user (uid 1000) inside the dev VM. Podman machines
+    # default to "user"; we honor whatever's actually there.
+    $devUser = ((& wsl.exe -d $wslDistro --exec bash -c "getent passwd 1000 | cut -d: -f1" 2>$null) -join "").Trim()
+    if (-not $devUser) { $devUser = "user" }
+
+    # Convert C:\path\index.html -> /mnt/c/path/index.html
+    $drive    = $Html.Substring(0,1).ToLower()
+    $htmlWsl  = "/mnt/$drive" + ($Html.Substring(2) -replace '\\','/')
+
+    # Resolve the seed mios.toml the configurator should pre-load. Pick
+    # the highest-precedence existing layer; the bash side will copy it
+    # into the dev VM's ~/Downloads/mios.toml as the working file.
+    $sources = @(
+        (Join-Path $env:APPDATA "MiOS\mios.toml"),
+        (Join-Path $RepoDir "mios-bootstrap\mios.toml"),
+        (Join-Path $RepoDir "mios\usr\share\mios\mios.toml")
+    )
+    $seedToml = $null
+    foreach ($s in $sources) { if (Test-Path $s) { $seedToml = $s; break } }
+    $seedTomlWsl = ""
+    if ($seedToml) {
+        $sd = $seedToml.Substring(0,1).ToLower()
+        $seedTomlWsl = "/mnt/$sd" + ($seedToml.Substring(2) -replace '\\','/')
+    }
+
+    Write-Host ""
+    Write-Host "  Launching Epiphany on $wslDistro (user: $devUser) ..." -ForegroundColor Cyan
+    Write-Host "  Configurator URL:    file://~/Downloads/mios-configurator.html" -ForegroundColor Gray
+    Write-Host "  Working mios.toml:   /home/$devUser/Downloads/mios.toml" -ForegroundColor Gray
+    Write-Host "  WSLg routes the Epiphany window to the Windows desktop." -ForegroundColor Gray
+    Write-Host ""
+
+    $bashScript = @'
+#!/usr/bin/env bash
+# Generated by build-mios.ps1 / Open-ConfiguratorInDev.
+set -euo pipefail
+SRC_HTML="${1:?html path required}"
+SEED_TOML="${2:-}"
+USER_NAME="${3:-user}"
+USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+DL_DIR="$USER_HOME/Downloads"
+
+sudo -u "$USER_NAME" install -d -m 0755 "$DL_DIR"
+
+# Seed the working mios.toml in ~/Downloads. The configurator's "Pick file"
+# button binds to it; "Save" overwrites in place (File System Access API)
+# or, if the WebKit build lacks FSA, the operator triggers a download that
+# also lands here.
+if [[ -n "$SEED_TOML" && -r "$SEED_TOML" ]]; then
+    sudo -u "$USER_NAME" install -m 0644 "$SEED_TOML" "$DL_DIR/mios.toml"
+elif [[ ! -f "$DL_DIR/mios.toml" ]]; then
+    sudo -u "$USER_NAME" touch "$DL_DIR/mios.toml"
+fi
+
+# Copy the HTML configurator into ~/Downloads where Epiphany's flatpak
+# sandbox can read it via the home-portal default exposure.
+sudo -u "$USER_NAME" install -m 0644 "$SRC_HTML" "$DL_DIR/mios-configurator.html"
+
+# Ensure flathub remote + Epiphany flatpak are present (system-wide install).
+flatpak remote-add --system --if-not-exists flathub \
+    https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+if ! flatpak list --system --app --columns=application 2>/dev/null | grep -qx org.gnome.Epiphany; then
+    echo "[configurator] installing org.gnome.Epiphany flatpak (one-time, ~250 MB)..."
+    flatpak install --system --noninteractive --assumeyes --or-update flathub org.gnome.Epiphany \
+        2>&1 | grep -E '^(Installing|Updating|Already|Error|Warning)' || true
+fi
+
+# Resolve the WSLg display sockets for the regular user. WSLg sets
+# WAYLAND_DISPLAY=wayland-0 + DISPLAY=:0 in $HOME/.profile, but a
+# sudo invocation strips those -- pull them from /run/user/1000.
+RT="/run/user/$(id -u "$USER_NAME")"
+[[ -d "$RT" ]] || RT="/tmp/runtime-$USER_NAME"
+sudo -u "$USER_NAME" mkdir -p "$RT"
+
+# Launch Epiphany detached. Browsers refuse to run as root, so we drop
+# to the regular user. The flatpak run wrapper picks up the seat's
+# Wayland socket via XDG_RUNTIME_DIR.
+sudo -u "$USER_NAME" \
+    XDG_RUNTIME_DIR="$RT" \
+    DISPLAY=":0" \
+    WAYLAND_DISPLAY="wayland-0" \
+    PULSE_SERVER="unix:$RT/pulse/native" \
+    flatpak run org.gnome.Epiphany \
+        "file://$DL_DIR/mios-configurator.html" >/dev/null 2>&1 &
+disown
+echo "[configurator] Epiphany launched -- window should appear on the Windows desktop"
+echo "[configurator] save target: $DL_DIR/mios.toml"
+'@
+
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bashScript))
+    $stage = "set -e; echo '$b64' | base64 -d > /tmp/launch-config.sh && chmod +x /tmp/launch-config.sh; " +
+             "/tmp/launch-config.sh '$htmlWsl' '$seedTomlWsl' '$devUser'"
+    & wsl.exe -d $wslDistro --exec bash -c $stage 2>&1 | ForEach-Object { Write-Log "configurator: $_" }
+    if ($LASTEXITCODE -ne 0) { Log-Warn "Epiphany launch returned rc=$LASTEXITCODE -- falling back"; return $false }
+
+    Write-Host ""
+    Write-Host "  In Epiphany on the Windows desktop:" -ForegroundColor Cyan
+    Write-Host "    1. Click 'Pick file' (or 'Open (fallback)') -> ~/Downloads/mios.toml" -ForegroundColor Gray
+    Write-Host "    2. Edit identity / AI / desktop / flatpaks / quadlets" -ForegroundColor Gray
+    Write-Host "    3. Click 'Save' -- the file overwrites ~/Downloads/mios.toml" -ForegroundColor Gray
+    Write-Host ""
+    $null = Read-Host "  Press Enter when finished editing in Epiphany"
+
+    # Pick up the saved mios.toml from MiOS-DEV's ~/Downloads and
+    # promote it as the build source. We write to BOTH:
+    #   1. %APPDATA%\MiOS\mios.toml   -- runtime per-user overlay
+    #   2. mios-bootstrap clone root   -- seed-merge inputs to podman build
+    # so the very next build/install pass uses the operator's edits.
+    $tomlContent = (& wsl.exe -d $wslDistro --user $devUser --exec cat "/home/$devUser/Downloads/mios.toml" 2>$null) -join "`n"
+    if ([string]::IsNullOrWhiteSpace($tomlContent)) {
+        Log-Warn "No saved mios.toml found at /home/$devUser/Downloads/ -- continuing with vendor default"
+        return $true
+    }
+
+    $userLayer = Join-Path $env:APPDATA "MiOS\mios.toml"
+    $userDir   = Split-Path -Parent $userLayer
+    if (-not (Test-Path $userDir)) { New-Item -ItemType Directory -Path $userDir -Force | Out-Null }
+    [System.IO.File]::WriteAllText($userLayer, $tomlContent, [Text.UTF8Encoding]::new($false))
+
+    $bootstrapToml = Join-Path $RepoDir "mios-bootstrap\mios.toml"
+    if (Test-Path (Split-Path -Parent $bootstrapToml)) {
+        [System.IO.File]::WriteAllText($bootstrapToml, $tomlContent, [Text.UTF8Encoding]::new($false))
+        Log-Ok "Saved mios.toml -> $userLayer + $bootstrapToml (build pipeline picks up on next pass)"
+    } else {
+        Log-Ok "Saved mios.toml -> $userLayer"
+    }
+    return $true
+}
+
+function Open-ConfiguratorOnWindows([string]$RepoDir, [string]$Html) {
+    # Legacy / fallback path: run the configurator in the operator's
+    # default Windows browser. Used when MiOS-DEV isn't reachable yet
+    # (e.g. fresh install before Phase 3 finishes) or when WSLg is
+    # disabled. Saves go through the Windows Downloads folder via the
+    # standard <input type="file"> + downloads flow.
     $stagingDir = Join-Path $env:TEMP "mios-configurator"
     if (-not (Test-Path $stagingDir)) { New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null }
     $stamp   = [datetime]::Now.ToString("yyyyMMdd-HHmmss")
@@ -567,43 +723,29 @@ function Open-Configurator([string]$RepoDir) {
     )
     $src = $null
     foreach ($s in $sources) { if (Test-Path $s) { $src = $s; break } }
-    if ($src) {
-        Copy-Item -Path $src -Destination $staging -Force
-    } else {
-        New-Item -ItemType File -Path $staging -Force | Out-Null
-    }
+    if ($src) { Copy-Item -Path $src -Destination $staging -Force }
+    else      { New-Item -ItemType File -Path $staging -Force | Out-Null }
 
-    # Build the file:// URL with the staging path as a query param so
-    # the HTML banner shows the operator exactly where to save.
     $stagingForUrl = ($staging -replace '\\', '/' -replace ' ', '%20')
-    $url = "file:///$($html -replace '\\', '/' -replace ' ', '%20')?suggested_path=$stagingForUrl"
-
+    $url = "file:///$($Html -replace '\\', '/' -replace ' ', '%20')?suggested_path=$stagingForUrl"
     Write-Host ""
-    Write-Host "  Opening configurator:" -ForegroundColor Cyan
-    Write-Host "    $url"
-    Write-Host "  Staging file:" -ForegroundColor Cyan
-    Write-Host "    $staging"
-    Write-Host "  In the browser: click 'Pick file' -> open the staging file -> edit -> Save."
+    Write-Host "  Opening configurator: $url" -ForegroundColor Cyan
+    Write-Host "  Staging file:         $staging" -ForegroundColor Cyan
     Write-Host ""
-
-    # Start-Process honors the user's default browser association.
-    try {
-        Start-Process $url -ErrorAction Stop
-    } catch {
-        Write-Log "Browser launch failed: $($_.Exception.Message). Open manually: $url" "WARN"
-    }
-
+    try { Start-Process $url -ErrorAction Stop }
+    catch { Log-Warn "Browser launch failed: $($_.Exception.Message). Open manually: $url" }
     $null = Read-Host "  Press Enter when finished editing in the browser"
 
-    # Promote the staged file to the per-user layer (%APPDATA%\MiOS).
-    # Per-user has highest precedence in the overlay, so this becomes
-    # the active config without needing admin elevation.
     if ((Test-Path $staging) -and ((Get-Item $staging).Length -gt 0)) {
         $userLayer = Join-Path $env:APPDATA "MiOS\mios.toml"
         $userDir   = Split-Path -Parent $userLayer
         if (-not (Test-Path $userDir)) { New-Item -ItemType Directory -Path $userDir -Force | Out-Null }
         Copy-Item -Path $staging -Destination $userLayer -Force
-        Log-Ok "Staged $staging -> $userLayer"
+        $bootstrapToml = Join-Path $RepoDir "mios-bootstrap\mios.toml"
+        if (Test-Path (Split-Path -Parent $bootstrapToml)) {
+            Copy-Item -Path $staging -Destination $bootstrapToml -Force
+        }
+        Log-Ok "Staged $staging -> $userLayer (+ bootstrap clone if present)"
     }
 }
 
@@ -694,14 +836,162 @@ function Sync-RepoToDistro([string]$Distro, [string]$WinPath) {
     } catch { return $false }
 }
 
+function Initialize-MiosDataDisk {
+    <#
+    .SYNOPSIS
+        Shrink C: by exactly $ShrinkMB and create a dedicated MiOS-DEV partition
+        in the freed space. Redirect podman-machine storage onto that partition
+        so MiOS-DEV's VHDX (which internally hosts the ext4 root) lives on the
+        new drive end-to-end.
+
+    .NOTES
+        WSL2 STORES DISTROS AS VHDX FILES. The VHDX format requires a Windows-
+        accessible host filesystem (NTFS or ReFS) -- a raw ext4 host partition
+        cannot host a VHDX. The new partition is therefore formatted NTFS, and
+        MiOS-DEV's Linux root inside the VHDX *is* ext4 (mkfs'd by WSL2 at first
+        boot). Result: the operator's "ext partition for MiOS-DEV" requirement
+        is satisfied at the WSL/Linux layer, with the host wrapper as the thin
+        NTFS shell that WSL2 strictly requires.
+
+        Idempotent: a partition labeled $VolumeLabel on $DriveLetter is treated
+        as already-initialized and the function returns without shrinking again.
+    #>
+    param(
+        [int]$ShrinkMB     = 262144,
+        [string]$DriveLetter = 'M',
+        [string]$VolumeLabel = 'MIOS-DEV'
+    )
+
+    Set-Step "Sizing MiOS data disk ($ShrinkMB MB on ${DriveLetter}:)..."
+
+    # 0. Already-initialized? Skip.
+    $existing = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
+    if ($existing -and $existing.FileSystemLabel -eq $VolumeLabel) {
+        Log-Ok "MiOS data disk already on ${DriveLetter}: ($([math]::Round($existing.Size/1GB,1)) GB, $($existing.FileSystem))"
+        return "${DriveLetter}:\"
+    }
+    if ($existing) {
+        throw "Drive ${DriveLetter}: already exists with label '$($existing.FileSystemLabel)' -- pass a different -DriveLetter or remove the volume manually"
+    }
+
+    # 1. Locate C: partition + its disk
+    $sysLetter = ([Environment]::GetEnvironmentVariable('SystemDrive')).TrimEnd(':')
+    $cPart = Get-Partition -DriveLetter $sysLetter
+    $supported = Get-PartitionSupportedSize -DriveLetter $sysLetter
+    $shrinkBytes = [int64]$ShrinkMB * 1MB
+    $newCSize = $cPart.Size - $shrinkBytes
+
+    if ($shrinkBytes -gt ($cPart.Size - $supported.SizeMin)) {
+        throw "Cannot shrink ${sysLetter}: by $ShrinkMB MB. Min partition size is $([math]::Round($supported.SizeMin/1GB,1)) GB; current $([math]::Round($cPart.Size/1GB,1)) GB; max shrinkable $([math]::Round(($cPart.Size-$supported.SizeMin)/1GB,1)) GB. Free space on ${sysLetter}: or move pagefile/hibernation file to allow more shrink."
+    }
+
+    # 2. Free space on disk after shrink (for new partition placement)
+    $disk = Get-Disk -Number $cPart.DiskNumber
+    if ($disk.PartitionStyle -ne 'GPT' -and $disk.PartitionStyle -ne 'MBR') {
+        throw "Disk $($disk.Number) has unsupported partition style '$($disk.PartitionStyle)'"
+    }
+
+    # 3. Shrink C:
+    Set-Step "Shrinking ${sysLetter}: $([math]::Round($cPart.Size/1GB,1))GB -> $([math]::Round($newCSize/1GB,1))GB ..."
+    Resize-Partition -DriveLetter $sysLetter -Size $newCSize -ErrorAction Stop
+    Log-Ok "${sysLetter}: shrunk by $ShrinkMB MB"
+
+    # 4. Create new partition in freed space, exact size match
+    Set-Step "Creating $VolumeLabel partition (${ShrinkMB}MB) on disk $($disk.Number)..."
+    $newPart = New-Partition -DiskNumber $disk.Number -Size $shrinkBytes -DriveLetter $DriveLetter -ErrorAction Stop
+
+    # 5. Format NTFS (host wrapper -- VHDX inside carries ext4)
+    Format-Volume -DriveLetter $DriveLetter -FileSystem NTFS -NewFileSystemLabel $VolumeLabel `
+        -AllocationUnitSize 4096 -Confirm:$false -Force | Out-Null
+    Log-Ok "${DriveLetter}: created (${ShrinkMB}MB NTFS, label=$VolumeLabel) -- VHDX inside hosts ext4"
+
+    return "${DriveLetter}:\"
+}
+
+function Set-PodmanMachineStorageOn {
+    <#
+    .SYNOPSIS
+        Junction %LOCALAPPDATA%\containers\podman\machine -> $DataRoot\podman\machine
+        BEFORE `podman machine init` runs, so MiOS-DEV's VHDX is created on the
+        new drive in the first place (no post-hoc move + symlink dance needed).
+
+    .NOTES
+        Idempotent: existing junction with the same target is left alone. If a
+        real directory already exists at the default path, its contents are
+        moved over and the directory replaced with a junction.
+    #>
+    param([Parameter(Mandatory)][string]$DataRoot)
+
+    $defaultDir = Join-Path $env:LOCALAPPDATA 'containers\podman\machine'
+    $targetDir  = Join-Path $DataRoot 'podman\machine'
+    if (-not (Test-Path $targetDir)) {
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+    }
+
+    if (Test-Path $defaultDir) {
+        $item = Get-Item $defaultDir -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            $current = $item.Target -join ''
+            if ($current -and ($current -ieq $targetDir -or $current -ieq "\??\$targetDir")) {
+                Log-Ok "podman-machine storage already junctioned -> $targetDir"
+                return
+            }
+            # Different target -- remove and re-link
+            cmd /c rmdir "`"$defaultDir`"" | Out-Null
+        } else {
+            # Real directory exists -- move children to target then remove
+            Set-Step "Migrating existing podman-machine state to $targetDir ..."
+            Get-ChildItem $defaultDir -Force | Move-Item -Destination $targetDir -Force
+            Remove-Item $defaultDir -Force -Recurse -ErrorAction SilentlyContinue
+        }
+    } else {
+        $parent = Split-Path $defaultDir -Parent
+        if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    }
+
+    # Create the junction (cmd's mklink is the standards path for NTFS reparse points)
+    cmd /c mklink /J "`"$defaultDir`"" "`"$targetDir`"" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to junction $defaultDir -> $targetDir (mklink exit $LASTEXITCODE)"
+    }
+    Log-Ok "podman-machine storage junctioned $defaultDir -> $targetDir"
+}
+
 function New-BuilderDistro([hashtable]$HW) {
-    Set-Step "Initializing MiOS-BUILDER ($($HW.Cpus) CPUs / $($HW.RamGB)GB / $($HW.DiskGB)GB disk)"
+    Set-Step "Initializing $DevDistro ($($HW.Cpus) CPUs / $($HW.RamGB)GB / $($HW.DiskGB)GB disk)"
     # Cap at the OS-reported physical RAM (what podman validates) minus 512 MB safety margin.
     # Nominal $HW.RamGB rounds up from actual hardware, causing podman to reject the request.
     $ramMB = [math]::Max(4096, [math]::Min($HW.OsTotalRamMB - 512, $HW.RamGB * 1024 - 512))
+
+    # Provision the dedicated MiOS data disk (shrink C: by 262144 MB, create
+    # NTFS partition for the VHDX) and redirect podman-machine storage onto
+    # it BEFORE `podman machine init`. Honors $env:MIOS_DATA_DISK_LETTER and
+    # $env:MIOS_DATA_DISK_MB env-var overrides; defaults are M:\ and 262144 MB.
+    $diskGB = $HW.DiskGB
+    if ($env:MIOS_SKIP_DATA_DISK -notin @('1','true','TRUE','yes')) {
+        $shrinkMB    = if ($env:MIOS_DATA_DISK_MB)     { [int]$env:MIOS_DATA_DISK_MB }     else { 262144 }
+        $driveLetter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER }      else { 'M' }
+        try {
+            $dataRoot = Initialize-MiosDataDisk -ShrinkMB $shrinkMB -DriveLetter $driveLetter -VolumeLabel 'MIOS-DEV'
+            Set-PodmanMachineStorageOn -DataRoot $dataRoot
+            # Resize VHDX max to fit the new data disk (free GB minus a small
+            # safety margin). The $HW.DiskGB default was computed against C:'s
+            # free space and would oversubscribe the new partition otherwise.
+            $newFreeGB = [math]::Floor((Get-Volume -DriveLetter $driveLetter).SizeRemaining / 1GB)
+            $clamped   = [math]::Max(80, [math]::Min($HW.DiskGB, $newFreeGB - 8))
+            if ($clamped -ne $HW.DiskGB) {
+                Log-Ok "Clamped VHDX max from $($HW.DiskGB) GB to $clamped GB to fit ${driveLetter}: ($newFreeGB GB free)"
+                $diskGB = $clamped
+            }
+        } catch {
+            Log-Warn "MiOS data-disk provisioning failed: $_"
+            Log-Warn "Continuing with default %LOCALAPPDATA% storage (set MIOS_SKIP_DATA_DISK=1 to silence this)"
+        }
+    }
+
     $initSw = [System.Diagnostics.Stopwatch]::StartNew()
     & podman machine init $BuilderDistro `
-        --cpus $HW.Cpus --memory $ramMB --disk-size $HW.DiskGB `
+        --cpus $HW.Cpus --memory $ramMB --disk-size $diskGB `
         --rootful --now 2>&1 | ForEach-Object {
             Write-Log "podman-init: $_"
             if ($initSw.ElapsedMilliseconds -ge 150) {
@@ -713,12 +1003,12 @@ function New-BuilderDistro([hashtable]$HW) {
         }
     if ($LASTEXITCODE -ne 0) { throw "podman machine init failed (exit $LASTEXITCODE)" }
     & podman machine set --default $BuilderDistro 2>&1 | Out-Null
-    Log-Ok "MiOS-BUILDER created and set as default Podman machine"
+    Log-Ok "$DevDistro created and set as default Podman machine"
 
     # Rootful machine-os distros are not accessible via wsl.exe or podman machine ssh.
     # Build runs from the Windows Podman client via the machine's API -- no exec needed.
     # Just verify the API is up (it should be immediately after --now).
-    Set-Step "Verifying MiOS-BUILDER Podman API..."
+    Set-Step "Verifying $DevDistro Podman API..."
     $deadline = (Get-Date).AddSeconds(30)
     $apiOk = $false
     while ((Get-Date) -lt $deadline) {
@@ -728,7 +1018,309 @@ function New-BuilderDistro([hashtable]$HW) {
         Start-Sleep -Seconds 2
     }
     if (-not $apiOk) { throw "$BuilderDistro not in running state after 30 s -- check: podman machine ls" }
-    Log-Ok "MiOS-BUILDER Podman API ready"
+    Log-Ok "$DevDistro Podman API ready"
+    # Overlay seed is invoked once at end of Phase 3 (covers both the
+    # newly-created path and the already-running path); see the call
+    # site directly above End-Phase 3 in the main flow.
+}
+
+function Invoke-MiosOverlaySeed {
+    # Seed the full MiOS package surface as a live overlay inside the
+    # MiOS-DEV WSL2 distro. Reads PACKAGES.md from the cloned mios.git
+    # checkout and runs `dnf5 install` per fenced ```packages-*``` block.
+    #
+    # Why: every CLI/utility/dev tool that ships in the deployed MiOS
+    # OCI image is installed live on the Windows-side dev machine too,
+    # so `wsl -d podman-MiOS-DEV` lands the operator in a shell that
+    # is package-equivalent to a deployed MiOS host (minus kernel/UEFI
+    # which only apply to bare-metal/Hyper-V/QEMU shapes).
+    #
+    # Idempotent via a sentinel: skip if /var/lib/mios/.overlay-seeded
+    # is newer than the source PACKAGES.md.
+    Set-Step "Seeding MiOS package overlay onto $DevDistro..."
+    $packagesMd = Join-Path $MiosRepoDir "mios\usr\share\mios\PACKAGES.md"
+    if (-not (Test-Path $packagesMd)) {
+        Log-Warn "PACKAGES.md not found at $packagesMd -- overlay seed skipped"
+        return
+    }
+    $wslDistro = "podman-$DevDistro"
+
+    # Confirm the distro is reachable via wsl.exe (rootful machines on
+    # newer Podman builds register as podman-<Name>; older builds may
+    # register without prefix -- try both).
+    $sshOk = $false
+    foreach ($candidate in @($wslDistro, $DevDistro)) {
+        $probe = (& wsl.exe -d $candidate --exec bash -c "echo ok" 2>$null) -join ""
+        if ($probe.Trim() -eq "ok") { $wslDistro = $candidate; $sshOk = $true; break }
+    }
+    if (-not $sshOk) {
+        Log-Warn "Cannot wsl.exe into $DevDistro -- overlay seed deferred to first manual run"
+        return
+    }
+
+    # Stage PACKAGES.md + the overlay installer inside the distro's /tmp.
+    # Using `wsl --exec cp` from the Windows path avoids podman-machine-cp's
+    # rootful permission quirks.
+    $packagesWslPath = ($packagesMd -replace '\\','/' -replace '^([A-Za-z]):','/mnt/$1' )
+    $packagesWslPath = $packagesWslPath.ToLower() -replace '/mnt/[a-z]:', { "/mnt/$($args[0].Value -replace '/mnt/|:','')" }
+    # Simpler/safer: convert C:\path -> /mnt/c/path
+    $drive = $packagesMd.Substring(0,1).ToLower()
+    $packagesWslPath = "/mnt/$drive" + ($packagesMd.Substring(2) -replace '\\','/')
+
+    $overlayScript = @'
+#!/usr/bin/env bash
+# mios-overlay.sh -- live system overlay seeder for MiOS-DEV.
+# Generated by build-mios.ps1 / Invoke-MiosOverlaySeed.
+set -uo pipefail
+
+SENTINEL="/var/lib/mios/.overlay-seeded"
+SRC_MD="${SRC_MD:-/tmp/PACKAGES.md}"
+PACKAGES_MD="/tmp/PACKAGES.lf.md"
+LOG_DIR="/tmp/mios-overlay-logs"
+mkdir -p "$LOG_DIR" && chmod 0777 "$LOG_DIR"
+
+# Skip if already seeded and PACKAGES.md is older than the sentinel.
+if [[ -f "$SENTINEL" && "$SENTINEL" -nt "$SRC_MD" ]]; then
+    echo "[mios-overlay] sentinel newer than PACKAGES.md -> skip"
+    exit 0
+fi
+
+# Normalize CRLF (OneDrive-synced source).
+tr -d '\r' < "$SRC_MD" > "$PACKAGES_MD"
+
+mapfile -t SECTIONS < <(grep -oP '^```packages-\K[a-z0-9-]+' "$PACKAGES_MD" | sort -u)
+echo "[mios-overlay] sections: ${#SECTIONS[@]}"
+
+get_pkgs() {
+    sed -n "/^\`\`\`packages-${1}$/,/^\`\`\`$/{/^\`\`\`/d;/^$/d;/^#/d;p}" "$PACKAGES_MD"
+}
+
+# Add Fedora-version-pinned RPMFusion (free + nonfree).
+fedver=$(rpm -E %fedora 2>/dev/null || echo 43)
+sudo dnf5 install -y --skip-unavailable \
+    "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${fedver}.noarch.rpm" \
+    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${fedver}.noarch.rpm" \
+    >"$LOG_DIR/00-rpmfusion.log" 2>&1 || true
+
+# Sections SKIPPED on the dev WSL distro (irrelevant or breakage on WSL):
+#   kernel  -- WSL runs Microsoft kernel; no kernel install allowed
+#   boot    -- UEFI/UKI host-bootable; dev VM has no UEFI surface
+#   moby    -- conflicts with podman (the dev VM IS the podman backend)
+#   bloat   -- anti-pattern fence section (intentionally not installed)
+#   critical -- mixed; we install a curated WSL-safe subset below
+SKIP_RE='^(kernel|boot|moby|bloat|critical)$'
+
+install_section() {
+    local sec="$1"
+    [[ "$sec" =~ $SKIP_RE ]] && { echo "[mios-overlay] SKIP $sec"; return; }
+    local pkgs
+    pkgs=$(get_pkgs "$sec" | tr '\n' ' ')
+    [[ -z "${pkgs// }" ]] && { echo "[mios-overlay] EMPTY $sec"; return; }
+    echo "[mios-overlay] INSTALL $sec"
+    # shellcheck disable=SC2086
+    sudo dnf5 install -y --skip-unavailable --skip-broken --allowerasing \
+        $pkgs >"$LOG_DIR/$sec.log" 2>&1
+    # rc=1 from terminal systemd scriptlets is benign on podman-machine
+    # WSL distros that lack a live system D-Bus -- packages still land.
+}
+
+# Foundation (repos must be first), then everything else.
+install_section repos
+for sec in "${SECTIONS[@]}"; do
+    [[ "$sec" == "repos" ]] && continue
+    install_section "$sec"
+done
+
+# Critical safe-subset (skip kernel-core/gdm/libvirt on WSL).
+echo "[mios-overlay] INSTALL critical (WSL-safe subset)"
+sudo dnf5 install -y --skip-unavailable --skip-broken --allowerasing \
+    bootc chrony cockpit firewalld NetworkManager pipewire tuned \
+    >"$LOG_DIR/critical.log" 2>&1 || true
+
+sudo install -d -m 0755 /var/lib/mios
+sudo touch "$SENTINEL"
+
+# Install a wrapper at /usr/local/bin/mios-dev-seed so the operator can
+# re-run the overlay manually inside the dev distro after editing
+# PACKAGES.md (e.g. `wsl -d podman-MiOS-DEV -- sudo mios-dev-seed`).
+sudo install -d -m 0755 /usr/local/bin
+sudo install -m 0755 /tmp/mios-overlay.sh /usr/local/bin/mios-dev-seed
+
+# Drop a profile.d hint so `wsl -d podman-MiOS-DEV` greets the operator
+# with the dev-VM context. Quiet for non-interactive shells.
+sudo tee /etc/profile.d/mios-dev-motd.sh >/dev/null <<'PROFILE'
+# MiOS-DEV operator hint -- only on interactive shells.
+if [[ -n "${PS1-}" && -t 1 ]]; then
+    pkgs=$(rpm -qa | wc -l 2>/dev/null || echo ?)
+    echo "MiOS-DEV (Podman-WSL2 dev VM, $pkgs pkgs)  --  refresh: sudo mios-dev-seed"
+fi
+PROFILE
+sudo chmod 0644 /etc/profile.d/mios-dev-motd.sh
+
+echo "[mios-overlay] done -- $(rpm -qa | wc -l) packages installed"
+echo "[mios-overlay] manual refresh: sudo mios-dev-seed"
+'@
+
+    # Materialize the script + a copy of PACKAGES.md inside the distro
+    # via stdin; avoids cross-FS quoting headaches and works for both
+    # /mnt/c-mounted paths and rootful machines.
+    $b64Script = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($overlayScript))
+    $stage = "set -e; sudo install -d -m 0777 /tmp; " +
+             "echo '$b64Script' | base64 -d > /tmp/mios-overlay.sh && chmod +x /tmp/mios-overlay.sh; " +
+             "cp '$packagesWslPath' /tmp/PACKAGES.md; " +
+             "/tmp/mios-overlay.sh"
+    & wsl.exe -d $wslDistro --exec bash -c $stage 2>&1 | ForEach-Object { Write-Log "overlay-seed: $_" }
+    if ($LASTEXITCODE -ne 0) {
+        Log-Warn "overlay seed exited rc=$LASTEXITCODE -- partial install possible (packages may still be present; rerun safe)"
+    } else {
+        Log-Ok "MiOS package overlay seeded into $DevDistro"
+    }
+}
+
+function Invoke-MiosQuadletOverlay {
+    # Mirror the MiOS FHS overlay (Quadlets, systemd units, sysusers,
+    # tmpfiles, libexec, profile.d, /etc/mios config templates) onto the
+    # dev distro so MiOS-DEV runs the same container surface as a deployed
+    # MiOS host. After this:
+    #   - Podman Desktop (Windows) sees mios-cockpit-link, mios-forge, etc.
+    #     under the MiOS-DEV machine connection -- each carries
+    #     io.podman_desktop.openInBrowser labels for one-click access.
+    #   - Cockpit on the dev VM (https://localhost:9090, mirrored networking)
+    #     renders the same containers + system services as a deployed host.
+    #
+    # Idempotent via /var/lib/mios/.quadlet-overlay-seeded; re-runs are no-ops
+    # unless the source mios.git Containerfile has been touched since the
+    # sentinel. Set MIOS_SKIP_DEV_QUADLETS=1 to bypass entirely.
+    if ($env:MIOS_SKIP_DEV_QUADLETS -in @('1','true','TRUE','yes')) {
+        Log-Warn "MIOS_SKIP_DEV_QUADLETS set -- Quadlet overlay skipped"
+        return
+    }
+
+    Set-Step "Overlaying MiOS Quadlets + systemd units onto $DevDistro..."
+    $miosRoot = Join-Path $MiosRepoDir "mios"
+    if (-not (Test-Path (Join-Path $miosRoot "Containerfile"))) {
+        Log-Warn "mios.git checkout missing at $miosRoot -- Quadlet overlay skipped"
+        return
+    }
+    $wslDistro = "podman-$DevDistro"
+    $sshOk = $false
+    foreach ($candidate in @($wslDistro, $DevDistro)) {
+        $probe = (& wsl.exe -d $candidate --exec bash -c "echo ok" 2>$null) -join ""
+        if ($probe.Trim() -eq "ok") { $wslDistro = $candidate; $sshOk = $true; break }
+    }
+    if (-not $sshOk) { Log-Warn "Cannot wsl.exe into $DevDistro -- Quadlet overlay deferred"; return }
+
+    # Convert C:\path\to\mios -> /mnt/c/path/to/mios for the WSL side.
+    $drive = $miosRoot.Substring(0,1).ToLower()
+    $miosRootWsl = "/mnt/$drive" + ($miosRoot.Substring(2) -replace '\\','/')
+
+    $enableAi     = if ($env:MIOS_DEV_ENABLE_AI     -in @('1','true','TRUE','yes')) { '1' } else { '0' }
+    $enableRunner = if ($env:MIOS_DEV_ENABLE_RUNNER -in @('1','true','TRUE','yes')) { '1' } else { '0' }
+
+    $overlayScript = @'
+#!/usr/bin/env bash
+# mios-quadlet-overlay.sh -- mirror MiOS FHS overlay into MiOS-DEV.
+# Generated by build-mios.ps1 / Invoke-MiosQuadletOverlay.
+set -uo pipefail
+
+SRC="${1:?source mios.git path required}"
+SENTINEL="/var/lib/mios/.quadlet-overlay-seeded"
+
+# Skip if sentinel is newer than the source mios.git's Containerfile
+# (cheap proxy for "has the source tree changed since last overlay").
+if [[ -f "$SENTINEL" && "$SENTINEL" -nt "$SRC/Containerfile" ]]; then
+    echo "[quadlet-overlay] sentinel newer than mios.git -> skip"
+    exit 0
+fi
+
+echo "[quadlet-overlay] mirroring FHS overlay from $SRC ..."
+
+# Build a deterministic list of paths to mirror via a single tar pipe.
+# Each find branch is best-effort -- a missing source is simply absent
+# from the list, so the script no-ops on stripped checkouts rather than
+# erroring out.
+LIST="$(mktemp)"
+trap 'rm -f "$LIST"' EXIT
+{
+    cd "$SRC" || exit 1
+    find etc/containers/systemd                                 -type f 2>/dev/null
+    find usr/share/containers/systemd                           -type f 2>/dev/null
+    find usr/lib/systemd/system            -maxdepth 1          -name 'mios-*' 2>/dev/null
+    find usr/lib/systemd/system            -mindepth 2          -name '*mios*.conf' -path '*.service.d/*' 2>/dev/null
+    find usr/lib/systemd/system            -mindepth 2          -name '*.conf' -path 'usr/lib/systemd/system/dbus-broker.service.d/*' 2>/dev/null
+    find usr/lib/systemd/journald.conf.d                        -name '*mios*' 2>/dev/null
+    find usr/lib/sysusers.d                                     -name '*mios*' 2>/dev/null
+    find usr/lib/tmpfiles.d                                     -name '*mios*' 2>/dev/null
+    find usr/libexec/mios                                       -type f 2>/dev/null
+    find etc/profile.d                                          -name '*mios*' 2>/dev/null
+    for d in etc/mios/forge etc/mios/ai etc/mios/system-prompts; do
+        find "$d" -type f 2>/dev/null
+    done
+} | sort -u > "$LIST"
+
+count=$(wc -l < "$LIST")
+echo "[quadlet-overlay] $count files to mirror"
+
+if (( count == 0 )); then
+    echo "[quadlet-overlay] nothing to mirror -- mios.git tree may be stripped"
+    exit 0
+fi
+
+# Single tar pipe: preserves perms/ownership in archive, extracts onto /
+# under sudo so root-owned destinations (e.g. /etc/mios/) work.
+sudo tar -C "$SRC" -cf - --files-from="$LIST" 2>/dev/null \
+    | sudo tar -C / -xf - 2>&1 \
+    | grep -vE '^tar:' || true
+
+# Realize sysusers + tmpfiles, then reload systemd so the new units
+# (and Quadlet-generated *.service files) are visible.
+echo "[quadlet-overlay] realizing sysusers / tmpfiles / daemon-reload ..."
+sudo systemd-sysusers 2>&1 | tail -3 || true
+sudo systemd-tmpfiles --create 2>&1 | tail -3 || true
+sudo systemctl daemon-reload 2>&1 | tail -3 || true
+
+# ALWAYS-ON LIGHTWEIGHT SET: Cockpit (web console at :9090), the
+# Podman-Desktop discovery shim that surfaces MiOS containers in PD's
+# UI, and the self-hosted Forgejo forge (small SQLite-backed git host).
+# Each enable is best-effort -- a unit that ConditionVirtualization-skips
+# itself just no-ops with status=inactive (success).
+LIGHT_SET=(cockpit.socket mios-cockpit-link.service mios-forge.service)
+for svc in "${LIGHT_SET[@]}"; do
+    echo "[quadlet-overlay] enable --now $svc"
+    sudo systemctl enable --now "$svc" 2>&1 | grep -vE 'created symlink' || true
+done
+
+# OPT-IN HEAVY SET: AI inference + Forgejo Runner. Gated by env vars
+# threaded through from the PowerShell side -- defaults to skip so
+# the dev VM doesn't pull multi-GB images on first boot.
+if [[ "${MIOS_DEV_ENABLE_AI:-0}" == "1" ]]; then
+    echo "[quadlet-overlay] enable --now mios-ai + ollama (heavy)"
+    sudo systemctl enable --now mios-ai.service ollama.service 2>&1 | grep -vE 'created symlink' || true
+fi
+if [[ "${MIOS_DEV_ENABLE_RUNNER:-0}" == "1" ]]; then
+    echo "[quadlet-overlay] enable --now mios-forgejo-runner (heavy)"
+    sudo systemctl enable --now mios-forgejo-runner.service 2>&1 | grep -vE 'created symlink' || true
+fi
+
+sudo install -d -m 0755 /var/lib/mios
+sudo touch "$SENTINEL"
+
+active=$(systemctl --no-legend list-units 'mios-*' 2>/dev/null | wc -l)
+echo "[quadlet-overlay] done -- $active mios-* units active"
+echo "[quadlet-overlay] Cockpit:        https://localhost:9090/  (host LAN reachable via mirrored networking)"
+echo "[quadlet-overlay] Podman Desktop: containers under MiOS-DEV machine carry openInBrowser labels"
+'@
+
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($overlayScript))
+    $stage = "set -e; export MIOS_DEV_ENABLE_AI='$enableAi' MIOS_DEV_ENABLE_RUNNER='$enableRunner'; " +
+             "echo '$b64' | base64 -d > /tmp/mios-quadlet-overlay.sh && chmod +x /tmp/mios-quadlet-overlay.sh; " +
+             "/tmp/mios-quadlet-overlay.sh '$miosRootWsl'"
+    & wsl.exe -d $wslDistro --exec bash -c $stage 2>&1 | ForEach-Object { Write-Log "quadlet-overlay: $_" }
+    if ($LASTEXITCODE -ne 0) {
+        Log-Warn "Quadlet overlay rc=$LASTEXITCODE -- partial overlay possible (units may still be present; rerun safe)"
+    } else {
+        Log-Ok "MiOS Quadlet overlay applied to $DevDistro"
+    }
 }
 
 function Invoke-GhcrLogin([string]$Token) {
@@ -999,7 +1591,7 @@ function Invoke-BibBuild([string[]]$Types, [string]$MachineOutDir, [int]$Timeout
     # a transient alpine container only creates the dir in the container's
     # ephemeral fs, which evaporates before the BIB container starts.
     Set-Step "BIB: creating output dir on builder machine..."
-    $machineName = if ($env:MIOS_BUILDER_MACHINE) { $env:MIOS_BUILDER_MACHINE } else { "mios-builder" }
+    $machineName = if ($env:MIOS_BUILDER_MACHINE) { $env:MIOS_BUILDER_MACHINE } else { $DevDistro.ToLower() }
     & podman machine ssh $machineName -- "sudo mkdir -p '$MachineOutDir' && sudo chmod 0755 '$MachineOutDir'" 2>&1 |
         ForEach-Object { Write-Log "bib-mkdir: $_" }
     if ($LASTEXITCODE -ne 0) {
@@ -1042,7 +1634,7 @@ function Invoke-BibBuild([string[]]$Types, [string]$MachineOutDir, [int]$Timeout
 }
 
 function Copy-FromMachine([string]$MachinePath, [string]$WinDest) {
-    # podman machine cp MiOS-BUILDER:/path/in/machine C:\windows\path
+    # podman machine cp MiOS-DEV:/path/in/machine C:\windows\path
     Set-Step "Copying $([System.IO.Path]::GetFileName($MachinePath)) from machine..."
     & podman machine cp "${BuilderDistro}:${MachinePath}" $WinDest 2>&1 |
         ForEach-Object { Write-Log "machine-cp: $_" }
@@ -1373,14 +1965,28 @@ if ($activeDistro) {
     Log-Ok "Bootstrap files materialized under $MiosShareDir"
     End-Phase 2
 
-    # ── Phase 3 -- MiOS-BUILDER distro ───────────────────────────────────────
+    # ── Phase 3 -- MiOS-DEV distro (formerly MiOS-BUILDER) ───────────────────
     Start-Phase 3
     $machineRunning = $false
-    # Check via Podman API first (covers rootful machine-os distros inaccessible via wsl.exe)
+    # Check via Podman API first (covers rootful machine-os distros inaccessible via wsl.exe).
+    # Accept BOTH the canonical "MiOS-DEV" and the legacy "MiOS-BUILDER" names so existing
+    # installs don't get redundantly recreated. If only the legacy name is found we adopt it
+    # in-place by re-pointing $BuilderDistro -- the operator can `podman machine rm` and
+    # re-run for the canonical name.
     try {
-        $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
-              Where-Object { $_ -match "^$([regex]::Escape($BuilderDistro))\s+true" }
-        if ($ml) { $machineRunning = $true }
+        $names = @($DevDistro, $LegacyDevName)
+        foreach ($n in $names) {
+            $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
+                  Where-Object { $_ -match "^$([regex]::Escape($n))\s+true" }
+            if ($ml) {
+                if ($n -eq $LegacyDevName) {
+                    Log-Warn "Detected legacy machine '$LegacyDevName' -- reusing in place. Rename: 'podman machine rm $LegacyDevName' then re-run."
+                    $script:BuilderDistro = $n
+                }
+                $machineRunning = $true
+                break
+            }
+        }
     } catch {}
     # Also accept a stopped machine and start it
     if (-not $machineRunning) {
@@ -1415,6 +2021,21 @@ if ($activeDistro) {
     } else {
         New-BuilderDistro -HW $HW
     }
+
+    # Run the overlay seed regardless of whether the machine was just created or
+    # was already running. Idempotent via /var/lib/mios/.overlay-seeded -- a
+    # second pass is a no-op when PACKAGES.md hasn't changed since last seed.
+    # This is what catches the re-run case (operator runs build-mios.ps1 again
+    # after editing PACKAGES.md): every section delta gets installed live.
+    Invoke-MiosOverlaySeed
+
+    # Quadlet/systemd overlay -- copies the MiOS FHS overlay into MiOS-DEV and
+    # enables the lightweight container set (cockpit.socket, mios-cockpit-link,
+    # mios-forge). Heavy services (mios-ai, mios-forgejo-runner) are opt-in via
+    # MIOS_DEV_ENABLE_AI=1 / MIOS_DEV_ENABLE_RUNNER=1. Idempotent via
+    # /var/lib/mios/.quadlet-overlay-seeded sentinel.
+    Invoke-MiosQuadletOverlay
+
     End-Phase 3
 
     # ── Phase 4 -- WSL2 .wslconfig ───────────────────────────────────────────
@@ -1437,7 +2058,7 @@ if ($activeDistro) {
 
     if ($cfgRaw -notmatch "\[wsl2\]") {
         # No [wsl2] section at all -- append one wholesale
-        $block = "`n[wsl2]`n# MiOS-managed -- host resources for MiOS-BUILDER`n"
+        $block = "`n[wsl2]`n# MiOS-managed -- host resources for MiOS-DEV`n"
         foreach ($kv in $requiredKeys.GetEnumerator()) { $block += "$($kv.Key)=$($kv.Value)`n" }
         Add-Content -Path $wslCfg -Value $block
         Log-Ok ".wslconfig: wrote [wsl2] -- $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
@@ -1611,8 +2232,8 @@ MIOS_OLLAMA_BAKE_MODELS="$MiosOllamaBakeModels"
         @{ F="MiOS Setup.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`"";            D="Re-run full 'MiOS' setup" },
         @{ F="MiOS Build.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`" -BuildOnly";  D="Pull latest + build 'MiOS' OCI image" },
         @{ F="MiOS Terminal.lnk";        T="wsl.exe"; A="-d $MiosWslDistro";                                    D="Open 'MiOS' workstation terminal" },
-        @{ F="MiOS Builder Shell.lnk";  T="wsl.exe"; A="-d $BuilderDistro --user root";                         D="Open MiOS-BUILDER terminal (root)" },
-        @{ F="MiOS Podman Shell.lnk";  T=$pwsh;     A="-NoProfile -Command podman machine ssh $BuilderDistro"; D="SSH into MiOS-BUILDER Podman machine" },
+        @{ F="MiOS Dev Shell.lnk";     T="wsl.exe"; A="-d podman-$DevDistro --user root";                      D="Open $DevDistro terminal (root)" },
+        @{ F="MiOS Podman Shell.lnk";  T=$pwsh;     A="-NoProfile -Command podman machine ssh $DevDistro";    D="SSH into $DevDistro Podman machine" },
         @{ F="Uninstall MiOS.lnk";     T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$uninstSc`"";           D="Remove MiOS" }
     ) | ForEach-Object { New-Shortcut (Join-Path $StartMenuDir $_.F) $_.T $_.A $_.D $MiosInstallDir }
     Log-Ok "Add/Remove Programs + Start Menu created"

@@ -193,7 +193,7 @@ guacd              = true
 # verbatim to every script that sources tools/lib/userenv.sh, so it
 # propagates throughout the build / install / runtime chain.
 # Examples:
-#   MIOS_BUILDER_DISTRO = "MiOS-BUILDER"
+#   MIOS_BUILDER_DISTRO = "MiOS-DEV"
 #   MIOS_RECHUNK_MAX_LAYERS = "67"
 #   MIOS_AI_GRADER = "o3"
 # ----------------------------------------------------------------------------
