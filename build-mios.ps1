@@ -7,7 +7,25 @@
 #   -BuildOnly    Pull latest + build only (skip first-time setup)
 #   -Unattended   Accept all defaults, no prompts
 
-param([switch]$BuildOnly, [switch]$Unattended)
+param(
+    # -BootstrapOnly: localhost-side preflight + dev VM provision +
+    # smoke test + rename + Windows install. Stops BEFORE the OCI image
+    # build (Phase 6+). This is the curl-bash entry path -- after it
+    # completes the operator has a fully-functional MiOS-DEV WSL2 distro
+    # plus Windows-side icons (oh-my-posh, fonts, theme, Start Menu).
+    # The "Build MiOS" Start Menu shortcut then drives the full image
+    # build via -BuildOnly when the operator is ready.
+    [switch]$BootstrapOnly,
+
+    # -BuildOnly: skip the dev VM provisioning (assumes the bootstrap
+    # phase already ran and MiOS-DEV is registered). Jump to identity
+    # prompts + OCI image build + deploy. This is what the "Build MiOS"
+    # Start Menu launcher invokes.
+    [switch]$BuildOnly,
+
+    # -Unattended: take all defaults; no interactive prompts.
+    [switch]$Unattended
+)
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = "SilentlyContinue"
@@ -66,24 +84,34 @@ $MiosWslDistro    = "MiOS"
 $LegacyDistro     = "podman-machine-default"
 
 if ($script:IsAdmin) {
-    # AllUsers (machine-wide native Windows app layout).
-    $MiosInstallDir   = Join-Path ${env:ProgramFiles} "MiOS"            # C:\Program Files\MiOS
+    # AllUsers (machine-wide native Windows app layout). Top-level
+    # C:\MiOS as requested -- treats MiOS as a first-class Windows
+    # application rather than a hidden Program Files entry.
+    $MiosInstallDir   = Join-Path ${env:SystemDrive} "MiOS"             # C:\MiOS
     $MiosProgramData  = Join-Path ${env:ProgramData}  "MiOS"            # C:\ProgramData\MiOS
     $MiosRepoDir      = Join-Path $MiosInstallDir   "repo"              # code (git checkouts)
-    $MiosBinDir       = Join-Path $MiosInstallDir   "bin"               # entry-point scripts
+    $MiosBinDir       = Join-Path $MiosInstallDir   "bin"               # entry-point scripts + oh-my-posh
     $MiosShareDir     = Join-Path $MiosInstallDir   "share"             # mios-bootstrap etc/usr trees
+    $MiosIconsDir     = Join-Path $MiosInstallDir   "icons"             # per-verb .ico files
+    $MiosThemesDir    = Join-Path $MiosInstallDir   "themes"            # mios.omp.json + future themes
+    $MiosFontsDir     = Join-Path $MiosInstallDir   "fonts"             # local copy of installed fonts
     $MiosDistroDir    = Join-Path $MiosProgramData  "distros"           # multi-GB WSL2 artifacts
     $MiosImagesDir    = Join-Path $MiosProgramData  "images"            # qcow2 / vhdx / iso outputs
     $MiosMachineCfg   = Join-Path $MiosProgramData  "config"            # global non-secret install.env
     $StartMenuDir     = Join-Path ${env:ProgramData} "Microsoft\Windows\Start Menu\Programs\MiOS"
     $UninstallRegKey  = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MiOS"
 } else {
-    # CurrentUser fallback.
-    $MiosInstallDir   = Join-Path ${env:LOCALAPPDATA} "Programs\MiOS"
-    $MiosProgramData  = Join-Path ${env:LOCALAPPDATA} "MiOS\machine-state"
+    # CurrentUser fallback (no write access to C:\). Mirrors the admin
+    # layout under %LOCALAPPDATA%\MiOS so paths inside the install
+    # root stay relative-stable (bin/, icons/, themes/, ...).
+    $MiosInstallDir   = Join-Path ${env:LOCALAPPDATA} "MiOS"
+    $MiosProgramData  = Join-Path $MiosInstallDir    "machine-state"
     $MiosRepoDir      = Join-Path $MiosInstallDir    "repo"
     $MiosBinDir       = Join-Path $MiosInstallDir    "bin"
     $MiosShareDir     = Join-Path $MiosInstallDir    "share"
+    $MiosIconsDir     = Join-Path $MiosInstallDir    "icons"
+    $MiosThemesDir    = Join-Path $MiosInstallDir    "themes"
+    $MiosFontsDir     = Join-Path $MiosInstallDir    "fonts"
     $MiosDistroDir    = Join-Path $MiosInstallDir    "distros"
     $MiosImagesDir    = Join-Path $MiosInstallDir    "images"
     $MiosMachineCfg   = Join-Path $MiosInstallDir    "config"
@@ -98,6 +126,44 @@ if ($script:IsAdmin) {
 $MiosConfigDir    = Join-Path ${env:APPDATA}      "MiOS"               # %APPDATA%\MiOS
 $MiosDataDir      = Join-Path ${env:LOCALAPPDATA} "MiOS"               # %LOCALAPPDATA%\MiOS
 $MiosLogDir       = Join-Path $MiosDataDir        "logs"
+
+function Resolve-MiosInstallRoot {
+    # Returns the best Windows-side install root, preferring the dedicated
+    # MiOS data disk (created by Initialize-MiosDataDisk in Phase 3:
+    # shrinks C: by 256 GB, formats NTFS, label "MIOS-DEV", default
+    # mount letter M:). Falls back to the boot-time default
+    # ($MiosInstallDir) when the data disk hasn't been provisioned yet.
+    #
+    # Honors $env:MIOS_DATA_DISK_LETTER for non-default mount letters
+    # (must match Initialize-MiosDataDisk's -DriveLetter argument).
+    param([string]$Default = $script:MiosInstallDir)
+    $letter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER } else { 'M' }
+    $vol = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
+    if ($vol -and $vol.FileSystemLabel -eq 'MIOS-DEV') {
+        return Join-Path "${letter}:\" 'MiOS'
+    }
+    return $Default
+}
+
+function Update-MiosInstallPaths {
+    # Re-points the script-scope install paths at a new root. Called by
+    # Install-WindowsBranding once the data disk is up so all
+    # subsequent stages (oh-my-posh, theme, launcher, icons, dash)
+    # write under M:\MiOS\ instead of the bootstrap-time default.
+    param([Parameter(Mandatory)] [string] $NewRoot)
+    $script:MiosInstallDir = $NewRoot
+    $script:MiosBinDir     = Join-Path $NewRoot 'bin'
+    $script:MiosShareDir   = Join-Path $NewRoot 'share'
+    $script:MiosIconsDir   = Join-Path $NewRoot 'icons'
+    $script:MiosThemesDir  = Join-Path $NewRoot 'themes'
+    $script:MiosFontsDir   = Join-Path $NewRoot 'fonts'
+    # Note: $MiosRepoDir is intentionally NOT moved here -- the repos
+    # were already cloned under the boot-time root in Phase 2 before
+    # the data disk existed. Migrating them mid-install would break
+    # any in-flight git operations or open file handles. A separate
+    # `mios-update --migrate-to <drive>` verb (future) handles the
+    # one-time move.
+}
 
 # ── Log files ─────────────────────────────────────────────────────────────────
 # UNIFIED COUNTING SYSTEM: there is exactly one logged counter timeline --
@@ -777,14 +843,12 @@ function Get-PasswordHash([string]$Plain) {
             if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
         } catch {}
     }
-    # Podman machine SSH (machine-os not accessible via wsl.exe)
+    # Dev-distro shell (works pre- AND post-rename via Invoke-DistroSh
+    # auto-detect): wsl-direct on MiOS-DEV, podman-machine-ssh on
+    # podman-MiOS-DEV. -NoSudo because openssl needs no privilege.
     try {
-        $mls = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
-               Where-Object { $_ -match "^$([regex]::Escape($BuilderDistro))\s+true" }
-        if ($mls) {
-            $h = (& podman machine ssh $BuilderDistro -- bash -c "openssl passwd -6 -salt '$salt' '$Plain'" 2>$null) -join ""
-            if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
-        }
+        $h = (Invoke-DistroSh -Bash "openssl passwd -6 -salt '$salt' '$Plain'" -MachineName $BuilderDistro -NoSudo 2>$null) -join ""
+        if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
     } catch {}
     try {
         $h = (& podman run --rm docker.io/library/alpine:latest sh -c "apk add -q openssl && openssl passwd -6 -salt '$salt' '$Plain'" 2>$null) -join ""
@@ -834,10 +898,12 @@ function Sync-RepoToDistro([string]$Distro, [string]$WinPath) {
             "git -C / fetch 'file://$wsl' main 2>/dev/null && git -C / reset --hard FETCH_HEAD 2>/dev/null"
         if ($LASTEXITCODE -eq 0) { return $true }
     } catch {}
-    # Podman machine fallback: Windows drive not mounted; pull from GitHub origin instead
+    # Dev-distro fallback: Windows drive not mounted; pull from GitHub
+    # origin instead. Routed through Invoke-DistroSh so it works in both
+    # the pre-rename (podman-machine-ssh) and post-rename (wsl-direct)
+    # states.
     try {
-        & podman machine ssh $Distro -- bash -c `
-            "cd / && git fetch --depth=1 origin main 2>/dev/null && git reset --hard FETCH_HEAD 2>/dev/null"
+        Invoke-DistroSh -Bash "cd / && git fetch --depth=1 origin main 2>/dev/null && git reset --hard FETCH_HEAD 2>/dev/null" -MachineName $Distro 2>$null | Out-Null
         return ($LASTEXITCODE -eq 0)
     } catch { return $false }
 }
@@ -1857,15 +1923,16 @@ function Invoke-BibBuild([string[]]$Types, [string]$MachineOutDir, [int]$Timeout
     # Pre-create the output directory on the BUILDER MACHINE filesystem.
     # podman volume bind-mounts require the host-side path to exist before
     # the container starts; otherwise crun fails with `statfs ENOENT`.
-    # CRITICAL: must run via `podman machine ssh` -- running `mkdir` inside
-    # a transient alpine container only creates the dir in the container's
-    # ephemeral fs, which evaporates before the BIB container starts.
-    Set-Step "BIB: creating output dir on builder machine..."
-    $machineName = if ($env:MIOS_BUILDER_MACHINE) { $env:MIOS_BUILDER_MACHINE } else { $DevDistro.ToLower() }
-    & podman machine ssh $machineName -- "sudo mkdir -p '$MachineOutDir' && sudo chmod 0755 '$MachineOutDir'" 2>&1 |
+    # CRITICAL: must run on the dev distro itself -- running `mkdir`
+    # inside a transient alpine container only creates the dir in the
+    # container's ephemeral fs, which evaporates before BIB starts.
+    # Routed through Invoke-DistroSh so it works in both rename states.
+    Set-Step "BIB: creating output dir on dev distro..."
+    $machineName = if ($env:MIOS_BUILDER_MACHINE) { $env:MIOS_BUILDER_MACHINE } else { $DevDistro }
+    Invoke-DistroSh -Bash "mkdir -p '$MachineOutDir' && chmod 0755 '$MachineOutDir'" -MachineName $machineName 2>&1 |
         ForEach-Object { Write-Log "bib-mkdir: $_" }
     if ($LASTEXITCODE -ne 0) {
-        Write-Log "WARN: 'podman machine ssh ... mkdir' returned $LASTEXITCODE -- BIB will likely fail with statfs ENOENT"
+        Write-Log "WARN: BIB output-dir mkdir returned $LASTEXITCODE -- BIB will likely fail with statfs ENOENT"
     }
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -2033,6 +2100,248 @@ function Invoke-DeployPipeline([hashtable]$HW) {
     }
 }
 
+function Test-MiosDevDistroHealthy {
+    # Smoke-test the freshly-provisioned MiOS-DEV podman machine before
+    # we commit to renaming it. Verifies:
+    #   1. wsl.exe can reach the distro (basic VM bootstrap done)
+    #   2. systemd is running inside (services can be enabled)
+    #   3. /usr tree has the MiOS overlay (33-mios-overlay sentinel present)
+    #   4. podman API socket is reachable from the Windows host
+    #
+    # Returns $true on full success, $false otherwise (caller decides
+    # whether to abort the rename or warn-and-continue). Errors bubble
+    # up as warnings -- does NOT throw, so a partial-overlay state
+    # doesn't kill the bootstrap.
+    Set-Step "Smoke-testing $DevDistro before rename..."
+
+    # The pre-rename distro is "podman-$DevDistro"; post-rename it's
+    # just "$DevDistro". This function is called pre-rename so we
+    # check both for safety.
+    $wslList = @()
+    try { $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" | ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ } } catch {}
+    $candidates = @("podman-$DevDistro", $DevDistro)
+    $name = $wslList | Where-Object { $candidates -contains $_ } | Select-Object -First 1
+    if (-not $name) {
+        Log-Warn "smoke: neither podman-$DevDistro nor $DevDistro is registered"
+        return $false
+    }
+
+    # 1. Basic responsiveness.
+    $echoOut = ""
+    try { $echoOut = (& wsl.exe -d $name -- /bin/sh -c 'echo ready' 2>&1) -join "" } catch {}
+    if ($echoOut.Trim() -ne 'ready') {
+        Log-Warn "smoke: $name did not respond to 'echo ready' (got: '$echoOut')"
+        return $false
+    }
+    Log-Ok "smoke 1/4: $name is responsive"
+
+    # 2. systemd up.
+    $sysOut = ""
+    try { $sysOut = (& wsl.exe -d $name --user root -- /bin/sh -c 'systemctl is-system-running 2>&1 || true' 2>&1) -join "" } catch {}
+    # `running` (clean), `degraded` (some failed but functional), or
+    # `starting` (still booting) are all acceptable -- only `offline`
+    # / `unknown` (no systemd PID) blocks the rename.
+    if ($sysOut.Trim() -match '^(offline|unknown)\s*$' -or [string]::IsNullOrWhiteSpace($sysOut)) {
+        Log-Warn "smoke: systemd not reachable in $name (state: '$sysOut')"
+        # Non-fatal -- some build flows skip systemd. Continue.
+    } else {
+        Log-Ok "smoke 2/4: systemd state '$($sysOut.Trim())' in $name"
+    }
+
+    # 3. MiOS overlay present.
+    $overlayOut = ""
+    try { $overlayOut = (& wsl.exe -d $name --user root -- /bin/sh -c 'test -d /usr/share/mios && echo present || echo missing' 2>&1) -join "" } catch {}
+    if ($overlayOut.Trim() -ne 'present') {
+        Log-Warn "smoke: /usr/share/mios overlay missing in $name (got: '$overlayOut')"
+        # Non-fatal -- the overlay is applied at build time, not
+        # bootstrap. The dev distro's Fedora rootfs is the only thing
+        # we need pre-build.
+    } else {
+        Log-Ok "smoke 3/4: /usr/share/mios overlay present in $name"
+    }
+
+    # 4. Podman API reachable. Skipped post-rename (podman client
+    # speaks to the SSH socket regardless of WSL distro name).
+    if ($name -eq "podman-$DevDistro") {
+        $podOut = ""
+        try { $podOut = (& podman --connection "${DevDistro}-root" version --format '{{.Server.Version}}' 2>&1) -join "" } catch {}
+        if ([string]::IsNullOrWhiteSpace($podOut) -or $podOut -match 'error|Error|fail') {
+            Log-Warn "smoke: podman API not responding (got: '$podOut')"
+            # Non-fatal -- some podman versions report differently
+        } else {
+            Log-Ok "smoke 4/4: podman API server v$($podOut.Trim())"
+        }
+    }
+
+    return $true
+}
+
+function Invoke-DistroSh {
+    # Run a bash snippet inside the dev distro, picking the right
+    # transport based on the rename state:
+    #
+    #   * Pre-rename (distro = "podman-MiOS-DEV"): use `podman machine
+    #     ssh` -- works because podman's WSLDistroName() = podman-<name>.
+    #   * Post-rename (distro = "MiOS-DEV"):       use `wsl -d MiOS-DEV`
+    #     directly -- `podman machine ssh` here fails because podman
+    #     hardcodes the `podman-` prefix in WSLDistroName().
+    #
+    # Both transports base64-encode the script to avoid CRLF mangling
+    # by stdin pipelines, then `echo BASE64 | base64 -d | bash`
+    # decodes and pipes the script to a fresh bash via stdin (bash
+    # auto-execs when stdin is a pipe).
+    #
+    # Returns: the inner script's stdout. After invocation,
+    # $LASTEXITCODE holds the inner bash exit code (set by the
+    # native wsl.exe / podman.exe process, which propagates the
+    # last pipeline stage).
+    #
+    # Callers MUST NOT do `return Invoke-DistroSh ...` if they want
+    # both stdout and exit code -- assign to a variable and check
+    # $LASTEXITCODE separately:
+    #
+    #     $out = Invoke-DistroSh -Bash "echo hello"
+    #     if ($LASTEXITCODE -ne 0) { ... }
+    #
+    # All build-pipeline call sites that previously called
+    # `podman machine ssh $BuilderDistro -- sudo bash -c "..."`
+    # should route through this helper so the rename is transparent.
+    param(
+        [Parameter(Mandatory)] [string] $Bash,
+        [string] $MachineName = $script:DevDistro,
+        [switch] $NoSudo
+    )
+    $Bash = $Bash -replace "`r`n", "`n" -replace "`r", "`n"
+    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Bash))
+    # --user root makes sudo redundant on the wsl path; pre-rename
+    # podman-machine-ssh runs as `core` so sudo is needed unless the
+    # script is itself root-safe. Default = sudo on the ssh path,
+    # bare bash on the wsl path.
+    $sudoPrefix = if ($NoSudo) { '' } else { 'sudo ' }
+
+    $wslList = @()
+    try { $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" | ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ } } catch {}
+
+    if ($wslList -contains $MachineName) {
+        # Post-rename: wsl --user root, no sudo (already root).
+        $inner = "echo $encoded | base64 -d | bash"
+        & wsl.exe -d $MachineName --user root -- /bin/sh -c $inner
+        return
+    }
+    if ($wslList -contains "podman-$MachineName") {
+        # Pre-rename: podman machine ssh, sudo unless caller opts out.
+        $inner = "echo $encoded | base64 -d | ${sudoPrefix}bash"
+        & podman machine ssh $MachineName -- /bin/sh -c $inner
+        return
+    }
+    Write-Log "Invoke-DistroSh: neither '$MachineName' nor 'podman-$MachineName' is registered" "ERROR"
+    # Synthesize a non-zero exit code so callers' $LASTEXITCODE check fires.
+    cmd /c "exit 127" | Out-Null
+}
+
+function Rename-PodmanDevDistro {
+    # Drops the `podman-` prefix that `podman machine init` auto-adds
+    # to its WSL2 distro: renames podman-MiOS-DEV -> MiOS-DEV so the
+    # operator-facing distro name matches the project name everywhere
+    # (Start Menu, dashboard, `wsl -d MiOS-DEV`, mios-dev shortcut).
+    #
+    # Procedure: export -> unregister -> import-with-new-name. Only
+    # safe to call AFTER all `podman machine ssh` and `podman build`
+    # operations have completed (subsequent `podman machine start/ssh`
+    # commands will FAIL because podman hardcodes the `podman-` prefix
+    # in WSLDistroName(); the operator's daily workflow uses `wsl -d
+    # MiOS-DEV` or the `mios-dev` shortcut, both of which work).
+    #
+    # The Windows-side podman client connection (a fixed SSH URI at
+    # 127.0.0.1:<port>/run/podman/podman.sock) is unaffected: the
+    # socket lives inside the distro, the port-forward survives the
+    # rename, and `podman cp / commit / build` continue to work as
+    # long as the distro is started via `wsl -d MiOS-DEV`.
+    #
+    # Idempotent: if `podman-$DevDistro` is already absent and
+    # `$DevDistro` is registered, skip with a no-op.
+    # Bypass: $env:MIOS_SKIP_DISTRO_RENAME=1.
+    if ($env:MIOS_SKIP_DISTRO_RENAME -in @('1','true','TRUE','yes')) {
+        Log-Warn "MIOS_SKIP_DISTRO_RENAME set -- WSL distro rename skipped"
+        return
+    }
+    Set-Step "Renaming podman-$DevDistro -> $DevDistro (drops podman- prefix)..."
+
+    $oldName = "podman-$DevDistro"
+    $newName = $DevDistro
+
+    # Snapshot current registrations.
+    $wslList = @()
+    try { $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" | ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ } } catch {}
+
+    if ($wslList -contains $newName -and -not ($wslList -contains $oldName)) {
+        Log-Ok "$newName already registered and $oldName absent -- nothing to rename"
+        return
+    }
+    if (-not ($wslList -contains $oldName)) {
+        Log-Warn "$oldName not registered -- nothing to rename (skipping)"
+        return
+    }
+    if ($wslList -contains $newName) {
+        Log-Warn "$newName already exists alongside $oldName -- skipping rename to avoid clobbering an existing distro. Run 'wsl --unregister $newName' manually if you want to redo this."
+        return
+    }
+
+    # Stop the machine so the WSL VM has no active mounts when we
+    # export. Errors here are non-fatal -- if podman wasn't running we
+    # just proceed straight to wsl --shutdown.
+    try { & podman machine stop $DevDistro 2>$null | Out-Null } catch {}
+    & wsl.exe --shutdown 2>$null | Out-Null
+
+    # Pick the new home path -- prefer the dedicated MiOS data disk if
+    # present (already redirected by Update-MiosInstallPaths during
+    # Install-WindowsBranding), else fall back to the standard distros
+    # dir under %ProgramData%/%LOCALAPPDATA%.
+    $newDistroDir = Join-Path $MiosDistroDir $newName
+    if (-not (Test-Path $MiosDistroDir)) { New-Item -ItemType Directory -Path $MiosDistroDir -Force | Out-Null }
+
+    # Export to a temp tarball, unregister the old, import with the
+    # new name. wsl --export uses gzip-compressed tar by default since
+    # Win11; we keep .tar.gz suffix explicit so the format is obvious.
+    $tmpTar = Join-Path $env:TEMP "mios-distro-rename-$([guid]::NewGuid().ToString('N').Substring(0,8)).tar.gz"
+    try {
+        Log-Ok "Exporting $oldName -> $tmpTar"
+        & wsl.exe --export $oldName $tmpTar 2>&1 | ForEach-Object { Write-Log "wsl-export: $_" }
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmpTar)) {
+            throw "wsl --export $oldName failed (exit $LASTEXITCODE)"
+        }
+        Log-Ok "Unregistering $oldName"
+        & wsl.exe --unregister $oldName 2>&1 | ForEach-Object { Write-Log "wsl-unregister: $_" }
+        if ($LASTEXITCODE -ne 0) {
+            throw "wsl --unregister $oldName failed (exit $LASTEXITCODE)"
+        }
+        Log-Ok "Importing as $newName at $newDistroDir"
+        & wsl.exe --import $newName $newDistroDir $tmpTar --version 2 2>&1 | ForEach-Object { Write-Log "wsl-import: $_" }
+        if ($LASTEXITCODE -ne 0) {
+            # Recovery: re-import as the old name so the operator isn't
+            # left with NO dev distro at all.
+            Log-Warn "wsl --import $newName failed -- restoring $oldName from tarball"
+            & wsl.exe --import $oldName (Join-Path $MiosDistroDir $oldName) $tmpTar --version 2 2>&1 | ForEach-Object { Write-Log "wsl-import-recovery: $_" }
+            throw "wsl --import $newName failed (exit $LASTEXITCODE) -- $oldName restored"
+        }
+
+        # Boot the new distro once so subsequent podman commands hit a
+        # running VM. `wsl -d <name> -- echo` is the lightest possible
+        # warm-start that doesn't depend on the distro's default user
+        # being configured.
+        & wsl.exe -d $newName -- /bin/sh -c 'echo ready' 2>&1 | ForEach-Object { Write-Log "wsl-warm: $_" }
+
+        Log-Ok "Renamed: $oldName -> $newName ($newDistroDir)"
+        Log-Warn "Note: 'podman machine start/ssh $newName' will fail (podman hardcodes the 'podman-' prefix). Use 'wsl -d $newName' or the 'mios-dev' shortcut instead. The Windows-side podman client (podman build/cp/commit) still works via the existing SSH connection."
+    } catch {
+        Log-Warn "Distro rename aborted: $_"
+    } finally {
+        if (Test-Path $tmpTar) {
+            try { Remove-Item $tmpTar -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+}
+
 function New-Shortcut([string]$Path,[string]$Target,[string]$Args="",[string]$Desc="",[string]$Dir="") {
     $ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut($Path)
     $sc.TargetPath = $Target
@@ -2066,7 +2375,17 @@ function Install-WindowsBranding {
         Log-Warn "MIOS_SKIP_WINDOWS_BRANDING set -- Windows branding install skipped"
         return
     }
-    Set-Step "Installing oh-my-posh + Geist + Nerd fonts on Windows host..."
+
+    # Re-resolve the install root: if Phase 3 provisioned the dedicated
+    # MIOS-DEV data disk (M:\ by default) all Windows-side artifacts
+    # (oh-my-posh, theme, launcher, icons, dash) move there to keep
+    # the install consolidated on the operator-visible MiOS volume.
+    $resolvedRoot = Resolve-MiosInstallRoot
+    if ($resolvedRoot -ne $script:MiosInstallDir) {
+        Log-Ok "MiOS data disk detected -- redirecting Windows install root: $($script:MiosInstallDir) -> $resolvedRoot"
+        Update-MiosInstallPaths -NewRoot $resolvedRoot
+    }
+    Set-Step "Installing oh-my-posh + Geist + Nerd fonts under $($script:MiosInstallDir)..."
 
     # ── 1. Fonts (per-user; no admin needed) ─────────────────────────
     $fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
@@ -2119,12 +2438,14 @@ function Install-WindowsBranding {
     } catch { Log-Warn "Nerd Font fetch failed: $($_.Exception.Message)" }
     finally { if (Test-Path $nerdTmp) { Remove-Item $nerdTmp -Recurse -Force -ErrorAction SilentlyContinue } }
 
-    # ── 2. oh-my-posh.exe (per-user) ─────────────────────────────────
-    $ompDir  = Join-Path $env:LOCALAPPDATA 'Programs\oh-my-posh\bin'
-    $ompExe  = Join-Path $ompDir 'oh-my-posh.exe'
+    # ── 2. oh-my-posh.exe (installed into $MiosBinDir) ───────────────
+    # Single canonical install location: $MiosInstallDir\bin (= C:\MiOS\bin
+    # for admin installs, %LOCALAPPDATA%\MiOS\bin otherwise) so all MiOS
+    # tooling lives under one root and a single PATH entry covers them.
+    New-Item -ItemType Directory -Path $MiosBinDir -Force | Out-Null
+    $ompExe  = Join-Path $MiosBinDir 'oh-my-posh.exe'
     if (-not (Test-Path $ompExe)) {
         try {
-            New-Item -ItemType Directory -Path $ompDir -Force | Out-Null
             $arch = if ([Environment]::Is64BitOperatingSystem) {
                 if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
             } else { '386' }
@@ -2134,11 +2455,14 @@ function Install-WindowsBranding {
         } catch { Log-Warn "oh-my-posh download failed: $($_.Exception.Message)"; return }
     }
 
-    # Add the install dir to the user's PATH if not already present.
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if (-not ($userPath -split ';' | Where-Object { $_ -ieq $ompDir })) {
-        [Environment]::SetEnvironmentVariable('Path', "$userPath;$ompDir", 'User')
-        Log-Ok "Added $ompDir to user PATH"
+    # Add $MiosBinDir to PATH (machine-wide for admin installs, user
+    # otherwise) so `oh-my-posh`, `mios-dash`, `mios-dev`, etc. all
+    # resolve from any new shell.
+    $pathScope = if ($script:IsAdmin) { 'Machine' } else { 'User' }
+    $envPath = [Environment]::GetEnvironmentVariable('Path', $pathScope)
+    if (-not ($envPath -split ';' | Where-Object { $_ -ieq $MiosBinDir })) {
+        [Environment]::SetEnvironmentVariable('Path', "$envPath;$MiosBinDir", $pathScope)
+        Log-Ok "Added $MiosBinDir to $pathScope PATH"
     }
 
     # ── 3. PowerShell profile + theme ────────────────────────────────
@@ -2147,8 +2471,8 @@ function Install-WindowsBranding {
         $miosThemeSrc = Join-Path $MiosRepoDir 'mios-bootstrap\usr\share\mios\oh-my-posh\mios.omp.json'
     }
     if (Test-Path $miosThemeSrc) {
-        $themeDst = Join-Path $env:APPDATA 'MiOS\mios.omp.json'
-        New-Item -ItemType Directory -Path (Split-Path $themeDst) -Force | Out-Null
+        New-Item -ItemType Directory -Path $MiosThemesDir -Force | Out-Null
+        $themeDst = Join-Path $MiosThemesDir 'mios.omp.json'
         Copy-Item -Path $miosThemeSrc -Destination $themeDst -Force
         Log-Ok "MiOS oh-my-posh theme staged at $themeDst"
 
@@ -2162,12 +2486,13 @@ function Install-WindowsBranding {
         $existing = if (Test-Path $profilePath) { Get-Content $profilePath -Raw } else { '' }
         $marker   = '# >>> MiOS oh-my-posh init >>>'
         $endMark  = '# <<< MiOS oh-my-posh init <<<'
+        $themeForProfile = $themeDst -replace '\\', '\\'
         $block = @"
 $marker
 # Auto-generated by mios-bootstrap/build-mios.ps1. Edit at your own
 # risk -- block is replaced on every re-run between the markers.
 if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
-    `$miosTheme = "`$env:APPDATA\MiOS\mios.omp.json"
+    `$miosTheme = "$themeForProfile"
     if (Test-Path `$miosTheme) {
         oh-my-posh init pwsh --config `$miosTheme | Invoke-Expression
     }
@@ -2193,6 +2518,563 @@ $endMark
     }
 
     Log-Ok "Windows-side branding installed (open a NEW pwsh window to see the MiOS prompt)"
+}
+
+function New-MiosIcon {
+    # Generate one multi-size .ico (16/32/48/64/256) with a "M" glyph
+    # plus an optional accent badge (chevron / arrow / grid / gear /
+    # update-arrows). Writes a multi-image PNG-payload .ico so Windows
+    # Explorer + Taskbar pick the best size for each rendering context.
+    #
+    # Badges live in the bottom-right corner (~36% of canvas); the
+    # main "M" stays centered so all icons read as part of one family.
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [ValidateSet('plain','dev','pull','dash','build','update','config')] [string] $Badge = 'plain'
+    )
+    Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+    $sizes = @(16, 32, 48, 64, 256)
+    $bitmaps = @()
+    foreach ($s in $sizes) {
+        $bmp = New-Object System.Drawing.Bitmap $s, $s
+        $g   = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.SmoothingMode      = 'AntiAlias'
+        $g.TextRenderingHint  = 'AntiAlias'
+        $g.InterpolationMode  = 'HighQualityBicubic'
+        # MiOS palette (Hokusai + operator): bg=#282262 accent=#F35C15 fg=#E7DFD3
+        $bg     = [System.Drawing.Color]::FromArgb(40, 34, 98)
+        $fg     = [System.Drawing.Color]::FromArgb(231, 223, 211)
+        $accent = [System.Drawing.Color]::FromArgb(243, 92, 21)
+        $green  = [System.Drawing.Color]::FromArgb(62, 119, 101)
+        $g.Clear($bg)
+        $ringPen = New-Object System.Drawing.Pen($accent, [math]::Max(1, $s / 32))
+        $g.DrawEllipse($ringPen, 1, 1, $s - 3, $s - 3)
+        $fontSize = [int]($s * 0.55)
+        $font  = New-Object System.Drawing.Font("Segoe UI", $fontSize, [System.Drawing.FontStyle]::Bold)
+        $sf    = New-Object System.Drawing.StringFormat
+        $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
+        $brush = New-Object System.Drawing.SolidBrush($fg)
+        $g.DrawString('M', $font, $brush, [System.Drawing.RectangleF]::FromLTRB(0, 0, $s, $s), $sf)
+
+        if ($Badge -ne 'plain' -and $s -ge 32) {
+            $bSize = [int]($s * 0.36)
+            $bX    = $s - $bSize - 1
+            $bY    = $s - $bSize - 1
+            # Filled badge circle (green for non-destructive, accent
+            # orange for action verbs).
+            $badgeFill = if ($Badge -in @('dev','dash','config')) { $green } else { $accent }
+            $badgeBrush = New-Object System.Drawing.SolidBrush($badgeFill)
+            $g.FillEllipse($badgeBrush, $bX, $bY, $bSize, $bSize)
+            $badgeBrush.Dispose()
+            $glyphFont = New-Object System.Drawing.Font("Segoe UI Symbol", [int]($bSize * 0.65), [System.Drawing.FontStyle]::Bold)
+            $glyphChar = switch ($Badge) {
+                'dev'    { [char]0x276F }   # ❯ chevron right
+                'pull'   { [char]0x2193 }   # ↓ down arrow
+                'dash'   { [char]0x25A6 }   # ▦ grid
+                'build'  { [char]0x2699 }   # ⚙ gear
+                'update' { [char]0x21BB }   # ↻ clockwise
+                'config' { [char]0x2699 }   # ⚙ gear
+            }
+            $g.DrawString([string]$glyphChar, $glyphFont, $brush,
+                [System.Drawing.RectangleF]::FromLTRB($bX, $bY, $bX + $bSize, $bY + $bSize), $sf)
+            $glyphFont.Dispose()
+        }
+        $g.Dispose(); $font.Dispose(); $brush.Dispose(); $ringPen.Dispose()
+        $bitmaps += ,$bmp
+    }
+    # Multi-image .ico writer (ICONDIR + ICONDIRENTRY[] + PNG payloads).
+    $fs = [System.IO.File]::Create($Path)
+    $bw = New-Object System.IO.BinaryWriter($fs)
+    $bw.Write([UInt16]0)                    # reserved
+    $bw.Write([UInt16]1)                    # type = icon
+    $bw.Write([UInt16]$bitmaps.Count)
+    $payloads = @()
+    foreach ($bmp in $bitmaps) {
+        $ms = New-Object System.IO.MemoryStream
+        $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+        $payloads += ,$ms.ToArray()
+    }
+    $offset = 6 + (16 * $bitmaps.Count)
+    for ($i = 0; $i -lt $bitmaps.Count; $i++) {
+        $b = $bitmaps[$i]; $p = $payloads[$i]
+        $bw.Write([byte]($(if ($b.Width  -ge 256) { 0 } else { $b.Width  })))
+        $bw.Write([byte]($(if ($b.Height -ge 256) { 0 } else { $b.Height })))
+        $bw.Write([byte]0)              # palette
+        $bw.Write([byte]0)              # reserved
+        $bw.Write([UInt16]1)            # color planes
+        $bw.Write([UInt16]32)           # bpp
+        $bw.Write([UInt32]$p.Length)
+        $bw.Write([UInt32]$offset)
+        $offset += $p.Length
+    }
+    foreach ($p in $payloads) { $bw.Write($p) }
+    $bw.Flush(); $bw.Close(); $fs.Close()
+    foreach ($bmp in $bitmaps) { $bmp.Dispose() }
+}
+
+function Install-MiosLauncher {
+    # Builds out the Windows-side MiOS install tree and shortcuts:
+    #
+    #   $MiosInstallDir/                 (= C:\MiOS for admin installs,
+    #     bin/                            %LOCALAPPDATA%\MiOS otherwise)
+    #       oh-my-posh.exe               (already staged by Install-WindowsBranding)
+    #       mios-dash.ps1                Windows dashboard
+    #       mios-dev.ps1                 wsl -d <dev-distro> launcher
+    #       mios-pull.ps1                wsl --user root sudo /usr/bin/mios-pull
+    #       mios-update.ps1              re-runs build-mios.ps1 to refresh
+    #     icons/                         per-verb .ico files (M + badge)
+    #       mios.ico, mios-dev.ico, mios-pull.ico, mios-dash.ico,
+    #       mios-build.ico, mios-update.ico, mios-config.ico
+    #     themes/mios.omp.json           (already staged by Install-WindowsBranding)
+    #
+    #   Start Menu\Programs\MiOS\        $StartMenuDir
+    #     MiOS.lnk                       (main launcher; wt -p MiOS or pwsh)
+    #     MiOS Dev VM.lnk                (wsl into MiOS-DEV)
+    #     MiOS Update.lnk                (mios-pull)
+    #     MiOS Dashboard.lnk             (standalone dash)
+    #     MiOS Configurator.lnk          (HTML configurator on MiOS-DEV WSLg)
+    #
+    #   Desktop\MiOS.lnk                 single primary shortcut
+    #   PowerShell profile               mios-dash / mios-dev / mios-pull functions
+    #   Windows Terminal settings.json   "MiOS" profile + color scheme
+    #
+    # Idempotent: regenerates / replaces in place.
+    # Bypass: $env:MIOS_SKIP_LAUNCHER=1.
+    if ($env:MIOS_SKIP_LAUNCHER -in @('1','true','TRUE','yes')) {
+        Log-Warn "MIOS_SKIP_LAUNCHER set -- launcher install skipped"
+        return
+    }
+    Set-Step "Installing MiOS desktop launcher under $MiosInstallDir..."
+
+    foreach ($d in @($MiosInstallDir, $MiosBinDir, $MiosIconsDir, $MiosThemesDir, $StartMenuDir)) {
+        New-Item -ItemType Directory -Path $d -Force | Out-Null
+    }
+
+    # ── 1. Generate the icon family (one .ico per verb) ───────────────
+    $iconMap = @{
+        'mios'         = 'plain'
+        'mios-dev'     = 'dev'
+        'mios-pull'    = 'pull'
+        'mios-dash'    = 'dash'
+        'mios-build'   = 'build'
+        'mios-update'  = 'update'
+        'mios-config'  = 'config'
+    }
+    $icoPaths = @{}
+    foreach ($name in $iconMap.Keys) {
+        $p = Join-Path $MiosIconsDir "$name.ico"
+        try {
+            New-MiosIcon -Path $p -Badge $iconMap[$name]
+            $icoPaths[$name] = $p
+        } catch {
+            Log-Warn "icon $name : $($_.Exception.Message)"
+        }
+    }
+    $icoPath = $icoPaths['mios']
+    if ($icoPath) { Log-Ok "Generated $($iconMap.Count) MiOS icons under $MiosIconsDir" }
+    else          { Log-Warn "icon generation failed -- shortcuts will use default WT icon"; $icoPath = "" }
+
+    # ── 2. Bin scripts: mios-dash + mios-dev + mios-pull + mios-update ──
+    $dashPath = Join-Path $MiosBinDir 'mios-dash.ps1'
+    $dashScript = @'
+# <MiOSRoot>\bin\mios-dash.ps1
+# Windows-side dashboard. Mirrors /usr/libexec/mios/mios-dashboard.sh
+# layout: 80-col frame, centered MiOS ASCII art, services probe, hint.
+# Auto-installed by mios-bootstrap (Install-MiosLauncher).
+$ErrorActionPreference = 'SilentlyContinue'
+
+# Self-locate the MiOS install root (this script is at <root>\bin\mios-dash.ps1).
+$Script:MiOSRoot = Split-Path -Parent $PSScriptRoot
+
+$WIDTH = 80
+$INNER = $WIDTH - 4
+$F_TL = [char]0x256D; $F_TR = [char]0x256E
+$F_BL = [char]0x2570; $F_BR = [char]0x256F
+$F_LT = [char]0x251C; $F_RT = [char]0x2524
+$F_V  = [char]0x2502; $HR   = [char]0x2500
+$DOT_UP = [char]0x25CF; $DOT_DOWN = [char]0x25CB
+
+function Repeat-Char([char]$c, [int]$n) { return ([string]$c) * [math]::Max(0, $n) }
+function Frame-Top    { Write-Host ($F_TL + (Repeat-Char $HR ($WIDTH - 2)) + $F_TR) -ForegroundColor DarkCyan }
+function Frame-Bot    { Write-Host ($F_BL + (Repeat-Char $HR ($WIDTH - 2)) + $F_BR) -ForegroundColor DarkCyan }
+function Frame-Divide { Write-Host ($F_LT + (Repeat-Char $HR ($WIDTH - 2)) + $F_RT) -ForegroundColor DarkCyan }
+
+function Frame-Line([string]$content, [ConsoleColor]$color = 'Gray') {
+    $vis = $content
+    if ($vis.Length -gt $INNER) { $vis = $vis.Substring(0, $INNER - 1) + [char]0x2026 }
+    $pad = $INNER - $vis.Length
+    if ($pad -lt 0) { $pad = 0 }
+    Write-Host -NoNewline $F_V        -ForegroundColor DarkCyan
+    Write-Host -NoNewline " "
+    Write-Host -NoNewline $vis        -ForegroundColor $color
+    Write-Host -NoNewline (' ' * $pad)
+    Write-Host -NoNewline " "
+    Write-Host           $F_V         -ForegroundColor DarkCyan
+}
+
+function Probe-Endpoint([string]$url) {
+    try {
+        $iwrParams = @{ Uri = $url; UseBasicParsing = $true; TimeoutSec = 2 }
+        $r = Invoke-WebRequest @iwrParams -ErrorAction Stop
+        return $true
+    } catch { return $false }
+}
+
+function Show-MiosDashboard {
+    Clear-Host
+    Frame-Top
+
+    # Centered ASCII art header. Width 54, art lines as-is.
+    $art = @(
+        '      ___                       ___           ___',
+        '     /\__\          ___        /\  \         /\  \',
+        '    /::|  |        /\  \      /::\  \       /::\  \',
+        '   /:|:|  |        \:\  \    /:/\:\  \     /:/\ \  \',
+        '  /:/|:|__|__      /::\__\  /:/  \:\  \   _\:\~\ \  \',
+        ' /:/ |::::\__\  __/:/\/__/ /:/__/ \:\__\ /\ \:\ \ \__\',
+        ' \/__/~~/:/  / /\/:/  /    \:\  \ /:/  / \:\ \:\ \/__/',
+        '       /:/  /  \::/__/      \:\  /:/  /   \:\ \:\__\',
+        '      /:/  /    \:\__\       \:\/:/  /     \:\/:/  /',
+        '     /:/  /      \/__/        \::/  /       \::/  /',
+        '     \/__/                     \/__/         \/__/'
+    )
+    $maxw = ($art | Measure-Object -Property Length -Maximum).Maximum
+    $padL = [math]::Max(0, [int](($INNER - $maxw) / 2))
+    foreach ($line in $art) {
+        Frame-Line ((' ' * $padL) + $line) 'Cyan'
+    }
+    Frame-Divide
+
+    # Title + version row. VERSION lives at <MiOSRoot>\VERSION.
+    $verFile = Join-Path $Script:MiOSRoot 'VERSION'
+    $ver = if (Test-Path $verFile) { (Get-Content $verFile -Raw).Trim() } else { '0.2.2' }
+    $left = " MiOS v$ver  --  Windows Launcher"
+    $right = " $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion) "
+    $gap = $INNER - $left.Length - $right.Length
+    if ($gap -lt 1) { $gap = 1 }
+    Frame-Line ($left + (' ' * $gap) + $right) 'White'
+    Frame-Divide
+
+    # Self-replication endpoints (probe each host).
+    Frame-Line "  Self-replication loop" 'Cyan'
+    $endpoints = @(
+        @{ Name = 'Forge   '; Url = 'http://localhost:3000/'   ; Probe = 'http://localhost:3000/api/v1/version' },
+        @{ Name = 'AI      '; Url = 'http://localhost:8080/v1'; Probe = 'http://localhost:8080/v1/models'      },
+        @{ Name = 'Cockpit '; Url = 'https://localhost:9090/' ; Probe = 'https://localhost:9090/'              },
+        @{ Name = 'Ollama  '; Url = 'http://localhost:11434'  ; Probe = 'http://localhost:11434/'              }
+    )
+    foreach ($ep in $endpoints) {
+        $up  = Probe-Endpoint $ep.Probe
+        $dot = if ($up) { $DOT_UP } else { $DOT_DOWN }
+        Frame-Line ("    $dot  $($ep.Name)   $($ep.Url)") (if ($up) { 'Green' } else { 'DarkGray' })
+    }
+    Frame-Divide
+
+    # MiOS-DEV distro state. After build-mios.ps1's Rename-PodmanDevDistro
+    # pass the WSL distro is just "MiOS-DEV"; before the rename (or in
+    # partial-install states) it shows up as "podman-MiOS-DEV". Probe
+    # both, canonical-first, plus the legacy MiOS-BUILDER names from
+    # earlier project versions for full backwards-compat.
+    Frame-Line "  MiOS-DEV (WSL2 dev VM)" 'Cyan'
+    $wslList = @()
+    try { $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" | ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ } } catch {}
+    $devCandidates = @('MiOS-DEV', 'podman-MiOS-DEV', 'MiOS-BUILDER', 'podman-MiOS-BUILDER')
+    $matched = $wslList | Where-Object { $devCandidates -contains $_ } | Select-Object -First 1
+    if ($matched) {
+        Frame-Line "    $DOT_UP  registered : $matched" 'Green'
+        Frame-Line "    enter      : wsl -d $matched"   'Gray'
+    } else {
+        Frame-Line "    $DOT_DOWN  not registered yet"            'DarkGray'
+        Frame-Line "    setup      : run build-mios.ps1 to provision" 'Gray'
+    }
+    Frame-Divide
+
+    Frame-Line "  Edit /  ->  git commit  ->  git push  ->  Forgejo runner  ->  bootc switch" 'DarkGray'
+    Frame-Bot
+    Write-Host ""
+}
+
+Show-MiosDashboard
+'@
+    Set-Content -Path $dashPath -Value $dashScript -Encoding UTF8
+    Log-Ok "Windows mios-dash staged at $dashPath"
+
+    # mios-dev.ps1 / mios-pull.ps1 -- self-resolving wrappers.
+    # The Rename-PodmanDevDistro pass at the end of build-mios.ps1
+    # drops the `podman-` prefix, so the canonical post-install name
+    # is `$DevDistro` (= "MiOS-DEV"). These wrappers probe at RUNTIME
+    # so they Just Work whether the rename has happened yet or not
+    # (e.g. during a partial install or after a failed rename), and
+    # they pick up future renames without needing regeneration.
+    $devResolveBlock = @"
+`$Global:MiosDevCandidates = @('$DevDistro', 'podman-$DevDistro', '$LegacyDevName', 'podman-$LegacyDevName')
+function Resolve-MiosDevDistro {
+    `$wslList = @()
+    try { `$wslList = (& wsl.exe -l -q 2>`$null) -split "``r?``n" | ForEach-Object { (`$_ -replace [char]0, '').Trim() } | Where-Object { `$_ } } catch {}
+    `$match = `$Global:MiosDevCandidates | Where-Object { `$wslList -contains `$_ } | Select-Object -First 1
+    if (-not `$match) { `$match = '$DevDistro' }
+    return `$match
+}
+"@
+    $devPath = Join-Path $MiosBinDir 'mios-dev.ps1'
+    Set-Content -Path $devPath -Value @"
+$devResolveBlock
+wsl.exe -d (Resolve-MiosDevDistro) @args
+"@ -Encoding UTF8
+
+    $pullPath = Join-Path $MiosBinDir 'mios-pull.ps1'
+    Set-Content -Path $pullPath -Value @"
+$devResolveBlock
+wsl.exe -d (Resolve-MiosDevDistro) --user root sudo /usr/bin/mios-pull @args
+"@ -Encoding UTF8
+
+    # mios-update.ps1 -- re-runs build-mios.ps1 from the cloned repo to
+    # refresh the Windows side (oh-my-posh, fonts, theme, launcher).
+    $bootstrapBuild = Join-Path $MiosRepoDir 'mios-bootstrap\build-mios.ps1'
+    $updatePath = Join-Path $MiosBinDir 'mios-update.ps1'
+    $updateScript = @"
+# Refreshes the Windows-side MiOS install by re-running build-mios.ps1.
+# Skips the heavy build / VM provisioning phases via -ResetOnly when
+# possible; passes any extra arguments through.
+`$bs = "$bootstrapBuild"
+if (Test-Path `$bs) {
+    & pwsh.exe -NoProfile -File `$bs @args
+} else {
+    Write-Host "build-mios.ps1 not found at `$bs" -ForegroundColor Yellow
+    Write-Host "Re-clone with: git clone $MiosBootstrapUrl `"$MiosRepoDir\mios-bootstrap`""
+}
+"@
+    Set-Content -Path $updatePath -Value $updateScript -Encoding UTF8
+
+    # mios-config.ps1 -- opens the HTML configurator in default browser.
+    $cfgPath = Join-Path $MiosBinDir 'mios-config.ps1'
+    $cfgHtml = Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\index.html'
+    $cfgScript = @"
+`$cfg = "$cfgHtml"
+if (Test-Path `$cfg) { Start-Process `$cfg }
+else { Write-Host "configurator not found at `$cfg" -ForegroundColor Yellow }
+"@
+    Set-Content -Path $cfgPath -Value $cfgScript -Encoding UTF8
+
+    Log-Ok "Bin scripts staged: mios-dash, mios-dev, mios-pull, mios-update, mios-config"
+
+    # Also drop a VERSION file so mios-dash can render the current ver.
+    Set-Content -Path (Join-Path $MiosInstallDir 'VERSION') -Value $MiosVersion.TrimStart('v') -Encoding UTF8
+
+    # ── 3. PowerShell profile: mios-* functions (idempotent block) ────
+    $profilePath = $PROFILE.CurrentUserAllHosts
+    if (-not $profilePath) { $profilePath = $PROFILE }
+    $profileDir  = Split-Path $profilePath -Parent
+    if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
+    $existing = if (Test-Path $profilePath) { Get-Content $profilePath -Raw } else { '' }
+    $marker   = '# >>> MiOS dash function >>>'
+    $endMark  = '# <<< MiOS dash function <<<'
+    $miosBinForProfile = $MiosBinDir -replace '\\', '\\'
+    $dashFn = @"
+$marker
+# Auto-generated by mios-bootstrap/build-mios.ps1. Block is replaced
+# on every re-run between the markers. Functions resolve the bin
+# scripts under $MiosBinDir.
+`$Global:MiosBin = "$miosBinForProfile"
+function mios-dash    { & (Join-Path `$Global:MiosBin 'mios-dash.ps1')   @args }
+function mios-dev     { & (Join-Path `$Global:MiosBin 'mios-dev.ps1')    @args }
+function mios-pull    { & (Join-Path `$Global:MiosBin 'mios-pull.ps1')   @args }
+function mios-update  { & (Join-Path `$Global:MiosBin 'mios-update.ps1') @args }
+function mios-config  { & (Join-Path `$Global:MiosBin 'mios-config.ps1') @args }
+$endMark
+"@
+    if ($existing -match [regex]::Escape($marker)) {
+        $pattern  = "(?s)$([regex]::Escape($marker)).*?$([regex]::Escape($endMark))"
+        $safeRepl = $dashFn -replace '\$', '$$$$'
+        $existing = [regex]::Replace($existing, $pattern, $safeRepl)
+    } else {
+        $existing = ($existing.TrimEnd() + "`n`n" + $dashFn + "`n").TrimStart()
+    }
+    Set-Content -Path $profilePath -Value $existing -Encoding UTF8 -NoNewline
+    Log-Ok "PowerShell profile updated with mios-* functions"
+
+    # ── 4. Windows Terminal "MiOS" profile (settings.json patch) ──────
+    $wtSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'
+    if (-not (Test-Path $wtSettings)) {
+        # Preview / store-side-loaded variant
+        $wtSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'
+    }
+    # Profile commandline -- resizes the console buffer to the dashboard
+    # frame BEFORE rendering (WT has no per-profile init-size knob;
+    # initialCols/Rows is window-global which would clobber other tabs).
+    # Keep Windows-style line continuation (backtick) only inside this
+    # double-quoted heredoc; once written into JSON it's a single line.
+    $miosCmd = 'pwsh.exe -NoExit -Command "& { try { $H=Get-Host; $sz=New-Object Management.Automation.Host.Size 80,32; $H.UI.RawUI.BufferSize=(New-Object Management.Automation.Host.Size 80,3000); $H.UI.RawUI.WindowSize=$sz } catch {}; . $PROFILE; mios-dash }"'
+    if (Test-Path $wtSettings) {
+        try {
+            $wtJson = Get-Content $wtSettings -Raw | ConvertFrom-Json
+            # Color scheme (MiOS palette).
+            if (-not $wtJson.schemes) {
+                $wtJson | Add-Member -NotePropertyName schemes -NotePropertyValue @() -Force
+            }
+            $miosScheme = [PSCustomObject]@{
+                name           = 'MiOS'
+                background     = '#282262'
+                foreground     = '#E7DFD3'
+                cursorColor    = '#F35C15'
+                selectionBackground = '#1A407F'
+                black          = '#282262'
+                red            = '#DC271B'
+                green          = '#3E7765'
+                yellow         = '#F35C15'
+                blue           = '#1A407F'
+                purple         = '#734F39'
+                cyan           = '#B7C9D7'
+                white          = '#E7DFD3'
+                brightBlack    = '#948E8E'
+                brightRed      = '#DC271B'
+                brightGreen    = '#3E7765'
+                brightYellow   = '#F35C15'
+                brightBlue     = '#1A407F'
+                brightPurple   = '#925837'
+                brightCyan     = '#B7C9D7'
+                brightWhite    = '#E0E0E0'
+            }
+            $schemes = @($wtJson.schemes | Where-Object { $_.name -ne 'MiOS' })
+            $schemes += $miosScheme
+            $wtJson.schemes = $schemes
+
+            # Profile.
+            if (-not $wtJson.profiles) {
+                $wtJson | Add-Member -NotePropertyName profiles -NotePropertyValue ([PSCustomObject]@{ list = @() }) -Force
+            }
+            if (-not $wtJson.profiles.list) {
+                $wtJson.profiles | Add-Member -NotePropertyName list -NotePropertyValue @() -Force
+            }
+            $miosGuid = '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}'
+            $miosProfile = [PSCustomObject]@{
+                guid              = $miosGuid
+                name              = 'MiOS'
+                commandline       = $miosCmd
+                startingDirectory = '%USERPROFILE%'
+                icon              = $(if ($icoPath) { $icoPath } else { 'ms-appx:///ProfileIcons/{61c54bbd-c2c6-5271-96e7-009a87ff44bf}.png' })
+                colorScheme       = 'MiOS'
+                # Geist Mono is the Vercel face; Symbols-Only Nerd Font
+                # is registered alongside so DirectWrite font-fallback
+                # picks it up for PUA (Powerline + Devicon) glyphs.
+                font              = [PSCustomObject]@{
+                    face = 'Geist Mono'
+                    size = 11
+                }
+                useAcrylic        = $false
+                opacity           = 100
+                cursorShape       = 'bar'
+                antialiasingMode  = 'cleartype'
+            }
+            $list = @($wtJson.profiles.list | Where-Object { $_.guid -ne $miosGuid })
+            $list += $miosProfile
+            $wtJson.profiles.list = $list
+
+            $wtJson | ConvertTo-Json -Depth 20 | Set-Content -Path $wtSettings -Encoding UTF8
+            Log-Ok "Windows Terminal MiOS profile injected at $wtSettings"
+        } catch {
+            Log-Warn "Windows Terminal settings.json patch failed: $($_.Exception.Message)"
+        }
+    } else {
+        Log-Warn "Windows Terminal not installed (no settings.json found) -- launcher will fall back to bare pwsh"
+    }
+
+    # ── 5. Desktop primary launcher + Start Menu MiOS folder ──────────
+    $desktopDir = [Environment]::GetFolderPath('Desktop')
+    $shell      = New-Object -ComObject WScript.Shell
+
+    # Resolve toolchain paths once.
+    $wtExe   = (Get-Command wt.exe   -ErrorAction SilentlyContinue).Source
+    $pwshExe = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+    if (-not $pwshExe) { $pwshExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source }
+    if (-not $pwshExe) {
+        Log-Warn "pwsh.exe / powershell.exe not found -- launcher shortcuts skipped"
+        return
+    }
+
+    # New-MiosShortcut -- helper that drops a single .lnk. Returns the
+    # path so callers can log it.
+    function New-MiosShortcut {
+        param(
+            [string]$LnkPath,
+            [string]$TargetExe,
+            [string]$ArgsString,
+            [string]$IconFile,
+            [string]$Description
+        )
+        $lnk = $shell.CreateShortcut($LnkPath)
+        $lnk.TargetPath       = $TargetExe
+        $lnk.Arguments        = $ArgsString
+        $lnk.WorkingDirectory = $env:USERPROFILE
+        if ($IconFile -and (Test-Path $IconFile)) { $lnk.IconLocation = "$IconFile,0" }
+        $lnk.Description      = $Description
+        $lnk.WindowStyle      = 1
+        $lnk.Save()
+        return $LnkPath
+    }
+
+    # Console-resize prelude shared by all bare-pwsh-launched verbs.
+    $resizeBin = "try { `$H=Get-Host; `$H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 80,32) } catch {}"
+
+    # Primary "MiOS" shortcut (Desktop + Start Menu): prefers wt.exe.
+    if ($wtExe) {
+        $primaryTarget = $wtExe; $primaryArgs = '-p MiOS'
+    } else {
+        $primaryTarget = $pwshExe
+        $primaryArgs   = "-NoExit -Command `"& { $resizeBin; . `$PROFILE; mios-dash }`""
+    }
+
+    # Build MiOS launcher: drives the OCI image build via build-mios.ps1
+    # -BuildOnly. Uses the cloned mios-bootstrap repo at $MiosRepoDir
+    # rather than re-fetching from GitHub so the build matches the
+    # bootstrap that put MiOS-DEV in place.
+    $bootstrapBuildScript = Join-Path $MiosRepoDir 'mios-bootstrap\build-mios.ps1'
+    $buildMiosArgs = "-NoExit -Command `"& { $resizeBin; & '$bootstrapBuildScript' -BuildOnly }`""
+
+    # Per-verb shortcut definitions: name -> @{ verb, icon-key, desc }.
+    # All verbs go through pwsh + the user's profile so the mios-*
+    # functions are defined; pwsh.exe is used directly (no wt -p MiOS)
+    # for the secondary verbs so they can run with their own icons.
+    $shortcuts = @(
+        @{ Name = 'MiOS';              Target = $primaryTarget; Args = $primaryArgs; IconKey = 'mios';        Desc = 'MiOS -- 80x32 launcher window with dashboard' },
+        @{ Name = 'Build MiOS';        Target = $pwshExe;       Args = $buildMiosArgs;                                                   IconKey = 'mios-build';  Desc = 'MiOS -- build the deployable OCI image (drives Phase 6+: identity, podman build, deploy)' },
+        @{ Name = 'MiOS Dev VM';       Target = $pwshExe;       Args = "-NoExit -Command `"& { $resizeBin; . `$PROFILE; mios-dev }`"";   IconKey = 'mios-dev';    Desc = 'MiOS -- enter MiOS-DEV WSL2 distro' },
+        @{ Name = 'MiOS Update';       Target = $pwshExe;       Args = "-NoExit -Command `"& { $resizeBin; . `$PROFILE; mios-pull }`"";  IconKey = 'mios-pull';   Desc = 'MiOS -- pull mios.git overlay onto live root' },
+        @{ Name = 'MiOS Dashboard';    Target = $pwshExe;       Args = "-NoExit -Command `"& { $resizeBin; . `$PROFILE; mios-dash }`"";  IconKey = 'mios-dash';   Desc = 'MiOS -- standalone dashboard view' },
+        @{ Name = 'MiOS Configurator'; Target = $pwshExe;       Args = "-Command `"& { . `$PROFILE; mios-config }`"";                    IconKey = 'mios-config'; Desc = 'MiOS -- open HTML configurator (mios.toml editor)' }
+    )
+
+    foreach ($sc in $shortcuts) {
+        $iconFile = $icoPaths[$sc.IconKey]
+        $smPath = Join-Path $StartMenuDir "$($sc.Name).lnk"
+        New-MiosShortcut -LnkPath $smPath -TargetExe $sc.Target -ArgsString $sc.Args -IconFile $iconFile -Description $sc.Desc | Out-Null
+        Log-Ok "Start Menu: $smPath"
+    }
+
+    # Single primary shortcut on the Desktop (the rest live in Start Menu\MiOS\).
+    if (Test-Path $desktopDir) {
+        $deskLnk = Join-Path $desktopDir 'MiOS.lnk'
+        New-MiosShortcut -LnkPath $deskLnk -TargetExe $primaryTarget -ArgsString $primaryArgs -IconFile $icoPath -Description 'MiOS -- Immutable Fedora AI Workstation (Podman-WSL2)' | Out-Null
+        Log-Ok "Desktop: $deskLnk"
+    }
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+
+    # ── 6. Verify the dev distro is registered (or warn) ──────────────
+    # Phase 3 ("MiOS-DEV distro") provisions the dev distro as
+    # "podman-$DevDistro" (= "podman-MiOS-DEV"); the post-Phase-13
+    # Rename-PodmanDevDistro pass drops that prefix to plain
+    # "$DevDistro" (= "MiOS-DEV"). Probe canonical-first.
+    $wslList = @()
+    try { $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" | ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ } } catch {}
+    $devCandidates = @($DevDistro, "podman-$DevDistro", $LegacyDevName, "podman-$LegacyDevName")
+    $matched = $wslList | Where-Object { $devCandidates -contains $_ } | Select-Object -First 1
+    if ($matched) {
+        Log-Ok "$matched distro registered -- launcher ready"
+    } else {
+        Log-Warn "$DevDistro distro not registered yet (Phase 3 should have provisioned it). The launcher's mios-dash will show 'not registered'; rerun this script or `podman machine init` to create it."
+    }
+
+    Log-Ok "MiOS launcher installed (Desktop + Start Menu). Open it to enter an 80x32 pwsh window with the MiOS dashboard."
 }
 
 # =============================================================================
@@ -2307,6 +3189,19 @@ if ($activeDistro) {
     $script:GhcrToken = if ($env:MIOS_GITHUB_TOKEN) { $env:MIOS_GITHUB_TOKEN }
                         elseif ($env:GITHUB_TOKEN)   { $env:GITHUB_TOKEN }
                         else { Read-Line "GitHub PAT for ghcr.io base image pull" "" }
+
+    # Existing-distro fast path: smoke test + rename + Windows install
+    # FIRST so the launcher gets the renamed name; only then run the
+    # build (Phase 9). With -BootstrapOnly, the build is skipped and
+    # the script exits after the launcher install.
+    if (Test-MiosDevDistroHealthy) { Rename-PodmanDevDistro }
+    Install-WindowsBranding
+    Install-MiosLauncher
+    if ($BootstrapOnly) {
+        Log-Ok "-BootstrapOnly mode: existing $DevDistro is healthy, Windows install refreshed."
+        End-Phase 1   # we never entered Phase 9 here
+        return
+    }
 
     Start-Phase 9
     $rc = Invoke-WslBuild -Distro $activeDistro -BaseImage $HW.BaseImage -AiModel $HW.AiModel
@@ -2545,12 +3440,40 @@ if ($activeDistro) {
     }
     End-Phase 5
 
-    # ── Optional GUI configurator (between Phase 5 and Phase 6) ──────────────
-    # Install oh-my-posh + Geist + Symbols-Only Nerd Font on the
-    # Windows host (per-user, no admin needed) so PowerShell terminals
-    # render the same MiOS-themed prompt the deployed Linux side does.
-    # Idempotent; bypass via $env:MIOS_SKIP_WINDOWS_BRANDING=1.
+    # ── Bootstrap finalize: smoke test -> rename -> Windows install ──────────
+    # The new bootstrap flow finishes the dev-VM-side work HERE rather
+    # than letting it stretch through the OCI build. Sequence:
+    #   1. Test-MiosDevDistroHealthy: smoke test (responsive + overlay present)
+    #   2. Install-WindowsBranding:   oh-my-posh, Geist, Nerd Font (pre-rename so
+    #                                  the data-disk redirect picks up before
+    #                                  the launcher's icons land)
+    #   3. Rename-PodmanDevDistro:    podman-MiOS-DEV -> MiOS-DEV (drops prefix
+    #                                  so all icons/shortcuts target the canonical name)
+    #   4. Install-MiosLauncher:      Desktop + Start Menu icons, Build MiOS
+    #                                  shortcut -- targets the post-rename name
     Install-WindowsBranding
+
+    $devHealthy = Test-MiosDevDistroHealthy
+    if ($devHealthy) {
+        Rename-PodmanDevDistro
+    } else {
+        Log-Warn "Skipping rename: smoke test reported issues. The launcher will fall back to 'podman-$DevDistro' transparently."
+    }
+
+    Install-MiosLauncher
+
+    # ── -BootstrapOnly: exit cleanly here ─────────────────────────────────────
+    # The curl/iex entry path stops here. The operator now has:
+    #   * MiOS-DEV WSL2 distro (renamed, podman-managed, overlay applied)
+    #   * Windows-side oh-my-posh / Geist / Nerd Font / theme installed
+    #   * MiOS install root on M:\MiOS\ (or fallback) with bin/icons/themes
+    #   * Desktop + Start Menu shortcuts including "Build MiOS"
+    # They can now click "Build MiOS" to drive the OCI image build (which
+    # re-runs this script with -BuildOnly).
+    if ($BootstrapOnly) {
+        Log-Ok "-BootstrapOnly mode: dev VM provisioned, Windows install complete. Click 'Build MiOS' on the Start Menu to build the deployable image."
+        return
+    }
 
     # Operator can pre-fill mios.toml fields via the HTML page; the
     # Phase-6 prompts that follow then default to whatever was saved.
@@ -2607,9 +3530,19 @@ MIOS_OLLAMA_BAKE_MODELS="$MiosOllamaBakeModels"
     $envContent | & wsl.exe -d $BuilderDistro --user root --exec bash -c $writeCmd 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) { $written = $true }
 
-    # Try podman machine ssh (works for some machine configurations)
+    # Try the dev-distro shell via Invoke-DistroSh (auto-picks
+    # wsl-direct post-rename, podman-machine-ssh pre-rename). Bakes
+    # the env content into the script as base64 so we don't need a
+    # second stdin channel (Invoke-DistroSh's stdin is already used
+    # for the base64-encoded script body).
     if (-not $written) {
-        $envContent | & podman machine ssh $BuilderDistro -- bash -c $writeCmd 2>&1 | Out-Null
+        $envB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($envContent))
+        $writeBaked = @"
+mkdir -p /etc/mios
+printf '%s' '$envB64' | base64 -d > /etc/mios/install.env
+chmod 0640 /etc/mios/install.env
+"@
+        Invoke-DistroSh -Bash $writeBaked -MachineName $BuilderDistro 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) { $written = $true }
     }
 
@@ -2675,25 +3608,33 @@ MIOS_OLLAMA_BAKE_MODELS="$MiosOllamaBakeModels"
 # source on the next `irm | iex`.
 `$ErrorActionPreference = 'SilentlyContinue'
 `$d = '$DevDistro'
-foreach (`$cand in @("podman-`$d", `$d, "podman-$LegacyDevName")) {
+# Probe canonical name first (post-rename), then podman- prefix
+# (pre-rename), then legacy MiOS-BUILDER fallbacks. First responder wins.
+foreach (`$cand in @(`$d, "podman-`$d", '$LegacyDevName', "podman-$LegacyDevName")) {
     `$probe = (& wsl.exe -d `$cand --exec bash -c 'echo ok' 2>`$null) -join ''
     if (`$probe.Trim() -eq 'ok') {
         & wsl.exe -d `$cand --exec /usr/libexec/mios/mios-configurator-launch
         exit `$LASTEXITCODE
     }
 }
-Write-Host '  MiOS-DEV not reachable -- run irm | iex first to provision the dev VM' -ForegroundColor Yellow
+Write-Host '  MiOS-DEV not reachable -- run bootstrap.ps1 first to provision the dev VM' -ForegroundColor Yellow
 exit 1
 "@ | Set-Content -Path $cfgScript -Encoding UTF8 -Force
 
+    # MiOS Dev Shell points at the canonical post-rename name first
+    # ($DevDistro = "MiOS-DEV"); pre-rename installs still get a usable
+    # entry via the launcher's Resolve-MiosDevDistro fallback in
+    # mios-dev.ps1 (under $MiosBinDir). The legacy Podman Shell entry
+    # was removed -- `podman machine ssh MiOS-DEV` fails post-rename
+    # because podman hardcodes the `podman-` prefix in WSLDistroName(),
+    # and "MiOS Dev Shell" already covers the same use case.
     @(
-        @{ F="MiOS Setup.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`"";            D="Re-run full 'MiOS' setup" },
-        @{ F="MiOS Build.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`" -BuildOnly";  D="Pull latest + build 'MiOS' OCI image" },
-        @{ F="MiOS Configurator.lnk"; T=$pwsh;      A="-NoProfile -ExecutionPolicy Bypass -File `"$cfgScript`""; D="Edit mios.toml in Epiphany via WSLg" },
-        @{ F="MiOS Terminal.lnk";        T="wsl.exe"; A="-d $MiosWslDistro";                                    D="Open 'MiOS' workstation terminal" },
-        @{ F="MiOS Dev Shell.lnk";     T="wsl.exe"; A="-d podman-$DevDistro --user root";                      D="Open $DevDistro terminal (root)" },
-        @{ F="MiOS Podman Shell.lnk";  T=$pwsh;     A="-NoProfile -Command podman machine ssh $DevDistro";    D="SSH into $DevDistro Podman machine" },
-        @{ F="Uninstall MiOS.lnk";     T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$uninstSc`"";           D="Remove MiOS" }
+        @{ F="MiOS Setup.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`"";              D="Re-run full 'MiOS' setup" },
+        @{ F="Build MiOS.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`" -BuildOnly";    D="Build 'MiOS' OCI image (Phase 6+: identity, podman build, deploy)" },
+        @{ F="MiOS Configurator.lnk";  T=$pwsh;     A="-NoProfile -ExecutionPolicy Bypass -File `"$cfgScript`""; D="Edit mios.toml in Epiphany via WSLg" },
+        @{ F="MiOS Terminal.lnk";      T="wsl.exe"; A="-d $MiosWslDistro";                                       D="Open 'MiOS' workstation terminal" },
+        @{ F="MiOS Dev Shell.lnk";     T="wsl.exe"; A="-d $DevDistro --user root";                               D="Open $DevDistro terminal (root)" },
+        @{ F="Uninstall MiOS.lnk";     T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$uninstSc`"";             D="Remove MiOS" }
     ) | ForEach-Object { New-Shortcut (Join-Path $StartMenuDir $_.F) $_.T $_.A $_.D $MiosInstallDir }
 
     # Mirror the Configurator shortcut to the operator's Desktop so the
@@ -2753,6 +3694,13 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
     if ($rc -eq 0) {
         End-Phase 9
         Invoke-DeployPipeline -HW $HW
+        # NOTE: Rename-PodmanDevDistro now runs DURING bootstrap (after
+        # Phase 5 + smoke test + Install-WindowsBranding) so the dev VM
+        # is already named MiOS-DEV by the time the OCI build (Phase 9
+        # above) completes. The build pipeline reaches the distro via
+        # podman's API socket (SSH-forwarded) which is unaffected by
+        # the WSL rename, OR via Invoke-DistroSh which probes both
+        # names. No post-build rename is needed.
     } else { End-Phase 9 -Fail; $ExitCode = $rc }
 
 } # end full-install branch

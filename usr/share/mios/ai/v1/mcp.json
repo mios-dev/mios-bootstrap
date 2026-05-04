@@ -1,11 +1,4 @@
 {
-  "mcpServers": {
-    "mios-system": {
-      "command": "/usr/bin/mios-status",
-      "args": ["--mcp-mode"],
-      "env": {
-        "MIOS_ROOT": "/"
-      }
-    }
-  }
+  "_comment": "MiOS MCP server registry. The mios-system entry was previously pointed at /usr/bin/mios-status --mcp-mode, but mios-status (a dashboard wrapper duplicate of mios-dash) was removed in v0.2.4 and never implemented --mcp-mode. The dashboard itself is rendered by /usr/libexec/mios/mios-dashboard.sh; an MCP exposure is on the v0.3 roadmap.",
+  "mcpServers": {}
 }
