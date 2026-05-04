@@ -180,6 +180,45 @@ sections = [
 ]
 
 # ----------------------------------------------------------------------------
+# [colors] -- MiOS unified palette. Operator neutrals (#1A407F, #E0E0E0,
+# #B7C9D7, #948E8E, #734F39) + Hokusai "Great Wave" (#3E7765, #E7DFD3,
+# #F35C15, #DC271B, #282262), combined into one 16-slot ANSI mapping
+# applied across every console / terminal via /etc/profile.d/mios-colors.sh.
+# Vendor canonical block lives at mios.git/usr/share/mios/mios.toml; this
+# is the bootstrap-overlay default for first install.
+# ----------------------------------------------------------------------------
+[colors]
+bg          = "#282262"
+fg          = "#E7DFD3"
+accent      = "#1A407F"
+cursor      = "#F35C15"
+success     = "#3E7765"
+warning     = "#F35C15"
+error       = "#DC271B"
+info        = "#1A407F"
+muted       = "#948E8E"
+subtle      = "#B7C9D7"
+earth       = "#734F39"
+silver      = "#E0E0E0"
+
+ansi_0_black            = "#282262"
+ansi_1_red              = "#DC271B"
+ansi_2_green            = "#3E7765"
+ansi_3_yellow           = "#F35C15"
+ansi_4_blue             = "#1A407F"
+ansi_5_magenta          = "#734F39"
+ansi_6_cyan             = "#B7C9D7"
+ansi_7_white            = "#E7DFD3"
+ansi_8_bright_black     = "#948E8E"
+ansi_9_bright_red       = "#FF6B5C"
+ansi_10_bright_green    = "#5FAA8E"
+ansi_11_bright_yellow   = "#FF8540"
+ansi_12_bright_blue     = "#3D6BA8"
+ansi_13_bright_magenta  = "#9D7660"
+ansi_14_bright_cyan     = "#E0E0E0"
+ansi_15_bright_white    = "#FFFFFF"
+
+# ----------------------------------------------------------------------------
 # [bootstrap] -- behavior of mios-bootstrap.git/install.sh during Phase-0.
 #   mode: auto | bootc | fhs
 #     - auto  : detect host kind, prefer 'bootc switch' when available
