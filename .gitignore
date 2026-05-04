@@ -14,6 +14,13 @@
 !build-mios.sh
 !build-mios.ps1
 !Get-MiOS.ps1
+# Universal MiOS-SEED merge -- canonical bash + PowerShell implementations.
+# Both build entries (build-mios.sh / build-mios.ps1) invoke these to
+# overlay mios-bootstrap onto a mios.git checkout before podman build,
+# so every Day-0 build produces an identical OCI image regardless of
+# host platform. See AGREEMENTS.md and IMPLEMENTATION-SUMMARY.md.
+!seed-merge.sh
+!seed-merge.ps1
 !AGENTS.md
 !AGREEMENTS.md
 !AI.md

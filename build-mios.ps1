@@ -748,6 +748,30 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
                                    [string]$EmbedModel = "nomic-embed-text",
                                    [string]$BakeModels = "qwen2.5-coder:7b,nomic-embed-text") {
     $repoPath = Join-Path $MiosRepoDir "mios"
+
+    # ── Universal MiOS-SEED merge ────────────────────────────────────────────
+    # Overlay mios-bootstrap onto mios.git BEFORE invoking podman build so the
+    # build context contains both layers. Without this, only mios.git's tree
+    # is in the build context and bootstrap-owned files (etc/skel/.config/mios/,
+    # etc/mios/profile.toml, mios.toml at root, agent entry-point .md files)
+    # never reach the OCI image -- WSL/bootc deploys would diverge from the
+    # Linux Total-Root-Merge path. seed-merge.ps1 is the canonical PowerShell
+    # implementation; seed-merge.sh is its bash twin invoked from build-mios.sh.
+    $bootstrapPath = Join-Path $MiosRepoDir "mios-bootstrap"
+    $seedScript    = Join-Path $bootstrapPath "seed-merge.ps1"
+    if (Test-Path $seedScript) {
+        Set-Step "Universal MiOS-SEED: overlay mios-bootstrap onto mios.git"
+        try {
+            & $seedScript -MiosDir $repoPath -BootstrapDir $bootstrapPath
+            Log-Ok "Bootstrap overlay merged into build context (mios.git tree)"
+        } catch {
+            Log-Warn "seed-merge failed: $_"
+            Log-Warn "Build will proceed with mios.git tree only -- bootstrap files (skel, mios.toml, agent .md) will NOT be in the OCI image"
+        }
+    } else {
+        Log-Warn "seed-merge.ps1 not found at $seedScript -- skipping Universal SEED merge"
+    }
+
     Set-Step "podman build (Windows client → $BuilderDistro)"
     Write-Log "BUILD START (Windows API build)  base=$BaseImage  user=$MiosUser  host=$MiosHostname  ai=$AiModel"
 
@@ -830,6 +854,38 @@ function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
         & podman machine ssh $Distro -- bash -c $justCheck 2>$null | Out-Null
     } else {
         & wsl.exe -d $Distro --user root --exec bash -c $justCheck 2>$null | Out-Null
+    }
+
+    # ── Universal MiOS-SEED merge (inside WSL distro) ─────────────────────────
+    # Sync-RepoToDistro brought mios.git into / via `git fetch + reset --hard`.
+    # That path strips untracked files, so we can't pre-merge on the Windows
+    # side -- the merge has to happen INSIDE WSL after the sync, before
+    # `just build` invokes podman build. Clone mios-bootstrap into
+    # /tmp/mios-bootstrap, run seed-merge.sh against /, then build.
+    Set-Step "Universal MiOS-SEED: overlay mios-bootstrap onto / inside $Distro"
+    $bootstrapRepoUrl = if ($env:MIOS_BOOTSTRAP_REPO) { $env:MIOS_BOOTSTRAP_REPO } else { $MiosBootstrapUrl }
+    $bootstrapRef     = if ($env:MIOS_BOOTSTRAP_REF)  { $env:MIOS_BOOTSTRAP_REF  } else { "main" }
+    $seedScript = @"
+set -e
+if [ ! -d /tmp/mios-bootstrap/.git ]; then
+    rm -rf /tmp/mios-bootstrap
+    git clone --depth=1 --branch '$bootstrapRef' '$bootstrapRepoUrl' /tmp/mios-bootstrap
+fi
+if [ -x /tmp/mios-bootstrap/seed-merge.sh ]; then
+    /tmp/mios-bootstrap/seed-merge.sh / /tmp/mios-bootstrap
+else
+    echo '[seed-merge] WARN: /tmp/mios-bootstrap/seed-merge.sh not found -- bootstrap overlay skipped' >&2
+fi
+"@
+    if ($useSsh) {
+        & podman machine ssh $Distro -- bash -c $seedScript 2>&1 | ForEach-Object { Write-Log "seed-merge: $_" }
+    } else {
+        & wsl.exe -d $Distro --user root --exec bash -c $seedScript 2>&1 | ForEach-Object { Write-Log "seed-merge: $_" }
+    }
+    if ($LASTEXITCODE -eq 0) {
+        Log-Ok "Bootstrap overlay merged into WSL distro / (Universal MiOS-SEED)"
+    } else {
+        Log-Warn "seed-merge inside ${Distro} returned non-zero -- build will proceed; bootstrap files may be missing from the image"
     }
 
     Set-Step "Launching: just build (inside $Distro)"
