@@ -549,7 +549,10 @@ function Start-Phase([int]$i) {
     if ($script:DashboardMode -eq 'log') {
         $ts = [datetime]::Now.ToString("HH:mm:ss")
         Write-Host ""
-        Write-Host "[$ts] >> Phase $i/$($script:TotalPhases - 1) -- $($script:PhaseNames[$i])" -ForegroundColor Cyan
+        # In bootstrap-only mode, phases 6-13 never run; report just the
+        # phase number + name without a misleading X/13 ratio.
+        $phaseTag = if ($BootstrapOnly) { "Phase $i" } else { "Phase $i/$($script:TotalPhases - 1)" }
+        Write-Host "[$ts] >> $phaseTag -- $($script:PhaseNames[$i])" -ForegroundColor Cyan
     } else {
         Show-Dashboard
     }
@@ -3178,13 +3181,25 @@ $endMark
 $ExitCode = 0
 try {
 
-# ── Window resize (best-effort) + dashboard mode probe ───────────────────────
-# Resize first so the SetCursorPosition probe runs against the final
-# console dimensions; then probe whether in-place repaint actually
-# works in this host (Windows Terminal: yes; Start-Transcript active /
-# redirected stdout / certain `irm | iex` parents: no).
+# ── Window resize (best-effort) + dashboard mode ──────────────────────────────
+# Default = 'log' (linear, sequential phase + step log lines). The
+# framed in-place dashboard has been a recurring source of
+# host-compat issues -- some hosts honor [Console]::SetCursorPosition
+# only intermittently, the probe can't catch every misbehavior, and
+# the failure mode (frames stacking forever) is awful. Linear log is
+# always correct.
+#
+# Operators who specifically want the framed live dashboard can
+# opt in by setting $env:MIOS_DASHBOARD_MODE='interactive' before
+# launching. The probe is still run as a sanity-check in that case
+# so the opt-in falls back to log mode if the host is genuinely
+# broken.
 Try-ResizeConsole -Cols 100 -Rows 40
-$script:DashboardMode = if (Test-DashboardCanRedraw) { 'interactive' } else { 'log' }
+if ($env:MIOS_DASHBOARD_MODE -eq 'interactive') {
+    $script:DashboardMode = if (Test-DashboardCanRedraw) { 'interactive' } else { 'log' }
+} else {
+    $script:DashboardMode = 'log'
+}
 
 # ── Banner ───────────────────────────────────────────────────────────────────
 Clear-Host

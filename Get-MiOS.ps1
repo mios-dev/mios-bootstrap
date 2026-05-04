@@ -69,31 +69,59 @@ if ($env:MIOS_AGREEMENT_BANNER -notin @('quiet','silent','off','0','false','FALS
 "@)
 }
 
-# 1. Elevation -- re-launch a fresh elevated pwsh window so the host has
-# a clean, full-size console (the original `irm | iex` host inherits
-# whatever terminal called us, which may be too small for the dashboard).
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-         ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    $relaunchArgs = "-NoProfile -ExecutionPolicy Bypass -NoExit -Command `"irm $RepoUrl/raw/$Branch/Get-MiOS.ps1 | iex"
-    if ($FullBuild)  { $relaunchArgs += " -FullBuild" }
-    if ($Unattended) { $relaunchArgs += " -Unattended" }
-    if ($Workflow)   { $relaunchArgs += " -Workflow $Workflow" }
-    $relaunchArgs += "`""
-    # Prefer pwsh 7+ (the script Requires-Version 5.1 elsewhere but the
-    # build dashboard needs PS7's [Console] behavior).
+# 1. ALWAYS spawn a fresh elevated pwsh window. The original `irm | iex`
+# host inherits whatever terminal called us (VS Code integrated, remote
+# session, embedded host, etc.) which often (a) isn't admin, (b) is the
+# wrong size for the build, and (c) breaks console cursor positioning.
+# A fresh top-level pwsh window guarantees a clean, properly-sized
+# environment regardless of where the curl was run from.
+#
+# Sentinel: $env:MIOS_GETMIOS_RELAUNCHED prevents the new window from
+# re-launching itself in an infinite loop.
+if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+               ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    Write-Host "  [*] Spawning a fresh elevated pwsh window for the bootstrap run..." -ForegroundColor Cyan
+    if (-not $isAdmin) {
+        Write-Host "  [*] You'll see a UAC prompt momentarily; approve it to continue." -ForegroundColor DarkGray
+    }
+
+    # The new window re-runs Get-MiOS.ps1 via the same web URL so it's
+    # always the latest published version (vs. relying on $PSCommandPath
+    # which is empty under irm|iex).
+    $relaunchCmd = "`$env:MIOS_GETMIOS_RELAUNCHED=1; irm $RepoUrl/raw/$Branch/Get-MiOS.ps1 | iex"
+    $forwardSwitches = ""
+    if ($FullBuild)  { $forwardSwitches += " -FullBuild" }
+    if ($Unattended) { $forwardSwitches += " -Unattended" }
+    if ($Workflow)   { $forwardSwitches += " -Workflow $Workflow" }
+    if ($forwardSwitches) {
+        # iex consumes the script as input; trailing args don't apply.
+        # Bake the switches into a $args splat the relaunched script
+        # can re-parse if it exposes them (it does -- the param block).
+        $relaunchCmd = "`$env:MIOS_GETMIOS_RELAUNCHED=1; & ([scriptblock]::Create((irm $RepoUrl/raw/$Branch/Get-MiOS.ps1)))$forwardSwitches"
+    }
+
     $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-    Start-Process $shell -ArgumentList $relaunchArgs -Verb RunAs
+    $startArgs = @(
+        '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+        '-NoExit',
+        '-Command', $relaunchCmd
+    )
+    Start-Process $shell -ArgumentList $startArgs -Verb RunAs
+    Write-Host "  [+] New pwsh window opened. Continuing the bootstrap there." -ForegroundColor Green
     return
 }
 
-# 2. Resize host window so the 80-col dashboard frame fits with breathing room.
+# 2. Resize host window. Larger here (110x42) than the 100x40 default
+# inside build-mios.ps1 because the new pwsh window starts at the
+# system default (often 80x25), so we need an explicit set.
 try {
-    $sz  = New-Object Management.Automation.Host.Size 100, 40
-    $buf = New-Object Management.Automation.Host.Size 100, 3000
+    $sz  = New-Object Management.Automation.Host.Size 110, 42
+    $buf = New-Object Management.Automation.Host.Size 110, 3000
     $Host.UI.RawUI.BufferSize = $buf
     $Host.UI.RawUI.WindowSize = $sz
 } catch {
-    try { $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size 100, 40 } catch {}
+    try { $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size 110, 42 } catch {}
 }
 
 # 3. Helpers
