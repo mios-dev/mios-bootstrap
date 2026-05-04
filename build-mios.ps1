@@ -1273,10 +1273,12 @@ function New-BuilderDistro([hashtable]$HW) {
     $diskGB = $HW.DiskGB
 
     $initSw = [System.Diagnostics.Stopwatch]::StartNew()
+    $initOut = [System.Collections.Generic.List[string]]::new()
     & podman machine init $BuilderDistro `
         --cpus $HW.Cpus --memory $ramMB --disk-size $diskGB `
         --rootful --now 2>&1 | ForEach-Object {
             Write-Log "podman-init: $_"
+            $initOut.Add([string]$_) | Out-Null
             if ($initSw.ElapsedMilliseconds -ge 150) {
                 $clean = ($_ -replace '\x1b\[[0-9;]*[mGKHFJ]','').Trim()
                 if ($clean) { $script:CurStep = $clean.Substring(0,[math]::Min($clean.Length,80)) }
@@ -1284,9 +1286,31 @@ function New-BuilderDistro([hashtable]$HW) {
                 $initSw.Restart()
             }
         }
-    if ($LASTEXITCODE -ne 0) { throw "podman machine init failed (exit $LASTEXITCODE)" }
+    $initRc      = $LASTEXITCODE
+    $initJoined  = ($initOut -join " ")
+    if ($initRc -ne 0) {
+        # "VM already exists" -- recover by starting (or treating as already
+        # running) instead of failing. Caller's outer loop already tried to
+        # detect a running machine; we got here because the registration
+        # exists but `podman machine ls` didn't expose it as running, which
+        # also matches Windows Subsystem for Linux's transient ghost state
+        # right after a previous interrupted init. Best response is just to
+        # try starting it and verify the API.
+        if ($initJoined -match 'already exists|VM already exists') {
+            Log-Warn "podman machine init: $BuilderDistro already exists -- starting instead"
+            $startOut = @(& podman machine start $BuilderDistro 2>&1)
+            $startOut | ForEach-Object { Write-Log "podman-recover-start: $_" }
+            if (($startOut -join " ") -match 'already running') {
+                Log-Ok "$BuilderDistro is already running"
+            } elseif ($LASTEXITCODE -ne 0) {
+                throw "podman machine start $BuilderDistro after init-already-exists failed (exit $LASTEXITCODE)"
+            }
+        } else {
+            throw "podman machine init failed (exit $initRc)"
+        }
+    }
     & podman machine set --default $BuilderDistro 2>&1 | Out-Null
-    Log-Ok "$DevDistro created and set as default Podman machine"
+    Log-Ok "$DevDistro ready as default Podman machine"
 
     # Rootful machine-os distros are not accessible via wsl.exe or podman machine ssh.
     # Build runs from the Windows Podman client via the machine's API -- no exec needed.
@@ -2462,6 +2486,59 @@ function Invoke-DistroSh {
     cmd /c "exit 127" | Out-Null
 }
 
+function Restore-PodmanPrefix {
+    # Recovery: if a previous run of Rename-PodmanDevDistro renamed
+    # the WSL distro from `podman-MiOS-DEV` to `MiOS-DEV`, every
+    # subsequent `podman machine start/init/ssh` invocation fails
+    # with WSL_E_DISTRO_NOT_FOUND -- podman hardcodes the `podman-`
+    # prefix in WSLDistroName() and can't see the renamed distro.
+    #
+    # This function detects the renamed-but-broken state and reverses
+    # the rename via export -> unregister -> import-with-prefix.
+    # User-facing surfaces (dashboard, mios-dev launcher, icons)
+    # already hide the prefix, so the operator still sees "MiOS-DEV"
+    # everywhere they look.
+    #
+    # Idempotent: bails if podman-$DevDistro already exists or if
+    # $DevDistro isn't registered at all.
+    # Bypass: $env:MIOS_SKIP_PODMAN_RESTORE=1.
+    if ($env:MIOS_SKIP_PODMAN_RESTORE -in @('1','true','TRUE','yes')) {
+        return
+    }
+    $wslList = @()
+    try { $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" | ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ } } catch {}
+    $renamed  = $wslList -contains $DevDistro
+    $prefixed = $wslList -contains "podman-$DevDistro"
+    if ($prefixed) { return }                # already correct
+    if (-not $renamed) { return }            # nothing to restore from
+
+    Set-Step "Restoring podman- prefix on $DevDistro (recovery)..."
+    & wsl.exe --shutdown 2>$null | Out-Null
+    $tmpTar = Join-Path $env:TEMP "mios-podman-restore-$([guid]::NewGuid().ToString('N').Substring(0,8)).tar.gz"
+    try {
+        Log-Ok "Exporting $DevDistro -> $tmpTar"
+        & wsl.exe --export $DevDistro $tmpTar 2>&1 | ForEach-Object { Write-Log "wsl-export: $_" }
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmpTar)) {
+            Log-Warn "wsl --export $DevDistro failed; cannot restore podman prefix"
+            return
+        }
+        & wsl.exe --unregister $DevDistro 2>&1 | ForEach-Object { Write-Log "wsl-unregister: $_" }
+        if (-not (Test-Path $script:MiosDistroDir)) { New-Item -ItemType Directory -Path $script:MiosDistroDir -Force | Out-Null }
+        $newPath = Join-Path $script:MiosDistroDir "podman-$DevDistro"
+        Log-Ok "Re-importing as podman-$DevDistro at $newPath"
+        & wsl.exe --import "podman-$DevDistro" $newPath $tmpTar --version 2 2>&1 | ForEach-Object { Write-Log "wsl-import: $_" }
+        if ($LASTEXITCODE -eq 0) {
+            Log-Ok "Recovery complete: $DevDistro restored as podman-$DevDistro"
+            Log-Warn "podman machine commands work again. User-facing labels still show '$DevDistro'."
+        } else {
+            Log-Warn "wsl --import podman-$DevDistro failed; restoring original $DevDistro"
+            & wsl.exe --import $DevDistro (Join-Path $script:MiosDistroDir $DevDistro) $tmpTar --version 2 2>&1 | ForEach-Object { Write-Log "wsl-import-fallback: $_" }
+        }
+    } finally {
+        if (Test-Path $tmpTar) { Remove-Item $tmpTar -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Rename-PodmanDevDistro {
     # Drops the `podman-` prefix that `podman machine init` auto-adds
     # to its WSL2 distro: renames podman-MiOS-DEV -> MiOS-DEV so the
@@ -3550,11 +3627,19 @@ if ($activeDistro) {
                         elseif ($env:GITHUB_TOKEN)   { $env:GITHUB_TOKEN }
                         else { Read-Line "GitHub PAT for ghcr.io base image pull" "" }
 
-    # Existing-distro fast path: smoke test + rename + Windows install
-    # FIRST so the launcher gets the renamed name; only then run the
-    # build (Phase 9). With -BootstrapOnly, the build is skipped and
-    # the script exits after the launcher install.
-    if (Test-MiosDevDistroHealthy) { Rename-PodmanDevDistro }
+    # Existing-distro fast path: smoke test + Windows install. The
+    # auto-rename (Rename-PodmanDevDistro) is opt-in only via
+    # $env:MIOS_RENAME_DISTRO=1 because podman hardcodes the
+    # `podman-` prefix in WSLDistroName() -- after a rename, every
+    # `podman machine start/init/ssh` fails with WSL_E_DISTRO_NOT_FOUND.
+    # Hidden in user-facing labels is enough; the actual WSL distro
+    # stays as `podman-MiOS-DEV` for podman compatibility.
+    Restore-PodmanPrefix   # auto-recover from any previous rename
+    if (Test-MiosDevDistroHealthy) {
+        if ($env:MIOS_RENAME_DISTRO -in @('1','true','TRUE','yes')) {
+            Rename-PodmanDevDistro
+        }
+    }
     Install-WindowsBranding
     Install-MiosLauncher
     if ($BootstrapOnly) {
@@ -3682,9 +3767,15 @@ if ($activeDistro) {
                 Set-Step "Starting existing $BuilderDistro machine..."
                 $startOut = @(& podman machine start $BuilderDistro 2>&1)
                 $startOut | ForEach-Object { Write-Log "podman-start: $_" }
+                $startJoined = ($startOut -join " ")
                 if ($LASTEXITCODE -eq 0) {
                     $machineRunning = $true; Log-Ok "$BuilderDistro started"
-                } elseif (($startOut -join " ") -match "DISTRO_NOT_FOUND|bootstrap script failed|WSL_E_DISTRO") {
+                } elseif ($startJoined -match 'already running') {
+                    # Non-zero exit + 'already running' message: machine
+                    # IS running, podman is just being noisy. Treat as OK.
+                    $machineRunning = $true
+                    Log-Ok "$BuilderDistro already running (podman reported the state non-fatally)"
+                } elseif ($startJoined -match "DISTRO_NOT_FOUND|bootstrap script failed|WSL_E_DISTRO") {
                     # Stale Podman machine metadata -- WSL distro was deleted but Podman registry entry remains.
                     # Force-remove the stale entry so New-BuilderDistro can re-init cleanly.
                     Write-Log "podman-start: stale machine registration detected -- removing $BuilderDistro" "WARN"
@@ -3807,24 +3898,21 @@ if ($activeDistro) {
     }
     End-Phase 5
 
-    # ── Bootstrap finalize: smoke test -> rename -> Windows install ──────────
-    # The new bootstrap flow finishes the dev-VM-side work HERE rather
-    # than letting it stretch through the OCI build. Sequence:
-    #   1. Test-MiosDevDistroHealthy: smoke test (responsive + overlay present)
-    #   2. Install-WindowsBranding:   oh-my-posh, Geist, Nerd Font (pre-rename so
-    #                                  the data-disk redirect picks up before
-    #                                  the launcher's icons land)
-    #   3. Rename-PodmanDevDistro:    podman-MiOS-DEV -> MiOS-DEV (drops prefix
-    #                                  so all icons/shortcuts target the canonical name)
-    #   4. Install-MiosLauncher:      Desktop + Start Menu icons, Build MiOS
-    #                                  shortcut -- targets the post-rename name
+    # ── Bootstrap finalize: smoke test -> Windows install -> launcher ───────
+    # The auto-rename (podman-MiOS-DEV -> MiOS-DEV) is OFF by default
+    # because podman's WSLDistroName() hardcodes the `podman-` prefix
+    # -- a renamed distro breaks every `podman machine start/init/ssh`
+    # with WSL_E_DISTRO_NOT_FOUND. User-facing surfaces (dashboard,
+    # mios-dev launcher, icons, app menu) already hide the prefix, so
+    # operators see "MiOS-DEV" everywhere they look while the actual
+    # WSL distro stays as "podman-MiOS-DEV" for podman's sake. Set
+    # $env:MIOS_RENAME_DISTRO=1 to opt in.
+    Restore-PodmanPrefix   # auto-recover from any previous rename
     Install-WindowsBranding
 
     $devHealthy = Test-MiosDevDistroHealthy
-    if ($devHealthy) {
+    if ($devHealthy -and ($env:MIOS_RENAME_DISTRO -in @('1','true','TRUE','yes'))) {
         Rename-PodmanDevDistro
-    } else {
-        Log-Warn "Skipping rename: smoke test reported issues. The launcher will fall back to 'podman-$DevDistro' transparently."
     }
 
     Install-MiosLauncher
