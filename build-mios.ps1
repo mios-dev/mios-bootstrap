@@ -1736,8 +1736,8 @@ $NS systemctl daemon-reload 2>&1 | tail -3 || true
 # `systemctl enable` on them errors with "transient or generated" -- use
 # `start` instead. Native systemd units (cockpit.socket, mios-cdi-detect,
 # nvidia-cdi-refresh.path) take the standard `enable --now` path.
-NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path)
-QUADLET_SET=(mios-cockpit-link.service mios-forge.service)
+NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-ollama-firstboot.service)
+QUADLET_SET=(mios-cockpit-link.service mios-forge.service ollama.service)
 
 for svc in "${NATIVE_SET[@]}"; do
     if $NS systemctl list-unit-files "$svc" 2>/dev/null | grep -q "$svc"; then
