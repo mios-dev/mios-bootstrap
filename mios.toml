@@ -182,6 +182,554 @@ sections = [
 ]
 
 # ----------------------------------------------------------------------------
+# [packages.<section>] -- DEFINITIVE SSOT (v0.2.4+)
+#
+# Edit any [packages.<section>].pkgs list below to ADD, REMOVE, or
+# REPLACE packages for that section. mios-bootstrap/mios.toml IS the
+# user-edit copy -- changes here apply to every MiOS host that gets
+# bootstrapped from this clone, no mios.git fork needed.
+#
+# Resolution order (TOML doesn't merge tables -- the highest layer
+# REPLACES the section field-for-field):
+#   ~/.config/mios/mios.toml   per-user override     (highest)
+#   /etc/mios/mios.toml        host/admin override
+#   /usr/share/mios/mios.toml  vendor defaults       (lowest)
+#
+# To EXTEND a section without re-typing the vendor list, copy the
+# vendor list and append your additions; vendor changes flow forward
+# on the next bootstrap (the resolver always reads your file as a
+# whole table, not as a delta).
+# ----------------------------------------------------------------------------
+
+# ─────────────────────────────────────────────────────────────────────
+# [packages.*] -- DEFINITIVE SSOT for the MiOS package surface.
+# Each section below is a DNF install list. The packages.sh resolver
+# (automation/lib/packages.sh) consumes these tables; PACKAGES.md is
+# now a documentation shim that points operators here.
+# ─────────────────────────────────────────────────────────────────────
+
+[packages.repos]
+pkgs = [
+    "rpmfusion-free-release-rawhide",
+    "rpmfusion-nonfree-release-rawhide",
+    "fedora-workstation-repositories",
+    "dnf-plugins-core",
+    "dnf5-plugins",
+]
+
+[packages.base]
+pkgs = [
+    "policycoreutils-python-utils",
+    "selinux-policy-targeted",
+    "firewalld",
+    "audit",
+    "fapolicyd",
+    "crowdsec",
+    "usbguard",
+]
+
+[packages.moby]
+pkgs = [
+    "moby-engine",
+]
+
+[packages.uki]
+pkgs = [
+    "systemd-ukify",
+]
+
+[packages.sbom-tools]
+pkgs = [
+    "syft",
+]
+
+[packages.k3s-selinux-build]
+pkgs = [
+    "selinux-policy-devel",
+    "git",
+    "make",
+]
+
+[packages.kernel]
+pkgs = [
+    "kernel-modules-extra",
+    "kernel-devel",
+    "kernel-headers",
+    "kernel-tools",
+    "glibc-headers",
+    "glibc-devel",
+    "python3",
+]
+
+[packages.gnome]
+pkgs = [
+    "gnome-shell",
+    "gnome-session-wayland-session",
+    "gnome-control-center",
+    "gnome-keyring",
+    "gdm",
+    "gnome-remote-desktop",
+    "gnome-backgrounds",
+    "gnome-shell-extension-appindicator",
+    "gnome-shell-extension-dash-to-dock",
+    "xdg-user-dirs",
+    "xdg-utils",
+    "xdg-desktop-portal",
+    "xdg-desktop-portal-gnome",
+    "xdg-desktop-portal-gtk",
+    "pipewire-alsa",
+    "pipewire-pulseaudio",
+    "wireplumber",
+    "gstreamer1",
+    "gstreamer1-plugins-base",
+    "gstreamer1-plugins-good",
+    "upower",
+    "gnome-bluetooth",
+    "bluez",
+    "bluez-tools",
+    "flatpak",
+    "gvfs",
+    "gvfs-smb",
+    "gvfs-mtp",
+    "NetworkManager-wifi",
+    "NetworkManager-openvpn-gnome",
+    "nm-connection-editor",
+    "glibc-langpack-en",
+    "qt6-qtbase-gui",
+    "qt6-qtwayland",
+    "qadwaitadecorations-qt5",
+    "adw-gtk3-theme",
+]
+
+[packages.gnome-flatpak-runtime]
+pkgs = [
+    "xdg-user-dirs",
+    "xdg-utils",
+    "xdg-desktop-portal",
+    "xdg-desktop-portal-gnome",
+    "xdg-desktop-portal-gtk",
+    "pipewire-alsa",
+    "pipewire-pulseaudio",
+    "wireplumber",
+    "gstreamer1",
+    "gstreamer1-plugins-base",
+    "gstreamer1-plugins-good",
+    "gvfs",
+    "gvfs-smb",
+    "gvfs-mtp",
+    "glibc-langpack-en",
+    "qt6-qtbase-gui",
+    "qt6-qtwayland",
+    "qadwaitadecorations-qt5",
+    "adw-gtk3-theme",
+    "flatpak",
+]
+
+[packages.gnome-core-apps]
+pkgs = [
+]
+
+[packages.gpu-mesa]
+pkgs = [
+    "mesa-vulkan-drivers",
+    "mesa-dri-drivers",
+    "mesa-va-drivers",
+    "vulkan-loader",
+    "vulkan-tools",
+    "libva-utils",
+    "linux-firmware",
+]
+
+[packages.gpu-amd-compute]
+pkgs = [
+    "rocm-opencl",
+    "rocm-hip",
+    "rocm-runtime",
+    "rocm-smi",
+    "rocminfo",
+]
+
+[packages.gpu-intel-compute]
+pkgs = [
+    "intel-compute-runtime",
+    "intel-media-driver",
+    "intel-level-zero",
+    "igt-gpu-tools",
+]
+
+[packages.gpu-nvidia]
+pkgs = [
+    "akmod-nvidia",
+    "xorg-x11-drv-nvidia-cuda",
+    "nvidia-container-toolkit",
+    "nvidia-persistenced",
+    "nvidia-settings",
+    "xorg-x11-drv-nvidia-power",
+    "nvidia-container-selinux",
+]
+
+[packages.gpu-cdi-toolkits]
+pkgs = [
+]
+
+[packages.virt]
+pkgs = [
+    "qemu-kvm",
+    "libvirt",
+    "libvirt-daemon",
+    "virt-install",
+    "edk2-ovmf",
+    "swtpm",
+    "swtpm-tools",
+    "dnsmasq",
+    "mdevctl",
+    "libguestfs-tools",
+    "virt-v2v",
+    "qemu-device-display-virtio-gpu",
+    "virt-firmware",
+    "python3-cryptography",
+]
+
+[packages.containers]
+pkgs = [
+    "podman",
+    "podman-compose",
+    "buildah",
+    "skopeo",
+    "bootc",
+    "osbuild",
+    "osbuild-composer",
+    "osbuild-selinux",
+    "composer-cli",
+    "rpm-ostree",
+    "crun",
+    "netavark",
+    "aardvark-dns",
+    "slirp4netns",
+    "composefs",
+    "container-selinux",
+    "qemu-img",
+    "image-builder",
+    "bootc-image-builder",
+    "dracut-live",
+    "squashfs-tools",
+    "containers-common",
+    "toolbox",
+    "kubectl",
+    "helm",
+    "podman-plugins",
+    "cosign",
+]
+
+[packages.build-toolchain]
+pkgs = [
+    "make",
+    "gcc",
+    "gcc-c++",
+    "cmake",
+    "golang",
+    "selinux-policy-devel",
+    "binutils",
+    "pkgconf-pkg-config",
+]
+
+[packages.self-build]
+pkgs = [
+    "bootc-base-imagectl",
+    "konflux-image-tools",
+]
+
+[packages.boot]
+pkgs = [
+    "bootupd",
+    "dnf5-plugins",
+    "systemd-boot-unsigned",
+    "efibootmgr",
+    "systemd-ukify",
+    "binutils",
+    "efitools",
+    "sbsigntools",
+    "tpm2-tss",
+]
+
+[packages.cockpit]
+pkgs = [
+    "cockpit",
+    "cockpit-system",
+    "cockpit-ws",
+    "cockpit-bridge",
+    "cockpit-storaged",
+    "cockpit-networkmanager",
+    "cockpit-podman",
+    "cockpit-machines",
+    "cockpit-ostree",
+    "cockpit-selinux",
+    "cockpit-files",
+    "pcp",
+    "pcp-system-tools",
+]
+
+[packages.wintools]
+pkgs = [
+    "hyperv-tools",
+    "samba",
+    "samba-client",
+    "cifs-utils",
+    "freerdp-libs",
+]
+
+[packages.security]
+pkgs = [
+    "crowdsec",
+    "crowdsec-firewall-bouncer-nftables",
+    "firewalld",
+    "fapolicyd",
+    "fapolicyd-selinux",
+    "usbguard",
+    "setroubleshoot-server",
+    "policycoreutils-python-utils",
+    "audit",
+    "tpm2-tools",
+    "clevis",
+    "clevis-luks",
+    "aide",
+    "openscap-scanner",
+    "scap-security-guide",
+    "libpwquality",
+    "nftables",
+    "policycoreutils",
+    "setools-console",
+    "cosign",
+    "iptables-legacy",
+]
+
+[packages.gaming]
+pkgs = [
+    "gamemode",
+    "gnome-shell-extension-gamemode",
+    "vulkan-tools",
+    "steam-devices",
+]
+
+[packages.guests]
+pkgs = [
+    "qemu-guest-agent",
+    "hyperv-daemons",
+    "open-vm-tools",
+    "spice-vdagent",
+    "spice-webdavd",
+    "libvirt-nss",
+]
+
+[packages.storage]
+pkgs = [
+    "nfs-utils",
+    "rpcbind",
+    "glusterfs",
+    "glusterfs-fuse",
+    "glusterfs-server",
+    "ceph-common",
+    "iscsi-initiator-utils",
+    "targetcli",
+    "device-mapper-multipath",
+    "sg3_utils",
+    "lvm2",
+    "stratis-cli",
+    "stratisd",
+    "xfsprogs",
+    "btrfs-progs",
+    "e2fsprogs",
+    "mdadm",
+    "ntfs-3g",
+]
+
+[packages.ceph]
+pkgs = [
+    "ceph-common",
+    "cephadm",
+    "ceph-fuse",
+    "ceph-selinux",
+]
+
+[packages.k3s]
+pkgs = [
+    "container-selinux",
+]
+
+[packages.ha]
+pkgs = [
+    "pacemaker",
+    "corosync",
+    "pcs",
+    "fence-agents-all",
+    "fence-virt",
+    "resource-agents",
+    "sbd",
+    "booth",
+    "booth-core",
+    "booth-test",
+    "dlm",
+    "corosync-qdevice",
+    "corosync-qnetd",
+    "libqb",
+    "libibverbs",
+]
+
+[packages.utils]
+pkgs = [
+    "git",
+    "tmux",
+    "vim-enhanced",
+    "wget2-wget",
+    "curl",
+    "btop",
+    "nvtop",
+    "fastfetch",
+    "lm_sensors",
+    "smartmontools",
+    "tuned",
+    "tuned-ppd",
+    "fuse",
+    "fuse3",
+    "7zip-standalone",
+    "unzip",
+    "zstd",
+    "rsync",
+    "tree",
+    "jq",
+    "yq",
+    "bc",
+    "patch",
+    "openssl",
+    "distrobox",
+    "just",
+    "driverctl",
+    "tmt",
+    "ansible-core",
+    "wslu",
+    "python3-pip",
+    "python3-requests",
+    "cloud-init",
+    "libei",
+    "strace",
+    "lsof",
+    "iotop",
+    "socat",
+    "syft",
+    "oras-cli",
+]
+
+[packages.android]
+pkgs = [
+    "waydroid",
+]
+
+[packages.looking-glass-build]
+pkgs = [
+    "cmake",
+    "gcc",
+    "gcc-c++",
+    "make",
+    "binutils",
+    "pkgconf-pkg-config",
+    "libglvnd-devel",
+    "fontconfig",
+    "fontconfig-devel",
+    "spice-protocol",
+    "nettle-devel",
+    "gnutls-devel",
+    "libXi-devel",
+    "libXinerama-devel",
+    "libXcursor-devel",
+    "libXpresent-devel",
+    "libXScrnSaver-devel",
+    "libxkbcommon-x11-devel",
+    "wayland-devel",
+    "wayland-protocols-devel",
+    "libdecor-devel",
+    "pipewire-devel",
+    "libsamplerate-devel",
+]
+
+[packages.cockpit-plugins-build]
+pkgs = [
+    "npm",
+    "gettext",
+]
+
+[packages.network-discovery]
+pkgs = [
+    "avahi",
+    "avahi-tools",
+    "nss-mdns",
+]
+
+[packages.phosh]
+pkgs = [
+    "phosh",
+    "phoc",
+    "gnome-calls",
+    "feedbackd",
+]
+
+[packages.updater]
+pkgs = [
+    "uupd",
+    "greenboot",
+    "greenboot-default-health-checks",
+]
+
+[packages.freeipa]
+pkgs = [
+    "freeipa-client",
+    "sssd",
+    "sssd-tools",
+    "libsss_nss_idmap",
+]
+
+[packages.ai]
+pkgs = [
+    "python3-openai",
+]
+
+[packages.critical]
+pkgs = [
+    "gnome-shell",
+    "gdm",
+    "podman",
+    "bootc",
+    "libvirt",
+    "kernel-core",
+    "firewalld",
+    "cockpit",
+    "NetworkManager",
+    "pipewire",
+    "tuned",
+    "chrony",
+    "openssh-server",
+]
+
+[packages.bloat]
+pkgs = [
+    "malcontent-control",
+    "malcontent-pam",
+    "malcontent-tools",
+    "gnome-tour",
+    "gnome-initial-setup",
+    "PackageKit",
+    "PackageKit-command-not-found",
+]
+
+[packages.nut]
+pkgs = [
+    "nut",
+    "nut-client",
+    "nut-xml",
+    "usbutils",
+]
+
+
+# ----------------------------------------------------------------------------
 # [colors] -- MiOS unified palette. Operator neutrals (#1A407F, #E0E0E0,
 # #B7C9D7, #948E8E, #734F39) + Hokusai "Great Wave" (#3E7765, #E7DFD3,
 # #F35C15, #DC271B, #282262), combined into one 16-slot ANSI mapping
