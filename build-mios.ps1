@@ -666,6 +666,12 @@ echo "[configurator] Epiphany launched -- window should appear on the Windows de
 echo "[configurator] save target: $DL_DIR/mios.toml"
 '@
 
+    # PowerShell @'...'@ here-strings produce CRLF line endings on
+    # Windows. The bash shebang then becomes "#!/usr/bin/env bash\r"
+    # and `env` errors with "bash\r: No such file or directory".
+    # Strip CR before base64-encoding so the script lands clean inside
+    # the WSL distro.
+    $bashScript = $bashScript -replace "`r`n", "`n" -replace "`r", "`n"
     $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bashScript))
     $stage = "set -e; echo '$b64' | base64 -d > /tmp/launch-config.sh && chmod +x /tmp/launch-config.sh; " +
              "/tmp/launch-config.sh '$htmlWsl' '$seedTomlWsl' '$devUser'"
@@ -1164,6 +1170,11 @@ echo "[mios-overlay] manual refresh: sudo mios-dev-seed"
     # Materialize the script + a copy of PACKAGES.md inside the distro
     # via stdin; avoids cross-FS quoting headaches and works for both
     # /mnt/c-mounted paths and rootful machines.
+    # CRLF -> LF: PowerShell @'...'@ here-strings produce CRLF on
+    # Windows; without normalization the bash shebang becomes
+    # "#!/usr/bin/env bash\r" -> "env: 'bash\r': No such file or
+    # directory" -> the entire overlay silently no-ops on the dev VM.
+    $overlayScript = $overlayScript -replace "`r`n", "`n" -replace "`r", "`n"
     $b64Script = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($overlayScript))
     $stage = "set -e; sudo install -d -m 0777 /tmp; " +
              "echo '$b64Script' | base64 -d > /tmp/mios-overlay.sh && chmod +x /tmp/mios-overlay.sh; " +
@@ -1343,6 +1354,8 @@ echo "[quadlet-overlay] Terminal:       Ptyxis flatpak ready -- launch via WSLg,
 echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for the local Ollama Quadlet"
 '@
 
+    # CRLF -> LF (see Invoke-MiosOverlaySeed for the rationale).
+    $overlayScript = $overlayScript -replace "`r`n", "`n" -replace "`r", "`n"
     $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($overlayScript))
     $stage = "set -e; export MIOS_DEV_ENABLE_AI='$enableAi' MIOS_DEV_ENABLE_RUNNER='$enableRunner'; " +
              "echo '$b64' | base64 -d > /tmp/mios-quadlet-overlay.sh && chmod +x /tmp/mios-quadlet-overlay.sh; " +
