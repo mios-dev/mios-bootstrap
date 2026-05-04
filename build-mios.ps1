@@ -1644,13 +1644,54 @@ sudo git -C / config --bool core.symlinks true
 sudo git -C / remote remove origin 2>/dev/null || true
 sudo git -C / remote add origin "$SRC/.git"
 echo "[quadlet-overlay] git fetch ..."
-sudo git -C / fetch --depth=1 origin main 2>&1 | tail -3
+fetch_out=$(sudo git -C / fetch --depth=1 origin main 2>&1)
+fetch_rc=$?
+echo "$fetch_out" | tail -3
+if [[ $fetch_rc -ne 0 ]]; then
+    echo "[quadlet-overlay] ERROR: git fetch failed (rc=$fetch_rc)"
+    echo "[quadlet-overlay] $fetch_out"
+fi
 echo "[quadlet-overlay] git reset --hard FETCH_HEAD ..."
-sudo git -C / reset --hard FETCH_HEAD 2>&1 | tail -3
+reset_out=$(sudo git -C / reset --hard FETCH_HEAD 2>&1)
+reset_rc=$?
+echo "$reset_out" | tail -3
+if [[ $reset_rc -ne 0 ]]; then
+    echo "[quadlet-overlay] ERROR: git reset failed (rc=$reset_rc)"
+    # Most common cause: /usr is read-only (ostree-managed FCOS).
+    # Attempt to enable a writable overlay and retry once.
+    if echo "$reset_out" | grep -qiE 'read-only|ostree'; then
+        echo "[quadlet-overlay] /usr appears read-only -- enabling rpm-ostree usroverlay"
+        sudo rpm-ostree usroverlay 2>&1 | tail -2 || true
+        echo "[quadlet-overlay] retrying git reset --hard FETCH_HEAD"
+        sudo git -C / reset --hard FETCH_HEAD 2>&1 | tail -3
+        reset_rc=$?
+    fi
+fi
 
 count=$(sudo git -C / ls-tree -r --name-only HEAD 2>/dev/null | wc -l)
 echo "[quadlet-overlay] / now contains $count tracked mios.git files"
 echo "[quadlet-overlay] / HEAD: $(sudo git -C / rev-parse --short HEAD 2>/dev/null)"
+
+# Sanity: the smoke test expects /usr/share/mios. If git reset
+# succeeded but the dir isn't there, surface that loudly so we
+# don't silently ship a half-applied overlay.
+if [[ ! -d /usr/share/mios ]]; then
+    echo "[quadlet-overlay] ERROR: /usr/share/mios still missing after git reset"
+    echo "[quadlet-overlay]   tracked usr/share/mios entries in HEAD:"
+    sudo git -C / ls-tree -r --name-only HEAD 2>/dev/null | grep '^usr/share/mios/' | head -5 || true
+    echo "[quadlet-overlay]   filesystem state of /usr/share:"
+    ls -ld /usr/share/mios 2>&1 || true
+    ls -la /usr/share/ 2>&1 | head -10 || true
+fi
+
+# Top-of-root SSOT shortcuts: mios.toml + configurator HTML at /
+# so operators can `cat /mios.toml` and open `file:///configurator.html`
+# from the dev VM browser. The deployed root IS the git working tree
+# of mios.git, so these symlinks live in the same view as /.git --
+# the operator's "single source of truth" surface is one cd / away.
+sudo ln -sf usr/share/mios/mios.toml             /mios.toml             2>/dev/null || true
+sudo ln -sf usr/share/mios/configurator/index.html /configurator.html  2>/dev/null || true
+echo "[quadlet-overlay] root symlinks: /mios.toml, /configurator.html"
 
 # Realize sysusers + tmpfiles, then reload systemd so the new units
 # (and Quadlet-generated *.service files) are visible.
