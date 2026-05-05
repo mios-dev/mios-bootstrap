@@ -175,30 +175,62 @@ function Update-MiosInstallPaths {
 }
 
 function Invoke-MigrateLegacyInstallRoot {
+    # DEPRECATED 2026-05-05 (kept callable but no-op by default).
+    #
+    # ── Original intent ─────────────────────────────────────────────
     # When Update-MiosInstallPaths redirects $MiosInstallDir (typically
     # C:\MiOS or %LOCALAPPDATA%\MiOS) onto the data disk (M:\MiOS),
     # any leftover content at the legacy path becomes orphan state.
-    # This function MOVES that content onto the new root so the
-    # operator's pipeline really is a full-partition overlay -- no
-    # split-state across drives, no manual rmdir needed.
+    # This function used to MOVE that content onto the new root via
+    # `robocopy /MOVE /E` so the operator's pipeline was a full-
+    # partition overlay -- no split-state across drives.
     #
-    # Uses robocopy /MOVE /E with /XO /XN /XC so files that already
-    # exist at the destination are KEPT (the redirected root may
-    # already hold current versions of bin/, icons/, themes/ from a
-    # previous run). Source-only files MOVE in; collisions favor the
-    # destination. Once the move completes, the empty legacy root is
-    # removed.
+    # ── Why disabled ────────────────────────────────────────────────
+    # Operator clarification (2026-05-05): M:\ is for the MiOS-DEV
+    # podman machine's runtime artifacts (vhdx, build-output images,
+    # machine-state, distro snapshots, logs). C:\ is for the developer's
+    # working tree -- where they edit code, run git, drive Claude Code
+    # and similar tooling. The two surfaces serve different purposes
+    # and should NOT be merged.
     #
-    # Idempotent: legacy root absent or equal to current = no-op.
-    # Bypass: $env:MIOS_SKIP_LEGACY_MIGRATE=1.
+    # The robocopy /MOVE was wiping C:\MiOS files between turns
+    # whenever the bootstrap re-ran (visible 2026-05-05 14:43-14:52
+    # session as a 13-file working-tree wipe restored via
+    # `git checkout HEAD -- ...`). That's an unrecoverable failure
+    # mode for any developer with uncommitted edits at the legacy
+    # path; the MOVE doesn't differentiate "stale leftover" from
+    # "active edit in progress."
+    #
+    # ── Current behavior ────────────────────────────────────────────
+    # No-op unless MIOS_FORCE_LEGACY_MIGRATE=1 is set in the
+    # environment (intended only for clean-up sweeps the operator
+    # explicitly opts into). The default is to leave C:\MiOS in
+    # place. The MiOS-DEV machine clones its working tree from the
+    # canonical git remote inside its own vhdx; nothing on the
+    # Windows host is moved.
+    #
+    # Bypass to fall back to the old MOVE behavior:
+    #   $env:MIOS_FORCE_LEGACY_MIGRATE = '1'
+    # Bypass alias kept for backward compat (old recipes set this):
+    #   $env:MIOS_SKIP_LEGACY_MIGRATE   = '1'  (now redundant)
     param([string]$LegacyRoot)
     if (-not $LegacyRoot) { return }
     if ($LegacyRoot -ieq $script:MiosInstallDir) { return }
     if (-not (Test-Path $LegacyRoot)) { return }
+    # Default-off as of 2026-05-05. Skip unless the operator explicitly
+    # opts back in via MIOS_FORCE_LEGACY_MIGRATE=1. The legacy
+    # MIOS_SKIP_LEGACY_MIGRATE bypass is now redundant (the function is
+    # already skipping by default) but kept-recognized so old recipes
+    # don't error.
     if ($env:MIOS_SKIP_LEGACY_MIGRATE -in @('1','true','TRUE','yes')) {
-        Log-Warn "MIOS_SKIP_LEGACY_MIGRATE set -- leaving $LegacyRoot in place"
+        Log-Warn "MIOS_SKIP_LEGACY_MIGRATE set (now the default) -- $LegacyRoot left in place"
         return
     }
+    if ($env:MIOS_FORCE_LEGACY_MIGRATE -notin @('1','true','TRUE','yes')) {
+        Log-Ok "Legacy migration disabled (set MIOS_FORCE_LEGACY_MIGRATE=1 to re-enable). C:\\ stays as the dev working tree; M:\\ holds MiOS-DEV runtime artifacts only."
+        return
+    }
+    Log-Warn "MIOS_FORCE_LEGACY_MIGRATE=1 -- proceeding with destructive robocopy /MOVE from $LegacyRoot to $($script:MiosInstallDir)"
 
     Set-Step "Migrating legacy install $LegacyRoot -> $($script:MiosInstallDir) ..."
     if (-not (Test-Path $script:MiosInstallDir)) {
