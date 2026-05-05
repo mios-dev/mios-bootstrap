@@ -435,6 +435,15 @@ $script:DashHeight    = 0
 # to a 6-phase layout (BootstrapOnly mode truncating the tail) leaves
 # the bottom 8 rows of the previous dashboard as ghost content.
 $script:DashLastHeight = 0
+# Last-rendered row WIDTH (in columns). Tracks the high-water mark
+# across renders so a render that ends up narrower than a prior one
+# (e.g. terminal got resized down by 1 col, [Console]::WindowWidth
+# reported a smaller value, or the box width clamp dropped from 80
+# to 79) still pads to the previous max -- otherwise the previous
+# render's RIGHTMOST column lingers as a vertical ghost stripe of
+# `+`/`|`/`=` characters running down the right edge of the new
+# narrower render.
+$script:DashLastWidth = 0
 $script:FinalRc       = 0
 # Build sub-step denominator. In -BootstrapOnly mode we never run
 # the OCI build, so the 48 podman-build steps don't apply -- using
@@ -514,6 +523,11 @@ function Show-Dashboard {
     # ── Sizing -- max 80 cols (standard tty0/console) ──────────────────────────
     $winW = try { [Console]::WindowWidth  } catch { 80 }
     $bufH = try { [Console]::BufferHeight } catch { 9999 }
+    # Width-floor: pad to MAX($winW, last render width) so a narrower
+    # current render still overwrites every column the previous render
+    # touched. Otherwise the rightmost column(s) of a wider previous
+    # render show as a vertical ghost stripe.
+    $winW = [math]::Max($winW, $script:DashLastWidth)
     # Always 1 char narrower than actual terminal so old content to the right
     # of the box is blanked on overwrite; capped at 80 for tty0 portability.
     $w  = [math]::Max(40, [math]::Min(80, $winW - 1))
@@ -700,6 +714,7 @@ function Show-Dashboard {
         }
         $script:DashHeight     = $rows.Count
         $script:DashLastHeight = $rows.Count
+        $script:DashLastWidth  = [math]::Max($script:DashLastWidth, $winW)
         [Console]::SetCursorPosition(0, [math]::Min($dashStart + $script:DashHeight, $bufH - 1))
     } finally {
         $script:DashSync.Rendering = $false
