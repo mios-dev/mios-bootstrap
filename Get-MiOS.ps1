@@ -328,11 +328,18 @@ try {
     #      a separate conhost window that pwsh can size programmatically.
     $wtExe = Get-Command wt.exe -ErrorAction SilentlyContinue
     if ($wtExe) {
-        # wt.exe argument vector. The trailing pwsh + args are passed
-        # through verbatim by WT. We elevate via Start-Process -Verb
-        # RunAs against wt.exe; UAC then launches the new WT window
-        # elevated.
-        $wtArgs = @('-w','-1','--title','MiOS Bootstrap','nt',$shell) + $shellArgs
+        # wt.exe argument grammar:
+        #     wt [global-args] new-tab [tab-args] [commandline]
+        # `nt` is the short form of `new-tab`. `--title` is a TAB-ARG
+        # (must follow `nt`) and the title MUST NOT contain a space --
+        # Start-Process flattens -ArgumentList back into a string and
+        # ProcessCreate then splits on whitespace, so "MiOS Bootstrap"
+        # becomes two argv tokens and wt tries to spawn a command
+        # literally named "Bootstrap" -> 2147942402 (0x80070002,
+        # file-not-found). Single-token title sidesteps that.
+        # `-w -1` is a GLOBAL arg meaning "new WT window" (vs new tab
+        # in the operator's existing window).
+        $wtArgs = @('-w','-1','nt','--title','MiOS-Bootstrap',$shell) + $shellArgs
         Start-Process wt.exe -ArgumentList $wtArgs -Verb RunAs
     } else {
         Start-Process $shell -ArgumentList $shellArgs -Verb RunAs
