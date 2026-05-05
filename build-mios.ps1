@@ -436,7 +436,13 @@ $script:DashHeight    = 0
 # the bottom 8 rows of the previous dashboard as ghost content.
 $script:DashLastHeight = 0
 $script:FinalRc       = 0
-$script:BuildSubTotal = 48
+# Build sub-step denominator. In -BootstrapOnly mode we never run
+# the OCI build, so the 48 podman-build steps don't apply -- using
+# the full 48 makes the dashboard's "0/62" denominator nonsensical
+# for a 6-phase bootstrap run. Set to 0 here when bootstrap-only;
+# the full path (-FullBuild / -BuildOnly) bumps it back to 48 once
+# Phase 8 starts.
+$script:BuildSubTotal = if ($BootstrapOnly) { 0 } else { 48 }
 $script:BuildSubDone  = 0
 $script:BuildSubStep  = ""
 $script:GhcrToken     = ""
@@ -782,6 +788,87 @@ function Move-BelowDash {
         $targetRow = [math]::Min($script:DashRow + $script:DashHeight, [Console]::BufferHeight - 1)
         [Console]::SetCursorPosition(0, $targetRow)
     } catch {}
+}
+
+# Post-bootstrap interactive menu. Called from the BootstrapOnly path
+# in MAIN after Install-MiosLauncher has dropped the Start Menu /
+# Desktop shortcuts -- the operator now has a fully-provisioned dev
+# VM + Windows-side surface and chooses what to do next from here:
+#
+#   1. Continue to build      -> re-invoke this script with -BuildOnly
+#                                so the OCI image build runs against
+#                                the freshly-provisioned MiOS-DEV.
+#   2. Change settings         -> open the configurator HTML for an
+#                                interactive mios.toml edit pass
+#                                (Open-Configurator).
+#   3. System checks           -> run preflight.ps1 against the
+#                                current state (MiOS-DEV health,
+#                                mios.toml validation, .wslconfig,
+#                                disk space, GHCR token).
+#   4. Logs / reports          -> print the unified log path + the
+#                                last 30 lines.
+#   5. Close                   -> exit cleanly.
+#
+# Skipped automatically when -Unattended is set (CI / non-interactive).
+function Show-PostBootstrapMenu {
+    if ($Unattended) { return }
+    Move-BelowDash
+    while ($true) {
+        Write-Host ""
+        Write-Host "  +-- MiOS bootstrap complete -----------------------------+" -ForegroundColor Green
+        Write-Host "  |  1) Continue to build (OCI image + deployables)        |" -ForegroundColor White
+        Write-Host "  |  2) Change settings (open mios.toml in configurator)   |" -ForegroundColor White
+        Write-Host "  |  3) System checks (preflight + dev VM health)          |" -ForegroundColor White
+        Write-Host "  |  4) Logs / reports                                     |" -ForegroundColor White
+        Write-Host "  |  5) Close                                              |" -ForegroundColor White
+        Write-Host "  +--------------------------------------------------------+" -ForegroundColor Green
+        $choice = Read-Host "  Pick [1-5]"
+        switch ($choice.Trim()) {
+            '1' {
+                Write-Host "  -> Re-invoking with -BuildOnly to run the OCI build..." -ForegroundColor Cyan
+                $self = $MyInvocation.MyCommand.Path
+                if (-not $self -or -not (Test-Path $self)) { $self = Join-Path $MiosRepoDir 'build-mios.ps1' }
+                & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $self -BuildOnly
+                return
+            }
+            '2' {
+                if (Get-Command Open-Configurator -EA SilentlyContinue) {
+                    Open-Configurator -RepoDir $MiosRepoDir
+                } else {
+                    $cfgHtml = Join-Path $MiosRepoDir 'usr/share/mios/configurator/index.html'
+                    if (Test-Path $cfgHtml) { Start-Process $cfgHtml }
+                    else { Write-Host "  configurator HTML not found at $cfgHtml" -ForegroundColor Yellow }
+                }
+            }
+            '3' {
+                $pfl = Join-Path $MiosRepoDir 'preflight.ps1'
+                if (Test-Path $pfl) {
+                    Write-Host "  -> running preflight.ps1..." -ForegroundColor Cyan
+                    & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $pfl
+                } else {
+                    Write-Host "  preflight.ps1 not found at $pfl" -ForegroundColor Yellow
+                }
+                Write-Host ""
+                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray -NoNewline
+                $null = Read-Host
+            }
+            '4' {
+                Write-Host ""
+                Write-Host "  Unified log: $LogFile" -ForegroundColor Cyan
+                Write-Host "  Log dir    : $MiosLogDir" -ForegroundColor Cyan
+                Write-Host ""
+                if (Test-Path $LogFile) {
+                    Write-Host "  -- last 30 lines --" -ForegroundColor DarkGray
+                    Get-Content -Tail 30 $LogFile | ForEach-Object { Write-Host "    $_" }
+                }
+                Write-Host ""
+                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray -NoNewline
+                $null = Read-Host
+            }
+            '5' { return }
+            default { Write-Host "  Pick 1-5." -ForegroundColor Yellow }
+        }
+    }
 }
 
 function Read-Line([string]$Prompt, [string]$Default = "") {
@@ -4033,7 +4120,8 @@ if ($activeDistro) {
     # They can now click "Build MiOS" to drive the OCI image build (which
     # re-runs this script with -BuildOnly).
     if ($BootstrapOnly) {
-        Log-Ok "-BootstrapOnly mode: dev VM provisioned, Windows install complete. Click 'Build MiOS' on the Start Menu to build the deployable image."
+        Log-Ok "-BootstrapOnly mode: dev VM provisioned, Windows install complete."
+        Show-PostBootstrapMenu
         return
     }
 
