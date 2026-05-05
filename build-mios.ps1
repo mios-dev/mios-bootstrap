@@ -70,7 +70,7 @@ try {
 $MiosScope = if ($script:IsAdmin) { "AllUsers" } else { "CurrentUser" }
 
 # ── Paths & constants ─────────────────────────────────────────────────────────
-$MiosVersion      = "v0.2.2"
+$MiosVersion      = "v0.2.4"
 $MiosRepoUrl      = "https://github.com/mios-dev/mios.git"
 $MiosBootstrapUrl = "https://github.com/mios-dev/mios-bootstrap.git"
 # Podman machine name -- canonical "MiOS-DEV" (was MiOS-BUILDER pre-v0.2.3).
@@ -3547,10 +3547,17 @@ try {
 # so the opt-in falls back to log mode if the host is genuinely
 # broken.
 Try-ResizeConsole -Cols 100 -Rows 40
-if ($env:MIOS_DASHBOARD_MODE -eq 'interactive') {
-    $script:DashboardMode = if (Test-DashboardCanRedraw) { 'interactive' } else { 'log' }
+# Interactive (in-place repaint) is now the DEFAULT. Test-DashboardCanRedraw
+# probes [Console]::CursorTop, RawUI.WindowSize, etc. and falls back to log
+# mode automatically if the host can't redraw (transcript host, redirected
+# stdout, very narrow terminal). Set MIOS_DASHBOARD_MODE=log to force the
+# linear-log fallback explicitly (useful for CI / non-tty pipelines).
+$script:DashboardMode = if ($env:MIOS_DASHBOARD_MODE -eq 'log') {
+    'log'
+} elseif (Test-DashboardCanRedraw) {
+    'interactive'
 } else {
-    $script:DashboardMode = 'log'
+    'log'
 }
 
 # ── Banner ───────────────────────────────────────────────────────────────────

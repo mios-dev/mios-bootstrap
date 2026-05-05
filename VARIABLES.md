@@ -1,6 +1,6 @@
 # VARIABLES.md
 
-Global variable index for 'MiOS' v0.2.2. All values defined here are the single authoritative source. Change a value in `usr/share/mios/env.defaults` (Linux) or the `# Paths & constants` block of `install.ps1` (Windows) to propagate it system-wide.
+Global variable index for 'MiOS' v0.2.4. All values defined here are the single authoritative source. Change a value in `usr/share/mios/env.defaults` (Linux) or the `# Paths & constants` block of `install.ps1` (Windows) to propagate it system-wide.
 
 ---
 
@@ -98,7 +98,7 @@ Defined in the `# Paths & constants` block at the top of `install.ps1`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `$MiosVersion` | `v0.2.2` | 'MiOS' version string |
+| `$MiosVersion` | `v0.2.4` | 'MiOS' version string |
 | `$MiosInstallDir` | `%LOCALAPPDATA%\Programs\MiOS` | Windows install directory |
 | `$MiosRepoDir` | `%LOCALAPPDATA%\Programs\MiOS\repo` | Cloned repo path |
 | `$MiosDistroDir` | `%LOCALAPPDATA%\Programs\MiOS\distros` | WSL2 distro root dirs |

@@ -3,7 +3,7 @@
 Interactive installer for MiOS. End-user entry point and the
 user-editable layer of the three-layer profile model.
 
-**Version:** v0.2.2
+**Version:** v0.2.4
 **System repo:** <https://github.com/mios-dev/mios>
 
 ## Contents

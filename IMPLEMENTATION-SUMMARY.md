@@ -1,6 +1,6 @@
 # 'MiOS' Bootstrap -- Architecture Summary
 
-**Version:** v0.2.2
+**Version:** v0.2.4
 
 ## Repo ownership
 

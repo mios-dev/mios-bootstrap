@@ -58,16 +58,163 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Acknowledgment banner. Inlined because this script runs via 'irm | iex'
-# where $PSScriptRoot is empty. Quiet via $env:MIOS_AGREEMENT_BANNER.
-if ($env:MIOS_AGREEMENT_BANNER -notin @('quiet','silent','off','0','false','FALSE')) {
-    [Console]::Error.WriteLine(@"
-[mios] By invoking Get-MiOS.ps1 you acknowledge AGREEMENTS.md
-       (Apache-2.0 main + bundled-component licenses in LICENSES.md +
-        attribution in CREDITS.md). 'MiOS' is a research project
-       (pronounced 'MyOS'; generative, seed-script-derived).
-"@)
+# Acknowledgement gate (full scrollable form -- inlined because this
+# script runs via 'irm | iex' where $PSScriptRoot is empty so we cannot
+# dot-source automation/lib/agreements-banner.ps1 from a clone.
+#
+# Skip paths:
+#   $env:MIOS_AGREEMENT_BANNER in (quiet|silent|off|0|false)  -- silent skip
+#   $env:MIOS_AGREEMENT_ACK   = 'accepted'                    -- declared accept (CI)
+#   $env:MIOS_GETMIOS_RELAUNCHED = '1'                        -- inner call inherits the outer's accept
+#
+# On 'No thanks' or any non-accept reply we exit 78 (EX_CONFIG) before
+# any clone, fetch, or elevation -- nothing on disk is mutated.
+
+function Show-MiOSAgreement {
+    @"
+================================================================================
+      ___                       ___           ___
+     /\__\          ___        /\  \         /\  \
+    /::|  |        /\  \      /::\  \       /::\  \
+   /:|:|  |        \:\  \    /:/\:\  \     /:/\ \  \
+  /:/|:|__|__      /::\__\  /:/  \:\  \   _\:\~\ \  \
+ /:/ |::::\__\  __/:/\/__/ /:/__/ \:\__\ /\ \:\ \ \__\
+ \/__/~~/:/  / /\/:/  /    \:\  \ /:/  / \:\ \:\ \/__/
+       /:/  /  \::/__/      \:\  /:/  /   \:\ \:\__\
+      /:/  /    \:\__\       \:\/:/  /     \:\/:/  /
+     /:/  /      \/__/        \::/  /       \::/  /
+     \/__/                     \/__/         \/__/
+
+                        MiOS  --  Project Acknowledgement
+================================================================================
+
+The full document lives at AGREEMENTS.md (in the mios-bootstrap repo,
+fetched in step 5 below). The summary you are reading is the abridged
+operator-facing extract -- it is enough to make an informed accept-or-
+decline decision before any code runs.
+
+--------------------------------------------------------------------------------
+1. WHAT MiOS IS
+--------------------------------------------------------------------------------
+
+MiOS (pronounced "MyOS") is a research-grade, single-user-oriented
+Linux operating system delivered as an OCI bootc image. It is NOT a
+commercial product, NOT a hardened distribution backed by a vendor
+SLA, and NOT an audited reference platform. Treat every script,
+postcheck, and architectural claim as an artifact under ongoing
+review -- correct in the cases that have been exercised, likely to
+need adjustment in cases that have not.
+
+--------------------------------------------------------------------------------
+2. LICENSING
+--------------------------------------------------------------------------------
+
+* MiOS-owned source is Apache-2.0 (LICENSE)
+* Bundled vendor components retain their upstream licenses (LICENSES.md)
+* Attribution to every upstream project is recorded in CREDITS.md
+
+--------------------------------------------------------------------------------
+3. THIRD-PARTY AGREEMENTS THAT APPLY IMPLICITLY
+--------------------------------------------------------------------------------
+
+  * NVIDIA proprietary GPU drivers + CUDA -- NVIDIA Software License
+  * Steam (Flatpak) -- Steam Subscriber Agreement on first launch
+  * Microsoft Windows VM guests (libvirt/QEMU) -- bring your own license
+  * Flathub apps installed via mios.toml [desktop].flatpaks -- each carries
+    its own license
+  * Sigstore-signed images (opt-in via bootc switch --enforce-container-
+    sigpolicy) -- accept the transparency-log + Fulcio identity model
+
+These are NOT MiOS-specific terms. They are the upstream vendor terms
+MiOS surfaces at install time.
+
+--------------------------------------------------------------------------------
+4. DATA AND NETWORK POSTURE
+--------------------------------------------------------------------------------
+
+* No telemetry. There is no built-in telemetry channel in the image.
+* Outbound network calls from a default deployment are limited to:
+    - Fedora / RPMFusion / Flathub mirrors during build / bootc upgrade
+    - GitHub Container Registry (ghcr.io) during image fetch
+    - User-chosen Quadlet workloads (Forgejo, LocalAI, Ollama, Guacamole,...)
+    - The local AI runtime at MIOS_AI_ENDPOINT (default localhost)
+* Operators can audit by inspecting /etc/containers/systemd/,
+  /usr/lib/systemd/system/, and the active firewalld policy.
+* MiOS does not exfiltrate any user data to a vendor cloud.
+
+--------------------------------------------------------------------------------
+5. NO WARRANTY
+--------------------------------------------------------------------------------
+
+Apache-2.0 'AS IS' clause governs MiOS-owned source. CI covers the
+build pipeline, image lint, and postcheck invariants -- NOT full
+hardware matrix testing, multi-host upgrade drills, long-running
+stability, or production failure modes.
+
+--------------------------------------------------------------------------------
+6. TRADEMARKS
+--------------------------------------------------------------------------------
+
+Third-party trademarks (Fedora, Universal Blue, NVIDIA, OpenAI,
+Anthropic, Google, GitHub, Microsoft, Cline, Cursor, ...) belong to
+their respective owners. MiOS references them solely to identify the
+upstream component or specification each is part of.
+
+--------------------------------------------------------------------------------
+7. YOUR CHOICE
+--------------------------------------------------------------------------------
+
+Acknowledged  -- proceed. Get-MiOS.ps1 will elevate, clone the
+                 mios-bootstrap repo, and hand off to bootstrap.ps1.
+No thanks     -- exit 78 (EX_CONFIG). Nothing modified, nothing pulled.
+
+For unattended / CI invocation, set
+  `$env:MIOS_AGREEMENT_ACK = 'accepted'`
+in the host environment to bypass this prompt as declared policy.
+
+================================================================================
+"@
 }
+
+function Invoke-MiOSAgreementGate {
+    # Skip-paths in priority order.
+    $quietValues   = @('quiet','silent','off','0','false','FALSE')
+    $acceptValues  = @('accepted','ACCEPTED','yes','YES','y','1','true','TRUE')
+    if ($env:MIOS_AGREEMENT_BANNER -and $quietValues -contains $env:MIOS_AGREEMENT_BANNER) { return $true }
+    if ($env:MIOS_AGREEMENT_ACK    -and $acceptValues -contains $env:MIOS_AGREEMENT_ACK)   {
+        [Console]::Error.WriteLine("[mios] AGREEMENTS.md acknowledged via MIOS_AGREEMENT_ACK; proceeding.")
+        return $true
+    }
+    if ($env:MIOS_GETMIOS_RELAUNCHED -eq '1') { return $true }   # inner call inherits outer accept
+
+    # Render scrollable summary. Out-Host -Paging works on the standard
+    # Console host; falls back to plain Write-Host when the host doesn't
+    # support paging (transcript / redirected).
+    $text = Show-MiOSAgreement
+    try   { $text -split "`r?`n" | Out-Host -Paging }
+    catch { Write-Host $text }
+
+    # Prompt loop.
+    while ($true) {
+        $reply = Read-Host -Prompt "`n[mios] Type 'Acknowledged' to proceed, or 'No thanks' to abort"
+        switch -Regex ($reply) {
+            '^(Acknowledged|acknowledged|ACKNOWLEDGED|accept|ACCEPT|y|Y|yes|YES)$' {
+                [Console]::Error.WriteLine("[mios] AGREEMENTS.md acknowledged; proceeding.")
+                $env:MIOS_AGREEMENT_ACK = 'accepted'
+                return $true
+            }
+            '^(No\s+thanks|no\s+thanks|NO\s+THANKS|n|N|no|NO|decline|DECLINE|q|Q|quit|QUIT)$' {
+                [Console]::Error.WriteLine('[mios] not acknowledged; aborting (no system changes made).')
+                exit 78
+            }
+            default {
+                [Console]::Error.WriteLine("[mios] Please type exactly 'Acknowledged' or 'No thanks'.")
+            }
+        }
+    }
+}
+
+Invoke-MiOSAgreementGate | Out-Null
 
 # 1. ALWAYS spawn a fresh elevated pwsh window. The original `irm | iex`
 # host inherits whatever terminal called us (VS Code integrated, remote

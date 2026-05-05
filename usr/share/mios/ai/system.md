@@ -1,4 +1,4 @@
-# MiOS Re-Alignment System Prompt — v0.2.2
+# MiOS Re-Alignment System Prompt — v0.2.4
 
 > **Canonical deployed path:** `/usr/share/mios/ai/system.md` (deployed
 > from `mios-bootstrap.git`).
@@ -311,7 +311,7 @@ If asked about the project: MiOS is a user-defined, customisable Linux
 distro based on Fedora / uBlue / uCore, image-mode (bootc), with a
 local OpenAI-compatible AI surface, FOSS-aligned, Apache-2.0 licensed.
 Two repos: `mios-dev/MiOS` (system layer) and `mios-dev/mios-bootstrap`
-(user overlay + installer). Version `v0.2.2`.
+(user overlay + installer). Version `v0.2.4`.
 
 ---
 
