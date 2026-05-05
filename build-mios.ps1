@@ -813,16 +813,37 @@ function Move-BelowDash {
 function Show-PostBootstrapMenu {
     if ($Unattended) { return }
     Move-BelowDash
+    # Resolve the actual WSL distro name once -- podman-machine prefixes
+    # its distros with `podman-` (so the on-disk distro is podman-MiOS-DEV
+    # by default), the auto-rename to plain MiOS-DEV is opt-in via
+    # MIOS_RENAME_DISTRO=1, and operators commonly type `wsl -d MiOS-DEV`
+    # only to hit `WSL_E_DISTRO_NOT_FOUND`. Print the live name so the
+    # operator can copy-paste it.
+    $devDistro = $null
+    try {
+        $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" |
+                   ForEach-Object { ($_ -replace [char]0, '').Trim() } |
+                   Where-Object { $_ }
+        foreach ($c in @('MiOS-DEV','podman-MiOS-DEV','MiOS-BUILDER','podman-MiOS-BUILDER')) {
+            if ($wslList -contains $c) { $devDistro = $c; break }
+        }
+    } catch {}
     while ($true) {
         Write-Host ""
-        Write-Host "  +-- MiOS bootstrap complete -----------------------------+" -ForegroundColor Green
-        Write-Host "  |  1) Continue to build (OCI image + deployables)        |" -ForegroundColor White
-        Write-Host "  |  2) Change settings (open mios.toml in configurator)   |" -ForegroundColor White
-        Write-Host "  |  3) System checks (preflight + dev VM health)          |" -ForegroundColor White
-        Write-Host "  |  4) Logs / reports                                     |" -ForegroundColor White
-        Write-Host "  |  5) Close                                              |" -ForegroundColor White
-        Write-Host "  +--------------------------------------------------------+" -ForegroundColor Green
-        $choice = Read-Host "  Pick [1-5]"
+        Write-Host "  +-- MiOS bootstrap complete --------------------------------+" -ForegroundColor Green
+        if ($devDistro) {
+            Write-Host ("  |  Dev distro:  {0}{1}|" -f $devDistro, (' ' * [Math]::Max(0, 44 - $devDistro.Length))) -ForegroundColor DarkGray
+            Write-Host ("  |  Enter via:   wsl -d {0}{1}|" -f $devDistro, (' ' * [Math]::Max(0, 36 - $devDistro.Length))) -ForegroundColor DarkGray
+            Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Green
+        }
+        Write-Host "  |  1) Continue to build (OCI image + deployables)           |" -ForegroundColor White
+        Write-Host "  |  2) Change settings (open mios.toml in configurator)      |" -ForegroundColor White
+        Write-Host "  |  3) System checks (preflight + dev VM health)             |" -ForegroundColor White
+        Write-Host "  |  4) Logs / reports                                        |" -ForegroundColor White
+        Write-Host "  |  5) Enter dev distro now (wsl -d ...)                     |" -ForegroundColor White
+        Write-Host "  |  6) Close                                                 |" -ForegroundColor White
+        Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Green
+        $choice = Read-Host "  Pick [1-6]"
         switch ($choice.Trim()) {
             '1' {
                 Write-Host "  -> Re-invoking with -BuildOnly to run the OCI build..." -ForegroundColor Cyan
@@ -865,8 +886,19 @@ function Show-PostBootstrapMenu {
                 Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray -NoNewline
                 $null = Read-Host
             }
-            '5' { return }
-            default { Write-Host "  Pick 1-5." -ForegroundColor Yellow }
+            '5' {
+                if ($devDistro) {
+                    Write-Host "  -> launching wsl -d $devDistro ..." -ForegroundColor Cyan
+                    & wsl.exe -d $devDistro
+                } else {
+                    Write-Host "  No registered MiOS dev distro found. Try `wsl --list` and enter manually." -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray -NoNewline
+                    $null = Read-Host
+                }
+            }
+            '6' { return }
+            default { Write-Host "  Pick 1-6." -ForegroundColor Yellow }
         }
     }
 }
