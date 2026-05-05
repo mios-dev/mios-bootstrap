@@ -82,6 +82,15 @@ $BuilderDistro    = $DevDistro
 $LegacyDevName    = "MiOS-BUILDER"
 $MiosWslDistro    = "MiOS"
 $LegacyDistro     = "podman-machine-default"
+# MiOS-DEV's base OCI ref. Pinned explicitly so the MiOS-DEV substrate
+# doesn't drift with the operator's installed podman client version --
+# without --image, `podman machine init` defaults to whatever
+# /usr/share/podman/machine.image points at, which silently bumps every
+# time the operator runs `dnf upgrade podman`. Operators can override
+# via $env:MIOS_MACHINE_IMAGE before invoking the bootstrap; the default
+# tracks the latest stable podman-machine-os release.
+$MachineImage     = if ($env:MIOS_MACHINE_IMAGE) { $env:MIOS_MACHINE_IMAGE }
+                    else { "quay.io/podman/machine-os:6.0" }
 
 if ($script:IsAdmin) {
     # AllUsers (machine-wide native Windows app layout). Top-level
@@ -1472,8 +1481,10 @@ function New-BuilderDistro([hashtable]$HW) {
 
     $initSw = [System.Diagnostics.Stopwatch]::StartNew()
     $initOut = [System.Collections.Generic.List[string]]::new()
+    Log-Ok "Provisioning MiOS-DEV from machine image: $MachineImage"
     & podman machine init $BuilderDistro `
         --cpus $HW.Cpus --memory $ramMB --disk-size $diskGB `
+        --image $MachineImage `
         --rootful --now 2>&1 | ForEach-Object {
             Write-Log "podman-init: $_"
             $initOut.Add([string]$_) | Out-Null
