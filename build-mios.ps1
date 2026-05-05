@@ -429,6 +429,12 @@ $script:WarnCount     = 0
 $script:ScriptStart   = [datetime]::Now
 $script:DashRow       = 0
 $script:DashHeight    = 0
+# Last-rendered row count -- used by Show-Dashboard to blank rows that
+# were part of a previous larger render but are no longer present in
+# the current one. Without this, transitioning from a 14-phase layout
+# to a 6-phase layout (BootstrapOnly mode truncating the tail) leaves
+# the bottom 8 rows of the previous dashboard as ghost content.
+$script:DashLastHeight = 0
 $script:FinalRc       = 0
 $script:BuildSubTotal = 48
 $script:BuildSubDone  = 0
@@ -656,12 +662,38 @@ function Show-Dashboard {
     $script:DashSync.Rendering = $true
     try {
         $script:DashSync.SpinnerRow = $dashStart + $opRowIdx
-        [Console]::SetCursorPosition(0, $dashStart)
-        foreach ($row in $rows) {
-            [Console]::Write($row)
-            [Console]::Write([Environment]::NewLine)
+        # Per-row absolute cursor placement. The previous code relied on
+        # NewLine to advance to col 0 of the next row; in wider hosts
+        # (110-160+ col terminals against an 80-cap buffer, or when the
+        # background heartbeat slipped a write between rows) the cursor
+        # could land mid-row, painting subsequent rows offset to the
+        # right -- the visible "side-by-side ghost dashboard" symptom.
+        # SetCursorPosition before each Write guarantees col=0.
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+            $tgtRow = $dashStart + $i
+            if ($tgtRow -lt 0 -or $tgtRow -ge $bufH) { continue }
+            [Console]::SetCursorPosition(0, $tgtRow)
+            [Console]::Write($rows[$i])
         }
-        $script:DashHeight = $rows.Count
+        # ── Ghost-row blanking ────────────────────────────────────────
+        # If a previous render placed MORE rows than this one, blank
+        # those tail rows with a $winW-wide space line so the previous
+        # bottom of the dashboard doesn't linger underneath the new
+        # render. Common cause: BootstrapOnly mode collapses the phase
+        # table from 14 -> 6 rows mid-run; without this loop, phases
+        # 6-13 stay visible as orphan text below the new bottom border.
+        if ($script:DashLastHeight -gt $rows.Count) {
+            $blank = (' ' * $winW)
+            $extra = $script:DashLastHeight - $rows.Count
+            for ($k = 0; $k -lt $extra; $k++) {
+                $blankRow = $dashStart + $rows.Count + $k
+                if ($blankRow -lt 0 -or $blankRow -ge $bufH) { continue }
+                [Console]::SetCursorPosition(0, $blankRow)
+                [Console]::Write($blank)
+            }
+        }
+        $script:DashHeight     = $rows.Count
+        $script:DashLastHeight = $rows.Count
         [Console]::SetCursorPosition(0, [math]::Min($dashStart + $script:DashHeight, $bufH - 1))
     } finally {
         $script:DashSync.Rendering = $false

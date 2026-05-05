@@ -306,12 +306,37 @@ try {
     $encoded = [Convert]::ToBase64String($bytes)
 
     $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-    $startArgs = @(
+    $shellArgs = @(
         '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-NoExit',
         '-EncodedCommand', $encoded
     )
-    Start-Process $shell -ArgumentList $startArgs -Verb RunAs
+
+    # Force a NEW STANDALONE WINDOW. Without this the elevated relaunch
+    # lands as a tab inside whatever existing Windows Terminal window
+    # the user already had open -- not what we want for an installer
+    # that paints a fixed-size 110-col dashboard. Strategy:
+    #   1. If wt.exe (Windows Terminal) is installed, spawn through it
+    #      with `-w -1 nt` -- "-w -1" creates a brand-new WT window
+    #      (not a new tab in window 0) and `nt` opens a new tab inside
+    #      that fresh window. The window is sized via the WT profile
+    #      defaults; the inner pwsh resizes via $Host.UI.RawUI.WindowSize
+    #      below to a guaranteed 110x42.
+    #   2. Otherwise fall back to plain Start-Process pwsh -- which on
+    #      hosts with conhost as the default terminal (Win10, or Win11
+    #      with "Default Terminal" set to "Windows Console Host") opens
+    #      a separate conhost window that pwsh can size programmatically.
+    $wtExe = Get-Command wt.exe -ErrorAction SilentlyContinue
+    if ($wtExe) {
+        # wt.exe argument vector. The trailing pwsh + args are passed
+        # through verbatim by WT. We elevate via Start-Process -Verb
+        # RunAs against wt.exe; UAC then launches the new WT window
+        # elevated.
+        $wtArgs = @('-w','-1','--title','MiOS Bootstrap','nt',$shell) + $shellArgs
+        Start-Process wt.exe -ArgumentList $wtArgs -Verb RunAs
+    } else {
+        Start-Process $shell -ArgumentList $shellArgs -Verb RunAs
+    }
     Write-Host "  [+] New pwsh window opened. Continuing the bootstrap there." -ForegroundColor Green
     return
 }
