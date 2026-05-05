@@ -36,7 +36,7 @@ if ($env:MIOS_AGREEMENT_BANNER -notin @('quiet','silent','off','0','false','FALS
     [Console]::Error.WriteLine(@"
 [mios] By invoking build-mios.ps1 you acknowledge AGREEMENTS.md
        (Apache-2.0 main + bundled-component licenses in LICENSES.md +
-        attribution in CREDITS.md). 'MiOS' is a research project
+        attribution in usr/share/doc/mios/reference/credits.md). 'MiOS' is a research project
        (pronounced 'MyOS'; generative, seed-script-derived).
 "@)
 }

@@ -111,7 +111,7 @@ need adjustment in cases that have not.
 
 * MiOS-owned source is Apache-2.0 (LICENSE)
 * Bundled vendor components retain their upstream licenses (LICENSES.md)
-* Attribution to every upstream project is recorded in CREDITS.md
+* Attribution to every upstream project is recorded in usr/share/doc/mios/reference/credits.md
 
 --------------------------------------------------------------------------------
 3. THIRD-PARTY AGREEMENTS THAT APPLY IMPLICITLY

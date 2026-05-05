@@ -21,15 +21,16 @@
 # host platform. See AGREEMENTS.md and IMPLEMENTATION-SUMMARY.md.
 !seed-merge.sh
 !seed-merge.ps1
+# Repo-root files. After the 2026-05-05 doc consolidation pass:
+#   - duplicate substantive docs (AGREEMENTS, API, CREDITS) deleted from
+#     bootstrap; consumers find them at mios.git canonicals.
+#   - bootstrap-specific docs (AI, IMPLEMENTATION-SUMMARY, USER-SPACE-GUIDE,
+#     VARIABLES) moved into usr/share/doc/mios-bootstrap/{concepts,guides,reference}/
+#   - GitHub-convention + agent-tool discovery redirectors stay at root.
 !AGENTS.md
-!AGREEMENTS.md
-!AI.md
-!API.md
 !CLAUDE.md
-!CREDITS.md
 !GEMINI.md
 !system-prompt.md
-!IMPLEMENTATION-SUMMARY.md
 
 # Single canonical user-edit dotfile (the one users actually edit).
 # Every script in mios.git and mios-bootstrap.git resolves through this
@@ -57,9 +58,9 @@
 !.clinerules
 !.cursorrules
 
-# Documentation (user-facing)
-!USER-SPACE-GUIDE.md
-!VARIABLES.md
+# Documentation (user-facing). The substantive bootstrap docs live under
+# usr/share/doc/mios-bootstrap/ now; the cascade `!usr/` whitelist below
+# tracks them automatically. Only the LLM-discovery file stays at root.
 !llms.txt
 
 # Bootstrap-owned overlay subtrees merged into / on FHS hosts and

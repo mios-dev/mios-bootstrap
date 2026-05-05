@@ -9,7 +9,7 @@
 #
 # By invoking this script you acknowledge AGREEMENTS.md (Apache-2.0
 # main + bundled-component licenses in LICENSES.md + attribution in
-# CREDITS.md). 'MiOS' is a research project (pronounced 'MyOS';
+# usr/share/doc/mios/reference/credits.md). 'MiOS' is a research project (pronounced 'MyOS';
 # generative, seed-script-derived).
 #
 # Global pipeline phases (numbered; reused everywhere this project speaks of
@@ -44,7 +44,7 @@ case "${MIOS_AGREEMENT_BANNER:-}" in
         cat >&2 <<'__EOF__'
 [mios] By invoking build-mios.sh you acknowledge AGREEMENTS.md
        (Apache-2.0 main + bundled-component licenses in LICENSES.md +
-        attribution in CREDITS.md). 'MiOS' is a research project
+        attribution in usr/share/doc/mios/reference/credits.md). 'MiOS' is a research project
        (pronounced 'MyOS'; generative, seed-script-derived).
 __EOF__
         ;;

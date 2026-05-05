@@ -14,7 +14,7 @@
 #   - mios.git's factory FHS overlay   (etc/, usr/, var/, automation/, ...)
 #   - mios-bootstrap's user/AI overlay (etc/skel/, etc/mios/, usr/share/mios/ai/)
 #   - bootstrap's root-level files     (mios.toml, CLAUDE.md, AGENTS.md,
-#                                       GEMINI.md, AI.md, .cursorrules, ...)
+#                                       GEMINI.md, usr/share/doc/mios-bootstrap/concepts/ai-architecture.md, .cursorrules, ...)
 # baked in. Every deploy shape (raw, vhdx, qcow2, ISO, WSL2 distro,
 # Podman-WSL OCI host) lands the same content because they're produced
 # by bootc-image-builder from the same OCI image.
@@ -60,10 +60,10 @@ done
 # Containerfile picks them up via the new /ctx/rootfiles staging.
 ROOT_FILES=(
     mios.toml
-    CLAUDE.md AGENTS.md GEMINI.md AI.md AGREEMENTS.md
+    CLAUDE.md AGENTS.md GEMINI.md usr/share/doc/mios-bootstrap/concepts/ai-architecture.md AGREEMENTS.md
     .cursorrules
-    API.md CREDITS.md system-prompt.md
-    VARIABLES.md USER-SPACE-GUIDE.md IMPLEMENTATION-SUMMARY.md
+    usr/share/doc/mios/reference/api.md usr/share/doc/mios/reference/credits.md system-prompt.md
+    usr/share/doc/mios-bootstrap/reference/variables.md usr/share/doc/mios-bootstrap/guides/user-space.md usr/share/doc/mios-bootstrap/guides/install-architecture.md
     llms.txt
     bootstrap.sh bootstrap.ps1 install.sh install.ps1
     Get-MiOS.ps1 build-mios.sh build-mios.ps1

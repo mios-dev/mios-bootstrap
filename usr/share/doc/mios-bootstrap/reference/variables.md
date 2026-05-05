@@ -1,4 +1,4 @@
-# VARIABLES.md
+# usr/share/doc/mios-bootstrap/reference/variables.md
 
 Global variable index for 'MiOS' v0.2.4. All values defined here are the single authoritative source. Change a value in `usr/share/mios/env.defaults` (Linux) or the `# Paths & constants` block of `install.ps1` (Windows) to propagate it system-wide.
 

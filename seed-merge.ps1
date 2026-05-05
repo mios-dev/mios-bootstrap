@@ -63,10 +63,10 @@ foreach ($dir in @("etc", "usr", "var", "profile")) {
 # user-edit dotfile that live at / on the deployed system.
 $rootFiles = @(
     "mios.toml",
-    "CLAUDE.md", "AGENTS.md", "GEMINI.md", "AI.md", "AGREEMENTS.md",
+    "CLAUDE.md", "AGENTS.md", "GEMINI.md", "usr/share/doc/mios-bootstrap/concepts/ai-architecture.md", "AGREEMENTS.md",
     ".cursorrules",
-    "API.md", "CREDITS.md", "system-prompt.md",
-    "VARIABLES.md", "USER-SPACE-GUIDE.md", "IMPLEMENTATION-SUMMARY.md",
+    "usr/share/doc/mios/reference/api.md", "usr/share/doc/mios/reference/credits.md", "system-prompt.md",
+    "usr/share/doc/mios-bootstrap/reference/variables.md", "usr/share/doc/mios-bootstrap/guides/user-space.md", "usr/share/doc/mios-bootstrap/guides/install-architecture.md",
     "llms.txt",
     "bootstrap.sh", "bootstrap.ps1", "install.sh", "install.ps1",
     "Get-MiOS.ps1", "build-mios.sh", "build-mios.ps1"

@@ -55,8 +55,8 @@ mios-dev/mios-bootstrap         ← user overlay + interactive installer
   ├── usr/share/mios/ai/{models,mcp,vars}.json
   ├── usr/share/mios/knowledge/      ← RAG knowledge graphs
   ├── system-prompt.md                ← host AI prompt redirector
-  └── README.md AI.md API.md AGENTS.md AGREEMENTS.md
-      USER-SPACE-GUIDE.md VARIABLES.md IMPLEMENTATION-SUMMARY.md
+  └── README.md usr/share/doc/mios-bootstrap/concepts/ai-architecture.md usr/share/doc/mios/reference/api.md AGENTS.md AGREEMENTS.md
+      usr/share/doc/mios-bootstrap/guides/user-space.md usr/share/doc/mios-bootstrap/reference/variables.md usr/share/doc/mios-bootstrap/guides/install-architecture.md
 ```
 
 **Merge order:** `mios.git` ← `mios-bootstrap.git`. Bootstrap profile
