@@ -1927,6 +1927,52 @@ $NS systemd-sysusers 2>&1 | tail -3 || true
 $NS systemd-tmpfiles --create 2>&1 | tail -3 || true
 $NS systemctl daemon-reload 2>&1 | tail -3 || true
 
+# Container-host prerequisites for the mios user. Manifesto says MiOS-DEV
+# "should have the mios user appended as it will be needed for this MiOS-DEV
+# machine to host its containers (mirroring the layered containers in MiOS
+# at build time; guacamole, ollama, forgejo, cockpit etc-etc)". The
+# systemd-sysusers run above creates the mios login user (uid 1000); the
+# three steps below complete the container-hosting plumbing:
+#
+#   1. subuid/subgid append -- rootless podman needs an unprivileged uid
+#      range available for user-namespace mapping. Standard convention is
+#      one 64K-uid range starting at 524288 (well outside the host's
+#      regular uid space). Idempotent: skip if mios is already present.
+#
+#   2. linger enable -- so systemd --user services (the Quadlets) start
+#      at boot without an active interactive login session. Required for
+#      `systemctl --user enable mios-forge.service` etc. to actually
+#      launch the daemon at boot rather than waiting for a TTY login.
+#
+#   3. /var/home/mios skeleton seeded from /etc/skel -- FCOS / atomic-
+#      desktops home convention; the deployed MiOS image uses
+#      /var/home/<user> as $HOME so /etc 3-way merge doesn't have to
+#      manage home-dir state. Establish the same on MiOS-DEV so any
+#      operator-side configs (.bashrc, .config/) match across substrates.
+echo "[quadlet-overlay] container-host prerequisites for mios user ..."
+if id mios >/dev/null 2>&1; then
+    if ! grep -q '^mios:' /etc/subuid 2>/dev/null; then
+        echo 'mios:524288:65536' | sudo tee -a /etc/subuid >/dev/null
+        echo "[quadlet-overlay]   /etc/subuid: mios:524288:65536"
+    fi
+    if ! grep -q '^mios:' /etc/subgid 2>/dev/null; then
+        echo 'mios:524288:65536' | sudo tee -a /etc/subgid >/dev/null
+        echo "[quadlet-overlay]   /etc/subgid: mios:524288:65536"
+    fi
+    if command -v loginctl >/dev/null 2>&1; then
+        sudo loginctl enable-linger mios 2>/dev/null || true
+        echo "[quadlet-overlay]   loginctl enable-linger mios"
+    fi
+    sudo install -d -m 0755 /var/home 2>/dev/null || true
+    sudo install -d -m 0755 -o mios -g mios /var/home/mios 2>/dev/null || \
+        sudo install -d -m 0755 /var/home/mios
+    if [[ -d /etc/skel ]] && [[ ! -e /var/home/mios/.bashrc ]]; then
+        sudo rsync -aH --ignore-existing /etc/skel/ /var/home/mios/ 2>/dev/null || true
+        sudo chown -R mios:mios /var/home/mios 2>/dev/null || true
+        echo "[quadlet-overlay]   /var/home/mios seeded from /etc/skel"
+    fi
+fi
+
 # ALWAYS-ON LIGHTWEIGHT SET: Cockpit (web console at :9090), the
 # Podman-Desktop discovery shim that surfaces MiOS containers in PD's
 # UI, and the self-hosted Forgejo forge (small SQLite-backed git host).
