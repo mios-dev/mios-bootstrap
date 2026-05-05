@@ -184,74 +184,180 @@ function Update-MiosInstallPaths {
 }
 
 function Invoke-MigrateLegacyInstallRoot {
-    # DEPRECATED 2026-05-05 (kept callable but no-op by default).
+    # Migrate any leftover content at $LegacyRoot (typically C:\MiOS or
+    # %LOCALAPPDATA%\MiOS) onto the data-disk install root
+    # ($script:MiosInstallDir, typically M:\MiOS). Full-partition overlay
+    # is THE LAW: every MiOS deployment is a full-root overlay -- M:\MiOS\
+    # holds the entire project tree (bin, share, icons, themes, repo,
+    # distros, images, machine-state, logs). Split-state across drives is
+    # not a supported configuration.
     #
-    # ── Original intent ─────────────────────────────────────────────
-    # When Update-MiosInstallPaths redirects $MiosInstallDir (typically
-    # C:\MiOS or %LOCALAPPDATA%\MiOS) onto the data disk (M:\MiOS),
-    # any leftover content at the legacy path becomes orphan state.
-    # This function used to MOVE that content onto the new root via
-    # `robocopy /MOVE /E` so the operator's pipeline was a full-
-    # partition overlay -- no split-state across drives.
+    # ── Two strategies, auto-selected ───────────────────────────────
     #
-    # ── Why disabled ────────────────────────────────────────────────
-    # Operator clarification (2026-05-05): M:\ is for the MiOS-DEV
-    # podman machine's runtime artifacts (vhdx, build-output images,
-    # machine-state, distro snapshots, logs). C:\ is for the developer's
-    # working tree -- where they edit code, run git, drive Claude Code
-    # and similar tooling. The two surfaces serve different purposes
-    # and should NOT be merged.
+    # 1. GIT-AWARE strategy (when $LegacyRoot is a git working tree):
+    #    a. Verify the working tree is clean (no uncommitted changes).
+    #       If dirty, abort with a clear "commit or stash first" message
+    #       UNLESS MIOS_FORCE_LEGACY_MIGRATE=1 is set, in which case we
+    #       fall through to the robocopy strategy and the operator owns
+    #       the consequences.
+    #    b. Push the current branch to origin so the work is durable
+    #       on the remote before any move happens. If origin is
+    #       unreachable, abort -- we won't risk a /MOVE without a
+    #       remote-side anchor. (Skip via MIOS_LEGACY_MIGRATE_OFFLINE=1
+    #       for explicitly-offline workflows.)
+    #    c. If $InstallDir is already a git working tree pointing at
+    #       the same origin, fetch + fast-forward (or reset --hard
+    #       origin/<branch>) so M:\MiOS lands on the same commit as
+    #       what we just pushed. If the histories have actually
+    #       diverged (commits on M:\ NOT on origin), abort and tell
+    #       the operator -- divergence requires an explicit merge
+    #       decision, not an automated /MOVE.
+    #    d. If $InstallDir is NOT a git working tree, clone $LegacyRoot
+    #       (or origin) into $InstallDir so it becomes a proper repo.
+    #    e. Robocopy /MOVE the non-tracked artifacts (build outputs
+    #       under $LegacyRoot\images, $LegacyRoot\logs,
+    #       $LegacyRoot\machine-state -- anything outside the git
+    #       working tree's tracked paths) onto $InstallDir.
+    #    f. Remove $LegacyRoot once verified empty.
     #
-    # The robocopy /MOVE was wiping C:\MiOS files between turns
-    # whenever the bootstrap re-ran (visible 2026-05-05 14:43-14:52
-    # session as a 13-file working-tree wipe restored via
-    # `git checkout HEAD -- ...`). That's an unrecoverable failure
-    # mode for any developer with uncommitted edits at the legacy
-    # path; the MOVE doesn't differentiate "stale leftover" from
-    # "active edit in progress."
+    # 2. ROBOCOPY strategy (when $LegacyRoot is a plain dir, no .git):
+    #    Same /MOVE /E /XO /XN /XC behavior as the original
+    #    pre-2026-05-05 implementation. This is the strategy that wiped
+    #    the operator's working tree on 2026-05-05 14:43-14:52 -- it's
+    #    safe ONLY for plain (non-git) leftovers, not active dev trees.
     #
-    # ── Current behavior ────────────────────────────────────────────
-    # No-op unless MIOS_FORCE_LEGACY_MIGRATE=1 is set in the
-    # environment (intended only for clean-up sweeps the operator
-    # explicitly opts into). The default is to leave C:\MiOS in
-    # place. The MiOS-DEV machine clones its working tree from the
-    # canonical git remote inside its own vhdx; nothing on the
-    # Windows host is moved.
+    # ── Bypass switches (env vars; all default off) ─────────────────
     #
-    # Bypass to fall back to the old MOVE behavior:
-    #   $env:MIOS_FORCE_LEGACY_MIGRATE = '1'
-    # Bypass alias kept for backward compat (old recipes set this):
-    #   $env:MIOS_SKIP_LEGACY_MIGRATE   = '1'  (now redundant)
+    #   MIOS_SKIP_LEGACY_MIGRATE=1     skip migration entirely (no-op)
+    #   MIOS_FORCE_LEGACY_MIGRATE=1    proceed with robocopy /MOVE even
+    #                                  on a dirty git working tree
+    #                                  (DESTRUCTIVE; only for cleanup)
+    #   MIOS_LEGACY_MIGRATE_OFFLINE=1  skip the `git push` durability
+    #                                  step (use only when origin is
+    #                                  intentionally offline)
     param([string]$LegacyRoot)
     if (-not $LegacyRoot) { return }
     if ($LegacyRoot -ieq $script:MiosInstallDir) { return }
     if (-not (Test-Path $LegacyRoot)) { return }
-    # Default-off as of 2026-05-05. Skip unless the operator explicitly
-    # opts back in via MIOS_FORCE_LEGACY_MIGRATE=1. The legacy
-    # MIOS_SKIP_LEGACY_MIGRATE bypass is now redundant (the function is
-    # already skipping by default) but kept-recognized so old recipes
-    # don't error.
     if ($env:MIOS_SKIP_LEGACY_MIGRATE -in @('1','true','TRUE','yes')) {
-        Log-Warn "MIOS_SKIP_LEGACY_MIGRATE set (now the default) -- $LegacyRoot left in place"
+        Log-Warn "MIOS_SKIP_LEGACY_MIGRATE set -- leaving $LegacyRoot in place"
         return
     }
-    if ($env:MIOS_FORCE_LEGACY_MIGRATE -notin @('1','true','TRUE','yes')) {
-        Log-Ok "Legacy migration disabled (set MIOS_FORCE_LEGACY_MIGRATE=1 to re-enable). C:\\ stays as the dev working tree; M:\\ holds MiOS-DEV runtime artifacts only."
-        return
-    }
-    Log-Warn "MIOS_FORCE_LEGACY_MIGRATE=1 -- proceeding with destructive robocopy /MOVE from $LegacyRoot to $($script:MiosInstallDir)"
 
     Set-Step "Migrating legacy install $LegacyRoot -> $($script:MiosInstallDir) ..."
-    if (-not (Test-Path $script:MiosInstallDir)) {
-        New-Item -ItemType Directory -Path $script:MiosInstallDir -Force | Out-Null
+    $InstallDir = $script:MiosInstallDir
+    if (-not (Test-Path $InstallDir)) {
+        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
 
-    # robocopy exit codes 0-7 are success (any combination of files
-    # copied / mismatches / extra files); 8+ are real errors. All
-    # output via Write-Log so the unified install log keeps the
-    # full record without flooding the console.
+    # ── Detect whether $LegacyRoot is a git working tree ─────────
+    $legacyIsGit = (Test-Path (Join-Path $LegacyRoot '.git'))
+    $useGitStrategy = $legacyIsGit -and ($env:MIOS_FORCE_LEGACY_MIGRATE -notin @('1','true','TRUE','yes'))
+
+    if ($useGitStrategy) {
+        Log-Ok "Git-aware migration: $LegacyRoot has .git -- using git fetch/reset semantics"
+
+        # 1a. Working-tree dirty check.
+        $statusOut = & git -C $LegacyRoot status --porcelain 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Log-Warn "git -C $LegacyRoot status failed; aborting migration. Run manually or set MIOS_FORCE_LEGACY_MIGRATE=1 to override."
+            return
+        }
+        if ($statusOut) {
+            Log-Warn "Working tree at $LegacyRoot has uncommitted changes:"
+            $statusOut | ForEach-Object { Log-Warn "  $_" }
+            Log-Warn "Commit/stash before migrating, or set MIOS_FORCE_LEGACY_MIGRATE=1 to force a destructive /MOVE."
+            return
+        }
+
+        # 1b. Push current branch to origin so the work is durable.
+        $branch = (& git -C $LegacyRoot rev-parse --abbrev-ref HEAD 2>$null).Trim()
+        if (-not $branch -or $branch -eq 'HEAD') {
+            Log-Warn "$LegacyRoot is on a detached HEAD; refusing to migrate without a branch context."
+            return
+        }
+        if ($env:MIOS_LEGACY_MIGRATE_OFFLINE -notin @('1','true','TRUE','yes')) {
+            Set-Step "Pushing $branch to origin (durability anchor before migrate)..."
+            & git -C $LegacyRoot push origin $branch 2>&1 | ForEach-Object { Write-Log "git-push: $_" }
+            if ($LASTEXITCODE -ne 0) {
+                Log-Warn "git push origin $branch FAILED (exit $LASTEXITCODE). Aborting migration to protect uncommitted-but-pushed-elsewhere state. Set MIOS_LEGACY_MIGRATE_OFFLINE=1 to bypass (offline workflows)."
+                return
+            }
+        } else {
+            Log-Warn "MIOS_LEGACY_MIGRATE_OFFLINE=1 -- skipping the git-push durability anchor"
+        }
+
+        # 1c. Reconcile $InstallDir's git state with what we just pushed.
+        $headSha = (& git -C $LegacyRoot rev-parse HEAD 2>$null).Trim()
+        $installIsGit = (Test-Path (Join-Path $InstallDir '.git'))
+        if ($installIsGit) {
+            Set-Step "Fast-forwarding $InstallDir to $headSha..."
+            # Fetch from origin (the install dir's origin should be the
+            # same remote as $LegacyRoot's; if not, the operator's done
+            # something unusual and we abort).
+            & git -C $InstallDir fetch origin $branch --quiet 2>&1 | ForEach-Object { Write-Log "git-fetch-install: $_" }
+            $installAhead = (& git -C $InstallDir log --oneline "origin/$branch..HEAD" 2>$null) -join "`n"
+            if ($installAhead) {
+                Log-Warn "$InstallDir has commits NOT on origin/$branch -- divergence requires manual merge:"
+                $installAhead -split "`n" | ForEach-Object { Log-Warn "  $_" }
+                Log-Warn "Resolve via 'git -C $InstallDir merge origin/$branch' or 'git push origin $branch' from there. Aborting auto-migrate."
+                return
+            }
+            # Safe to fast-forward.
+            & git -C $InstallDir reset --hard "origin/$branch" 2>&1 | ForEach-Object { Write-Log "git-reset-install: $_" }
+            if ($LASTEXITCODE -ne 0) {
+                Log-Warn "git reset --hard origin/$branch FAILED on $InstallDir (exit $LASTEXITCODE)"
+                return
+            }
+            Log-Ok "$InstallDir fast-forwarded to $headSha"
+        } else {
+            Set-Step "Cloning $LegacyRoot into $InstallDir (first-time git establishment)..."
+            # Clone from $LegacyRoot directly (faster than re-fetching from origin).
+            & git clone $LegacyRoot $InstallDir 2>&1 | ForEach-Object { Write-Log "git-clone-install: $_" }
+            if ($LASTEXITCODE -ne 0) {
+                Log-Warn "git clone $LegacyRoot $InstallDir FAILED (exit $LASTEXITCODE)"
+                return
+            }
+            # Fix the origin to point at the actual remote (clone defaulted to $LegacyRoot).
+            $remoteUrl = (& git -C $LegacyRoot remote get-url origin 2>$null).Trim()
+            if ($remoteUrl) {
+                & git -C $InstallDir remote set-url origin $remoteUrl 2>&1 | ForEach-Object { Write-Log "git-remote: $_" }
+            }
+            Log-Ok "$InstallDir cloned from $LegacyRoot ($headSha)"
+        }
+
+        # 1e. Robocopy non-tracked artifacts (untracked-by-git directories
+        # the operator may have placed under $LegacyRoot -- build outputs,
+        # logs, machine-state). Use /MOVE with /XF . to skip anything
+        # already on the dest.
+        $untrackedDirs = @('logs','images','machine-state','distros') |
+            Where-Object { Test-Path (Join-Path $LegacyRoot $_) }
+        foreach ($d in $untrackedDirs) {
+            $src = Join-Path $LegacyRoot $d
+            $dst = Join-Path $InstallDir $d
+            $rc = & robocopy.exe $src $dst /MOVE /E /XO /XN /XC /NFL /NDL /NJH /NJS /R:1 /W:1 2>&1
+            $rc | ForEach-Object { Write-Log "migrate-artifact: $_" }
+        }
+
+        # 1f. The git tree at $LegacyRoot is now redundant with $InstallDir.
+        # Remove it (the working tree files match what's at $InstallDir
+        # bit-for-bit, since both are at the same SHA).
+        try {
+            Remove-Item $LegacyRoot -Recurse -Force -ErrorAction Stop
+            Log-Ok "Migrated and removed legacy git working tree: $LegacyRoot (now canonical at $InstallDir)"
+        } catch {
+            Log-Warn "Could not fully remove $LegacyRoot : $_"
+            Log-Warn "Manual cleanup: Remove-Item $LegacyRoot -Recurse -Force"
+        }
+        return
+    }
+
+    # ── Strategy 2: plain robocopy /MOVE for non-git leftover dirs ─────
+    if ($legacyIsGit) {
+        Log-Warn "MIOS_FORCE_LEGACY_MIGRATE=1 -- proceeding with destructive robocopy /MOVE on a git working tree at $LegacyRoot"
+    }
     $rcArgs = @(
-        $LegacyRoot, $script:MiosInstallDir,
+        $LegacyRoot, $InstallDir,
         '/MOVE',           # delete source files after copy
         '/E',              # include all subdirs incl. empty
         '/XO', '/XN', '/XC', # skip if dest exists (older / newer / same-size-different)
@@ -264,11 +370,6 @@ function Invoke-MigrateLegacyInstallRoot {
         Log-Warn "robocopy returned $rc on legacy migration (>= 8 = real error). Some files may remain at $LegacyRoot."
     }
 
-    # Clean up the legacy root if it's now empty. Files that existed
-    # at the destination won't have moved (robocopy /XO/XN/XC kept
-    # them at source), so the dir may still be populated -- in which
-    # case we leave it alone with a warning rather than risk losing
-    # operator data.
     if (Test-Path $LegacyRoot) {
         $remaining = @(Get-ChildItem -Path $LegacyRoot -Recurse -Force -File -ErrorAction SilentlyContinue)
         if ($remaining.Count -eq 0) {
