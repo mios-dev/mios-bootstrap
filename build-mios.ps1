@@ -1390,8 +1390,14 @@ $driverCmd
             }
             '5' {
                 if ($devDistro) {
-                    Write-Host "  -> launching wsl -d $devDistro ..." -ForegroundColor Cyan
-                    & wsl.exe -d $devDistro
+                    # --user mios: machine-os's daemonContainerNS [boot]
+                    # shim ignores /etc/wsl.conf [user] default=, so we
+                    # have to pass --user explicitly to land in the mios
+                    # account. Falls through silently to the bundled
+                    # `user` if mios doesn't exist (rare edge case where
+                    # sysusers failed during seed).
+                    Write-Host "  -> launching wsl -d $devDistro --user mios ..." -ForegroundColor Cyan
+                    & wsl.exe -d $devDistro --user mios
                 } else {
                     Write-Host "  No registered MiOS dev distro found. Try `wsl --list` and enter manually." -ForegroundColor Yellow
                     Write-Host ""
@@ -3583,14 +3589,26 @@ function Test-MiosDevDistroHealthy {
 
     # 4. Podman API reachable. Skipped post-rename (podman client
     # speaks to the SSH socket regardless of WSL distro name).
+    # Retried with backoff: Phase 3's wsl --terminate (added in
+    # 4a8e7f6 to make /etc/wsl.conf [user] default=mios take effect)
+    # restarts the distro right before this smoke check runs, so
+    # the podman API is warming up. Without retry the check fires
+    # before the API socket is ready and emits a confusing warning.
     if ($name -eq "podman-$DevDistro") {
         $podOut = ""
-        try { $podOut = (& podman --connection "${DevDistro}-root" version --format '{{.Server.Version}}' 2>&1) -join "" } catch {}
-        if ([string]::IsNullOrWhiteSpace($podOut) -or $podOut -match 'error|Error|fail') {
-            Log-Warn "smoke: podman API not responding (got: '$podOut')"
-            # Non-fatal -- some podman versions report differently
-        } else {
+        $okFmt = '^[0-9]+\.[0-9]+'
+        $attempts = 5
+        for ($i = 1; $i -le $attempts; $i++) {
+            try { $podOut = (& podman --connection "${DevDistro}-root" version --format '{{.Server.Version}}' 2>&1) -join "" } catch { $podOut = "$_" }
+            if ($podOut -match $okFmt) { break }
+            if ($i -lt $attempts) { Start-Sleep -Seconds 2 }
+        }
+        if ($podOut -match $okFmt) {
             Log-Ok "smoke 4/4: podman API server v$($podOut.Trim())"
+        } else {
+            Log-Warn "smoke: podman API not responding after $attempts attempts (got: '$podOut')"
+            # Non-fatal -- machine may still be warming up; first
+            # `podman machine inspect` call after this will succeed.
         }
     }
 
