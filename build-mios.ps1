@@ -490,24 +490,54 @@ function Write-Log {
 
 # ── Dashboard state ───────────────────────────────────────────────────────────
 $script:DW         = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 2), 80))
-$script:PhaseNames = @(
-    "Hardware + Prerequisites",
-    "Detecting environment",
-    "Directories and repos",
-    "MiOS-DEV distro",
-    "WSL2 configuration",
-    "Verifying build context",
-    "Identity",
-    "Writing identity",
-    "App registration",
-    "Building OCI image",
-    "Exporting WSL2 image",
-    "Registering 'MiOS' WSL2",
-    "Building disk images",
-    "Deploying Hyper-V VM"
-)
-$script:TotalPhases   = $script:PhaseNames.Count
-$script:PhStat        = @(0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+# Per the self-replication architecture, the Windows side (BootstrapOnly,
+# the default for irm | iex entry) does ONLY:
+#   ack -> hardware/env probe -> minimal mios-bootstrap clone ->
+#   MiOS-DEV podman-machine setup -> .wslconfig sanity ->
+#   Start Menu / shortcuts -> SSH handoff into MiOS-DEV.
+# Everything else (identity prompts, OCI build, WSL2/Hyper-V/QEMU
+# image exports, disk-image generation) belongs INSIDE MiOS-DEV via
+# /usr/libexec/mios/mios-build-driver -- no Windows-side rendering of
+# those phases. We render a 6-entry dashboard in BootstrapOnly mode
+# and the historical 14-entry one in -FullBuild / -BuildOnly mode.
+#
+# $AppRegPhaseId is the index for the "App registration" phase in
+# whichever array is active; the Start-Phase / End-Phase callers near
+# the bottom of the script reference it so we don't hardcode 8 or 5.
+if ($BootstrapOnly) {
+    $script:PhaseNames = @(
+        "Hardware + Prerequisites",
+        "Detecting environment",
+        "Directories and repos",
+        "MiOS-DEV distro",
+        "WSL2 configuration",
+        "App registration"
+    )
+    $script:AppRegPhaseId = 5
+} else {
+    $script:PhaseNames = @(
+        "Hardware + Prerequisites",
+        "Detecting environment",
+        "Directories and repos",
+        "MiOS-DEV distro",
+        "WSL2 configuration",
+        "Verifying build context",
+        "Identity",
+        "Writing identity",
+        "App registration",
+        "Building OCI image",
+        "Exporting WSL2 image",
+        "Registering 'MiOS' WSL2",
+        "Building disk images",
+        "Deploying Hyper-V VM"
+    )
+    $script:AppRegPhaseId = 8
+}
+$script:TotalPhases = $script:PhaseNames.Count
+# PhStat size tracks the active PhaseNames so the dashboard's status
+# row never indexes past the array. 0=pending, 1=running, 2=ok,
+# 3=warn, 4=fail (see Set-Step / End-Phase).
+$script:PhStat = @(0) * $script:TotalPhases
 $script:PhStart       = @{}
 $script:PhEnd         = @{}
 $script:CurPhase      = -1
@@ -4612,8 +4642,11 @@ chmod 0640 /etc/mios/install.env
     else { Log-Warn "install.env write failed (non-fatal -- firstboot will use default identity; set MIOS_* vars manually)" }
     End-Phase 7
 
-    # ── Phase 8 -- App registration + Start Menu ──────────────────────────────
-    Start-Phase 8
+    # ── App registration + Start Menu ─────────────────────────────────────────
+    # Phase index varies by mode -- 5 in BootstrapOnly (the trimmed
+    # 6-phase Windows-side layout) and 8 in -FullBuild / -BuildOnly
+    # (the full 14-phase legacy layout).
+    Start-Phase $script:AppRegPhaseId
     $pwsh      = if (Get-Command pwsh -EA SilentlyContinue) { (Get-Command pwsh).Source } else { "powershell.exe" }
     # Entry-point scripts live under $MiosBinDir (materialized in Phase 2).
     # Prefer build-mios.ps1 (current canonical entry); fall back to the
@@ -4729,7 +4762,7 @@ if (Test-Path `$K) { Remove-Item `$K -Recurse -Force -ErrorAction SilentlyContin
 Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." -ForegroundColor Green
 "@ | Set-Content $uninstSc -Encoding UTF8
     Log-Ok "uninstall.ps1 written"
-    End-Phase 8
+    End-Phase $script:AppRegPhaseId
 
     # ── Phase 9 -- Build ──────────────────────────────────────────────────────
     Start-Phase 9
