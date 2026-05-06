@@ -700,67 +700,89 @@ if ((Test-Path $RepoDir) -and ($RepoDir -ne 'M:\MiOS\repo\mios-bootstrap')) {
     exit 1
 }
 
-Write-Info "Cloning $RepoUrl ($Branch, depth=1) -> $RepoDir ..."
-# Bulletproof native-command invocation, take 4:
-#
-#   * 245d88e tried `*>$null` (PowerShell pipeline redirect): defeated
-#     by stream-merged ErrorRecord synthesis happening BEFORE redirect.
-#   * a6569e8 tried `& { EAP=Continue; ... } 2>&1 | Out-Null`: somehow
-#     EAP=Stop in the parent scope still escapes up through the irm|
-#     iex relaunch-wrapper boundary in this specific context.
-#   * 1643b64 tried `Start-Process -RedirectStandardError NUL
-#     -RedirectStandardOutput NUL`: PowerShell's Start-Process has a
-#     hard-coded equality check that refuses identical redirect targets,
-#     so this throws "RedirectStandardOutput and RedirectStandardError
-#     are same".
-#
-# Final approach: drop down to System.Diagnostics.Process directly.
-# That class has no such silly equality check, and we explicitly
-# .ReadToEnd() each stream into local strings (then discard them) so
-# both streams are drained without involving PowerShell's pipeline
-# ErrorRecord synthesis at all. RedirectStandard* = $true requires
-# UseShellExecute = $false, which lets us run from the existing console
-# without spawning a new window.
-$cloneExit = -1
-try {
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName  = 'git'
-    foreach ($a in @('clone','--branch',$Branch,'--depth','1',$RepoUrl,$RepoDir)) {
-        # ArgumentList is the safe Add-individual-argument API on
-        # .NET 5+; on Windows PowerShell 5.1 (.NET Framework 4.x) we
-        # fall back to the legacy single-string Arguments and quote
-        # paths that may contain spaces.
-        if ($psi.ArgumentList -ne $null) { [void]$psi.ArgumentList.Add($a) }
+# Helper: run git with all streams drained via System.Diagnostics.Process
+# so PowerShell's pipeline never sees stderr (no EAP=Stop trap on git's
+# normal "Cloning into ..." progress banner).
+function Invoke-GitProc {
+    param([string[]]$ArgList, [string]$Cwd = $null)
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = 'git'
+        foreach ($a in $ArgList) {
+            if ($psi.ArgumentList -ne $null) { [void]$psi.ArgumentList.Add($a) }
+        }
+        if ($psi.ArgumentList -eq $null -or $psi.ArgumentList.Count -eq 0) {
+            # PS 5.1 fallback: build single-string Arguments. Each arg
+            # quoted in case of spaces in paths.
+            $psi.Arguments = ($ArgList | ForEach-Object { '"' + ($_ -replace '"','\"') + '"' }) -join ' '
+        }
+        if ($Cwd) { $psi.WorkingDirectory = $Cwd }
+        $psi.UseShellExecute        = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError  = $true
+        $psi.CreateNoWindow         = $true
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        [void]$proc.Start()
+        $out = $proc.StandardOutput.ReadToEnd()
+        $err = $proc.StandardError.ReadToEnd()
+        $proc.WaitForExit()
+        return [pscustomobject]@{
+            ExitCode = $proc.ExitCode
+            Stdout   = $out
+            Stderr   = $err
+        }
+    } catch {
+        return [pscustomobject]@{ ExitCode = -1; Stdout = ''; Stderr = $_.Exception.Message }
     }
-    if ($psi.ArgumentList -eq $null -or $psi.ArgumentList.Count -eq 0) {
-        # PS 5.1 / .NET Framework path -- no ArgumentList, build a
-        # quoted single-string Arguments value.
-        $psi.Arguments = ('clone --branch {0} --depth 1 {1} "{2}"' -f $Branch, $RepoUrl, $RepoDir)
+}
+
+# If $RepoDir already exists with a .git subdir from a prior run, do an
+# in-place fetch + reset --hard to bring it to origin/main. NEVER delete
+# operator-side files (per feedback_mios_entry_full_reset.md). If it
+# exists but isn't a git repo, fail with an actionable message rather
+# than silently nuking it.
+if (Test-Path $RepoDir) {
+    if (Test-Path (Join-Path $RepoDir '.git')) {
+        Write-Info "Updating existing bootstrap clone at $RepoDir (fetch + hard reset to origin/$Branch) ..."
+        $fr = Invoke-GitProc -ArgList @('fetch','--depth=1','origin',$Branch) -Cwd $RepoDir
+        if ($fr.ExitCode -ne 0) {
+            Write-Err "git fetch in $RepoDir failed (exit $($fr.ExitCode))."
+            Write-Err "Stderr: $($fr.Stderr.Trim())"
+            Write-Err "Re-run manually:  git -C `"$RepoDir`" fetch --depth=1 origin $Branch"
+            exit 1
+        }
+        $rr = Invoke-GitProc -ArgList @('reset','--hard','FETCH_HEAD') -Cwd $RepoDir
+        if ($rr.ExitCode -ne 0) {
+            Write-Err "git reset --hard in $RepoDir failed (exit $($rr.ExitCode))."
+            Write-Err "Stderr: $($rr.Stderr.Trim())"
+            exit 1
+        }
+        Write-Good "Bootstrap clone updated to origin/$Branch in place at $RepoDir"
+    } else {
+        Write-Err "$RepoDir exists but is not a git repository."
+        Write-Err "I won't delete it -- contents may be operator-managed. Either:"
+        Write-Err "  - Move it aside:   Rename-Item `"$RepoDir`" `"$RepoDir.bak`""
+        Write-Err "  - Or pass -RepoDir <other-path> to use a different target."
+        exit 1
     }
-    $psi.UseShellExecute        = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError  = $true
-    $psi.CreateNoWindow         = $true
-    $proc = New-Object System.Diagnostics.Process
-    $proc.StartInfo = $psi
-    [void]$proc.Start()
-    [void]$proc.StandardOutput.ReadToEnd()
-    [void]$proc.StandardError.ReadToEnd()
-    $proc.WaitForExit()
-    $cloneExit = $proc.ExitCode
-} catch {
-    # If Process.Start itself threw (rare -- usually means git not on
-    # PATH, which Require-Cmd above already gated against), fall through
-    # to the exit-code check below with the sentinel -1.
-    Write-Err "git clone via System.Diagnostics.Process threw: $_"
+} else {
+    Write-Info "Cloning $RepoUrl ($Branch, depth=1) -> $RepoDir ..."
+    # Ensure parent dir exists so git clone has a place to write.
+    $parent = Split-Path $RepoDir -Parent
+    if ($parent -and -not (Test-Path $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+    $cr = Invoke-GitProc -ArgList @('clone','--branch',$Branch,'--depth','1',$RepoUrl,$RepoDir)
+    if ($cr.ExitCode -ne 0) {
+        Write-Err "git clone $RepoUrl -> $RepoDir failed (exit $($cr.ExitCode))."
+        Write-Err "Stderr: $($cr.Stderr.Trim())"
+        Write-Err "Re-run manually to see git's diagnostic output:"
+        Write-Err "  git clone --branch $Branch --depth 1 $RepoUrl `"$RepoDir`""
+        exit 1
+    }
+    Write-Good "Fresh bootstrap clone at $RepoDir"
 }
-if ($cloneExit -ne 0) {
-    Write-Err "git clone $RepoUrl -> $RepoDir failed (exit $cloneExit)."
-    Write-Err "Re-run manually to see git's diagnostic output:"
-    Write-Err "  git clone --branch $Branch --depth 1 $RepoUrl `"$RepoDir`""
-    exit 1
-}
-Write-Good "Fresh bootstrap clone at $RepoDir"
 
 # 6. Hand off to bootstrap.ps1 (canonical split-bootstrap entry).
 # Defaults to -BootstrapOnly: stops after dev VM + Windows install.
