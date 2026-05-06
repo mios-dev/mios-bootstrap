@@ -11,8 +11,9 @@
       2. Resizes the host window to ~100x40 so the build dashboard
          frame (80 cols + breathing room) fits without wrapping.
       3. Verifies Git + Podman are present.
-      4. Clones / updates the mios-bootstrap repo into
-         $env:USERPROFILE\MiOS-bootstrap.
+      4. Force-cleans + fresh-clones the mios-bootstrap repo into
+         $env:TEMP\mios-bootstrap. Every run is fresh; no persistent
+         working tree, no fetch/pull update branch.
       5. Hands off to bootstrap.ps1 -- the new split-bootstrap entry
          (default: -BootstrapOnly = preflight + dev VM + Windows
          install; the deployable OCI image is built later via the
@@ -33,7 +34,16 @@
     Branch to clone (default: main).
 
 .PARAMETER RepoDir
-    Local clone target (default: $USERPROFILE\MiOS-bootstrap).
+    Temp clone target. Default: $env:TEMP\mios-bootstrap. The directory
+    is force-removed at the start of every irm|iex run and then
+    fresh-cloned -- there is NO update / fetch / pull branch here. A
+    persistent path like $env:USERPROFILE\MiOS-bootstrap is FORBIDDEN
+    as the bootstrap working tree (it accumulates stale state across
+    runs and was the root cause of every "FATAL: From https://...",
+    "FATAL: Cloning into ...", and "FATAL: vm already exists" surface
+    we kept fixing). Operators who genuinely want to point at a local
+    checkout (e.g. for development) can pass an explicit -RepoDir; the
+    script will refuse to delete it if it's outside %TEMP%.
 
 .PARAMETER FullBuild
     Run the full pipeline in one shot (preflight + dev VM + Windows
@@ -50,7 +60,7 @@
 param(
     [string]$RepoUrl   = "https://github.com/mios-dev/mios-bootstrap.git",
     [string]$Branch    = "main",
-    [string]$RepoDir   = (Join-Path $env:USERPROFILE "MiOS-bootstrap"),
+    [string]$RepoDir   = (Join-Path $env:TEMP "mios-bootstrap"),
     [switch]$FullBuild,
     [switch]$Unattended,
     [string]$Workflow  = ""
@@ -491,76 +501,48 @@ Require-Cmd "git"    "Install Git from https://git-scm.com/download/win"
 Require-Cmd "podman" "Install Podman Desktop from https://podman-desktop.io"
 Write-Good "Prerequisites OK (git, podman)"
 
-# 5. Clone or refresh the mios-bootstrap repo. We do NOT use Start-Transcript
-# here -- build-mios.ps1's unified log captures everything, and a transcript
-# wraps stdout in a way that breaks the dashboard's in-place repaint.
-if (Test-Path (Join-Path $RepoDir ".git")) {
-    Write-Info "Updating existing repo at $RepoDir ..."
-    Push-Location $RepoDir
-    try {
-        # PowerShell's $ErrorActionPreference='Stop' (set at script top)
-        # combined with `2>&1` stream merging is the actual trap here:
-        # git writes its NORMAL pull progress to stderr ("From https://...",
-        # "Receiving objects: ..."), and `2>&1` materializes those lines
-        # as ErrorRecords on the pipeline. With EAP=Stop, the FIRST
-        # ErrorRecord throws immediately, before any `if ($LASTEXITCODE
-        # -ne 0)` check can run. Net result: the per-boot failure surfaces
-        # as a single mystery line ("From https://github.com/...") instead
-        # of the actual cause (uncommitted changes, divergent history).
-        #
-        # PowerShell 7.4+'s $PSNativeCommandUseErrorActionPreference adds
-        # a SECOND auto-promotion path (non-zero exit -> throw); we
-        # neutralize that too as belt-and-braces.
-        #
-        # We invoke each git command inside `& {}` with EAP=Continue and
-        # PSNCUEAP=$false locally, so stream-merged stderr is collected
-        # quietly into a string without throwing, then we check
-        # $LASTEXITCODE ourselves and raise our own actionable error.
-        $invoke_git = {
-            param([string[]]$ArgList)
-            $ErrorActionPreference = 'Continue'
-            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
-                $PSNativeCommandUseErrorActionPreference = $false
-            }
-            $combined = & git @ArgList 2>&1 | ForEach-Object { $_.ToString() }
-            [pscustomobject]@{
-                Output   = ($combined -join "`n")
-                ExitCode = $LASTEXITCODE
-            }
-        }
+# 5. Force-clean the temp dir and fresh-clone the mios-bootstrap repo.
+#
+# CONTRACT (per feedback_mios_irm_iex_always_temp_clone.md): irm|iex
+# ALWAYS clones a fresh copy to TEMP. There is NO update / fetch /
+# pull branch. Persistent locations like $env:USERPROFILE\MiOS-
+# bootstrap are forbidden as the bootstrap working tree -- they
+# accumulate stale state across runs which was the root cause of
+# every "FATAL: From https://...", "FATAL: Cloning into ...", and
+# "FATAL: vm already exists" surface we kept fixing.
+#
+# Safety: we only force-remove $RepoDir if it sits under %TEMP%.
+# Operators who pass an explicit -RepoDir outside of TEMP get a
+# clear error rather than having their persistent path nuked --
+# that protects against the case where someone aliases their dev
+# workspace into -RepoDir for local hacking.
+$tempRoot = [System.IO.Path]::GetFullPath($env:TEMP)
+$repoFull = [System.IO.Path]::GetFullPath($RepoDir)
+$inTemp   = $repoFull.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)
 
-        $r = & $invoke_git @('fetch', 'origin')
-        if ($r.ExitCode -ne 0) {
-            throw ("git fetch origin failed (exit $($r.ExitCode)) in '$RepoDir':`n" +
-                   $r.Output +
-                   "`nHint: check network connectivity, then run 'git -C $RepoDir fetch origin' manually.")
-        }
-        $r = & $invoke_git @('checkout', $Branch)
-        if ($r.ExitCode -ne 0) {
-            throw ("git checkout $Branch failed (exit $($r.ExitCode)) in '$RepoDir':`n" +
-                   $r.Output +
-                   "`nHint: there are likely uncommitted changes in '$RepoDir'. Either:" +
-                   "`n  - commit / 'git stash' your edits and retry, OR" +
-                   "`n  - delete the directory entirely (it's a thin redirector; safe to re-clone)")
-        }
-        $r = & $invoke_git @('pull', '--ff-only', 'origin', $Branch)
-        if ($r.ExitCode -ne 0) {
-            throw ("git pull --ff-only origin $Branch failed (exit $($r.ExitCode)) in '$RepoDir':`n" +
-                   $r.Output +
-                   "`nHint: '$RepoDir' has diverged from origin/$Branch (local commits ahead, or non-ff upstream rebase). Either:" +
-                   "`n  - 'git -C $RepoDir reset --hard origin/$Branch' to discard local commits, OR" +
-                   "`n  - re-run with -RepoDir <fresh-path> to clone into a clean directory")
-        }
-    } finally { Pop-Location }
-} else {
-    Write-Info "Cloning $RepoUrl -> $RepoDir ..."
-    & git clone --branch $Branch --depth 1 $RepoUrl $RepoDir
-    if ($LASTEXITCODE -ne 0) {
-        Write-Err "git clone failed"
+if (Test-Path $RepoDir) {
+    if (-not $inTemp) {
+        Write-Err "Refusing to force-clean a -RepoDir outside %TEMP%: $RepoDir"
+        Write-Err "Either delete it manually, or re-run without -RepoDir to use the default ($env:TEMP\mios-bootstrap)."
         exit 1
     }
+    Write-Info "Cleaning previous clone at $RepoDir ..."
+    Remove-Item -LiteralPath $RepoDir -Recurse -Force -ErrorAction Stop
 }
-Write-Good "Bootstrap repo ready at $RepoDir"
+
+Write-Info "Cloning $RepoUrl ($Branch, depth=1) -> $RepoDir ..."
+# `*>$null` discards stdout AND stderr without piping stderr through
+# the success stream, so $ErrorActionPreference='Stop' can't trip on
+# git's normal "Cloning into ..." progress banner. $LASTEXITCODE is
+# set independently of stream redirection.
+& git clone --branch $Branch --depth 1 $RepoUrl $RepoDir *>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Err "git clone $RepoUrl -> $RepoDir failed (exit $LASTEXITCODE)."
+    Write-Err "Re-run manually to see git's diagnostic output:"
+    Write-Err "  git clone --branch $Branch --depth 1 $RepoUrl `"$RepoDir`""
+    exit 1
+}
+Write-Good "Fresh bootstrap clone at $RepoDir"
 
 # 6. Hand off to bootstrap.ps1 (canonical split-bootstrap entry).
 # Defaults to -BootstrapOnly: stops after dev VM + Windows install.
