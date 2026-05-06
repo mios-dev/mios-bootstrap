@@ -173,7 +173,16 @@ $LegacyDistro     = "podman-machine-default"
 # specific operator wants to fall back to 5.8 (their bundled default)
 # until they upgrade -- set MIOS_MACHINE_IMAGE='' (empty string) to
 # omit --image entirely.
-$MachineImage = if ($env:PSBoundParameters.ContainsKey('MIOS_MACHINE_IMAGE') -or $env:MIOS_MACHINE_IMAGE) {
+# Use $env:MIOS_MACHINE_IMAGE if set to anything non-empty, otherwise
+# fall back to the 6.0 default. (My fc3fb18 typoed
+# $env:PSBoundParameters.ContainsKey(...) here -- $env:PSBoundParameters
+# is always $null and calling .ContainsKey() on $null throws "You cannot
+# call a method on a null-valued expression", which is what bricked the
+# build at line ~176 immediately after the AGREEMENTS banner. The
+# automatic $PSBoundParameters lives at script scope, not under $env,
+# and there's no -MachineImage parameter on this script anyway -- it's
+# env-var-only -- so the env-var-empty check is the whole story.)
+$MachineImage = if ($env:MIOS_MACHINE_IMAGE) {
     $env:MIOS_MACHINE_IMAGE
 } else {
     'docker://quay.io/podman/machine-os:6.0'
