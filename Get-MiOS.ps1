@@ -498,48 +498,58 @@ if (Test-Path (Join-Path $RepoDir ".git")) {
     Write-Info "Updating existing repo at $RepoDir ..."
     Push-Location $RepoDir
     try {
-        # PowerShell 7.4+ defaults $PSNativeCommandUseErrorActionPreference to
-        # $true, which (combined with our $ErrorActionPreference='Stop' at
-        # script top) promotes ANY native command non-zero exit to a
-        # terminating error whose message is whatever stderr arrived first.
-        # git's normal pull progress lands on stderr ("From https://...",
-        # "Receiving objects: ..."), so a FAILED pull would surface only
-        # the harmless first line and bury the real cause (uncommitted
-        # changes, divergent history, etc.). Disable the auto-promotion
-        # for this block, capture each git invocation's full output, and
-        # raise our own error with actionable hints if any step fails.
-        $prevNCUEAP = $null
-        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Scope Global -ErrorAction SilentlyContinue) {
-            $prevNCUEAP = $PSNativeCommandUseErrorActionPreference
-            $PSNativeCommandUseErrorActionPreference = $false
+        # PowerShell's $ErrorActionPreference='Stop' (set at script top)
+        # combined with `2>&1` stream merging is the actual trap here:
+        # git writes its NORMAL pull progress to stderr ("From https://...",
+        # "Receiving objects: ..."), and `2>&1` materializes those lines
+        # as ErrorRecords on the pipeline. With EAP=Stop, the FIRST
+        # ErrorRecord throws immediately, before any `if ($LASTEXITCODE
+        # -ne 0)` check can run. Net result: the per-boot failure surfaces
+        # as a single mystery line ("From https://github.com/...") instead
+        # of the actual cause (uncommitted changes, divergent history).
+        #
+        # PowerShell 7.4+'s $PSNativeCommandUseErrorActionPreference adds
+        # a SECOND auto-promotion path (non-zero exit -> throw); we
+        # neutralize that too as belt-and-braces.
+        #
+        # We invoke each git command inside `& {}` with EAP=Continue and
+        # PSNCUEAP=$false locally, so stream-merged stderr is collected
+        # quietly into a string without throwing, then we check
+        # $LASTEXITCODE ourselves and raise our own actionable error.
+        $invoke_git = {
+            param([string[]]$ArgList)
+            $ErrorActionPreference = 'Continue'
+            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                $PSNativeCommandUseErrorActionPreference = $false
+            }
+            $combined = & git @ArgList 2>&1 | ForEach-Object { $_.ToString() }
+            [pscustomobject]@{
+                Output   = ($combined -join "`n")
+                ExitCode = $LASTEXITCODE
+            }
         }
-        try {
-            $fetchOut = & git fetch origin 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw ("git fetch origin failed (exit $LASTEXITCODE) in '$RepoDir':`n" +
-                       ($fetchOut -join "`n") +
-                       "`nHint: check network connectivity, then run 'git -C $RepoDir fetch origin' manually.")
-            }
-            $checkoutOut = & git checkout $Branch 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw ("git checkout $Branch failed (exit $LASTEXITCODE) in '$RepoDir':`n" +
-                       ($checkoutOut -join "`n") +
-                       "`nHint: there are likely uncommitted changes in '$RepoDir'. Either:" +
-                       "`n  - commit / 'git stash' your edits and retry, OR" +
-                       "`n  - delete the directory entirely (it's a thin redirector; safe to re-clone)")
-            }
-            $pullOut = & git pull --ff-only origin $Branch 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw ("git pull --ff-only origin $Branch failed (exit $LASTEXITCODE) in '$RepoDir':`n" +
-                       ($pullOut -join "`n") +
-                       "`nHint: '$RepoDir' has diverged from origin/$Branch (local commits ahead, or non-ff upstream rebase). Either:" +
-                       "`n  - 'git -C $RepoDir reset --hard origin/$Branch' to discard local commits, OR" +
-                       "`n  - re-run with -RepoDir <fresh-path> to clone into a clean directory")
-            }
-        } finally {
-            if ($prevNCUEAP -ne $null) {
-                $PSNativeCommandUseErrorActionPreference = $prevNCUEAP
-            }
+
+        $r = & $invoke_git @('fetch', 'origin')
+        if ($r.ExitCode -ne 0) {
+            throw ("git fetch origin failed (exit $($r.ExitCode)) in '$RepoDir':`n" +
+                   $r.Output +
+                   "`nHint: check network connectivity, then run 'git -C $RepoDir fetch origin' manually.")
+        }
+        $r = & $invoke_git @('checkout', $Branch)
+        if ($r.ExitCode -ne 0) {
+            throw ("git checkout $Branch failed (exit $($r.ExitCode)) in '$RepoDir':`n" +
+                   $r.Output +
+                   "`nHint: there are likely uncommitted changes in '$RepoDir'. Either:" +
+                   "`n  - commit / 'git stash' your edits and retry, OR" +
+                   "`n  - delete the directory entirely (it's a thin redirector; safe to re-clone)")
+        }
+        $r = & $invoke_git @('pull', '--ff-only', 'origin', $Branch)
+        if ($r.ExitCode -ne 0) {
+            throw ("git pull --ff-only origin $Branch failed (exit $($r.ExitCode)) in '$RepoDir':`n" +
+                   $r.Output +
+                   "`nHint: '$RepoDir' has diverged from origin/$Branch (local commits ahead, or non-ff upstream rebase). Either:" +
+                   "`n  - 'git -C $RepoDir reset --hard origin/$Branch' to discard local commits, OR" +
+                   "`n  - re-run with -RepoDir <fresh-path> to clone into a clean directory")
         }
     } finally { Pop-Location }
 } else {
