@@ -966,7 +966,10 @@ function Read-Line([string]$Prompt, [string]$Default = "") {
     Write-Host ": " -NoNewline
     if ($Unattended) { Write-Host $Default -ForegroundColor DarkGray; return $Default }
     $v = Read-Host
-    return (([string]::IsNullOrWhiteSpace($v)) ? $Default : $v)
+    # NB: Windows PowerShell 5.1 (the universal elevation fallback in
+    # Get-MiOS.ps1's chain) doesn't support the PS7 ternary operator,
+    # so this stays as a plain if/else.
+    if ([string]::IsNullOrWhiteSpace($v)) { return $Default } else { return $v }
 }
 
 function Read-Model([string]$Default = "qwen2.5-coder:7b") {
