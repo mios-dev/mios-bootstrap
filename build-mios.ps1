@@ -3127,12 +3127,33 @@ echo "[quadlet-overlay] Terminal:       Ptyxis flatpak ready -- launch via WSLg,
 echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for the local Ollama Quadlet"
 '@
 
-    # CRLF -> LF (see Invoke-MiosOverlaySeed for the rationale).
+    # CRLF -> LF: bash on Linux is allergic to \r in shebang lines /
+    # heredoc terminators. The PowerShell here-string ships CRLF on
+    # Windows; normalize before the script ever leaves the host.
     $overlayScript = $overlayScript -replace "`r`n", "`n" -replace "`r", "`n"
-    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($overlayScript))
+
+    # Stage the seed to a file on M:\ instead of base64-inlining it
+    # through `bash -c`. f67e5ad (rpm-ostree install + python3 toml
+    # parse) pushed the seed past Windows' CreateProcess arg-length
+    # cap (~32K), and `wsl.exe -d <distro> --exec bash -c $stage`
+    # died with "FATAL: Program 'wsl.exe' failed to run: The
+    # filename or extension is too long" before the seed could even
+    # touch the distro. Writing to a file + invoking by path keeps
+    # the command line tiny.
+    $stagingDir  = Join-Path $MiosBootstrapShadow '.tmp'
+    if (-not (Test-Path $stagingDir)) {
+        New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+    }
+    $stagedPath  = Join-Path $stagingDir 'quadlet-overlay-seed.sh'
+    [System.IO.File]::WriteAllText($stagedPath, $overlayScript, [System.Text.UTF8Encoding]::new($false))
+
+    # Convert Windows path -> WSL /mnt/<drive>/... path so the seed
+    # script can be invoked from the WSL side without re-mounting.
+    $stagedDrive = $stagedPath.Substring(0,1).ToLower()
+    $stagedWsl   = "/mnt/$stagedDrive" + ($stagedPath.Substring(2) -replace '\\','/')
+
     $stage = "set -e; export MIOS_DEV_ENABLE_AI='$enableAi' MIOS_DEV_ENABLE_RUNNER='$enableRunner'; " +
-             "echo '$b64' | base64 -d > /tmp/mios-quadlet-overlay.sh && chmod +x /tmp/mios-quadlet-overlay.sh; " +
-             "/tmp/mios-quadlet-overlay.sh '$miosRootWsl'"
+             "bash '$stagedWsl' '$miosRootWsl'"
     & wsl.exe -d $wslDistro --exec bash -c $stage 2>&1 | ForEach-Object { Write-Log "quadlet-overlay: $_" }
     if ($LASTEXITCODE -ne 0) {
         Log-Warn "Quadlet overlay rc=$LASTEXITCODE -- partial overlay possible (units may still be present; rerun safe)"
