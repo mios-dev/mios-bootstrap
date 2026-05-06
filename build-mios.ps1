@@ -1818,50 +1818,93 @@ function Initialize-MiosDataDisk {
 function Set-PodmanMachineStorageOn {
     <#
     .SYNOPSIS
-        Junction %LOCALAPPDATA%\containers\podman\machine -> $DataRoot\podman\machine
-        BEFORE `podman machine init` runs, so MiOS-DEV's VHDX is created on the
-        new drive in the first place (no post-hoc move + symlink dance needed).
+        Symlink ALL candidate podman-machine storage paths to
+        $DataRoot\podman\machine BEFORE `podman machine init` runs,
+        so MiOS-DEV's VHDX is created on the data disk from the start
+        (no post-hoc move dance, no risk of leaving 100s of GBs of
+        machine state on C:\).
 
     .NOTES
-        Idempotent: existing junction with the same target is left alone. If a
-        real directory already exists at the default path, its contents are
-        moved over and the directory replaced with a junction.
+        Symlinks (mklink /D), NOT junctions (mklink /J). Verified
+        empirically 2026-05-06 against podman 5.8.2 + WSL provider:
+
+            /J -> `podman machine ls` FAILS with
+                  "mkdir <path>: Cannot create a file when that file
+                   already exists" (Go's os.Mkdir doesn't fall through
+                  on EEXIST when the path is a junction)
+            /D -> `podman machine ls` works, `init` works, files land
+                  on the symlink target
+
+        Idempotent: an existing correct symlink is left alone; an
+        existing legacy junction is replaced.
+
+        Covers all three default machineDir locations podman has used
+        across versions:
+          * %LOCALAPPDATA%\containers\podman\machine  (Windows-style)
+          * %USERPROFILE%\.local\share\containers\podman\machine
+            (Linux/XDG-style -- this is what podman 5.8.2 ACTUALLY
+            uses on Windows; the reason the old single-path
+            %LOCALAPPDATA% link did nothing useful)
+          * %PROGRAMDATA%\containers\podman\machine  (machine-wide
+            install fallback)
+
+        Get-MiOS.ps1's Set-PodmanMachineStorageOnM does the same work
+        before this function runs; this is a defensive idempotent
+        re-run in case the operator launched build-mios.ps1
+        directly.
     #>
     param([Parameter(Mandatory)][string]$DataRoot)
 
-    $defaultDir = Join-Path $env:LOCALAPPDATA 'containers\podman\machine'
-    $targetDir  = Join-Path $DataRoot 'podman\machine'
+    $targetDir = Join-Path $DataRoot 'podman\machine'
     if (-not (Test-Path $targetDir)) {
         New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
     }
 
-    if (Test-Path $defaultDir) {
-        $item = Get-Item $defaultDir -Force
-        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            $current = $item.Target -join ''
-            if ($current -and ($current -ieq $targetDir -or $current -ieq "\??\$targetDir")) {
-                Log-Ok "podman-machine storage already junctioned -> $targetDir"
-                return
-            }
-            # Different target -- remove and re-link
-            cmd /c rmdir "`"$defaultDir`"" | Out-Null
-        } else {
-            # Real directory exists -- move children to target then remove
-            Set-Step "Migrating existing podman-machine state to $targetDir ..."
-            Get-ChildItem $defaultDir -Force | Move-Item -Destination $targetDir -Force
-            Remove-Item $defaultDir -Force -Recurse -ErrorAction SilentlyContinue
-        }
-    } else {
-        $parent = Split-Path $defaultDir -Parent
-        if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    }
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA 'containers\podman\machine'),
+        (Join-Path $env:USERPROFILE  '.local\share\containers\podman\machine'),
+        (Join-Path $env:PROGRAMDATA  'containers\podman\machine')
+    )
 
-    # Create the junction (cmd's mklink is the standards path for NTFS reparse points)
-    cmd /c mklink /J "`"$defaultDir`"" "`"$targetDir`"" | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to junction $defaultDir -> $targetDir (mklink exit $LASTEXITCODE)"
+    foreach ($defaultDir in $candidates) {
+        if (-not $defaultDir) { continue }
+        if (Test-Path $defaultDir) {
+            $item = Get-Item $defaultDir -Force -ErrorAction SilentlyContinue
+            if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                $current   = ($item.Target -join '').TrimStart('\??\')
+                $isSymlink = $item.LinkType -eq 'SymbolicLink'
+                if ($current -ieq $targetDir -and $isSymlink) {
+                    Log-Ok "podman-machine storage already symlinked -> $targetDir ($defaultDir)"
+                    continue
+                }
+                # Wrong target OR right target wrong link type (legacy
+                # junction). Remove + relink as symlink below.
+                if ($current -ieq $targetDir -and -not $isSymlink) {
+                    Log-Warn "$defaultDir is a JUNCTION (legacy) -- recreating as symlink so podman 5.8.2 stops failing on os.Mkdir"
+                }
+                cmd /c "rmdir `"$defaultDir`"" 2>$null | Out-Null
+            } else {
+                # Real directory -- move children to target then remove.
+                Set-Step "Migrating existing podman-machine state to $targetDir ..."
+                Get-ChildItem $defaultDir -Force -ErrorAction SilentlyContinue |
+                    Move-Item -Destination $targetDir -Force -ErrorAction SilentlyContinue
+                Remove-Item $defaultDir -Force -Recurse -ErrorAction SilentlyContinue
+            }
+        } else {
+            $parent = Split-Path $defaultDir -Parent
+            if (-not (Test-Path $parent)) {
+                New-Item -ItemType Directory -Path $parent -Force | Out-Null
+            }
+        }
+
+        # Create the symlink (mklink /D, NOT /J -- see .NOTES above).
+        $rc = (cmd /c "mklink /D `"$defaultDir`" `"$targetDir`"" 2>&1)
+        if ($LASTEXITCODE -eq 0) {
+            Log-Ok "podman-machine storage symlinked $defaultDir -> $targetDir"
+        } else {
+            Log-Warn "mklink /D $defaultDir -> $targetDir failed: $rc"
+        }
     }
-    Log-Ok "podman-machine storage junctioned $defaultDir -> $targetDir"
 }
 
 function Get-PodmanMachineOsImage {

@@ -602,11 +602,18 @@ function Set-PodmanMachineStorageOnM {
             $item = Get-Item $p -Force -ErrorAction SilentlyContinue
             if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
                 $current = ($item.Target -join '').TrimStart('\??\')
-                if ($current -ieq $MRoot) {
-                    Write-Host "    [=] $p -> $MRoot (already junctioned)" -ForegroundColor DarkGray
+                $isSymlink = $item.LinkType -eq 'SymbolicLink'
+                if ($current -ieq $MRoot -and $isSymlink) {
+                    Write-Host "    [=] $p -> $MRoot (already symlinked)" -ForegroundColor DarkGray
                     continue
                 }
-                # Different target -- remove and re-link below.
+                # Wrong target OR right target but wrong link type
+                # (legacy junction from a pre-2026-05-06 install --
+                # podman 5.8.2 chokes on junctions for this path).
+                # Remove + re-link as symlink below.
+                if ($current -ieq $MRoot -and -not $isSymlink) {
+                    Write-Host "    [~] $p is a JUNCTION (legacy) -- recreating as symlink so podman 5.8.2 stops failing on os.Mkdir" -ForegroundColor DarkYellow
+                }
                 cmd /c "rmdir `"$p`"" 2>$null | Out-Null
             } else {
                 # Real directory exists. If empty, remove. If non-empty,
@@ -633,12 +640,31 @@ function Set-PodmanMachineStorageOnM {
                 }
             }
         }
-        # Now create the junction.
-        $rc = (cmd /c "mklink /J `"$p`" `"$MRoot`"" 2>&1)
+        # Now create the link. Use mklink /D (symbolic link) -- NOT
+        # /J (junction). Why:
+        #
+        # podman 5.8.2's `podman machine ls` calls os.Mkdir on
+        # ~/.local/share/containers/podman/machine and treats EEXIST
+        # as fatal when the path is a NTFS junction. With a junction
+        # there:
+        #     Error: mkdir C:\Users\Administrator\.local\share\containers\podman\machine:
+        #            Cannot create a file when that file already exists.
+        # Same path created as a symlink (mklink /D): no error,
+        # podman writes the wsl/, machine/, machine.pub, port-alloc.*
+        # children straight through to the M:\ target.
+        #
+        # Verified empirically 2026-05-06 against podman 5.8.2:
+        #     /J -> ls FAILS,  init works
+        #     /D -> ls WORKS,  init works, files land in M:\
+        #
+        # mklink /D requires admin OR Developer Mode. The bootstrap
+        # already requires admin for diskpart shrink in
+        # Initialize-MiosDataDisk, so this isn't an additional ask.
+        $rc = (cmd /c "mklink /D `"$p`" `"$MRoot`"" 2>&1)
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "    [+] junctioned $p -> $MRoot" -ForegroundColor DarkGray
+            Write-Host "    [+] symlinked $p -> $MRoot" -ForegroundColor DarkGray
         } else {
-            Write-Host "    [!] mklink /J $p -> $MRoot failed: $rc" -ForegroundColor Yellow
+            Write-Host "    [!] mklink /D $p -> $MRoot failed: $rc" -ForegroundColor Yellow
         }
     }
 }
