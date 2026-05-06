@@ -1129,27 +1129,16 @@ function Show-PostBootstrapMenu {
                 Write-Host "     The build dashboard renders in the MiOS-DEV tty (not on Windows)." -ForegroundColor DarkGray
 
                 # The driver lives in the MiOS image at /usr/libexec/mios/mios-build-driver.
-                # First-boot installs of MiOS-DEV may not yet have the bind-mount, so we
-                # also ship a fallback that fetches the latest driver from raw.github so
-                # an out-of-date dev-distro can self-update before invoking it.
+                # Phase 3's quadlet-overlay drops it into MiOS-DEV, so by the time the
+                # operator picks "1" the file is present. We invoke it directly with a
+                # SINGLE-LINE bash command -- multi-line heredocs survive PowerShell -> wt
+                # -> wsl arg-parsing only if every layer quotes correctly, and previously
+                # the chain shredded a heredoc into pseudo-args, surfacing as
+                #     [error 2147942402 (0x80070002): The system cannot find the file specified.]
+                # at wt.exe spawn time. Single-line, single-quoted-on-bash-side, no escapes.
                 $driverPath = '/usr/libexec/mios/mios-build-driver'
                 $fallback   = 'https://raw.githubusercontent.com/mios-dev/mios/main/usr/libexec/mios/mios-build-driver'
-                $driverCmd  = @"
-if [[ -x $driverPath ]]; then
-    bash $driverPath
-else
-    echo "[handoff] $driverPath not present in $devDistro -- fetching from origin..."
-    tmp=`$(mktemp)
-    if curl -fsSL '$fallback' -o "`$tmp"; then
-        chmod +x "`$tmp"
-        bash "`$tmp"
-        rm -f "`$tmp"
-    else
-        echo "[handoff] failed to fetch driver from $fallback" >&2
-        exec bash
-    fi
-fi
-"@
+                $driverCmd  = "stty cols 80 rows 40 2>/dev/null; if [ -x '$driverPath' ]; then exec bash '$driverPath'; else echo '[handoff] $driverPath not in $devDistro yet -- fetching latest...'; t=`$(mktemp); if curl -fsSL '$fallback' -o `"`$t`"; then chmod +x `"`$t`"; exec bash `"`$t`"; else echo '[handoff] FATAL: could not fetch driver from $fallback'; exec bash; fi; fi"
                 # wt.exe (Windows Terminal) is the canonical multi-tab host; if it's
                 # missing or the App Execution Alias is broken (per d6e8b66 / earlier
                 # in this session), fall back to a plain Start-Process wsl.exe in a
@@ -4268,6 +4257,24 @@ if ($script:DashboardMode -eq 'interactive') {
         }
     })
     $script:BgHandle = $script:BgPs.BeginInvoke()
+}
+
+# Resize the host console to exactly 80x40 BEFORE the first Show-Dashboard
+# call -- the dashboard frame is 80 cols wide and the phase table needs ~30
+# rows of vertical real-estate, so any wider/shorter window causes the
+# in-place repaint logic to corrupt or wrap. Per
+# feedback_mios_terminal_dimensions.md. SetBufferSize must be at least as
+# wide as SetWindowSize, hence 80 wide / 9000 deep (room for log scrollback).
+# Wrapped in try/catch because some console hosts (CI agents, virtualized
+# tty without a real console) refuse the resize -- in which case the
+# fallback log-mode dashboard renderer kicks in below.
+try {
+    [Console]::SetWindowSize(80, 40)
+    [Console]::SetBufferSize(80, 9000)
+} catch {
+    # Non-fatal -- the dashboard's redraw probe (Test-DashboardCanRedraw,
+    # called via Show-Dashboard right below) detects the failure and
+    # falls back to log-mode rendering automatically.
 }
 
 Show-Dashboard   # draw initial (all phases pending)
