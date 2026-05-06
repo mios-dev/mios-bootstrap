@@ -2746,6 +2746,31 @@ $NS systemd-sysusers 2>&1 | tail -3 || true
 $NS systemd-tmpfiles --create 2>&1 | tail -3 || true
 $NS systemctl daemon-reload 2>&1 | tail -3 || true
 
+# Set MiOS-DEV's default WSL2 user to mios (sysusers just created uid
+# 1000=mios above). Without this, `wsl -d podman-MiOS-DEV` lands on
+# whatever the machine-os tarball seeded as default (typically a bare
+# `user` UID 1000, which exists but has none of the mios HOME / shell
+# / groups setup). /etc/wsl.conf is read once at distro start, so the
+# next `wsl --terminate podman-MiOS-DEV` + reentry picks this up.
+# Idempotent: only ADDS [user] block if not already present.
+echo "[quadlet-overlay] setting wsl.conf default user to mios"
+if id mios >/dev/null 2>&1; then
+    if ! grep -q '^\[user\]' /etc/wsl.conf 2>/dev/null; then
+        printf '\n[user]\ndefault=mios\n' | sudo tee -a /etc/wsl.conf >/dev/null
+        echo "[quadlet-overlay] /etc/wsl.conf: appended [user] default=mios"
+    elif ! grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then
+        sudo sed -i '/^\[user\]/a default=mios' /etc/wsl.conf
+        echo "[quadlet-overlay] /etc/wsl.conf: inserted default=mios under existing [user]"
+    elif ! grep -qE '^[[:space:]]*default[[:space:]]*=[[:space:]]*mios[[:space:]]*$' /etc/wsl.conf 2>/dev/null; then
+        sudo sed -i 's|^[[:space:]]*default[[:space:]]*=.*|default=mios|' /etc/wsl.conf
+        echo "[quadlet-overlay] /etc/wsl.conf: rewrote default=<other> to default=mios"
+    else
+        echo "[quadlet-overlay] /etc/wsl.conf: default=mios already set"
+    fi
+else
+    echo "[quadlet-overlay] WARN: mios user not found after sysusers; skipping wsl.conf default-user write"
+fi
+
 # Container-host prerequisites for the mios user. Manifesto says MiOS-DEV
 # "should have the mios user appended as it will be needed for this MiOS-DEV
 # machine to host its containers (mirroring the layered containers in MiOS
