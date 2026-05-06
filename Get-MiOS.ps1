@@ -531,26 +531,36 @@ if (Test-Path $RepoDir) {
 }
 
 Write-Info "Cloning $RepoUrl ($Branch, depth=1) -> $RepoDir ..."
-# Naive `& git clone ... *>$null` does NOT reliably suppress the
-# $ErrorActionPreference='Stop' throw on git's normal stderr banner
-# ("Cloning into '...'"). The redirect operator runs at the pipeline
-# output level but PowerShell still synthesizes ErrorRecord objects
-# for native-command stderr lines, and EAP=Stop can act on the first
-# one before the redirect takes effect.
+# Bulletproof native-command invocation, take 3:
 #
-# Reliable pattern: invoke inside `& { ... }` with EAP=Continue and
-# $PSNativeCommandUseErrorActionPreference=$false (PS 7.4+) set in
-# the child scope. stderr is then collected harmlessly into the
-# success stream where Out-Null discards it. $LASTEXITCODE survives
-# the scope exit so we can check it. Same shape as
-# build-mios.ps1's Invoke-NativeQuiet helper.
-$cloneExit = & {
-    $ErrorActionPreference = 'Continue'
-    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
-        $PSNativeCommandUseErrorActionPreference = $false
-    }
-    & git clone --branch $Branch --depth 1 $RepoUrl $RepoDir 2>&1 | Out-Null
-    $LASTEXITCODE
+#   * a6569e8 used `& { EAP=Continue; ... } 2>&1 | Out-Null`. That
+#     pattern works inside build-mios.ps1's Invoke-NativeQuiet helper,
+#     but inside Get-MiOS.ps1's irm|iex relaunch wrapper context the
+#     stream-merged ErrorRecord still propagated up and tripped the
+#     OUTER catch with git's normal "Cloning into '...'" banner.
+#   * 245d88e used `*>$null`. That redirects all streams at pipeline
+#     output but PowerShell synthesizes ErrorRecords from native-cmd
+#     stderr BEFORE the redirect, and the first one still escapes.
+#
+# The shape that's actually independent of PowerShell's stderr-as-
+# ErrorRecord behavior: `Start-Process -RedirectStandardError NUL` --
+# Windows redirects git's stderr at the OS level, before PowerShell
+# can wrap any stderr line in an ErrorRecord. We then read the exit
+# code straight off the System.Diagnostics.Process object. No EAP /
+# PSNativeCommandUseErrorActionPreference / 2>&1 / try/catch dance.
+$cloneExit = -1
+try {
+    $proc = Start-Process -FilePath 'git' `
+        -ArgumentList @('clone','--branch',$Branch,'--depth','1',$RepoUrl,$RepoDir) `
+        -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput 'NUL' `
+        -RedirectStandardError 'NUL'
+    $cloneExit = $proc.ExitCode
+} catch {
+    # If Start-Process itself threw (rare -- usually means git not on PATH,
+    # which Require-Cmd above already gated against), fall through to
+    # the exit-code check below with the sentinel -1.
+    Write-Err "Start-Process git clone threw: $_"
 }
 if ($cloneExit -ne 0) {
     Write-Err "git clone $RepoUrl -> $RepoDir failed (exit $cloneExit)."
