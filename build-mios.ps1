@@ -1169,12 +1169,31 @@ fi
                     }
                 }
                 if ($wt) {
-                    & $wt new-tab --title "MiOS Build ($devDistro)" `
+                    # Open a NEW Windows Terminal window at exactly 80x40 to
+                    # match the dashboard frame (per feedback_mios_terminal_
+                    # dimensions.md). `wt.exe --size W,H -- <cmdline>` sets
+                    # the initial dimensions of a NEW wt window; `new-tab`
+                    # inherits whatever the parent window already has, which
+                    # is wrong for the build-pipeline tty.
+                    & $wt --size 80,40 --title "MiOS Build ($devDistro)" `
                         wsl.exe -d $devDistro --user mios --cd "~" -- bash -lc $driverCmd
                 } else {
-                    Write-Host "  wt.exe not found -- launching wsl.exe directly in a fresh conhost window." -ForegroundColor Yellow
-                    Start-Process -FilePath 'wsl.exe' `
-                        -ArgumentList @('-d', $devDistro, '--user', $MiosUser, '--cd', '~', '--', 'bash', '-lc', $driverCmd)
+                    Write-Host "  wt.exe not found -- launching wsl.exe via a sized conhost window." -ForegroundColor Yellow
+                    # conhost-side resize: spawn a pwsh window that resizes
+                    # itself to 80x40 before exec'ing wsl.exe. The dashboard
+                    # frame then renders flush against the borders, matching
+                    # the wt.exe path's geometry.
+                    $resizeShim = @"
+try {
+    [Console]::SetWindowSize(80,40)
+    [Console]::SetBufferSize(80,9000)
+} catch {}
+& wsl.exe -d '$devDistro' --user mios --cd '~' -- bash -lc @'
+$driverCmd
+'@
+"@
+                    Start-Process -FilePath 'pwsh.exe' `
+                        -ArgumentList @('-NoProfile','-NoExit','-Command', $resizeShim)
                 }
                 Write-Host "  -> Build is running inside $devDistro. This Windows menu can close." -ForegroundColor Green
                 Write-Host ""

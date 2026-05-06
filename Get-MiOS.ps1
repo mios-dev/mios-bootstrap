@@ -61,18 +61,15 @@
 param(
     [string]$RepoUrl   = "https://github.com/mios-dev/mios-bootstrap.git",
     [string]$Branch    = "main",
-    # Always-unique GUID-suffixed temp dir. Reusing a stable name like
-    # "%TEMP%\mios-bootstrap" was simple in theory but the Remove-Item
-    # at the start of each run trips on locked file handles -- typically
-    # a leftover pwsh from a previous bootstrap, a podman/wsl background
-    # process, or Windows Search / antivirus mid-scan. Result:
-    #     "Cannot remove item C:\Users\...\Temp\mios-bootstrap: The
-    #      process cannot access the file ... because it is being used
-    #      by another process."
-    # Each run getting its own dir sidesteps the entire problem class.
-    # Old dirs accumulate under %TEMP% but Windows reaps them on its
-    # normal %TEMP% cleanup cadence.
-    [string]$RepoDir   = (Join-Path $env:TEMP ("mios-bootstrap-" + [guid]::NewGuid().ToString('N').Substring(0,8))),
+    # The canonical Windows-entry working tree per
+    # feedback_mios_entry_m_drive_clone.md: M:\MiOS\repo\mios-bootstrap.
+    # M:\ is provisioned to EXACTLY 256 GB by Initialize-MiosDataDisk
+    # below. The previous %TEMP%-with-GUID approach (commit 88a0de3)
+    # was a stopgap; M:\ is the canonical answer because the build's
+    # downstream artifacts (OCI layers, WSL2 .tar/.vhdx, Hyper-V vhdx,
+    # qcow2, ISO, RAW) easily exceed 50 GB and need a dedicated
+    # data partition.
+    [string]$RepoDir   = "M:\MiOS\repo\mios-bootstrap",
     [switch]$FullBuild,
     [switch]$Unattended,
     [string]$Workflow  = ""
@@ -523,6 +520,55 @@ Require-Cmd "git"    "Install Git from https://git-scm.com/download/win"
 Require-Cmd "podman" "Install Podman Desktop from https://podman-desktop.io"
 Write-Good "Prerequisites OK (git, podman)"
 
+# Initialize-DataDisk: shrink C:\ by EXACTLY 256 GB (262144 MB) and
+# create M:\ as NTFS labeled MIOS-DEV. Idempotent: if M:\ already
+# exists with the right label, returns silently. Per
+# feedback_mios_entry_m_drive_clone.md, M:\ is part of the Windows
+# entry contract and runs every irm|iex.
+function Initialize-DataDisk {
+    param(
+        [int]$ShrinkMB     = 262144,   # exactly 256 GB, no auto-sizing
+        [string]$DriveLetter = 'M',
+        [string]$VolumeLabel = 'MIOS-DEV'
+    )
+    $existing = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
+    if ($existing -and $existing.FileSystemLabel -eq $VolumeLabel) {
+        Write-Good "M:\ already provisioned ($([math]::Round($existing.Size/1GB,1)) GB, $($existing.FileSystem), label=$VolumeLabel)"
+        return
+    }
+    if ($existing) {
+        Write-Err "Drive ${DriveLetter}: exists with label '$($existing.FileSystemLabel)' (not '$VolumeLabel')."
+        Write-Err "Either remove the volume manually or pass -DriveLetter <other> to Get-MiOS.ps1."
+        exit 1
+    }
+    Write-Info "Provisioning ${DriveLetter}:\ at exactly $ShrinkMB MB (256 GB) ..."
+    $sysLetter = ([Environment]::GetEnvironmentVariable('SystemDrive')).TrimEnd(':')
+    $cPart       = Get-Partition -DriveLetter $sysLetter
+    $supported   = Get-PartitionSupportedSize -DriveLetter $sysLetter
+    $shrinkBytes = [int64]$ShrinkMB * 1MB
+    $newCSize    = $cPart.Size - $shrinkBytes
+    if ($shrinkBytes -gt ($cPart.Size - $supported.SizeMin)) {
+        Write-Err "Cannot shrink ${sysLetter}: by $ShrinkMB MB."
+        Write-Err "  current ${sysLetter}: size: $([math]::Round($cPart.Size/1GB,1)) GB"
+        Write-Err "  min supported size:    $([math]::Round($supported.SizeMin/1GB,1)) GB"
+        Write-Err "  max shrinkable:         $([math]::Round(($cPart.Size-$supported.SizeMin)/1GB,1)) GB"
+        Write-Err "Free up ${sysLetter}: space (move pagefile / disable hibernation / clean up large files) and retry."
+        exit 1
+    }
+    $disk = Get-Disk -Number $cPart.DiskNumber
+    if ($disk.PartitionStyle -notin @('GPT','MBR')) {
+        Write-Err "Disk $($disk.Number) has unsupported partition style '$($disk.PartitionStyle)'"
+        exit 1
+    }
+    Write-Info "  shrinking ${sysLetter}: $([math]::Round($cPart.Size/1GB,1)) GB -> $([math]::Round($newCSize/1GB,1)) GB ..."
+    Resize-Partition -DriveLetter $sysLetter -Size $newCSize -ErrorAction Stop
+    Write-Info "  creating $VolumeLabel partition (${ShrinkMB} MB) on disk $($disk.Number) ..."
+    $null = New-Partition -DiskNumber $disk.Number -Size $shrinkBytes -DriveLetter $DriveLetter -ErrorAction Stop
+    $null = Format-Volume -DriveLetter $DriveLetter -FileSystem NTFS -NewFileSystemLabel $VolumeLabel `
+        -AllocationUnitSize 4096 -Confirm:$false -Force
+    Write-Good "${DriveLetter}:\\ created (${ShrinkMB} MB NTFS, label=$VolumeLabel)"
+}
+
 # 4b. Full-reset every artifact MiOS has ever installed on this host.
 #
 # CONTRACT (per feedback_mios_entry_full_reset.md): every irm|iex run is
@@ -648,55 +694,34 @@ if (Test-Path $uninstallKey) {
 
 Write-Good "Full-reset complete; starting fresh bootstrap."
 
-# 5. Fresh-clone the mios-bootstrap repo to a unique temp dir.
-#
-# CONTRACT (per feedback_mios_irm_iex_always_temp_clone.md): irm|iex
-# ALWAYS clones a fresh copy to TEMP. There is NO update / fetch /
-# pull branch. Persistent locations like $env:USERPROFILE\MiOS-
-# bootstrap are forbidden as the bootstrap working tree.
-#
-# Each run gets its own GUID-suffixed dir (see RepoDir param default),
-# so a locked leftover dir from a previous run -- a pwsh that's still
-# alive, a wsl/podman background process, antivirus / Windows Search
-# scanning -- never blocks a new start. The previous "Remove-Item +
-# fresh clone to a stable path" approach hit the user's run with:
-#
-#     Cannot remove item ... because it is being used by another process.
-#
-# Best-effort cleanup of older mios-bootstrap-* dirs runs in the
-# background -- failures are silent so we never block the bootstrap
-# on a stuck old dir.
-try {
-    Get-ChildItem $env:TEMP -Directory -Filter 'mios-bootstrap-*' -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -ne $RepoDir -and (-not $_.PSIsContainer -or $_.LastWriteTime -lt (Get-Date).AddHours(-1)) } |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-} catch {}
+# 4c. Provision M:\ at exactly 256 GB (NTFS, label MIOS-DEV).
+# Per feedback_mios_entry_m_drive_clone.md, M:\ is part of the
+# Windows entry contract -- the dev VM (podman-MiOS-DEV.vhdx),
+# build artifacts, and the bootstrap source clone all live on
+# this dedicated 256 GB partition. Idempotent: skips if M:\
+# already exists with the right label.
+Initialize-DataDisk
 
-# Safety: we only force-remove $RepoDir if it sits under %TEMP%.
-# Operators who pass an explicit -RepoDir outside of TEMP get a
-# clear error rather than having their persistent path nuked.
-$tempRoot = [System.IO.Path]::GetFullPath($env:TEMP)
-$repoFull = [System.IO.Path]::GetFullPath($RepoDir)
-$inTemp   = $repoFull.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)
+# Create the canonical Windows install root structure now that M:\
+# is guaranteed to exist. The reset above wiped M:\MiOS, so this
+# rebuilds it fresh.
+$miosRepoDir = "M:\MiOS\repo"
+New-Item -ItemType Directory -Path $miosRepoDir -Force -ErrorAction SilentlyContinue | Out-Null
 
-if (Test-Path $RepoDir) {
-    if (-not $inTemp) {
-        Write-Err "Refusing to force-clean a -RepoDir outside %TEMP%: $RepoDir"
-        Write-Err "Either delete it manually, or re-run without -RepoDir to use a fresh GUID-suffixed default."
-        exit 1
-    }
-    Write-Info "Cleaning previous clone at $RepoDir ..."
-    try {
-        Remove-Item -LiteralPath $RepoDir -Recurse -Force -ErrorAction Stop
-    } catch {
-        # Locked by another process (leftover pwsh, wsl/podman bg job,
-        # antivirus mid-scan, Windows Search). Don't fail -- spin up a
-        # fresh GUID dir alongside it and use that. The locked dir
-        # gets reaped on the next run's opportunistic cleanup or by
-        # Windows' %TEMP% maintenance.
-        Write-Info "Couldn't clean $RepoDir (locked) -- using a fresh sibling dir"
-        $RepoDir = Join-Path $env:TEMP ("mios-bootstrap-" + [guid]::NewGuid().ToString('N').Substring(0,8))
-    }
+# 5. Fresh-clone the mios-bootstrap repo to M:\MiOS\repo\mios-bootstrap.
+#
+# CONTRACT (per feedback_mios_irm_iex_always_temp_clone.md +
+# feedback_mios_entry_m_drive_clone.md): irm|iex ALWAYS clones a
+# fresh copy. There is NO update / fetch / pull branch. The clone
+# target is M:\MiOS\repo\mios-bootstrap (the canonical Windows-entry
+# working tree), NOT %TEMP% or %USERPROFILE%.
+#
+# Since the full reset above already wiped M:\MiOS, $RepoDir won't
+# exist when we get here -- no Remove-Item dance needed. (Operator
+# overrides with -RepoDir <other-path> still get the safety check.)
+if ((Test-Path $RepoDir) -and ($RepoDir -ne 'M:\MiOS\repo\mios-bootstrap')) {
+    Write-Err "-RepoDir $RepoDir already exists. Either delete it manually, or re-run without -RepoDir to use the canonical M:\MiOS\repo\mios-bootstrap."
+    exit 1
 }
 
 Write-Info "Cloning $RepoUrl ($Branch, depth=1) -> $RepoDir ..."
