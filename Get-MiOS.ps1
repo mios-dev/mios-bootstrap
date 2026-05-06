@@ -34,16 +34,17 @@
     Branch to clone (default: main).
 
 .PARAMETER RepoDir
-    Temp clone target. Default: $env:TEMP\mios-bootstrap. The directory
-    is force-removed at the start of every irm|iex run and then
-    fresh-cloned -- there is NO update / fetch / pull branch here. A
-    persistent path like $env:USERPROFILE\MiOS-bootstrap is FORBIDDEN
-    as the bootstrap working tree (it accumulates stale state across
-    runs and was the root cause of every "FATAL: From https://...",
-    "FATAL: Cloning into ...", and "FATAL: vm already exists" surface
-    we kept fixing). Operators who genuinely want to point at a local
-    checkout (e.g. for development) can pass an explicit -RepoDir; the
-    script will refuse to delete it if it's outside %TEMP%.
+    Temp clone target. Default: $env:TEMP\mios-bootstrap-<random8>.
+    Each invocation gets a fresh GUID-suffixed dir so a locked
+    leftover from a previous run never blocks a new start. Operators
+    who genuinely want to point at a local checkout (e.g. for
+    development) can pass an explicit -RepoDir; the script will
+    refuse to delete it if it's outside %TEMP%. There is NO update /
+    fetch / pull branch here -- always fresh-clone. A persistent path
+    like $env:USERPROFILE\MiOS-bootstrap is FORBIDDEN as the bootstrap
+    working tree (it accumulates stale state across runs and was the
+    root cause of every "FATAL: From https://...", "FATAL: Cloning
+    into ...", and "FATAL: vm already exists" surface we kept fixing).
 
 .PARAMETER FullBuild
     Run the full pipeline in one shot (preflight + dev VM + Windows
@@ -60,7 +61,18 @@
 param(
     [string]$RepoUrl   = "https://github.com/mios-dev/mios-bootstrap.git",
     [string]$Branch    = "main",
-    [string]$RepoDir   = (Join-Path $env:TEMP "mios-bootstrap"),
+    # Always-unique GUID-suffixed temp dir. Reusing a stable name like
+    # "%TEMP%\mios-bootstrap" was simple in theory but the Remove-Item
+    # at the start of each run trips on locked file handles -- typically
+    # a leftover pwsh from a previous bootstrap, a podman/wsl background
+    # process, or Windows Search / antivirus mid-scan. Result:
+    #     "Cannot remove item C:\Users\...\Temp\mios-bootstrap: The
+    #      process cannot access the file ... because it is being used
+    #      by another process."
+    # Each run getting its own dir sidesteps the entire problem class.
+    # Old dirs accumulate under %TEMP% but Windows reaps them on its
+    # normal %TEMP% cleanup cadence.
+    [string]$RepoDir   = (Join-Path $env:TEMP ("mios-bootstrap-" + [guid]::NewGuid().ToString('N').Substring(0,8))),
     [switch]$FullBuild,
     [switch]$Unattended,
     [string]$Workflow  = ""
@@ -511,21 +523,158 @@ Require-Cmd "git"    "Install Git from https://git-scm.com/download/win"
 Require-Cmd "podman" "Install Podman Desktop from https://podman-desktop.io"
 Write-Good "Prerequisites OK (git, podman)"
 
-# 5. Force-clean the temp dir and fresh-clone the mios-bootstrap repo.
+# 4b. Full-reset every artifact MiOS has ever installed on this host.
+#
+# CONTRACT (per feedback_mios_entry_full_reset.md): every irm|iex run is
+# a FULL RESET. No partial state, no carry-over. Reaps:
+#   * Temp clones      -- %TEMP%\mios-bootstrap*
+#   * Persistent clone -- %USERPROFILE%\MiOS-bootstrap (legacy, forbidden)
+#   * Per-user config  -- %USERPROFILE%\.config\mios
+#   * WSL distros      -- MiOS, MiOS-DEV, MiOS-BUILDER, podman-MiOS-DEV,
+#                          podman-MiOS-BUILDER, podman-machine-default
+#   * Podman machines  -- same name set (lots of overlap with WSL above)
+#   * Hyper-V VMs      -- everything matching MiOS-*
+#   * Install dirs     -- M:\MiOS, C:\MiOS, %PROGRAMDATA%\MiOS,
+#                          %LOCALAPPDATA%\MiOS
+#   * Start Menu       -- "MiOS\" folder under per-machine + per-user
+#   * Registry         -- HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion
+#                          \Uninstall\MiOS
+# Each step is wrapped so a missing artifact (the common case after a
+# fresh OS install) doesn't fail the run. Errors degrade to a Write-Info
+# log so the operator can see what didn't reap, but the bootstrap
+# continues regardless -- the new run is fresh-cloned anyway, so any
+# leftover that survives reset just gets re-overwritten.
+Write-Info "Full-reset of prior MiOS state (per Day-0 entry contract) ..."
+
+$resetDirs = @(
+    (Join-Path $env:USERPROFILE 'MiOS-bootstrap'),
+    (Join-Path $env:USERPROFILE '.config\mios'),
+    'M:\MiOS',
+    'C:\MiOS',
+    (Join-Path $env:PROGRAMDATA 'MiOS'),
+    (Join-Path $env:LOCALAPPDATA 'MiOS')
+)
+foreach ($d in $resetDirs) {
+    if ($d -and (Test-Path $d)) {
+        try {
+            Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction Stop
+            Write-Host "    [-] removed $d" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "    [!] couldn't remove $d (locked or in use): $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+}
+
+# Sweep all mios-bootstrap-* temp dirs from prior runs (but keep the
+# current $RepoDir we'll clone into).
+try {
+    Get-ChildItem $env:TEMP -Directory -Filter 'mios-bootstrap-*' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -ne $RepoDir } |
+        ForEach-Object {
+            try {
+                Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
+                Write-Host "    [-] removed $($_.FullName)" -ForegroundColor DarkGray
+            } catch {}
+        }
+} catch {}
+
+# WSL distros (every variant the bootstrap has ever named).
+$wslNames = @('MiOS','MiOS-DEV','MiOS-BUILDER','podman-MiOS-DEV','podman-MiOS-BUILDER','podman-machine-default')
+try {
+    $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" |
+               ForEach-Object { ($_ -replace [char]0,'').Trim() } |
+               Where-Object { $_ }
+    foreach ($n in $wslNames) {
+        if ($wslList -contains $n) {
+            try {
+                & wsl.exe --unregister $n 2>&1 | Out-Null
+                Write-Host "    [-] wsl --unregister $n" -ForegroundColor DarkGray
+            } catch {
+                Write-Host "    [!] wsl --unregister $n failed" -ForegroundColor Yellow
+            }
+        }
+    }
+} catch {}
+
+# Podman machines.
+foreach ($n in $wslNames) {
+    try {
+        $rmOut = & podman machine rm --force $n 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "    [-] podman machine rm $n" -ForegroundColor DarkGray
+        }
+    } catch {}
+}
+
+# Hyper-V VMs matching MiOS-*. Hyper-V cmdlets only exist when the
+# Hyper-V role / RSAT is installed; we Get-Command-gate so missing
+# cmdlets don't blow up.
+if (Get-Command Get-VM -ErrorAction SilentlyContinue) {
+    try {
+        Get-VM -Name 'MiOS-*' -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+                if ($_.State -ne 'Off') { Stop-VM -Name $_.Name -TurnOff -Force -ErrorAction SilentlyContinue }
+                Remove-VM -Name $_.Name -Force -ErrorAction Stop
+                Write-Host "    [-] Hyper-V Remove-VM $($_.Name)" -ForegroundColor DarkGray
+            } catch {
+                Write-Host "    [!] Hyper-V Remove-VM $($_.Name) failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+    } catch {}
+}
+
+# Start Menu folders (machine-wide and per-user).
+$startFolders = @(
+    (Join-Path $env:PROGRAMDATA 'Microsoft\Windows\Start Menu\Programs\MiOS'),
+    (Join-Path $env:APPDATA     'Microsoft\Windows\Start Menu\Programs\MiOS')
+)
+foreach ($sf in $startFolders) {
+    if (Test-Path $sf) {
+        try {
+            Remove-Item -LiteralPath $sf -Recurse -Force -ErrorAction Stop
+            Write-Host "    [-] removed Start Menu folder $sf" -ForegroundColor DarkGray
+        } catch {}
+    }
+}
+
+# Uninstall registry key (lets the next bootstrap re-register cleanly).
+$uninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\MiOS'
+if (Test-Path $uninstallKey) {
+    try {
+        Remove-Item -LiteralPath $uninstallKey -Recurse -Force -ErrorAction Stop
+        Write-Host "    [-] removed registry $uninstallKey" -ForegroundColor DarkGray
+    } catch {}
+}
+
+Write-Good "Full-reset complete; starting fresh bootstrap."
+
+# 5. Fresh-clone the mios-bootstrap repo to a unique temp dir.
 #
 # CONTRACT (per feedback_mios_irm_iex_always_temp_clone.md): irm|iex
 # ALWAYS clones a fresh copy to TEMP. There is NO update / fetch /
 # pull branch. Persistent locations like $env:USERPROFILE\MiOS-
-# bootstrap are forbidden as the bootstrap working tree -- they
-# accumulate stale state across runs which was the root cause of
-# every "FATAL: From https://...", "FATAL: Cloning into ...", and
-# "FATAL: vm already exists" surface we kept fixing.
+# bootstrap are forbidden as the bootstrap working tree.
 #
+# Each run gets its own GUID-suffixed dir (see RepoDir param default),
+# so a locked leftover dir from a previous run -- a pwsh that's still
+# alive, a wsl/podman background process, antivirus / Windows Search
+# scanning -- never blocks a new start. The previous "Remove-Item +
+# fresh clone to a stable path" approach hit the user's run with:
+#
+#     Cannot remove item ... because it is being used by another process.
+#
+# Best-effort cleanup of older mios-bootstrap-* dirs runs in the
+# background -- failures are silent so we never block the bootstrap
+# on a stuck old dir.
+try {
+    Get-ChildItem $env:TEMP -Directory -Filter 'mios-bootstrap-*' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -ne $RepoDir -and (-not $_.PSIsContainer -or $_.LastWriteTime -lt (Get-Date).AddHours(-1)) } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+} catch {}
+
 # Safety: we only force-remove $RepoDir if it sits under %TEMP%.
 # Operators who pass an explicit -RepoDir outside of TEMP get a
-# clear error rather than having their persistent path nuked --
-# that protects against the case where someone aliases their dev
-# workspace into -RepoDir for local hacking.
+# clear error rather than having their persistent path nuked.
 $tempRoot = [System.IO.Path]::GetFullPath($env:TEMP)
 $repoFull = [System.IO.Path]::GetFullPath($RepoDir)
 $inTemp   = $repoFull.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)
@@ -533,11 +682,21 @@ $inTemp   = $repoFull.StartsWith($tempRoot, [System.StringComparison]::OrdinalIg
 if (Test-Path $RepoDir) {
     if (-not $inTemp) {
         Write-Err "Refusing to force-clean a -RepoDir outside %TEMP%: $RepoDir"
-        Write-Err "Either delete it manually, or re-run without -RepoDir to use the default ($env:TEMP\mios-bootstrap)."
+        Write-Err "Either delete it manually, or re-run without -RepoDir to use a fresh GUID-suffixed default."
         exit 1
     }
     Write-Info "Cleaning previous clone at $RepoDir ..."
-    Remove-Item -LiteralPath $RepoDir -Recurse -Force -ErrorAction Stop
+    try {
+        Remove-Item -LiteralPath $RepoDir -Recurse -Force -ErrorAction Stop
+    } catch {
+        # Locked by another process (leftover pwsh, wsl/podman bg job,
+        # antivirus mid-scan, Windows Search). Don't fail -- spin up a
+        # fresh GUID dir alongside it and use that. The locked dir
+        # gets reaped on the next run's opportunistic cleanup or by
+        # Windows' %TEMP% maintenance.
+        Write-Info "Couldn't clean $RepoDir (locked) -- using a fresh sibling dir"
+        $RepoDir = Join-Path $env:TEMP ("mios-bootstrap-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+    }
 }
 
 Write-Info "Cloning $RepoUrl ($Branch, depth=1) -> $RepoDir ..."
