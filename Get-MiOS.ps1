@@ -235,6 +235,399 @@ function Invoke-MiOSAgreementGate {
 
 Invoke-MiOSAgreementGate | Out-Null
 
+# ───────────────────────────────────────────────────────────────────────
+# Windows Terminal "MiOS-Bootstrap" profile + Geist Mono Nerd Font +
+# oh-my-posh wiring. Runs ONCE on the outer (pre-elevation) pass so the
+# elevated relaunch can pin -p MiOS-Bootstrap and inherit the correct
+# font, scheme, padding, and (most importantly) a borderless 80x40
+# focus-mode window centered on the primary display. The dashboard
+# inside build-mios.ps1 is strict-clamped to 80 cols; matching the WT
+# window to 80x40 means the dashboard frame fits perfectly with zero
+# wrap or scroll-region shenanigans.
+#
+# All three helpers are idempotent: safe to call on every run.
+# ───────────────────────────────────────────────────────────────────────
+
+# Hokusai + operator-neutrals palette — kept in sync with
+# C:\MiOS\usr\share\mios\mios.toml [colors] section. Single hash so the
+# scheme JSON and the MOTD/dashboard share the same exact tokens.
+$Script:MiosPalette = @{
+    bg                  = '#282262'
+    fg                  = '#E7DFD3'
+    accent              = '#1A407F'
+    cursor              = '#F35C15'
+    ansi_0_black        = '#282262'
+    ansi_1_red          = '#DC271B'
+    ansi_2_green        = '#3E7765'
+    ansi_3_yellow       = '#F35C15'
+    ansi_4_blue         = '#1A407F'
+    ansi_5_magenta      = '#734F39'
+    ansi_6_cyan         = '#B7C9D7'
+    ansi_7_white        = '#E7DFD3'
+    ansi_8_brblack      = '#948E8E'
+    ansi_9_brred        = '#FF6B5C'
+    ansi_10_brgreen     = '#5FAA8E'
+    ansi_11_bryellow    = '#FF8540'
+    ansi_12_brblue      = '#3D6BA8'
+    ansi_13_brmagenta   = '#9D7660'
+    ansi_14_brcyan      = '#E0E0E0'
+    ansi_15_brwhite     = '#FFFFFF'
+}
+
+# Per-user font-install registry key: the modern non-admin path. Win10
+# 1809+ honors HKCU font registrations for the running user; no
+# Windows\Fonts\ admin write needed. We probe both "GeistMono Nerd Font
+# Mono" and "GeistMono NFM" (the two face names Nerd Fonts has shipped
+# under) so a font installed by another tool is reused.
+function Test-MiOSFontInstalled {
+    param([string]$Family = 'GeistMono Nerd Font Mono')
+    try {
+        $key = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+        if (Test-Path $key) {
+            $names = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue |
+                      Get-Member -MemberType NoteProperty |
+                      Where-Object { $_.Name -notmatch '^PS' }).Name
+            foreach ($n in $names) {
+                if ($n -match [regex]::Escape($Family) -or $n -match 'GeistMono\s+NFM' -or $n -match 'GeistMono\s+Nerd\s+Font') {
+                    return $true
+                }
+            }
+        }
+        # Also check the system-wide key (older admin installs / chocolatey).
+        $sysKey = 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+        if (Test-Path $sysKey) {
+            $sysNames = (Get-ItemProperty -Path $sysKey -ErrorAction SilentlyContinue |
+                          Get-Member -MemberType NoteProperty |
+                          Where-Object { $_.Name -notmatch '^PS' }).Name
+            foreach ($n in $sysNames) {
+                if ($n -match [regex]::Escape($Family) -or $n -match 'GeistMono\s+NFM' -or $n -match 'GeistMono\s+Nerd\s+Font') {
+                    return $true
+                }
+            }
+        }
+    } catch {}
+    return $false
+}
+
+function Install-MiOSGeistFont {
+    if (Test-MiOSFontInstalled) {
+        Write-Host "  [+] GeistMono Nerd Font already installed (HKCU/HKLM)." -ForegroundColor DarkGray
+        return $true
+    }
+    Write-Host "  [*] Installing GeistMono Nerd Font (per-user)..." -ForegroundColor Cyan
+    $zipUrl  = 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/GeistMono.zip'
+    $tmpDir  = Join-Path $env:TEMP ("mios-geist-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+    $zipPath = Join-Path $tmpDir 'GeistMono.zip'
+    try {
+        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+        Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force -ErrorAction Stop
+
+        # Per-user font install dir. Created on demand on Win10 1809+.
+        $userFontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+        if (-not (Test-Path $userFontDir)) {
+            New-Item -ItemType Directory -Path $userFontDir -Force | Out-Null
+        }
+        $regKey = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+        if (-not (Test-Path $regKey)) {
+            New-Item -Path $regKey -Force | Out-Null
+        }
+
+        # Prefer the *NerdFontMono* variants (forced fixed-width, the only
+        # safe choice for terminals). Fallback to *NerdFont* if Mono ones
+        # aren't present in the release.
+        $preferred = Get-ChildItem $tmpDir -Filter '*NerdFontMono*.ttf' -Recurse -ErrorAction SilentlyContinue
+        if (-not $preferred) {
+            $preferred = Get-ChildItem $tmpDir -Filter '*NerdFont*.ttf' -Recurse -ErrorAction SilentlyContinue
+        }
+        if (-not $preferred) {
+            Write-Host "  [!] GeistMono.zip extracted but no .ttf files matched the expected pattern." -ForegroundColor Yellow
+            return $false
+        }
+
+        $installed = 0
+        foreach ($ttf in $preferred) {
+            $dst = Join-Path $userFontDir $ttf.Name
+            Copy-Item -LiteralPath $ttf.FullName -Destination $dst -Force
+            # Face name for the registry value: derive from filename
+            # ("GeistMonoNerdFontMono-Regular.ttf" -> "GeistMono Nerd Font Mono Regular (TrueType)").
+            $face = $ttf.BaseName `
+                -replace 'NerdFontMono', ' Nerd Font Mono ' `
+                -replace 'NerdFont',     ' Nerd Font ' `
+                -replace '-',            ' ' `
+                -replace '\s+',          ' '
+            $face = $face.Trim() + ' (TrueType)'
+            New-ItemProperty -Path $regKey -Name $face -Value $dst -PropertyType String -Force | Out-Null
+            $installed++
+        }
+        Write-Host "  [+] Installed $installed Geist Mono Nerd Font face(s) to $userFontDir." -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "  [!] Geist Mono Nerd Font install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "      WT will fall back to Cascadia Mono — glyphs in oh-my-posh will be missing." -ForegroundColor DarkGray
+        return $false
+    } finally {
+        if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+# Resolve the WT settings.json path. Tries stable -> preview -> the
+# unpackaged-MSIX (scoop / portable) location. Returns $null if WT isn't
+# installed at all (we then fall back to a sized conhost window in the
+# launcher).
+function Get-MiOSTerminalSettingsPath {
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
+        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'),
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows Terminal\settings.json')
+    )
+    foreach ($p in $candidates) {
+        if (Test-Path -LiteralPath $p) { return $p }
+        # The packaged dirs may exist with no settings.json yet on a fresh
+        # WT install — return the path so we can write the file.
+        $parent = Split-Path -Parent $p
+        if (Test-Path -LiteralPath $parent) {
+            return $p
+        }
+    }
+    return $null
+}
+
+# Borderless / no-titlebar / focus-mode launchMode is configured in the
+# settings file (root-level "launchMode": "focus") — passing --focus on
+# the wt.exe command line ALONE only hides tabs but keeps the title bar
+# unless launchMode is also set in JSON. We set both for belt-and-braces.
+function Install-MiOSTerminalProfile {
+    $settingsPath = Get-MiOSTerminalSettingsPath
+    if (-not $settingsPath) {
+        Write-Host "  [!] Windows Terminal not installed — no settings.json target." -ForegroundColor Yellow
+        return $null
+    }
+    Write-Host "  [*] Patching Windows Terminal settings: $settingsPath" -ForegroundColor Cyan
+
+    # Stable WT profile GUID for "MiOS-Bootstrap". Re-using the same GUID
+    # across runs lets us upsert idempotently instead of polluting the
+    # profile list with a new entry every time.
+    $miosGuid = '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}'
+
+    $palette = $Script:MiosPalette
+    $miosScheme = [ordered]@{
+        name                = 'MiOS'
+        background          = $palette.bg
+        foreground          = $palette.fg
+        cursorColor         = $palette.cursor
+        selectionBackground = $palette.accent
+        black               = $palette.ansi_0_black
+        red                 = $palette.ansi_1_red
+        green               = $palette.ansi_2_green
+        yellow              = $palette.ansi_3_yellow
+        blue                = $palette.ansi_4_blue
+        purple              = $palette.ansi_5_magenta
+        cyan                = $palette.ansi_6_cyan
+        white               = $palette.ansi_7_white
+        brightBlack         = $palette.ansi_8_brblack
+        brightRed           = $palette.ansi_9_brred
+        brightGreen         = $palette.ansi_10_brgreen
+        brightYellow        = $palette.ansi_11_bryellow
+        brightBlue          = $palette.ansi_12_brblue
+        brightPurple        = $palette.ansi_13_brmagenta
+        brightCyan          = $palette.ansi_14_brcyan
+        brightWhite         = $palette.ansi_15_brwhite
+    }
+
+    # Profile commandline: pwsh -NoLogo with no command — pinned to the
+    # MiOS profile so any wt.exe -p MiOS-Bootstrap launch (manual or
+    # programmatic) lands in a Geist-rendered, MiOS-schemed shell whose
+    # $PROFILE is loaded (oh-my-posh init runs from there).
+    $defaultPwsh = "$env:ProgramFiles\PowerShell\7\pwsh.exe"
+    if (-not (Test-Path -LiteralPath $defaultPwsh)) {
+        $defaultPwsh = "$env:ProgramW6432\PowerShell\7\pwsh.exe"
+    }
+    if (-not (Test-Path -LiteralPath $defaultPwsh)) {
+        $defaultPwsh = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+    }
+    $profileCmdline = '"' + $defaultPwsh + '" -NoLogo'
+
+    $miosProfile = [ordered]@{
+        guid              = $miosGuid
+        name              = 'MiOS'
+        commandline       = $profileCmdline
+        startingDirectory = 'M:\\'
+        colorScheme       = 'MiOS'
+        font              = [ordered]@{
+            face   = 'GeistMono Nerd Font Mono'
+            size   = 11
+            weight = 'normal'
+        }
+        cursorShape       = 'bar'
+        antialiasingMode  = 'cleartype'
+        useAcrylic        = $false
+        opacity           = 100
+        # Borderless / minimum padding so the 80-col dashboard frame
+        # touches the window edge with no titlebar/tab-row stealing rows.
+        padding           = '0'
+        suppressApplicationTitle = $true
+        hidden            = $false
+    }
+
+    # Read existing settings.json — preserve the operator's other
+    # profiles, schemes, keybindings. WT writes JSONC (comments + trailing
+    # commas). PowerShell's ConvertFrom-Json refuses both pre-7.0; strip
+    # them out before parsing, but write back as plain JSON (WT accepts
+    # plain JSON without complaint).
+    $raw = ''
+    if (Test-Path -LiteralPath $settingsPath) {
+        try { $raw = Get-Content -LiteralPath $settingsPath -Raw -ErrorAction Stop } catch { $raw = '' }
+    }
+    if (-not $raw -or -not $raw.Trim()) {
+        # First-run / empty settings.json — start from a minimal skeleton.
+        $raw = '{ "profiles": { "list": [] }, "schemes": [] }'
+    }
+    # Strip // line comments and /* */ block comments so older PS can parse.
+    $stripped = [regex]::Replace($raw, '(?ms)/\*.*?\*/', '')
+    $stripped = [regex]::Replace($stripped, '(?m)^\s*//.*$', '')
+    # Strip trailing commas before } or ].
+    $stripped = [regex]::Replace($stripped, ',(\s*[}\]])', '$1')
+
+    try {
+        $wtJson = $stripped | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        Write-Host "  [!] settings.json could not be parsed; backing up + replacing." -ForegroundColor Yellow
+        $backup = $settingsPath + '.mios-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+        Copy-Item -LiteralPath $settingsPath -Destination $backup -Force -ErrorAction SilentlyContinue
+        $wtJson = ConvertFrom-Json '{ "profiles": { "list": [] }, "schemes": [] }'
+    }
+
+    # Root-level globals. launchMode=focus ⇒ no titlebar, no tab row,
+    # no minimize/maximize buttons — the "borderless / frameless" request.
+    # showTabsInTitlebar=false + alwaysShowTabs=false also hide tabs in
+    # non-focus tabs that the operator opens later.
+    $wtJson | Add-Member -NotePropertyName launchMode           -NotePropertyValue 'focus' -Force
+    $wtJson | Add-Member -NotePropertyName showTabsInTitlebar   -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName alwaysShowTabs       -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName useAcrylicInTabRow   -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName showTerminalTitleInTitlebar -NotePropertyValue $false -Force
+    $wtJson | Add-Member -NotePropertyName initialCols          -NotePropertyValue 80      -Force
+    $wtJson | Add-Member -NotePropertyName initialRows          -NotePropertyValue 40      -Force
+    $wtJson | Add-Member -NotePropertyName centerOnLaunch       -NotePropertyValue $true   -Force
+
+    # Schemes: upsert MiOS.
+    if (-not $wtJson.schemes) {
+        $wtJson | Add-Member -NotePropertyName schemes -NotePropertyValue @() -Force
+    }
+    $existingSchemes = @($wtJson.schemes | Where-Object { $_.name -ne 'MiOS' })
+    $existingSchemes += [PSCustomObject]$miosScheme
+    $wtJson.schemes = $existingSchemes
+
+    # Profiles.list: upsert MiOS-Bootstrap.
+    if (-not $wtJson.profiles) {
+        $wtJson | Add-Member -NotePropertyName profiles -NotePropertyValue ([PSCustomObject]@{ list = @() }) -Force
+    }
+    if (-not $wtJson.profiles.list) {
+        $wtJson.profiles | Add-Member -NotePropertyName list -NotePropertyValue @() -Force
+    }
+    # Filter out any prior MiOS entry by GUID *or* by the name we used in
+    # earlier revisions ("MiOS-Bootstrap"), so the upsert is one-and-only-one.
+    $existingList = @($wtJson.profiles.list | Where-Object {
+        $_.guid -ne $miosGuid -and $_.name -ne 'MiOS' -and $_.name -ne 'MiOS-Bootstrap'
+    })
+    $existingList += [PSCustomObject]$miosProfile
+    $wtJson.profiles.list = $existingList
+
+    # Write back.
+    try {
+        $parent = Split-Path -Parent $settingsPath
+        if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+        ($wtJson | ConvertTo-Json -Depth 32) | Set-Content -LiteralPath $settingsPath -Encoding UTF8
+        Write-Host "  [+] MiOS-Bootstrap profile + MiOS scheme injected; launchMode=focus, 80x40 centered." -ForegroundColor Green
+        return $miosGuid
+    } catch {
+        Write-Host "  [!] settings.json write failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $null
+    }
+}
+
+# Idempotent block in $PROFILE.CurrentUserAllHosts: oh-my-posh init line
+# pointed at mios.omp.json. The theme file is shipped under the install
+# dir; if it isn't there yet (first-run, before build-mios.ps1 stages it),
+# we fall back to a built-in oh-my-posh theme so the prompt still renders.
+function Install-MiOSPowerShellProfile {
+    # Resolve $PROFILE.CurrentUserAllHosts even if outer script blocks
+    # have torn down standard host context.
+    $profilePath = $PROFILE.CurrentUserAllHosts
+    if (-not $profilePath) { $profilePath = $PROFILE }
+    if (-not $profilePath) {
+        $profilePath = Join-Path $env:USERPROFILE 'Documents\PowerShell\profile.ps1'
+    }
+    $profileDir = Split-Path -Parent $profilePath
+    if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
+
+    $marker  = '# >>> MiOS oh-my-posh init >>>'
+    $endMark = '# <<< MiOS oh-my-posh init <<<'
+    $existing = if (Test-Path $profilePath) { Get-Content $profilePath -Raw } else { '' }
+
+    $block = @"
+$marker
+# Auto-generated by Get-MiOS.ps1 / build-mios.ps1. Replaced between the
+# markers on every bootstrap. Initializes oh-my-posh with the MiOS theme
+# (Hokusai palette) when the binary is on PATH; silent no-op otherwise.
+if (`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') {
+    `$miosOmp = Join-Path 'C:\MiOS' 'usr\share\mios\oh-my-posh\mios.omp.json'
+    if (-not (Test-Path `$miosOmp)) {
+        # Fallback: bootstrap repo path (used during the initial run
+        # before C:\MiOS is staged).
+        `$bootRepoOmp = Join-Path 'M:\MiOS\repo\mios-bootstrap' 'usr\share\mios\oh-my-posh\mios.omp.json'
+        if (Test-Path `$bootRepoOmp) { `$miosOmp = `$bootRepoOmp }
+    }
+    if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
+        if (Test-Path `$miosOmp) {
+            oh-my-posh init pwsh --config `$miosOmp | Invoke-Expression
+        } else {
+            oh-my-posh init pwsh | Invoke-Expression
+        }
+    }
+}
+$endMark
+"@
+
+    if ($existing -match [regex]::Escape($marker)) {
+        $pattern  = "(?s)$([regex]::Escape($marker)).*?$([regex]::Escape($endMark))"
+        $safeRepl = $block -replace '\$', '$$$$'
+        $existing = [regex]::Replace($existing, $pattern, $safeRepl)
+    } else {
+        $existing = ($existing.TrimEnd() + "`n`n" + $block + "`n").TrimStart()
+    }
+    Set-Content -Path $profilePath -Value $existing -Encoding UTF8 -NoNewline
+    Write-Host "  [+] PowerShell profile updated with MiOS oh-my-posh init: $profilePath" -ForegroundColor Green
+}
+
+# Compute centered window position (in pixels) for an 80x40 cell window
+# rendered with Geist Mono 11pt at 100% DPI. Cell metrics for that face
+# are roughly 9 px wide × 22 px tall on a typical 1920x1080 monitor; we
+# pad a few pixels for the inner-window scrollbar/border that focus mode
+# leaves in. Operators on different DPI / multi-monitor setups will get
+# the window approximately centered on the primary display — wt.exe
+# clamps to the screen rect anyway.
+function Get-MiOSCenteredWindowPosition {
+    param(
+        [int]$Cols   = 80,
+        [int]$Rows   = 40,
+        [int]$CellW  = 9,
+        [int]$CellH  = 22
+    )
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+        $w = ($Cols * $CellW) + 16   # +scrollbar/border slack
+        $h = ($Rows * $CellH) + 8
+        $x = [int][Math]::Max(0, ($screen.Width  - $w) / 2 + $screen.X)
+        $y = [int][Math]::Max(0, ($screen.Height - $h) / 2 + $screen.Y)
+        return "$x,$y"
+    } catch {
+        return '0,0'
+    }
+}
+
 # 1. ALWAYS spawn a fresh elevated pwsh window. The original `irm | iex`
 # host inherits whatever terminal called us (VS Code integrated, remote
 # session, embedded host, etc.) which often (a) isn't admin, (b) is the
@@ -247,6 +640,12 @@ Invoke-MiOSAgreementGate | Out-Null
 if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
                ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    Write-Host "  [*] Provisioning MiOS terminal profile (Geist Mono NF + Hokusai scheme)..." -ForegroundColor Cyan
+    Install-MiOSGeistFont           | Out-Null
+    Install-MiOSPowerShellProfile   | Out-Null
+    Install-MiOSTerminalProfile     | Out-Null
+    $miosWindowPos = Get-MiOSCenteredWindowPosition -Cols 80 -Rows 40
+
     Write-Host "  [*] Spawning a fresh elevated pwsh window for the bootstrap run..." -ForegroundColor Cyan
     if (-not $isAdmin) {
         Write-Host "  [*] You'll see a UAC prompt momentarily; approve it to continue." -ForegroundColor DarkGray
@@ -300,6 +699,14 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     # never appears anywhere in this source.
     $relaunchCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
+# Inner pwsh was launched with -NoProfile (clean bootstrap env). Manually
+# dot-source the AllHosts profile so the MiOS oh-my-posh init block runs
+# and the operator's prompt after the bootstrap finishes is rendered in
+# the Hokusai palette + Geist Mono NF glyphs. Silent if the profile or
+# oh-my-posh isn't installed yet — the block is idempotent on every run.
+if (`$PROFILE.CurrentUserAllHosts -and (Test-Path `$PROFILE.CurrentUserAllHosts)) {
+    try { . `$PROFILE.CurrentUserAllHosts } catch {}
+}
 try {
     # Cache-Control: no-cache + Pragma: no-cache + a unique If-None-Match
     # tag tell Fastly (and any intermediate proxies) to revalidate against
@@ -426,7 +833,23 @@ try {
     $wtExe = Get-Command wt.exe -ErrorAction SilentlyContinue
     $elevated = $false
     if ($wtExe) {
-        $wtArgs = @('-w','-1','nt','--title','MiOS-Bootstrap',$shell) + $shellArgs
+        # Global args (before `nt`) configure the WT WINDOW; tab args
+        # (after `nt`) configure the tab. -p MiOS-Bootstrap pins the
+        # profile we just provisioned so the new window inherits the
+        # Geist font, MiOS color scheme, zero padding, suppressed title.
+        # --pos / --size override settings.json initialCols/Rows for this
+        # specific launch; --focus enforces borderless even if an older
+        # WT build doesn't honor launchMode=focus.
+        $wtArgs = @(
+            '-w','-1',
+            '--pos',  $miosWindowPos,
+            '--size', '80,40',
+            '--focus',
+            'nt',
+            '--title','MiOS-Bootstrap',
+            '-p','MiOS',
+            $shell
+        ) + $shellArgs
         try {
             Start-Process wt.exe -ArgumentList $wtArgs -Verb RunAs -ErrorAction Stop
             $elevated = $true
@@ -487,16 +910,21 @@ try {
     return
 }
 
-# 2. Resize host window. Larger here (110x42) than the 100x40 default
-# inside build-mios.ps1 because the new pwsh window starts at the
-# system default (often 80x25), so we need an explicit set.
+# 2. Resize host window to 80x40 — the canonical TTY0 / dashboard
+# proportions. The MiOS dashboard frame is strict-clamped to 80 cols
+# (build-mios.ps1 Show-Dashboard) and the menu/build steps fit within
+# 40 rows. Matching the WT window exactly means zero wrap, zero scroll
+# region drift, and the dashboard borders touch the window edge.
+# wt.exe --size 80,40 already requested this for the WT window; this
+# RawUI set is the conhost-fallback path AND a belt-and-braces resize
+# in case WT honored --pos but ignored --size on an older build.
 try {
-    $sz  = New-Object Management.Automation.Host.Size 110, 42
-    $buf = New-Object Management.Automation.Host.Size 110, 3000
+    $sz  = New-Object Management.Automation.Host.Size 80, 40
+    $buf = New-Object Management.Automation.Host.Size 80, 9000
     $Host.UI.RawUI.BufferSize = $buf
     $Host.UI.RawUI.WindowSize = $sz
 } catch {
-    try { $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size 110, 42 } catch {}
+    try { $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size 80, 40 } catch {}
 }
 
 # 3. Helpers

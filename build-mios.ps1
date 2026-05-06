@@ -4670,88 +4670,56 @@ $endMark
     Log-Ok "PowerShell profile updated with mios-* functions"
 
     # ── 4. Windows Terminal "MiOS" profile (settings.json patch) ──────
+    #
+    # The canonical implementation now lives in mios-bootstrap/Get-MiOS.ps1
+    # (Install-MiOSGeistFont + Install-MiOSTerminalProfile + Get-MiOSCenteredWindowPosition).
+    # Get-MiOS.ps1 runs FIRST on the irm|iex entry path, before this script
+    # even starts, so the WT profile is already in place by the time
+    # build-mios.ps1 lands here. The only thing we still rebind here is
+    # the profile's commandline, so launching the "MiOS" tab from a
+    # standalone WT (after install) opens the staged hub script (mios.ps1)
+    # rather than a bare pwsh. Get-MiOS.ps1's commandline is just `pwsh
+    # -NoLogo`; once the install dir exists we want it to launch the menu.
     $wtSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'
     if (-not (Test-Path $wtSettings)) {
-        # Preview / store-side-loaded variant
         $wtSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'
     }
-    # Profile commandline -- resizes the console buffer (WT has no
-    # per-profile init-size knob; initialCols/Rows is window-global
-    # which would clobber other tabs) then launches the MiOS hub. The
-    # hub is the one canonical entry; from there the operator chooses
-    # Build / Dev VM / Update / Dashboard / Configurator. Path is baked
-    # in at install time so no $PROFILE round-trip is needed.
     $hubPathForJson = $hubPath -replace '\\', '\\'
-    $miosCmd = ('pwsh.exe -NoExit -ExecutionPolicy Bypass -Command "& { try { $H=Get-Host; $H.UI.RawUI.BufferSize=(New-Object Management.Automation.Host.Size 90,3000); $H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 90,36) } catch {}; & ''' + $hubPathForJson + ''' }"')
+    $miosCmd = ('pwsh.exe -NoExit -ExecutionPolicy Bypass -Command "& { try { $H=Get-Host; $H.UI.RawUI.BufferSize=(New-Object Management.Automation.Host.Size 80,9000); $H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 80,40) } catch {}; & ''' + $hubPathForJson + ''' }"')
     if (Test-Path $wtSettings) {
         try {
-            $wtJson = Get-Content $wtSettings -Raw | ConvertFrom-Json
-            # Color scheme (MiOS palette).
-            if (-not $wtJson.schemes) {
-                $wtJson | Add-Member -NotePropertyName schemes -NotePropertyValue @() -Force
-            }
-            $miosScheme = [PSCustomObject]@{
-                name           = 'MiOS'
-                background     = '#282262'
-                foreground     = '#E7DFD3'
-                cursorColor    = '#F35C15'
-                selectionBackground = '#1A407F'
-                black          = '#282262'
-                red            = '#DC271B'
-                green          = '#3E7765'
-                yellow         = '#F35C15'
-                blue           = '#1A407F'
-                purple         = '#734F39'
-                cyan           = '#B7C9D7'
-                white          = '#E7DFD3'
-                brightBlack    = '#948E8E'
-                brightRed      = '#DC271B'
-                brightGreen    = '#3E7765'
-                brightYellow   = '#F35C15'
-                brightBlue     = '#1A407F'
-                brightPurple   = '#925837'
-                brightCyan     = '#B7C9D7'
-                brightWhite    = '#E0E0E0'
-            }
-            $schemes = @($wtJson.schemes | Where-Object { $_.name -ne 'MiOS' })
-            $schemes += $miosScheme
-            $wtJson.schemes = $schemes
+            # JSONC tolerance: strip comments + trailing commas before parsing
+            # so this works on PS5.1 (ConvertFrom-Json refuses JSONC there).
+            $wtRaw = Get-Content $wtSettings -Raw
+            $wtRaw = [regex]::Replace($wtRaw, '(?ms)/\*.*?\*/', '')
+            $wtRaw = [regex]::Replace($wtRaw, '(?m)^\s*//.*$', '')
+            $wtRaw = [regex]::Replace($wtRaw, ',(\s*[}\]])', '$1')
+            $wtJson = $wtRaw | ConvertFrom-Json
 
-            # Profile.
-            if (-not $wtJson.profiles) {
-                $wtJson | Add-Member -NotePropertyName profiles -NotePropertyValue ([PSCustomObject]@{ list = @() }) -Force
-            }
-            if (-not $wtJson.profiles.list) {
-                $wtJson.profiles | Add-Member -NotePropertyName list -NotePropertyValue @() -Force
-            }
             $miosGuid = '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}'
-            $miosProfile = [PSCustomObject]@{
-                guid              = $miosGuid
-                name              = 'MiOS'
-                commandline       = $miosCmd
-                startingDirectory = '%USERPROFILE%'
-                icon              = $(if ($icoPath) { $icoPath } else { 'ms-appx:///ProfileIcons/{61c54bbd-c2c6-5271-96e7-009a87ff44bf}.png' })
-                colorScheme       = 'MiOS'
-                # Geist Mono is the Vercel face; Symbols-Only Nerd Font
-                # is registered alongside so DirectWrite font-fallback
-                # picks it up for PUA (Powerline + Devicon) glyphs.
-                font              = [PSCustomObject]@{
-                    face = 'Geist Mono'
-                    size = 11
-                }
-                useAcrylic        = $false
-                opacity           = 100
-                cursorShape       = 'bar'
-                antialiasingMode  = 'cleartype'
+            $existingProfile = $null
+            if ($wtJson.profiles -and $wtJson.profiles.list) {
+                $existingProfile = $wtJson.profiles.list | Where-Object { $_.guid -eq $miosGuid } | Select-Object -First 1
             }
-            $list = @($wtJson.profiles.list | Where-Object { $_.guid -ne $miosGuid })
-            $list += $miosProfile
-            $wtJson.profiles.list = $list
-
-            $wtJson | ConvertTo-Json -Depth 20 | Set-Content -Path $wtSettings -Encoding UTF8
-            Log-Ok "Windows Terminal MiOS profile injected at $wtSettings"
+            if ($existingProfile) {
+                # Rebind commandline + icon to the post-install hub. Leave
+                # font/scheme/padding/launchMode untouched -- those are
+                # owned by Get-MiOS.ps1's installer and we don't want to
+                # rewrite them on every build run.
+                $existingProfile.commandline = $miosCmd
+                $existingProfile.startingDirectory = $Script:MiOSRoot
+                if ($icoPath -and (-not $existingProfile.PSObject.Properties['icon'])) {
+                    $existingProfile | Add-Member -NotePropertyName icon -NotePropertyValue $icoPath -Force
+                } elseif ($icoPath) {
+                    $existingProfile.icon = $icoPath
+                }
+                $wtJson | ConvertTo-Json -Depth 32 | Set-Content -Path $wtSettings -Encoding UTF8
+                Log-Ok "Windows Terminal MiOS profile rebound to $hubPath"
+            } else {
+                Log-Warn "Windows Terminal MiOS profile not found (Get-MiOS.ps1 entry didn't run?) -- skipping rebind"
+            }
         } catch {
-            Log-Warn "Windows Terminal settings.json patch failed: $($_.Exception.Message)"
+            Log-Warn "Windows Terminal settings.json rebind failed: $($_.Exception.Message)"
         }
     } else {
         Log-Warn "Windows Terminal not installed (no settings.json found) -- launcher will fall back to bare pwsh"
