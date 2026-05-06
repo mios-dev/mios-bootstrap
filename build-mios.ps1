@@ -61,19 +61,37 @@ $ProgressPreference    = "SilentlyContinue"
 
 # ── Console resize: 80x40 BEFORE any sizing-dependent state is captured ──────
 # $script:DW (~line 543) is computed from [Console]::WindowWidth at script-
-# load time and never re-read. If the parent window opened at e.g. 81 cols,
-# DW gets locked to 79 and the dashboard frame draws 79-wide forever -- with
-# the right edge of the actual 80+ col terminal showing log-line bleed-through
-# past the frame. Resize NOW, before $DW is computed below.
+# load time and never re-read. If the parent window opened wider, the
+# dashboard frame draws at the wrong width and log lines bleed past it.
+# Resize NOW, before $DW is computed.
 # Per feedback_mios_terminal_dimensions.md.
+#
+# The order matters: SetWindowSize requires buffer >= window. If the
+# current buffer is smaller than 80, SetWindowSize(80,40) fails. If
+# the current window is larger than 80, SetBufferSize(80,9000) fails
+# (buffer can't be smaller than current window). So we branch on the
+# current width.
+$_resizeBefore = try { "$([Console]::WindowWidth)x$([Console]::WindowHeight) buf=$([Console]::BufferWidth)x$([Console]::BufferHeight)" } catch { 'unknown' }
+$_resizeAfter  = 'unchanged'
+$_resizeErr    = $null
 try {
-    [Console]::SetWindowSize(80, 40)
-    [Console]::SetBufferSize(80, 9000)
+    $_curW = [Console]::WindowWidth
+    if ($_curW -gt 80) {
+        # Shrink window first (buffer can't be < window), then buffer.
+        [Console]::SetWindowSize(80, 40)
+        [Console]::SetBufferSize(80, 9000)
+    } else {
+        # Enlarge buffer first (window can't be > buffer), then window.
+        [Console]::SetBufferSize(80, 9000)
+        [Console]::SetWindowSize(80, 40)
+    }
+    $_resizeAfter = "$([Console]::WindowWidth)x$([Console]::WindowHeight) buf=$([Console]::BufferWidth)x$([Console]::BufferHeight)"
 } catch {
-    # Non-fatal -- some console hosts (CI agents, tty without conhost)
-    # refuse the resize; the dashboard's redraw probe falls back to log
-    # mode automatically when SetCursorPosition fails.
+    $_resizeErr = $_.Exception.Message
 }
+# Log to a deferred-flush variable; written to the unified log once the log
+# file path is known (Write-Log isn't defined this early in load).
+$script:_PendingResizeLog = "console resize: before=$_resizeBefore after=$_resizeAfter err=$_resizeErr"
 
 # ── Self-replication enforcement: Windows ALWAYS halts at Phase 5 ────────────
 # Per the self-replication architecture, the Windows side has STRICT scope:
@@ -173,20 +191,35 @@ $LegacyDistro     = "podman-machine-default"
 # specific operator wants to fall back to 5.8 (their bundled default)
 # until they upgrade -- set MIOS_MACHINE_IMAGE='' (empty string) to
 # omit --image entirely.
-# Use $env:MIOS_MACHINE_IMAGE if set to anything non-empty, otherwise
-# fall back to the 6.0 default. (My fc3fb18 typoed
-# $env:PSBoundParameters.ContainsKey(...) here -- $env:PSBoundParameters
-# is always $null and calling .ContainsKey() on $null throws "You cannot
-# call a method on a null-valued expression", which is what bricked the
-# build at line ~176 immediately after the AGREEMENTS banner. The
-# automatic $PSBoundParameters lives at script scope, not under $env,
-# and there's no -MachineImage parameter on this script anyway -- it's
-# env-var-only -- so the env-var-empty check is the whole story.)
-$MachineImage = if ($env:MIOS_MACHINE_IMAGE) {
-    $env:MIOS_MACHINE_IMAGE
-} else {
-    'docker://quay.io/podman/machine-os:6.0'
-}
+# Default: NO --image (use podman's bundled local file, which always
+# works because podman ships its own machine-os tarball alongside the
+# client). Empirical lesson from logs across this stretch:
+#
+#   * podman 5.8.2 on Windows / WSL provider FAILS to pull ANY OCI
+#     ref via `podman machine init --image docker://...` -- both 6.0
+#     AND the bundled-tag fallback to :5.8 hit the same Win32 error:
+#         Error: failed to pull quay.io/podman/machine-os@sha256:<digest>:
+#                The system cannot find the path specified.
+#     This is a podman-on-Windows pull-extraction bug, NOT a wrong-URL
+#     bug -- the digests resolve correctly; the local extraction
+#     stage is broken on the WSL provider for this client version.
+#
+#   * Without --image, podman uses its bundled local tarball and
+#     `wsl --import`s it directly -- no pull, no extraction-from-
+#     registry path, just works. Operator's earlier successful runs
+#     all took this path.
+#
+# To pin a specific machine-os tag, the operator must:
+#   (a) upgrade their podman client to a version that fixes the
+#       WSL pull bug (`winget upgrade Podman.Podman`, retry)
+#   (b) THEN set $env:MIOS_MACHINE_IMAGE=docker://quay.io/podman/
+#       machine-os:6.0 (or whatever tag) before invoking the
+#       bootstrap.
+#
+# Until the operator's client is upgraded, pinning is wedged shut by
+# podman, not by us. This default makes the bootstrap actually
+# progress instead of dying at Phase 3 with "path not found."
+$MachineImage = $env:MIOS_MACHINE_IMAGE
 if ($MachineImage -and $MachineImage -notmatch '^(docker|https?|file)://' -and $MachineImage -match '^[a-z0-9.-]+\.[a-z]{2,}/') {
     # Operator passed a bare OCI ref via env -- auto-prefix `docker://`.
     $MachineImage = "docker://$MachineImage"
@@ -530,6 +563,16 @@ try {
          "                     build-mios.ps1 commit=$scriptCommit  version=$MiosVersion`n" +
          "=" * 78 + "`n"),
         [Text.Encoding]::UTF8)
+    # Flush the deferred console-resize diagnostic captured at line ~70
+    # (before $LogFile was known, before Write-Log existed). This makes
+    # it visible in the unified log so we can tell post-mortem whether
+    # the SetWindowSize(80,40) call actually took.
+    if ($script:_PendingResizeLog) {
+        [System.IO.File]::AppendAllText(
+            $LogFile,
+            ("[" + (Get-Date -Format 'HH:mm:ss.fff') + "][INFO] " + $script:_PendingResizeLog + "`n"),
+            [Text.Encoding]::UTF8)
+    }
 } catch {}
 
 # Dashboard mode is set after $script:DashRow is captured below in MAIN
@@ -714,8 +757,20 @@ function Show-Dashboard {
     if ($script:DashboardMode -eq 'log') { return }
     try {
     # ── Sizing -- max 80 cols (standard tty0/console) ──────────────────────────
+    # Pad to BufferWidth, not just WindowWidth. The buffer can be wider
+    # than the visible window (Windows console default = 120-col buffer
+    # in a 80-col window), and log lines written before the dashboard
+    # rendered may have left stale content at buffer columns past the
+    # visible right edge. PadRight(WindowWidth) only clears up to the
+    # visible width; PadRight(BufferWidth) clears every column the log
+    # could have written to. Per the operator's "ics / oder:14b /
+    # GB free)" right-edge bleed in repeated screenshots.
     $winW = try { [Console]::WindowWidth  } catch { 80 }
+    $bufW = try { [Console]::BufferWidth  } catch { $winW }
     $bufH = try { [Console]::BufferHeight } catch { 9999 }
+    # Use the LARGER of window and buffer for padding -- ensures every
+    # column that could hold stale content gets blanked.
+    $winW = [math]::Max($winW, $bufW)
     # Width-floor: pad to MAX($winW, last render width) so a narrower
     # current render still overwrites every column the previous render
     # touched. Otherwise the rightmost column(s) of a wider previous
