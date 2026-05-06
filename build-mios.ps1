@@ -5189,6 +5189,20 @@ if ($activeDistro) {
     # /var/lib/mios/.quadlet-overlay-seeded sentinel.
     Invoke-MiosQuadletOverlay
 
+    # The overlay seed wrote /etc/wsl.conf [user] default=mios so future
+    # `wsl -d podman-MiOS-DEV` invocations land in the mios user (not the
+    # bundled `user` UID 1000). But /etc/wsl.conf is read at distro
+    # START -- the live instance running RIGHT NOW was launched with the
+    # pre-seed config and still defaults to `user`. Terminate the distro
+    # so the next entry (menu option 1 or 5) re-launches with the new
+    # default user. Idempotent: if the distro isn't running, --terminate
+    # is a no-op.
+    $_wslDistroForTerm = "podman-$BuilderDistro"
+    Set-Step "Terminating $_wslDistroForTerm so /etc/wsl.conf takes effect on next entry..."
+    & wsl.exe --terminate $_wslDistroForTerm 2>&1 |
+        ForEach-Object { Write-Log "wsl-terminate: $_" }
+    Log-Ok "$_wslDistroForTerm terminated -- next entry uses mios as default user"
+
     End-Phase 3
 
     # ── Phase 4 -- WSL2 .wslconfig ───────────────────────────────────────────
