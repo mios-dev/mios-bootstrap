@@ -305,7 +305,51 @@ try {
     $bytes   = [System.Text.Encoding]::Unicode.GetBytes($relaunchCmd)
     $encoded = [Convert]::ToBase64String($bytes)
 
-    $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+    # Resolve $shell to a REAL on-disk path, not the WindowsApps App
+    # Execution Alias. Get-Command pwsh.exe returns the alias stub at
+    # %LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe when PowerShell 7 is
+    # installed via the Microsoft Store. Start-Process -Verb RunAs against
+    # that stub fails with:
+    #
+    #     error 2147944320 (0x80070780) -- ERROR_FILE_CANNOT_BE_ACCESSED
+    #
+    # because the alias forwards to the UWP package, but `-Verb RunAs`
+    # flips the security context mid-forward and the UAC-elevated process
+    # ends up trying to access an alias path the elevated user can't see.
+    # Same failure family as the wt.exe stub bug above. Fix: prefer the
+    # real install path (Program Files MSI install or the resolved
+    # WindowsApps package directory), then fall back to powershell.exe
+    # (Windows PowerShell 5.1, ships with Windows -- always at a fixed
+    # System32 path that doesn't go through App Execution Alias).
+    $shell = $null
+    $candidates = @(
+        "$env:ProgramFiles\PowerShell\7\pwsh.exe",
+        "$env:ProgramW6432\PowerShell\7\pwsh.exe"
+    )
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) { $shell = $c; break }
+    }
+    if (-not $shell) {
+        # Microsoft Store install of PowerShell 7 -- locate the real
+        # WindowsApps package directory (skips the alias stub).
+        $storePwsh = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Filter 'pwsh.exe' -Recurse -ErrorAction SilentlyContinue |
+                     Where-Object { $_.FullName -match 'Microsoft\.PowerShell_' } |
+                     Select-Object -First 1 -ExpandProperty FullName
+        if ($storePwsh) { $shell = $storePwsh }
+    }
+    if (-not $shell) {
+        # Windows PowerShell 5.1 -- always ships with Windows at the canonical
+        # System32 path. No alias indirection. Slower startup, smaller feature
+        # set, but the bootstrap relaunch only needs Invoke-RestMethod +
+        # iex/scriptblock-create -- both work fine in 5.1.
+        $winPwsh = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+        if (Test-Path -LiteralPath $winPwsh -PathType Leaf) { $shell = $winPwsh }
+    }
+    if (-not $shell) {
+        # Last-ditch: the alias path from PATH. Will hit 0x80070780 on
+        # elevation but at least Start-Process throws a useful error.
+        $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+    }
     $shellArgs = @(
         '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-NoExit',
@@ -375,7 +419,37 @@ try {
         }
     }
     if (-not $elevated) {
-        Start-Process $shell -ArgumentList $shellArgs -Verb RunAs
+        # Plain elevation. Pass -WorkingDirectory $env:WINDIR so the
+        # elevated process gets a WD it's guaranteed to be able to read
+        # (avoids the "Administrator can't see %USERPROFILE%" path-not-
+        # accessible class of 0x80070780 failures when the launching user
+        # had a OneDrive-redirected or non-default home directory).
+        try {
+            Start-Process -FilePath $shell -ArgumentList $shellArgs -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
+            $elevated = $true
+        } catch {
+            Write-Host "  [!] $shell elevation failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            # Last-resort fallback: Windows PowerShell 5.1 at the canonical
+            # System32 path (skips any App Execution Alias chain entirely).
+            $winPwsh = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+            if ((Test-Path -LiteralPath $winPwsh -PathType Leaf) -and ($shell -ne $winPwsh)) {
+                Write-Host "  [*] Retrying via Windows PowerShell 5.1: $winPwsh" -ForegroundColor Cyan
+                try {
+                    Start-Process -FilePath $winPwsh -ArgumentList $shellArgs -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
+                    $elevated = $true
+                } catch {
+                    Write-Host "  [!] Windows PowerShell 5.1 elevation also failed: $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+        }
+    }
+    if (-not $elevated) {
+        Write-Host ''
+        Write-Host '  [!] Could not spawn an elevated pwsh window via any path.' -ForegroundColor Red
+        Write-Host '      Manually open an elevated PowerShell and re-run:' -ForegroundColor DarkGray
+        Write-Host "        irm $rawUrl | iex" -ForegroundColor DarkGray
+        Write-Host ''
+        return
     }
     Write-Host "  [+] New pwsh window opened. Continuing the bootstrap there." -ForegroundColor Green
     return
