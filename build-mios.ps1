@@ -466,6 +466,10 @@ try {
             if ($LASTEXITCODE -eq 0 -and $sha) { $scriptCommit = "$sha" }
         }
     } catch {}
+    # Promote to script scope so the dashboard's title can show it on
+    # every screenshot -- the operator can see at a glance which
+    # commit is actually running, no log-grep required.
+    $script:BuildMiosCommit = $scriptCommit
     [System.IO.File]::AppendAllText(
         $LogFile,
         ("=" * 78 + "`n" +
@@ -726,7 +730,15 @@ function Show-Dashboard {
 
     # Header -- gap computed so total row width = $w, then padded to $winW
     $rows.Add($sepE)
-    $title = " 'MiOS' $MiosVersion  --  Build Dashboard"
+    # Stamp the commit SHA in the title so every screenshot of the
+    # dashboard makes it unambiguous which build-mios.ps1 is running.
+    # Diagnoses Fastly cache lag at a glance: if the operator sees
+    # "(commit abc1234)" but the latest fix you just pushed is def5678,
+    # they're on stale code.
+    $commitTag = if ($script:BuildMiosCommit -and $script:BuildMiosCommit -ne '(unknown)') {
+        " (commit $($script:BuildMiosCommit))"
+    } else { '' }
+    $title = " 'MiOS' $MiosVersion$commitTag  --  Build Dashboard"
     $right = "[ $elStr ] "
     $gap   = [math]::Max(0, $in - $title.Length - $right.Length)
     $hdr   = "| $title" + (" " * $gap) + "$right |"
@@ -4501,6 +4513,25 @@ if ($activeDistro) {
             if ($registered) {
                 Log-Warn "Stale $BuilderDistro registration detected (not running, not startable) -- force-removing before re-init"
                 & podman machine rm --force $BuilderDistro 2>&1 | ForEach-Object { Write-Log "podman-rm-prepurge: $_" }
+            }
+            # Even if podman-machine has NO registration, the underlying
+            # WSL distro side can still hold a leftover registration --
+            # especially after `podman machine rm` succeeded but the
+            # WSL distro unregister step failed (or was never reached
+            # by an interrupted run). The init then explodes with:
+            #     Error: vm "MiOS-DEV" already exists on hypervisor
+            # because the WSL-side hypervisor already has the distro.
+            # Sweep both candidate names: the canonical "podman-MiOS-DEV"
+            # that podman init creates, and the bare "MiOS-DEV" that the
+            # rename step (Rename-PodmanDevDistro) produces.
+            $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" |
+                       ForEach-Object { ($_ -replace [char]0,'').Trim() } |
+                       Where-Object { $_ }
+            foreach ($cand in @("podman-$BuilderDistro", $BuilderDistro)) {
+                if ($wslList -contains $cand) {
+                    Log-Warn "Stale WSL distro '$cand' detected -- unregistering before init"
+                    & wsl.exe --unregister $cand 2>&1 | ForEach-Object { Write-Log "wsl-unregister: $_" }
+                }
             }
         } catch {}
         New-BuilderDistro -HW $HW
