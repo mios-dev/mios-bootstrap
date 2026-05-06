@@ -768,17 +768,32 @@ function Show-Dashboard {
     $winW = try { [Console]::WindowWidth  } catch { 80 }
     $bufW = try { [Console]::BufferWidth  } catch { $winW }
     $bufH = try { [Console]::BufferHeight } catch { 9999 }
-    # Use the LARGER of window and buffer for padding -- ensures every
-    # column that could hold stale content gets blanked.
-    $winW = [math]::Max($winW, $bufW)
-    # Width-floor: pad to MAX($winW, last render width) so a narrower
-    # current render still overwrites every column the previous render
-    # touched. Otherwise the rightmost column(s) of a wider previous
-    # render show as a vertical ghost stripe.
-    $winW = [math]::Max($winW, $script:DashLastWidth)
-    # Always 1 char narrower than actual terminal so old content to the right
-    # of the box is blanked on overwrite; capped at 80 for tty0 portability.
-    $w  = [math]::Max(40, [math]::Min(80, $winW - 1))
+    # ── Width strict-clamp ────────────────────────────────────────────
+    # The previous code did `winW = max(winW, bufW, DashLastWidth)` to
+    # "blank stale columns from a wider previous render" -- but that
+    # ratchet locks the padding wider than the live buffer for the
+    # rest of the session.
+    #
+    # Concrete failure mode (commit 53ac9d8 stacking screenshots):
+    #   1. Load-time resize: 80x40 / 80x9000
+    #   2. `Try-ResizeConsole -Cols 100 -Rows 40` (~line 4501)
+    #      enlarges to 100x40 transiently
+    #   3. First Show-Dashboard: winW=max(100, 100, 0)=100, rows padded
+    #      to 100, DashLastWidth=100
+    #   4. Defensive resize (~line 4395): back to 80x40 / 80x9000
+    #   5. Every later Show-Dashboard: winW=max(80, 80, 100)=100
+    #   6. Writing a 100-char row on an 80-col buffer auto-wraps at
+    #      col 79; 20 chars overflow to the next buffer row; the next
+    #      iteration overwrites cols 0-79 of that row but the
+    #      now-orphaned wrap content from the previous iteration stays
+    #      visible -> the stacked-banner artifact.
+    #
+    # Strict-clamp: never pad wider than the LIVE current console.
+    # Capped at 80 for tty0/console portability. If a previous render
+    # was wider than the current, the ghost-row blanking pass below
+    # handles those extra rows; we never need to keep padding wide.
+    $winW = [math]::Min($winW, [math]::Min($bufW, 80))
+    $w    = [math]::Max(40, [math]::Min(80, $winW - 1))
     $in = $w - 4   # inner content width: "| " + content + " |"
     $sepD = ("+" + ("-" * ($w - 2)) + "+").PadRight($winW)
     $sepE = ("+" + ("=" * ($w - 2)) + "+").PadRight($winW)
@@ -970,7 +985,10 @@ function Show-Dashboard {
         }
         $script:DashHeight     = $rows.Count
         $script:DashLastHeight = $rows.Count
-        $script:DashLastWidth  = [math]::Max($script:DashLastWidth, $winW)
+        # DashLastWidth is no longer ratcheted -- the strict-clamp on
+        # $winW makes the ratchet harmful (locks padding wider than the
+        # live buffer; see comment near top of Show-Dashboard).
+        $script:DashLastWidth  = $winW
         [Console]::SetCursorPosition(0, [math]::Min($dashStart + $script:DashHeight, $bufH - 1))
     } finally {
         $script:DashSync.Rendering = $false
@@ -1284,12 +1302,23 @@ $driverCmd
                 }
             }
             '3' {
-                $pfl = Join-Path $MiosRepoDir 'preflight.ps1'
-                if (Test-Path $pfl) {
+                # preflight.ps1 is in mios.git, not mios-bootstrap.git.
+                # mios.git clones to $MiosRepoDir\mios (Phase 2), so the
+                # actual path is $MiosRepoDir\mios\preflight.ps1.
+                # Older $MiosRepoDir\preflight.ps1 fallback covers the
+                # case where the operator manually staged a copy at the
+                # parent dir.
+                $pflCandidates = @(
+                    (Join-Path $MiosRepoDir 'mios\preflight.ps1'),
+                    (Join-Path $MiosRepoDir 'preflight.ps1')
+                )
+                $pfl = $pflCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+                if ($pfl) {
                     Write-Host "  -> running preflight.ps1..." -ForegroundColor Cyan
                     & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $pfl
                 } else {
-                    Write-Host "  preflight.ps1 not found at $pfl" -ForegroundColor Yellow
+                    Write-Host "  preflight.ps1 not found at any of:" -ForegroundColor Yellow
+                    $pflCandidates | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkYellow }
                 }
                 Write-Host ""
                 Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray -NoNewline
@@ -4498,7 +4527,12 @@ try {
 # launching. The probe is still run as a sanity-check in that case
 # so the opt-in falls back to log mode if the host is genuinely
 # broken.
-Try-ResizeConsole -Cols 100 -Rows 40
+# 80x40 EXACTLY -- per feedback_mios_terminal_dimensions.md: "every
+# spawned window must open at exactly 80 cols x 40 rows to match the
+# dashboard frame." Anything wider creates transient state that the
+# dashboard's strict-clamp width logic in Show-Dashboard would have
+# to compensate for; cleaner to never go wide in the first place.
+Try-ResizeConsole -Cols 80 -Rows 40
 # Interactive (in-place repaint) is now the DEFAULT. Test-DashboardCanRedraw
 # probes [Console]::CursorTop, RawUI.WindowSize, etc. and falls back to log
 # mode automatically if the host can't redraw (transcript host, redirected
