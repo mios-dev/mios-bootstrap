@@ -59,6 +59,22 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = "SilentlyContinue"
 
+# ── Console resize: 80x40 BEFORE any sizing-dependent state is captured ──────
+# $script:DW (~line 543) is computed from [Console]::WindowWidth at script-
+# load time and never re-read. If the parent window opened at e.g. 81 cols,
+# DW gets locked to 79 and the dashboard frame draws 79-wide forever -- with
+# the right edge of the actual 80+ col terminal showing log-line bleed-through
+# past the frame. Resize NOW, before $DW is computed below.
+# Per feedback_mios_terminal_dimensions.md.
+try {
+    [Console]::SetWindowSize(80, 40)
+    [Console]::SetBufferSize(80, 9000)
+} catch {
+    # Non-fatal -- some console hosts (CI agents, tty without conhost)
+    # refuse the resize; the dashboard's redraw probe falls back to log
+    # mode automatically when SetCursorPosition fails.
+}
+
 # ── Self-replication enforcement: Windows ALWAYS halts at Phase 5 ────────────
 # Per the self-replication architecture, the Windows side has STRICT scope:
 # ack + MiOS-DEV podman-machine setup + SSH handoff. The legacy -FullBuild /
@@ -132,35 +148,39 @@ $BuilderDistro    = $DevDistro
 $LegacyDevName    = "MiOS-BUILDER"
 $MiosWslDistro    = "MiOS"
 $LegacyDistro     = "podman-machine-default"
-# MiOS-DEV's base machine-OS image. Pinned to the floating `next` tag
-# at quay.io/podman/machine-os per the always-target-latest contract
-# (memory: feedback_mios_target_latest.md). Operator's words:
+# MiOS-DEV's base machine-OS image.
 #
-#   "the podman-MiOS-DEV is using the podman-os:NEXT or 6.0 -- Correct?!"
+# Empirical lesson from the aa33e13 -> this commit cycle: pinning
+# $MachineImage to `docker://quay.io/podman/machine-os:next` (or :6.0)
+# FAILS on the podman 5.8 / WSL provider with:
 #
-# Probed quay.io/v2/podman/machine-os/tags/list as of 2026-05-06: the
-# floating tags are `next` (development branch, latest) and `6.0`
-# (newest stable non-floating). We pin `next` -- it's what the operator
-# asked for first and matches the always-bleeding-edge preference.
+#     Error: failed to pull quay.io/podman/machine-os@sha256:<digest>:
+#            The system cannot find the path specified.
+#     podman machine init failed (exit 125)
 #
-# Caveats baked in:
-#   * `podman machine init --image <bare OCI ref>` doesn't recognize
-#     the bare-ref form on Windows -- podman tries to stat() the value
-#     as a local file path, hitting GetFileAttributesEx on a string
-#     containing `:` (drive separator) and failing with the truncated
-#     "The system cannot find the path specified" we saw in earlier runs.
-#     The `docker://` prefix is REQUIRED.
-#   * The operator can override via $env:MIOS_MACHINE_IMAGE -- e.g. set
-#     to "docker://quay.io/podman/machine-os:6.0" to pin to the stable
-#     6.0 tag, or any HTTPS qcow2 URL for a custom image.
-$MachineImage = if ($env:MIOS_MACHINE_IMAGE) {
-    $env:MIOS_MACHINE_IMAGE
-} else {
-    'docker://quay.io/podman/machine-os:next'
-}
-if ($MachineImage -notmatch '^(docker|https?|file)://' -and $MachineImage -match '^[a-z0-9.-]+\.[a-z]{2,}/') {
-    # Operator passed a bare OCI ref via env -- auto-prefix `docker://`
-    # so podman parses it as a docker-transport URL, not a file path.
+# The pull resolves the tag to a digest then fails at the Windows
+# filesystem layer -- podman 5.8's WSL provider's --image plumbing
+# doesn't handle docker:// refs the way the QEMU/Hyper-V providers do.
+# Bare refs (without docker://) are even worse -- they hit the older
+# GetFileAttributesEx-as-file-path trap.
+#
+# So: when no MIOS_MACHINE_IMAGE env override is set, omit --image
+# entirely. podman then resolves its OWN bundled default (`quay.io/
+# podman/machine-os:<podman-major.minor>`, e.g. 5.8 for the operator's
+# 5.8.2 client) and pulls it via its own internal code path that
+# DOES work. Operator's earlier successful run took exactly this
+# branch.
+#
+# Operators who want a newer machine-os should upgrade their podman
+# client (`winget upgrade Podman.Podman`); the bundled default tag
+# tracks the client's major.minor.
+#
+# The MIOS_MACHINE_IMAGE override hatch stays open for advanced cases
+# (a known-working HTTPS qcow2.zst URL, or a podman version that DOES
+# accept docker:// refs). Bare-ref auto-prefix to docker:// is also
+# preserved for that path.
+$MachineImage = $env:MIOS_MACHINE_IMAGE
+if ($MachineImage -and $MachineImage -notmatch '^(docker|https?|file)://' -and $MachineImage -match '^[a-z0-9.-]+\.[a-z]{2,}/') {
     $MachineImage = "docker://$MachineImage"
 }
 
@@ -4261,23 +4281,21 @@ if ($script:DashboardMode -eq 'interactive') {
     $script:BgHandle = $script:BgPs.BeginInvoke()
 }
 
-# Resize the host console to exactly 80x40 BEFORE the first Show-Dashboard
-# call -- the dashboard frame is 80 cols wide and the phase table needs ~30
-# rows of vertical real-estate, so any wider/shorter window causes the
-# in-place repaint logic to corrupt or wrap. Per
-# feedback_mios_terminal_dimensions.md. SetBufferSize must be at least as
-# wide as SetWindowSize, hence 80 wide / 9000 deep (room for log scrollback).
-# Wrapped in try/catch because some console hosts (CI agents, virtualized
-# tty without a real console) refuse the resize -- in which case the
-# fallback log-mode dashboard renderer kicks in below.
+# Re-set console size again right before the first Show-Dashboard render.
+# The earlier resize (~line 70) is the LOAD-TIME resize that fixes the $DW
+# computation. This second resize is defensive: if some other code in the
+# load path between line 70 and here changed the window size, this restores
+# it. Idempotent.
 try {
     [Console]::SetWindowSize(80, 40)
     [Console]::SetBufferSize(80, 9000)
-} catch {
-    # Non-fatal -- the dashboard's redraw probe (Test-DashboardCanRedraw,
-    # called via Show-Dashboard right below) detects the failure and
-    # falls back to log-mode rendering automatically.
-}
+} catch {}
+
+# Force-recompute $DW now that the window is definitely 80 wide. If the
+# load-time resize failed but THIS one succeeded, the original $DW (set
+# from a wider parent terminal) would still drive the dashboard at the
+# wrong width. Re-reading WindowWidth here closes that gap.
+$script:DW = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 2), 80))
 
 Show-Dashboard   # draw initial (all phases pending)
 
