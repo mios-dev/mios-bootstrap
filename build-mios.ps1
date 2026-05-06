@@ -4917,6 +4917,24 @@ if ($activeDistro) {
         Push-Location $MiosRepoDir
         try {
             $null = Invoke-NativeQuiet { git init -q }
+            # ── git-for-windows quirk: `git init` at a DRIVE ROOT (M:\)
+            # writes `core.worktree = M:/` to .git/config. That's a
+            # Windows-style absolute path that breaks the Linux side of
+            # the pipeline -- when Phase 3's quadlet-overlay-seed runs
+            # `git fetch /mnt/m/.git`, upload-pack reads `core.worktree`,
+            # tries to `chdir to 'M:/'` (literal Windows path on Linux),
+            # and dies with:
+            #     fatal: cannot chdir to 'M:/': No such file or directory
+            # which cascades into:
+            #     fatal: protocol error: bad pack header
+            #     fatal: ambiguous argument 'FETCH_HEAD'
+            #     [quadlet-overlay] / now contains 0 tracked mios.git files
+            # Unsetting worktree (or pinning to '.' relative) restores the
+            # default behavior: worktree = parent of .git dir, which on
+            # Windows is M:\ and on Linux (via /mnt/m) is /mnt/m. Both
+            # ends agree, fetch succeeds, the seed populates / inside
+            # MiOS-DEV.
+            $null = Invoke-NativeQuiet { git config --unset core.worktree }
             $null = Invoke-NativeQuiet { git remote add origin $MiosRepoUrl }
             $fetchExit = Invoke-NativeQuiet { git fetch --depth=1 origin main }
             if ($fetchExit -ne 0) {
@@ -4927,6 +4945,16 @@ if ($activeDistro) {
             $null = Invoke-NativeQuiet { git checkout -q main }
         } finally { Pop-Location }
     }
+    # Defensive: even on the existing-clone update path, scrub a bad
+    # core.worktree that an older bootstrap may have left in config.
+    Push-Location $MiosRepoDir
+    try {
+        $existingWt = & git config --get core.worktree 2>$null
+        if ($existingWt -and ($existingWt -match '^[A-Za-z]:[\\/]')) {
+            Log-Warn "Scrubbing stale Windows-shaped core.worktree '$existingWt' from $MiosRepoDir\.git\config"
+            $null = Invoke-NativeQuiet { git config --unset core.worktree }
+        }
+    } finally { Pop-Location }
     Log-Ok "mios.git overlaid at $MiosRepoDir"
 
     # ── Step 2: mios-bootstrap.git in shadow checkout, files overlaid ──────
