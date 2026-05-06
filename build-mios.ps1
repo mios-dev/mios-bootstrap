@@ -1544,7 +1544,7 @@ function Find-ActiveDistro {
     # Check if BuilderDistro is a running Podman machine (machine-os: no /Justfile but can still build)
     try {
         $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
-              Where-Object { $_ -match "^$([regex]::Escape($BuilderDistro))\s+true" }
+              Where-Object { $_ -match "(?i)^$([regex]::Escape($BuilderDistro))\s+true" }
         if ($ml) { return $BuilderDistro }
     } catch {}
     return $null
@@ -1744,17 +1744,42 @@ function New-BuilderDistro([hashtable]$HW) {
         # also matches Windows Subsystem for Linux's transient ghost state
         # right after a previous interrupted init. Best response is just to
         # try starting it and verify the API.
-        if ($initJoined -match 'already exists|VM already exists') {
+        if ($initJoined -match '(?i)already exists|vm.*already exists') {
             Log-Warn "podman machine init: $BuilderDistro already exists -- starting instead"
             $startOut = @(& podman machine start $BuilderDistro 2>&1)
             $startOut | ForEach-Object { Write-Log "podman-recover-start: $_" }
-            if (($startOut -join " ") -match 'already running') {
+            $startJoined = ($startOut -join " ")
+            if ($startJoined -match '(?i)already running') {
                 Log-Ok "$BuilderDistro is already running"
-            } elseif ($LASTEXITCODE -ne 0) {
-                throw "podman machine start $BuilderDistro after init-already-exists failed (exit $LASTEXITCODE)"
+            } elseif ($LASTEXITCODE -eq 0) {
+                Log-Ok "$BuilderDistro started"
+            } else {
+                # Start failed too -- registration is stale or the VM is in
+                # a half-provisioned state from a SIGINT'd previous run.
+                # Force-remove the registration and re-init from scratch.
+                # Safe at this point in the pipeline: no MiOS image / no
+                # operator data lives in the build VM yet.
+                Log-Warn "$BuilderDistro start failed after init-already-exists (exit $LASTEXITCODE) -- force-removing and retrying init"
+                Write-Log "podman-recover-rm-output: $startJoined"
+                & podman machine rm --force $BuilderDistro 2>&1 |
+                    ForEach-Object { Write-Log "podman-recover-rm: $_" }
+
+                # Retry init from a clean slate.
+                $retryOut = [System.Collections.Generic.List[string]]::new()
+                & podman @initArgs 2>&1 | ForEach-Object {
+                    Write-Log "podman-init-retry: $_"
+                    $retryOut.Add([string]$_) | Out-Null
+                    $clean = ($_ -replace '\x1b\[[0-9;]*[mGKHFJ]','').Trim()
+                    if ($clean) { $script:CurStep = $clean.Substring(0,[math]::Min($clean.Length,80)) }
+                    Show-Dashboard
+                }
+                if ($LASTEXITCODE -ne 0) {
+                    throw "podman machine init retry failed (exit $LASTEXITCODE) after force-rm: $(($retryOut | Select-Object -Last 5) -join ' / ')"
+                }
+                Log-Ok "$BuilderDistro re-initialized after force-rm"
             }
         } else {
-            throw "podman machine init failed (exit $initRc)"
+            throw "podman machine init failed (exit $initRc): $(($initOut | Select-Object -Last 3) -join ' / ')"
         }
     }
     $null = Invoke-NativeQuiet { podman machine set --default $BuilderDistro }
@@ -1768,7 +1793,7 @@ function New-BuilderDistro([hashtable]$HW) {
     $apiOk = $false
     while ((Get-Date) -lt $deadline) {
         $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
-              Where-Object { $_ -match "^$([regex]::Escape($BuilderDistro))\s+true" }
+              Where-Object { $_ -match "(?i)^$([regex]::Escape($BuilderDistro))\s+true" }
         if ($ml) { $apiOk = $true; break }
         Start-Sleep -Seconds 2
     }
@@ -4366,8 +4391,14 @@ if ($activeDistro) {
     try {
         $names = @($DevDistro, $LegacyDevName)
         foreach ($n in $names) {
+            # `(?i)` = case-insensitive. Different podman versions print
+            # the Running column as `true`/`false` (lowercase) or
+            # `True`/`False` (capitalized); the previous regex was
+            # case-sensitive on `true` and silently missed running
+            # machines on capitalized-output builds, leading the script
+            # to fall through into init and then hit "vm already exists".
             $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
-                  Where-Object { $_ -match "^$([regex]::Escape($n))\s+true" }
+                  Where-Object { $_ -match "(?i)^$([regex]::Escape($n))\s+true" }
             if ($ml) {
                 if ($n -eq $LegacyDevName) {
                     Log-Warn "Detected legacy machine '$LegacyDevName' -- reusing in place. Rename: 'podman machine rm $LegacyDevName' then re-run."
@@ -4378,11 +4409,14 @@ if ($activeDistro) {
             }
         }
     } catch {}
-    # Also accept a stopped machine and start it
+    # Also accept a stopped machine and start it. The pattern is
+    # case-insensitive so podman builds that print `True`/`False`
+    # don't slip past as "no entry" and fall into init (which then
+    # crashes on "vm already exists").
     if (-not $machineRunning) {
         try {
             $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
-                  Where-Object { $_ -match "^$([regex]::Escape($BuilderDistro))" }
+                  Where-Object { $_ -match "(?i)^$([regex]::Escape($BuilderDistro))\s" }
             if ($ml) {
                 Set-Step "Starting existing $BuilderDistro machine..."
                 $startOut = @(& podman machine start $BuilderDistro 2>&1)
@@ -4390,15 +4424,26 @@ if ($activeDistro) {
                 $startJoined = ($startOut -join " ")
                 if ($LASTEXITCODE -eq 0) {
                     $machineRunning = $true; Log-Ok "$BuilderDistro started"
-                } elseif ($startJoined -match 'already running') {
+                } elseif ($startJoined -match '(?i)already running') {
                     # Non-zero exit + 'already running' message: machine
                     # IS running, podman is just being noisy. Treat as OK.
                     $machineRunning = $true
                     Log-Ok "$BuilderDistro already running (podman reported the state non-fatally)"
-                } elseif ($startJoined -match "DISTRO_NOT_FOUND|bootstrap script failed|WSL_E_DISTRO") {
+                } elseif ($startJoined -match "(?i)DISTRO_NOT_FOUND|bootstrap script failed|WSL_E_DISTRO") {
                     # Stale Podman machine metadata -- WSL distro was deleted but Podman registry entry remains.
                     # Force-remove the stale entry so New-BuilderDistro can re-init cleanly.
                     Write-Log "podman-start: stale machine registration detected -- removing $BuilderDistro" "WARN"
+                    & podman machine rm --force $BuilderDistro 2>&1 | ForEach-Object { Write-Log "podman-rm: $_" }
+                } else {
+                    # Generic start failure -- registration exists but won't start.
+                    # Force-remove so the subsequent New-BuilderDistro init has a
+                    # clean slate. This catches cases where the previous run was
+                    # SIGINT'd mid-init and left the machine in an unstartable
+                    # half-provisioned state. podman machine rm with --force is
+                    # destructive of THE BUILD VM only -- no MiOS image / no
+                    # operator data lives there yet at Phase 3, so this is
+                    # always safe at this point in the pipeline.
+                    Log-Warn "podman machine start $BuilderDistro failed -- force-removing stale registration so init can re-create it"
                     & podman machine rm --force $BuilderDistro 2>&1 | ForEach-Object { Write-Log "podman-rm: $_" }
                 }
             }
