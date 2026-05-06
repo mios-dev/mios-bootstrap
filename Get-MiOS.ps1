@@ -305,49 +305,52 @@ try {
     $bytes   = [System.Text.Encoding]::Unicode.GetBytes($relaunchCmd)
     $encoded = [Convert]::ToBase64String($bytes)
 
-    # Resolve $shell to a REAL on-disk path, not the WindowsApps App
-    # Execution Alias. Get-Command pwsh.exe returns the alias stub at
-    # %LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe when PowerShell 7 is
-    # installed via the Microsoft Store. Start-Process -Verb RunAs against
-    # that stub fails with:
+    # Resolve $shell to a directly-launchable on-disk path. PowerShell 7
+    # has THREE possible install shapes on Windows, and only ONE of them
+    # is launchable via Start-Process -Verb RunAs:
     #
-    #     error 2147944320 (0x80070780) -- ERROR_FILE_CANNOT_BE_ACCESSED
+    #   (a) MSI / standalone install at $env:ProgramFiles\PowerShell\7\pwsh.exe
+    #       -- LAUNCHABLE. Plain NTFS file, no ACL surprise, no alias
+    #       indirection. PREFERRED.
     #
-    # because the alias forwards to the UWP package, but `-Verb RunAs`
-    # flips the security context mid-forward and the UAC-elevated process
-    # ends up trying to access an alias path the elevated user can't see.
-    # Same failure family as the wt.exe stub bug above. Fix: prefer the
-    # real install path (Program Files MSI install or the resolved
-    # WindowsApps package directory), then fall back to powershell.exe
-    # (Windows PowerShell 5.1, ships with Windows -- always at a fixed
-    # System32 path that doesn't go through App Execution Alias).
+    #   (b) Microsoft Store install at
+    #       $env:ProgramFiles\WindowsApps\Microsoft.PowerShell_*\pwsh.exe
+    #       -- NOT LAUNCHABLE directly. WindowsApps\ is owned by
+    #       TrustedInstaller with restricted ACLs; even the elevated
+    #       Administrator gets ERROR_ACCESS_DENIED (0x80070005) when
+    #       Start-Process tries to exec a binary from there. The only
+    #       supported entry point is via the App Execution Alias at
+    #       %LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe, which itself
+    #       fails on -Verb RunAs with ERROR_FILE_CANNOT_BE_ACCESSED
+    #       (0x80070780) because the alias-forward chain doesn't survive
+    #       UAC elevation. Both Store-install paths are unusable for our
+    #       elevation use case -- we deliberately SKIP them.
+    #
+    #   (c) Windows PowerShell 5.1 at
+    #       %WINDIR%\System32\WindowsPowerShell\v1.0\powershell.exe
+    #       -- LAUNCHABLE. Ships with every Windows install, fixed
+    #       canonical path, no alias chain, no TrustedInstaller ACL.
+    #       Older PS edition (5.1 vs 7.x) but the bootstrap relaunch
+    #       payload uses only Invoke-RestMethod + [scriptblock]::Create
+    #       + Read-Host, all of which work identically in 5.1. UNIVERSAL
+    #       FALLBACK.
+    #
+    # Resolution order: (a) MSI pwsh -> (c) Windows PS 5.1. We never
+    # attempt (b) because Start-Process can't launch from WindowsApps\
+    # under any elevation flow, alias or no alias.
     $shell = $null
-    $candidates = @(
-        "$env:ProgramFiles\PowerShell\7\pwsh.exe",
-        "$env:ProgramW6432\PowerShell\7\pwsh.exe"
-    )
-    foreach ($c in $candidates) {
+    foreach ($c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe",
+                     "$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
         if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) { $shell = $c; break }
     }
     if (-not $shell) {
-        # Microsoft Store install of PowerShell 7 -- locate the real
-        # WindowsApps package directory (skips the alias stub).
-        $storePwsh = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Filter 'pwsh.exe' -Recurse -ErrorAction SilentlyContinue |
-                     Where-Object { $_.FullName -match 'Microsoft\.PowerShell_' } |
-                     Select-Object -First 1 -ExpandProperty FullName
-        if ($storePwsh) { $shell = $storePwsh }
-    }
-    if (-not $shell) {
-        # Windows PowerShell 5.1 -- always ships with Windows at the canonical
-        # System32 path. No alias indirection. Slower startup, smaller feature
-        # set, but the bootstrap relaunch only needs Invoke-RestMethod +
-        # iex/scriptblock-create -- both work fine in 5.1.
         $winPwsh = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
         if (Test-Path -LiteralPath $winPwsh -PathType Leaf) { $shell = $winPwsh }
     }
     if (-not $shell) {
-        # Last-ditch: the alias path from PATH. Will hit 0x80070780 on
-        # elevation but at least Start-Process throws a useful error.
+        # Truly degenerate: no MSI pwsh AND no Windows PS 5.1 (nuked
+        # System32?). Last-ditch alias path from PATH so Start-Process at
+        # least surfaces a clear error rather than silently hanging.
         $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
     }
     $shellArgs = @(
