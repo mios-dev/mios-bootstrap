@@ -6,6 +6,33 @@
 # Flags:
 #   -BuildOnly    Pull latest + build only (skip first-time setup)
 #   -Unattended   Accept all defaults, no prompts
+#
+# ── ARCHITECTURE: Day-0 self-replication contract ────────────────────────────
+# Per the MiOS self-replication architecture (project memory:
+# project_mios_self_replication_vision.md), the Windows side of the bootstrap
+# is STRICTLY an entry point with a narrow scope:
+#
+#   1. Acknowledgements (AGREEMENTS.md / LICENSES.md)
+#   2. MiOS-DEV podman-machine setup (Phases 0-5 + 8 of this script)
+#   3. SSH handoff into MiOS-DEV
+#
+# After step 3, EVERYTHING else runs INSIDE MiOS-DEV: local fetch + overlay,
+# identity prompts, and the FULL build pipeline producing every output
+# format MiOS targets (OCI bootc image, WSL2/g .tar/.vhdx, Hyper-V .vhdx,
+# QEMU qcow2, Live-CD/USB ISO, USB installer, RAW dd image). The build
+# dashboard renders on the MiOS-DEV tty inside the SSH-hosted Windows
+# Terminal -- it is NOT streamed back across the WSL/Windows boundary.
+#
+# Show-PostBootstrapMenu's "Continue to build" choice IS the SSH handoff:
+# it spawns a new Windows Terminal tab running `wsl.exe -d MiOS-DEV` which
+# in turn invokes /usr/libexec/mios/mios-build-driver inside the dev distro.
+#
+# Migration status (2026-05-06): Phase 6+ legacy code (identity, OCI build,
+# disk image generation, Hyper-V VM deploy) still lives in this script as
+# the -FullBuild / -BuildOnly path. The new SSH-handoff flow runs alongside
+# it via the menu. Subsequent migration chunks move identity prompts and
+# the full output-format matrix into the Linux-side driver, then trim this
+# Windows-side tail entirely.
 
 param(
     # -BootstrapOnly: localhost-side preflight + dev VM provision +
@@ -921,11 +948,78 @@ function Show-PostBootstrapMenu {
         $choice = Read-Host "  Pick [1-6]"
         switch ($choice.Trim()) {
             '1' {
-                Write-Host "  -> Re-invoking with -BuildOnly to run the OCI build..." -ForegroundColor Cyan
-                $self = $MyInvocation.MyCommand.Path
-                if (-not $self -or -not (Test-Path $self)) { $self = Join-Path $MiosRepoDir 'build-mios.ps1' }
-                & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $self -BuildOnly
-                return
+                # ── Windows -> MiOS-DEV handoff (per self-replication contract) ──
+                # The Windows side has finished its STRICT scope: ack +
+                # MiOS-DEV podman-machine setup. The actual build (OCI +
+                # WSL2/g + Hyper-V + QEMU + Live-CD + USB + RAW) runs
+                # INSIDE MiOS-DEV. We open a fresh Windows Terminal tab
+                # hosting `wsl.exe -d <distro>` -- the MiOS-DEV tty
+                # renders the dashboard there directly, no streaming
+                # back across the WSL/Windows boundary.
+                if (-not $devDistro) {
+                    Write-Host "  ERROR: cannot find a MiOS-DEV WSL distro to hand off into." -ForegroundColor Red
+                    Write-Host "         Tried: MiOS-DEV / podman-MiOS-DEV / MiOS-BUILDER / podman-MiOS-BUILDER" -ForegroundColor DarkGray
+                    Write-Host "         Fix:   re-run the bootstrap to provision the dev distro." -ForegroundColor DarkGray
+                    Write-Host ""
+                    Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray -NoNewline
+                    $null = Read-Host
+                    continue
+                }
+                Write-Host "  -> Opening a new terminal into $devDistro for the build pipeline..." -ForegroundColor Cyan
+                Write-Host "     The build dashboard renders in the MiOS-DEV tty (not on Windows)." -ForegroundColor DarkGray
+
+                # The driver lives in the MiOS image at /usr/libexec/mios/mios-build-driver.
+                # First-boot installs of MiOS-DEV may not yet have the bind-mount, so we
+                # also ship a fallback that fetches the latest driver from raw.github so
+                # an out-of-date dev-distro can self-update before invoking it.
+                $driverPath = '/usr/libexec/mios/mios-build-driver'
+                $fallback   = 'https://raw.githubusercontent.com/mios-dev/mios/main/usr/libexec/mios/mios-build-driver'
+                $driverCmd  = @"
+if [[ -x $driverPath ]]; then
+    bash $driverPath
+else
+    echo "[handoff] $driverPath not present in $devDistro -- fetching from origin..."
+    tmp=`$(mktemp)
+    if curl -fsSL '$fallback' -o "`$tmp"; then
+        chmod +x "`$tmp"
+        bash "`$tmp"
+        rm -f "`$tmp"
+    else
+        echo "[handoff] failed to fetch driver from $fallback" >&2
+        exec bash
+    fi
+fi
+"@
+                # wt.exe (Windows Terminal) is the canonical multi-tab host; if it's
+                # missing or the App Execution Alias is broken (per d6e8b66 / earlier
+                # in this session), fall back to a plain Start-Process wsl.exe in a
+                # fresh conhost window. Either way the build runs in MiOS-DEV.
+                $wt = $null
+                try {
+                    $alias = Get-Command wt.exe -ErrorAction SilentlyContinue
+                    if ($alias) { $wt = $alias.Source }
+                } catch {}
+                if (-not $wt) {
+                    $uwp = Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.WindowsTerminal_*" -Directory -ErrorAction SilentlyContinue |
+                           Sort-Object LastWriteTime -Descending |
+                           Select-Object -First 1
+                    if ($uwp) {
+                        $cand = Join-Path $uwp.FullName 'wt.exe'
+                        if (Test-Path $cand) { $wt = $cand }
+                    }
+                }
+                if ($wt) {
+                    & $wt new-tab --title "MiOS Build ($devDistro)" `
+                        wsl.exe -d $devDistro --user mios --cd "~" -- bash -lc $driverCmd
+                } else {
+                    Write-Host "  wt.exe not found -- launching wsl.exe directly in a fresh conhost window." -ForegroundColor Yellow
+                    Start-Process -FilePath 'wsl.exe' `
+                        -ArgumentList @('-d', $devDistro, '--user', $MiosUser, '--cd', '~', '--', 'bash', '-lc', $driverCmd)
+                }
+                Write-Host "  -> Build is running inside $devDistro. This Windows menu can close." -ForegroundColor Green
+                Write-Host ""
+                Write-Host "  Press Enter to return to the menu, or close this window..." -ForegroundColor DarkGray -NoNewline
+                $null = Read-Host
             }
             '2' {
                 if (Get-Command Open-Configurator -EA SilentlyContinue) {
