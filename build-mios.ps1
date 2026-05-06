@@ -1834,6 +1834,48 @@ function New-BuilderDistro([hashtable]$HW) {
     }
     $initRc      = $LASTEXITCODE
     $initJoined  = ($initOut -join " ")
+
+    # ── Recovery branch 1: pull failed on a pinned --image ──────────────────
+    # Pinning $MachineImage to a tag the operator's installed podman client
+    # can't pull (typical: docker://quay.io/podman/machine-os:6.0 against a
+    # podman 5.8 client) produces:
+    #     Error: failed to pull quay.io/podman/machine-os@sha256:<digest>:
+    #            The system cannot find the path specified.
+    # init exits 125 BEFORE creating any registration, so there's no
+    # cleanup needed -- just retry without --image so podman uses its
+    # bundled default (which the client always knows how to handle).
+    # The fallback is logged so the operator sees they're on a
+    # fallback tag and can `winget upgrade Podman.Podman` to actually
+    # land on their requested pin.
+    if ($initRc -ne 0 -and $MachineImage `
+            -and $initJoined -match '(?i)failed to pull|cannot find the path specified') {
+        Log-Warn "podman machine init failed to pull $MachineImage on this client."
+        Log-Warn "Falling back to podman's bundled default machine-os image."
+        Log-Warn "To get the pinned image, upgrade your podman client: winget upgrade Podman.Podman"
+
+        # Strip --image from the arg list and retry.
+        $fallbackArgs = @($initArgs | Where-Object { $_ -ne '--image' -and $_ -ne $MachineImage })
+        $fallbackOut = [System.Collections.Generic.List[string]]::new()
+        & {
+            $ErrorActionPreference = 'Continue'
+            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                $PSNativeCommandUseErrorActionPreference = $false
+            }
+            & podman @fallbackArgs 2>&1 | ForEach-Object {
+                Write-Log "podman-init-fallback: $_"
+                $fallbackOut.Add([string]$_) | Out-Null
+                $clean = ($_ -replace '\x1b\[[0-9;]*[mGKHFJ]','').Trim()
+                if ($clean) { $script:CurStep = $clean.Substring(0,[math]::Min($clean.Length,80)) }
+                Show-Dashboard
+            }
+        }
+        $initRc = $LASTEXITCODE
+        $initJoined = (($initOut + $fallbackOut) -join " ")
+        if ($initRc -eq 0) {
+            Log-Ok "$BuilderDistro initialized via bundled-default fallback"
+        }
+    }
+
     if ($initRc -ne 0) {
         # "VM already exists" -- recover by starting (or treating as already
         # running) instead of failing. Caller's outer loop already tried to
