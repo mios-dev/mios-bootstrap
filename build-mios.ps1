@@ -1835,6 +1835,143 @@ function Set-PodmanMachineStorageOn {
     Log-Ok "podman-machine storage junctioned $defaultDir -> $targetDir"
 }
 
+function Get-PodmanMachineOsImage {
+    # Pre-stage a podman-machine OCI image via direct HTTPS, bypassing
+    # `podman machine init`'s pull-extraction pipeline. On podman 5.8.2
+    # for Windows + WSL provider that pipeline fails with:
+    #     Error: failed to pull quay.io/podman/machine-os@sha256:<...>:
+    #            The system cannot find the path specified.
+    # for ANY ref (6.0, 5.8, bundled default). Direct GET against the
+    # OCI Distribution API works fine -- the bug is in podman's own
+    # cache write step on Windows. Pre-staging the layer ourselves and
+    # passing the result to `--image <local-path>` skips the broken
+    # path entirely.
+    #
+    # Returns the local file path on success; throws on failure. The
+    # output filename follows the layer's
+    # `org.opencontainers.image.title` annotation
+    # (e.g. "podman-machine.x86_64.wsl.tar.zst") so podman recognizes
+    # the format from the extension alone.
+    [CmdletBinding()]
+    param(
+        [string]$Repo = 'quay.io/podman/machine-os',
+        [string]$Tag  = '6.0',
+        [string]$Architecture = 'x86_64',
+        [string]$DiskType = 'wsl',
+        [Parameter(Mandatory)] [string]$CacheDir
+    )
+
+    if (-not (Test-Path $CacheDir)) {
+        New-Item -ItemType Directory -Path $CacheDir -Force | Out-Null
+    }
+
+    $slash    = $Repo.IndexOf('/')
+    $registry = $Repo.Substring(0, $slash)
+    $name     = $Repo.Substring($slash + 1)
+    $base     = "https://$registry/v2/$name"
+
+    # ── Step 1: image index ───────────────────────────────────────────
+    Set-Step "Resolving $Repo`:$Tag (OCI index)"
+    $idxResp = Invoke-WebRequest -UseBasicParsing -Uri "$base/manifests/$Tag" `
+        -Headers @{ 'Accept' = 'application/vnd.oci.image.index.v1+json' } `
+        -ErrorAction Stop
+    $index = $idxResp.Content | ConvertFrom-Json
+    if ($index.mediaType -notlike '*image.index*') {
+        throw "Expected OCI image index at $Repo`:$Tag, got mediaType=$($index.mediaType)"
+    }
+
+    # ── Step 2: pick the platform manifest ────────────────────────────
+    $pm = $index.manifests | Where-Object {
+        $_.platform.architecture -eq $Architecture -and
+        $_.annotations.disktype -eq $DiskType
+    } | Select-Object -First 1
+    if (-not $pm) {
+        $available = ($index.manifests |
+            ForEach-Object { "$($_.platform.architecture)/$($_.annotations.disktype)" }) -join ', '
+        throw "No platform manifest for $Architecture/$DiskType in $Repo`:$Tag (available: $available)"
+    }
+
+    # ── Step 3: platform manifest -> single layer ─────────────────────
+    $pmResp = Invoke-WebRequest -UseBasicParsing -Uri "$base/manifests/$($pm.digest)" `
+        -Headers @{ 'Accept' = 'application/vnd.oci.image.manifest.v1+json' } `
+        -ErrorAction Stop
+    $manifest = $pmResp.Content | ConvertFrom-Json
+    $layer = $manifest.layers | Select-Object -First 1
+    if (-not $layer) {
+        throw "Platform manifest $($pm.digest) has no layers"
+    }
+
+    $title = $layer.annotations.'org.opencontainers.image.title'
+    if (-not $title) { $title = "$Architecture-$DiskType-$Tag.tar.zst" }
+    $localPath      = Join-Path $CacheDir $title
+    $expectedDigest = ($layer.digest -replace '^sha256:', '').ToLower()
+
+    # ── Step 4: cache-hit short-circuit ───────────────────────────────
+    if (Test-Path $localPath) {
+        $existingHash = (Get-FileHash -Path $localPath -Algorithm SHA256).Hash.ToLower()
+        if ($existingHash -eq $expectedDigest) {
+            Log-Ok "Reusing cached machine-os layer: $localPath"
+            return $localPath
+        }
+        Log-Warn "Cached machine-os layer hash mismatch -- re-downloading"
+        Remove-Item $localPath -Force -ErrorAction SilentlyContinue
+    }
+
+    # ── Step 5: streamed download via System.Net.Http (no RAM buffer) ─
+    $sizeMB  = [math]::Round($layer.size / 1MB, 1)
+    Log-Ok "Downloading machine-os layer ($sizeMB MB) -> $localPath"
+    $blobUrl = "$base/blobs/$($layer.digest)"
+    $tmpPath = "$localPath.tmp"
+
+    Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
+    $client = [System.Net.Http.HttpClient]::new()
+    $client.Timeout = [System.TimeSpan]::FromMinutes(30)
+    try {
+        $req  = [System.Net.Http.HttpRequestMessage]::new('Get', $blobUrl)
+        $resp = $client.SendAsync(
+            $req,
+            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+        ).GetAwaiter().GetResult()
+        if (-not $resp.IsSuccessStatusCode) {
+            throw "HTTP $([int]$resp.StatusCode) fetching $blobUrl"
+        }
+        $stream = $resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $file   = [System.IO.File]::Create($tmpPath)
+        try {
+            $buf       = [byte[]]::new(1048576)  # 1 MiB chunks
+            $total     = 0L
+            $lastTickMB = -16L
+            while (($n = $stream.Read($buf, 0, $buf.Length)) -gt 0) {
+                $file.Write($buf, 0, $n)
+                $total += $n
+                $totalMB = [int]($total / 1MB)
+                if ($totalMB - $lastTickMB -ge 16) {
+                    Set-Step "Downloading machine-os layer: $totalMB / $sizeMB MB"
+                    Show-Dashboard
+                    $lastTickMB = $totalMB
+                }
+            }
+        } finally {
+            $file.Dispose()
+            $stream.Dispose()
+        }
+    } finally {
+        $client.Dispose()
+    }
+
+    # ── Step 6: SHA256 verify ─────────────────────────────────────────
+    Set-Step "Verifying machine-os layer SHA256"
+    $actualHash = (Get-FileHash -Path $tmpPath -Algorithm SHA256).Hash.ToLower()
+    if ($actualHash -ne $expectedDigest) {
+        Remove-Item $tmpPath -Force -ErrorAction SilentlyContinue
+        throw "machine-os layer SHA256 mismatch: expected $expectedDigest, got $actualHash"
+    }
+
+    Move-Item -Path $tmpPath -Destination $localPath -Force
+    Log-Ok "machine-os layer staged: $localPath"
+    return $localPath
+}
+
 function New-BuilderDistro([hashtable]$HW) {
     Set-Step "Initializing $DevDistro ($($HW.Cpus) CPUs / $($HW.RamGB)GB / $($HW.DiskGB)GB disk)"
     # Cap at the OS-reported physical RAM (what podman validates) minus 512 MB safety margin.
@@ -1847,6 +1984,42 @@ function New-BuilderDistro([hashtable]$HW) {
     # CONTAINERS_STORAGE_CONF / podman.connections already point at
     # the data disk. $HW.DiskGB has also been clamped there.
     $diskGB = $HW.DiskGB
+
+    # ── Pre-stage machine-os via direct HTTPS ──────────────────────────────────
+    # On podman 5.8.2 (Windows + WSL provider) the in-process pull pipeline
+    # fails for ANY machine-os ref with "system cannot find the path
+    # specified". Direct OCI-Distribution GET against quay.io works fine,
+    # so we fetch the wsl-x86_64 layer ourselves and hand podman a local
+    # `.tar.zst` path -- no registry pull happens inside podman at all.
+    #
+    # Default tag: 6.0 (per operator instruction). Override with
+    # MIOS_MACHINE_TAG=<tag> or MIOS_MACHINE_IMAGE=<docker:// url> for a
+    # specific ref; pre-stage runs in both cases.
+    $machineTag = if ($env:MIOS_MACHINE_TAG) { $env:MIOS_MACHINE_TAG } else { '6.0' }
+    $machineRepo = 'quay.io/podman/machine-os'
+    if ($MachineImage -match '^docker://(.+)$') {
+        $ref = $matches[1]
+        if ($ref -match '^(.+):([^:]+)$') {
+            $machineRepo = $matches[1]
+            $machineTag  = $matches[2]
+        } elseif ($ref -match '^[^/]+/[^/]+/[^/]+$') {
+            $machineRepo = $ref
+        }
+        $MachineImage = $null  # force re-resolution below
+    }
+    if (-not $MachineImage) {
+        $machineCacheDir = Join-Path $script:MiosInstallDir 'machine-os'
+        try {
+            $MachineImage = Get-PodmanMachineOsImage `
+                -Repo $machineRepo `
+                -Tag  $machineTag `
+                -CacheDir $machineCacheDir
+        } catch {
+            Log-Warn "Pre-stage of $machineRepo`:$machineTag failed: $_"
+            Log-Warn "Will let podman attempt its own pull (likely fails on this client)."
+            $MachineImage = $null
+        }
+    }
 
     $initSw = [System.Diagnostics.Stopwatch]::StartNew()
     $initOut = [System.Collections.Generic.List[string]]::new()
