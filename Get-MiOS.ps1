@@ -531,36 +531,58 @@ if (Test-Path $RepoDir) {
 }
 
 Write-Info "Cloning $RepoUrl ($Branch, depth=1) -> $RepoDir ..."
-# Bulletproof native-command invocation, take 3:
+# Bulletproof native-command invocation, take 4:
 #
-#   * a6569e8 used `& { EAP=Continue; ... } 2>&1 | Out-Null`. That
-#     pattern works inside build-mios.ps1's Invoke-NativeQuiet helper,
-#     but inside Get-MiOS.ps1's irm|iex relaunch wrapper context the
-#     stream-merged ErrorRecord still propagated up and tripped the
-#     OUTER catch with git's normal "Cloning into '...'" banner.
-#   * 245d88e used `*>$null`. That redirects all streams at pipeline
-#     output but PowerShell synthesizes ErrorRecords from native-cmd
-#     stderr BEFORE the redirect, and the first one still escapes.
+#   * 245d88e tried `*>$null` (PowerShell pipeline redirect): defeated
+#     by stream-merged ErrorRecord synthesis happening BEFORE redirect.
+#   * a6569e8 tried `& { EAP=Continue; ... } 2>&1 | Out-Null`: somehow
+#     EAP=Stop in the parent scope still escapes up through the irm|
+#     iex relaunch-wrapper boundary in this specific context.
+#   * 1643b64 tried `Start-Process -RedirectStandardError NUL
+#     -RedirectStandardOutput NUL`: PowerShell's Start-Process has a
+#     hard-coded equality check that refuses identical redirect targets,
+#     so this throws "RedirectStandardOutput and RedirectStandardError
+#     are same".
 #
-# The shape that's actually independent of PowerShell's stderr-as-
-# ErrorRecord behavior: `Start-Process -RedirectStandardError NUL` --
-# Windows redirects git's stderr at the OS level, before PowerShell
-# can wrap any stderr line in an ErrorRecord. We then read the exit
-# code straight off the System.Diagnostics.Process object. No EAP /
-# PSNativeCommandUseErrorActionPreference / 2>&1 / try/catch dance.
+# Final approach: drop down to System.Diagnostics.Process directly.
+# That class has no such silly equality check, and we explicitly
+# .ReadToEnd() each stream into local strings (then discard them) so
+# both streams are drained without involving PowerShell's pipeline
+# ErrorRecord synthesis at all. RedirectStandard* = $true requires
+# UseShellExecute = $false, which lets us run from the existing console
+# without spawning a new window.
 $cloneExit = -1
 try {
-    $proc = Start-Process -FilePath 'git' `
-        -ArgumentList @('clone','--branch',$Branch,'--depth','1',$RepoUrl,$RepoDir) `
-        -NoNewWindow -Wait -PassThru `
-        -RedirectStandardOutput 'NUL' `
-        -RedirectStandardError 'NUL'
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName  = 'git'
+    foreach ($a in @('clone','--branch',$Branch,'--depth','1',$RepoUrl,$RepoDir)) {
+        # ArgumentList is the safe Add-individual-argument API on
+        # .NET 5+; on Windows PowerShell 5.1 (.NET Framework 4.x) we
+        # fall back to the legacy single-string Arguments and quote
+        # paths that may contain spaces.
+        if ($psi.ArgumentList -ne $null) { [void]$psi.ArgumentList.Add($a) }
+    }
+    if ($psi.ArgumentList -eq $null -or $psi.ArgumentList.Count -eq 0) {
+        # PS 5.1 / .NET Framework path -- no ArgumentList, build a
+        # quoted single-string Arguments value.
+        $psi.Arguments = ('clone --branch {0} --depth 1 {1} "{2}"' -f $Branch, $RepoUrl, $RepoDir)
+    }
+    $psi.UseShellExecute        = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+    $psi.CreateNoWindow         = $true
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    [void]$proc.Start()
+    [void]$proc.StandardOutput.ReadToEnd()
+    [void]$proc.StandardError.ReadToEnd()
+    $proc.WaitForExit()
     $cloneExit = $proc.ExitCode
 } catch {
-    # If Start-Process itself threw (rare -- usually means git not on PATH,
-    # which Require-Cmd above already gated against), fall through to
-    # the exit-code check below with the sentinel -1.
-    Write-Err "Start-Process git clone threw: $_"
+    # If Process.Start itself threw (rare -- usually means git not on
+    # PATH, which Require-Cmd above already gated against), fall through
+    # to the exit-code check below with the sentinel -1.
+    Write-Err "git clone via System.Diagnostics.Process threw: $_"
 }
 if ($cloneExit -ne 0) {
     Write-Err "git clone $RepoUrl -> $RepoDir failed (exit $cloneExit)."
