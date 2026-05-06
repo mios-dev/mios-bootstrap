@@ -893,6 +893,63 @@ function Move-BelowDash {
     } catch {}
 }
 
+# Scrub keys from $env:USERPROFILE\.wslconfig's [wsl2] section that
+# don't belong there. The most common mis-placement is `systemd=true`,
+# which is a /etc/wsl.conf [boot] directive (per-distro, INSIDE the
+# distro's filesystem) -- never a .wslconfig [wsl2] directive
+# (host-side, Windows). When wsl.exe parses .wslconfig and finds an
+# unknown key it prints:
+#
+#     wsl: Unknown key 'wsl2.systemd' in C:\Users\...\.wslconfig
+#
+# Older wsl versions treat that as a warning, newer ones can fail
+# the parse entirely. Either way the line ends up in our Phase 3
+# podman-init pipeline capture and surfaces as a FATAL with the
+# warning text (because the dashboard displays the LAST stderr line
+# captured before podman exits non-zero).
+#
+# This helper runs once at the end of Phase 0 so every subsequent
+# WSL/podman invocation in the build sees a clean .wslconfig.
+function Repair-WslConfig {
+    $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
+    if (-not (Test-Path $wslCfg)) { return }
+    # Keys that are valid in /etc/wsl.conf but NOT in .wslconfig's
+    # [wsl2] section. If we see any of these under [wsl2] we drop
+    # them (they were almost certainly written by an older bootstrap
+    # that confused the two config files, OR by a third-party tool).
+    $bootSectionKeys = @('systemd', 'command', 'enabled', 'appendWindowsPath',
+                         'default', 'options', 'mountFsTab',
+                         'generateHosts', 'generateResolvConf', 'hostname')
+    $lines     = Get-Content $wslCfg
+    $inWsl2    = $false
+    $newLines  = [System.Collections.Generic.List[string]]::new()
+    $scrubbed  = 0
+    foreach ($line in $lines) {
+        if ($line -match '^\s*\[wsl2\]\s*$') {
+            $inWsl2 = $true
+            $newLines.Add($line); continue
+        }
+        if ($line -match '^\s*\[') {
+            # Any other section header closes [wsl2].
+            $inWsl2 = $false
+            $newLines.Add($line); continue
+        }
+        if ($inWsl2 -and $line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') {
+            $key = $Matches[1]
+            if ($bootSectionKeys -contains $key) {
+                Write-Log "wslconfig-repair: dropped misplaced '$key=' line from [wsl2] (belongs in /etc/wsl.conf, not .wslconfig)" "WARN"
+                $scrubbed++
+                continue
+            }
+        }
+        $newLines.Add($line)
+    }
+    if ($scrubbed -gt 0) {
+        Set-Content -Path $wslCfg -Value $newLines -Encoding UTF8
+        Log-Ok ".wslconfig: scrubbed $scrubbed misplaced /etc/wsl.conf key(s) from [wsl2]"
+    }
+}
+
 # Invoke a native command with stderr collected into the success stream
 # but WITHOUT the "$ErrorActionPreference='Stop' + 2>&1" trap that
 # causes a chatty stderr (git's "Cloning into ...", "From https://...",
@@ -4083,6 +4140,14 @@ if (Get-Command podman -EA SilentlyContinue) { Log-Ok "Podman $((& podman --vers
 else { Log-Warn "Podman not found -- winget install RedHat.Podman-Desktop" }
 
 if (-not $preOk) { End-Phase 0 -Fail; throw "Prerequisites missing -- see log: $LogFile" }
+
+# Pre-flight: scrub misplaced /etc/wsl.conf keys from .wslconfig's [wsl2]
+# section BEFORE Phase 3 (podman machine init) talks to wsl.exe. A stale
+# `systemd=true` here would otherwise crash Phase 3 with the FATAL
+# "wsl: Unknown key 'wsl2.systemd' in <path>" surfaced as the last
+# captured stderr line of the podman pipeline.
+Repair-WslConfig
+
 End-Phase 0
 
 # ── Phase 1 -- Detecting existing build environment ──────────────────────────
