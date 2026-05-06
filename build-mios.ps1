@@ -3069,51 +3069,130 @@ echo "mios:mios" | sudo chpasswd 2>/dev/null && \
 # dashboard MOTD's `untracked 28` cosmetic note is unrelated and
 # unaffected.
 TOML_FILE="/usr/share/mios/mios.toml"
-if command -v rpm-ostree >/dev/null 2>&1 && [[ -f "$TOML_FILE" ]] && command -v python3 >/dev/null 2>&1; then
-    PKG_LIST=$(python3 - "$TOML_FILE" <<'PYEOF'
-import sys
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # python <3.11 fallback (FCOS ships 3.12+)
-try:
-    with open(sys.argv[1],'rb') as f:
-        d = tomllib.load(f)
-except Exception as e:
-    print('', end='')
-    sys.exit(0)
-sections = d.get('packages',{}).get('sections',[])
-out, seen = [], set()
-for s in sections:
-    sec = d.get('packages',{}).get(s,{})
-    if not isinstance(sec, dict): continue
-    if not sec.get('enable', True): continue
-    for p in sec.get('pkgs',[]):
-        if p and p not in seen:
-            seen.add(p); out.append(p)
-print(' '.join(out), end='')
-PYEOF
-)
+# Tool inventory: log explicitly which package manager is available so
+# the operator can see why a given fallback was chosen on this host.
+echo "[quadlet-overlay] package manager inventory:"
+echo "[quadlet-overlay]   rpm-ostree: $(command -v rpm-ostree 2>/dev/null || echo MISSING)"
+echo "[quadlet-overlay]   dnf:        $(command -v dnf 2>/dev/null || echo MISSING)"
+echo "[quadlet-overlay]   dnf5:       $(command -v dnf5 2>/dev/null || echo MISSING)"
+echo "[quadlet-overlay]   python3:    $(command -v python3 2>/dev/null || echo MISSING)"
+echo "[quadlet-overlay]   awk:        $(command -v awk 2>/dev/null || echo MISSING)"
+echo "[quadlet-overlay]   toml file:  $TOML_FILE ($([[ -f "$TOML_FILE" ]] && echo present || echo MISSING))"
+
+if [[ -f "$TOML_FILE" ]] && command -v awk >/dev/null 2>&1; then
+    # Pure-awk TOML parser. machine-os 6.0's stripped FCOS base often
+    # ships without python3, so the previous tomllib-based approach
+    # silently skipped (visible in the 19:24 log as "WARN: rpm-ostree
+    # or python3 not available"). Awk is in coreutils-equivalents on
+    # every Linux base.
+    #
+    # Two-stage parse:
+    #   1. Read [packages].sections array -> the master inclusion list.
+    #   2. For each section name, read [packages.<name>].pkgs IF
+    #      [packages.<name>].enable != false. Append to the global
+    #      package list.
+    # Output: deduped space-separated package names on stdout.
+    parse_pkgs() {
+        local toml="$1"
+        # Stage 1: extract sections array
+        local sections
+        sections=$(awk '
+            $0 == "[packages]" { in_master=1; line=""; next }
+            /^\[/ && in_master { in_master=0 }
+            in_master && /^[[:space:]]*sections[[:space:]]*=/ { collecting=1; line=$0 }
+            in_master && collecting && NR > 1 {
+                if (line != $0) line = line "\n" $0
+                if ($0 ~ /\]/) {
+                    sub(/^[^[]*\[/, "", line)
+                    sub(/\].*$/, "", line)
+                    gsub(/[[:space:]]/, "", line)
+                    gsub(/,/, " ", line)
+                    gsub(/"/, "", line)
+                    print line
+                    exit
+                }
+            }
+        ' "$toml")
+        # Stage 2: for each section, extract pkgs[] when enable != false
+        local sec
+        for sec in $sections; do
+            awk -v target="[packages.$sec]" '
+                $0 == target { in_sect=1; enable=1; collecting=0; next }
+                /^\[/ && in_sect { exit }
+                in_sect && /^[[:space:]]*enable[[:space:]]*=[[:space:]]*false/ { enable=0 }
+                in_sect && /^[[:space:]]*pkgs[[:space:]]*=/ { collecting=1; line=$0 }
+                in_sect && collecting {
+                    if (line != $0) line = line "\n" $0
+                    if ($0 ~ /\]/) {
+                        if (enable) {
+                            sub(/^[^[]*\[/, "", line)
+                            sub(/\].*$/, "", line)
+                            n = split(line, arr, /[,\n]/)
+                            for (i=1; i<=n; i++) {
+                                p = arr[i]
+                                gsub(/[[:space:]]/, "", p)
+                                gsub(/"/, "", p)
+                                gsub(/#.*/, "", p)
+                                if (p != "") print p
+                            }
+                        }
+                        exit
+                    }
+                }
+            ' "$toml"
+        done | awk '!seen[$0]++' | tr '\n' ' '
+    }
+
+    PKG_LIST=$(parse_pkgs "$TOML_FILE")
     PKG_COUNT=$(echo "$PKG_LIST" | wc -w)
+    echo "[quadlet-overlay] resolved $PKG_COUNT packages from mios.toml [packages].sections"
+
     if [[ $PKG_COUNT -gt 0 ]]; then
-        echo "[quadlet-overlay] rpm-ostree install: $PKG_COUNT packages from mios.toml [packages].sections"
-        echo "[quadlet-overlay] (first run can take 10-15 min; cached subsequent runs are fast)"
-        # shellcheck disable=SC2086 # PKG_LIST intentionally word-split
-        sudo rpm-ostree install --idempotent --allow-inactive $PKG_LIST 2>&1 | tail -40 || {
-            echo "[quadlet-overlay] WARN: rpm-ostree install returned non-zero -- continuing (some packages may have failed; check 'rpm-ostree status')"
-        }
-        # apply-live makes layered packages available NOW (best-effort).
-        # Things that can't apply live (kernel modules, units that
-        # require a fresh PID 1) get queued for the next reboot, which
-        # the build-mios.ps1's `wsl --terminate podman-MiOS-DEV` (added
-        # in 4a8e7f6) provides immediately after this seed completes.
-        echo "[quadlet-overlay] rpm-ostree apply-live (best-effort)..."
-        sudo rpm-ostree apply-live --allow-replacement 2>&1 | tail -10 || true
+        # Try package managers in order of preference:
+        # 1. rpm-ostree install (canonical on FCOS / machine-os; layered + apply-live)
+        # 2. rpm-ostree usroverlay + dnf install (reset-on-deployment-switch but
+        #    immediate effect; survives wsl --terminate within same boot)
+        # 3. dnf install standalone (mutable-fs base or already-overlayed)
+        installed_via=""
+        if command -v rpm-ostree >/dev/null 2>&1; then
+            echo "[quadlet-overlay] rpm-ostree install: $PKG_COUNT packages (first run 10-15 min; cached after)"
+            # shellcheck disable=SC2086
+            if sudo rpm-ostree install --idempotent --allow-inactive $PKG_LIST 2>&1 | tail -40; then
+                installed_via="rpm-ostree"
+                echo "[quadlet-overlay] rpm-ostree apply-live (best-effort, layered packages active immediately where possible)..."
+                sudo rpm-ostree apply-live --allow-replacement 2>&1 | tail -10 || true
+            else
+                echo "[quadlet-overlay] WARN: rpm-ostree install returned non-zero, falling back to dnf"
+            fi
+        fi
+        if [[ -z "$installed_via" ]] && command -v dnf >/dev/null 2>&1; then
+            echo "[quadlet-overlay] dnf install fallback (rpm-ostree usroverlay -> dnf)..."
+            sudo rpm-ostree usroverlay 2>&1 | tail -3 || true
+            # shellcheck disable=SC2086
+            if sudo dnf install -y --skip-unavailable $PKG_LIST 2>&1 | tail -40; then
+                installed_via="dnf"
+            fi
+        fi
+        if [[ -z "$installed_via" ]] && command -v dnf5 >/dev/null 2>&1; then
+            echo "[quadlet-overlay] dnf5 install fallback..."
+            sudo rpm-ostree usroverlay 2>&1 | tail -3 || true
+            # shellcheck disable=SC2086
+            if sudo dnf5 install -y --skip-unavailable $PKG_LIST 2>&1 | tail -40; then
+                installed_via="dnf5"
+            fi
+        fi
+        if [[ -n "$installed_via" ]]; then
+            echo "[quadlet-overlay] package install: SUCCESS via $installed_via"
+        else
+            echo "[quadlet-overlay] ERROR: all package managers failed (rpm-ostree / dnf / dnf5)"
+            echo "[quadlet-overlay]        machine-os may be locked-down past what live-install supports;"
+            echo "[quadlet-overlay]        full set will land via mios-build-driver -> bootc switch"
+        fi
     else
-        echo "[quadlet-overlay] WARN: package list resolved EMPTY -- mios.toml [packages].sections not parsed correctly"
+        echo "[quadlet-overlay] WARN: parser yielded EMPTY package list -- check awk parse logic vs $TOML_FILE"
     fi
 else
-    echo "[quadlet-overlay] WARN: rpm-ostree or python3 not available; package install deferred to mios-build-driver"
+    echo "[quadlet-overlay] WARN: $TOML_FILE absent or awk missing; cannot resolve package list"
 fi
 
 sudo install -d -m 0755 /var/lib/mios
