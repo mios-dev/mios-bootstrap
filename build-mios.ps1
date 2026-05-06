@@ -109,15 +109,35 @@ $BuilderDistro    = $DevDistro
 $LegacyDevName    = "MiOS-BUILDER"
 $MiosWslDistro    = "MiOS"
 $LegacyDistro     = "podman-machine-default"
-# MiOS-DEV's base OCI ref. Pinned explicitly so the MiOS-DEV substrate
-# doesn't drift with the operator's installed podman client version --
-# without --image, `podman machine init` defaults to whatever
-# /usr/share/podman/machine.image points at, which silently bumps every
-# time the operator runs `dnf upgrade podman`. Operators can override
-# via $env:MIOS_MACHINE_IMAGE before invoking the bootstrap; the default
-# tracks the latest stable podman-machine-os release.
-$MachineImage     = if ($env:MIOS_MACHINE_IMAGE) { $env:MIOS_MACHINE_IMAGE }
-                    else { "quay.io/podman/machine-os:6.0" }
+# MiOS-DEV's base machine-OS image. We DO NOT pin a specific tag by
+# default any more, because:
+#
+#   * `podman machine init --image <bare OCI ref>` does NOT recognize
+#     the bare-ref form -- podman tries to stat() the value as a local
+#     file path. On Windows that's a GetFileAttributesEx call on
+#     "quay.io/podman/machine-os:<tag>" which fails with "The system
+#     cannot find the path specified" because `:` is interpreted as a
+#     drive-letter separator. The user-visible failure was:
+#         FATAL: Error: GetFileAttributesEx quay.io/podm...
+#     in Phase 3 with the previous pin "quay.io/podman/machine-os:6.0".
+#   * To pass an OCI ref to `podman machine init --image`, the value
+#     MUST be prefixed with `docker://`. Bare refs are silently treated
+#     as file paths, no error from the parser, just an unhelpful stat
+#     failure downstream.
+#   * Hard-pinning a specific tag also tends to break with podman
+#     client version drift -- a podman 4.x client doesn't understand
+#     a 6.x machine-os, and vice versa.
+#
+# Behavior: if $env:MIOS_MACHINE_IMAGE is set we pass it through (and
+# auto-prefix `docker://` if it looks like an OCI ref). Otherwise we
+# omit --image entirely and let podman use its bundled default, which
+# always matches the installed podman client version.
+$MachineImage = $env:MIOS_MACHINE_IMAGE
+if ($MachineImage -and $MachineImage -notmatch '^(docker|https?|file)://' -and $MachineImage -match '^[a-z0-9.-]+\.[a-z]{2,}/') {
+    # Looks like a bare OCI ref (host.tld/repo:tag) -- prefix it so
+    # podman parses it as a docker-transport URL, not a file path.
+    $MachineImage = "docker://$MachineImage"
+}
 
 if ($script:IsAdmin) {
     # AllUsers (machine-wide native Windows app layout). Top-level
@@ -1597,11 +1617,27 @@ function New-BuilderDistro([hashtable]$HW) {
 
     $initSw = [System.Diagnostics.Stopwatch]::StartNew()
     $initOut = [System.Collections.Generic.List[string]]::new()
-    Log-Ok "Provisioning MiOS-DEV from machine image: $MachineImage"
-    & podman machine init $BuilderDistro `
-        --cpus $HW.Cpus --memory $ramMB --disk-size $diskGB `
-        --image $MachineImage `
-        --rootful --now 2>&1 | ForEach-Object {
+    if ($MachineImage) {
+        Log-Ok "Provisioning MiOS-DEV from machine image: $MachineImage"
+    } else {
+        Log-Ok "Provisioning MiOS-DEV using podman's bundled default machine image"
+    }
+    # Build the arg list dynamically so --image is only passed when the
+    # operator (or env override) has supplied one. With no --image,
+    # podman init uses its bundled default -- always compatible with
+    # the installed client version.
+    $initArgs = @(
+        'machine', 'init', $BuilderDistro,
+        '--cpus',      $HW.Cpus,
+        '--memory',    $ramMB,
+        '--disk-size', $diskGB,
+        '--rootful',
+        '--now'
+    )
+    if ($MachineImage) {
+        $initArgs += @('--image', $MachineImage)
+    }
+    & podman @initArgs 2>&1 | ForEach-Object {
             Write-Log "podman-init: $_"
             $initOut.Add([string]$_) | Out-Null
             if ($initSw.ElapsedMilliseconds -ge 150) {
