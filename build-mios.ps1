@@ -589,16 +589,21 @@ function Write-Log {
     # frames cannot leak in. This is THE single canonical counting
     # system for the run; every event flows through here.
     try { [System.IO.File]::AppendAllText($LogFile, ($line + "`n"), [Text.Encoding]::UTF8) } catch {}
-    # Console mirroring policy depends on $DashboardMode:
-    #   * interactive: Write-Host every line. Show-Dashboard repaints
-    #     over these rows on its next tick (the log file already has
-    #     the canonical record so we can be liberal here).
-    #   * log:         Show-Dashboard is a no-op so anything we Write-Host
-    #     stays on screen forever. Only surface WARN/ERROR (which
-    #     operators must see) and let INFO live in the log file.
-    if ($script:DashboardMode -eq 'interactive') {
-        Write-Host $line
-    } elseif ($L -in @('WARN','ERROR')) {
+    # Console mirroring policy:
+    #   * INFO/DEBUG -> file ONLY. Never Write-Host. The previous code
+    #     said "interactive: mirror every line, Show-Dashboard repaints
+    #     over them" but Show-Dashboard only writes ~25 rows; the
+    #     quadlet-overlay seed alone emits hundreds of INFO lines (file
+    #     update percent x 618, oh-my-posh sub-lines, etc.), drowning
+    #     the dashboard with scrolling text and producing the
+    #     stacked-frame screenshot artifact. The operator sees the
+    #     current step via $script:CurStep on the dashboard's now-line;
+    #     the log file is authoritative for everything else.
+    #   * WARN/ERROR -> file + Write-Host. Operators MUST see these,
+    #     so we surface them above the dashboard. Show-Dashboard's next
+    #     tick scrolls the visible region but the log file always has
+    #     the canonical record.
+    if ($L -in @('WARN','ERROR')) {
         $color = if ($L -eq 'ERROR') { 'Red' } else { 'Yellow' }
         Write-Host $line -ForegroundColor $color
     }
@@ -964,7 +969,13 @@ function Show-Dashboard {
             $tgtRow = $dashStart + $i
             if ($tgtRow -lt 0 -or $tgtRow -ge $bufH) { continue }
             [Console]::SetCursorPosition(0, $tgtRow)
-            [Console]::Write($rows[$i])
+            # Write the 80-cap row, then ANSI \e[K (clear-to-EOL) to
+            # wipe any stale content past col 80 left over from log
+            # lines, prior wider renders, or wt.exe windows that didn't
+            # honor SetWindowSize. Modern wt.exe + conhost both
+            # process \e[K cleanly; ancient hosts ignore it (degrades
+            # gracefully).
+            [Console]::Write($rows[$i] + "`e[K")
         }
         # ── Ghost-row blanking ────────────────────────────────────────
         # If a previous render placed MORE rows than this one, blank
