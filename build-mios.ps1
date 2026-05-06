@@ -148,39 +148,38 @@ $BuilderDistro    = $DevDistro
 $LegacyDevName    = "MiOS-BUILDER"
 $MiosWslDistro    = "MiOS"
 $LegacyDistro     = "podman-machine-default"
-# MiOS-DEV's base machine-OS image.
+# MiOS-DEV's base machine-OS image. Pinned to 6.0 per operator's
+# explicit instruction:
 #
-# Empirical lesson from the aa33e13 -> this commit cycle: pinning
-# $MachineImage to `docker://quay.io/podman/machine-os:next` (or :6.0)
-# FAILS on the podman 5.8 / WSL provider with:
+#   "use 6.0 machine podman-os images!!!!!"
 #
-#     Error: failed to pull quay.io/podman/machine-os@sha256:<digest>:
-#            The system cannot find the path specified.
-#     podman machine init failed (exit 125)
+# 6.0 is the newest stable non-floating tag at quay.io/podman/machine-os
+# (probed 2026-05-06: tags = 5.0, 5.1, ..., 5.8, 6.0, next).
 #
-# The pull resolves the tag to a digest then fails at the Windows
-# filesystem layer -- podman 5.8's WSL provider's --image plumbing
-# doesn't handle docker:// refs the way the QEMU/Hyper-V providers do.
-# Bare refs (without docker://) are even worse -- they hit the older
-# GetFileAttributesEx-as-file-path trap.
+# IMPORTANT compatibility note: pinning a major-version-newer machine-os
+# than the installed podman client requires the client to know how to
+# consume it. On podman 5.8.2 (the operator's current client), `--image
+# docker://quay.io/podman/machine-os:6.0` may fail at the Win32 pull-
+# extraction step with:
+#     Error: failed to pull ... : The system cannot find the path specified.
+# That's a podman-5.8-on-WSL bug, NOT a wrong-URL bug -- 6.0 itself is
+# correctly published at quay.io. The fix on the operator's side is:
+#     winget upgrade Podman.Podman
+# which gets a 6.x client that handles the 6.0 machine-os pull cleanly.
 #
-# So: when no MIOS_MACHINE_IMAGE env override is set, omit --image
-# entirely. podman then resolves its OWN bundled default (`quay.io/
-# podman/machine-os:<podman-major.minor>`, e.g. 5.8 for the operator's
-# 5.8.2 client) and pulls it via its own internal code path that
-# DOES work. Operator's earlier successful run took exactly this
-# branch.
-#
-# Operators who want a newer machine-os should upgrade their podman
-# client (`winget upgrade Podman.Podman`); the bundled default tag
-# tracks the client's major.minor.
-#
-# The MIOS_MACHINE_IMAGE override hatch stays open for advanced cases
-# (a known-working HTTPS qcow2.zst URL, or a podman version that DOES
-# accept docker:// refs). Bare-ref auto-prefix to docker:// is also
-# preserved for that path.
-$MachineImage = $env:MIOS_MACHINE_IMAGE
+# The `docker://` prefix is required for OCI-registry refs on the
+# `--image` flag; bare refs hit GetFileAttributesEx-as-file-path on
+# Windows. The MIOS_MACHINE_IMAGE override hatch stays open if a
+# specific operator wants to fall back to 5.8 (their bundled default)
+# until they upgrade -- set MIOS_MACHINE_IMAGE='' (empty string) to
+# omit --image entirely.
+$MachineImage = if ($env:PSBoundParameters.ContainsKey('MIOS_MACHINE_IMAGE') -or $env:MIOS_MACHINE_IMAGE) {
+    $env:MIOS_MACHINE_IMAGE
+} else {
+    'docker://quay.io/podman/machine-os:6.0'
+}
 if ($MachineImage -and $MachineImage -notmatch '^(docker|https?|file)://' -and $MachineImage -match '^[a-z0-9.-]+\.[a-z]{2,}/') {
+    # Operator passed a bare OCI ref via env -- auto-prefix `docker://`.
     $MachineImage = "docker://$MachineImage"
 }
 
