@@ -3047,6 +3047,75 @@ echo "${DEV_USER}:mios" | sudo chpasswd 2>/dev/null && \
 echo "mios:mios" | sudo chpasswd 2>/dev/null && \
     echo "[quadlet-overlay] mios password set to 'mios'"
 
+# ── Layer the FULL mios.toml [packages].sections set into MiOS-DEV ───────
+# Per feedback_mios_dev_equals_mios.md and the 2026-05-06 directive
+# "MIOS MUST CONTAIN EVERYTHING NEEDED TO SELF; dev, build, run, host,
+# hosting, etc-etc TOML/HTML SHOULD BOTH REFLECT EACHOTHER AND DICTATE
+# ANY AND ALL MIOS DEPLOYMENTS AND ENTRIES INCLUDING DEPLOYING MIOS DEV":
+# the same package set that lands in a deployed MiOS host must land in
+# MiOS-DEV at Phase 3 time, NOT deferred to mios-build-driver. Operator
+# expects `just`, `btop`, `fastfetch`, `ripgrep`, etc. to be available
+# the moment they enter the dev distro.
+#
+# Approach: parse /usr/share/mios/mios.toml [packages].sections (master
+# inclusion list, configurator-controlled), filter by per-section
+# .enable, dedupe pkgs, layer them via `rpm-ostree install` (machine-os
+# is FCOS-based + ostree-managed; rpm-ostree is the canonical layered-
+# package mechanism). --idempotent skips already-installed, --allow-
+# inactive doesn't fail when a layered package's services can't start
+# yet (e.g. needs reboot or kernel module not in WSL kernel).
+#
+# Best-effort: a non-zero rpm-ostree exit doesn't abort the seed. The
+# dashboard MOTD's `untracked 28` cosmetic note is unrelated and
+# unaffected.
+TOML_FILE="/usr/share/mios/mios.toml"
+if command -v rpm-ostree >/dev/null 2>&1 && [[ -f "$TOML_FILE" ]] && command -v python3 >/dev/null 2>&1; then
+    PKG_LIST=$(python3 - "$TOML_FILE" <<'PYEOF'
+import sys
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # python <3.11 fallback (FCOS ships 3.12+)
+try:
+    with open(sys.argv[1],'rb') as f:
+        d = tomllib.load(f)
+except Exception as e:
+    print('', end='')
+    sys.exit(0)
+sections = d.get('packages',{}).get('sections',[])
+out, seen = [], set()
+for s in sections:
+    sec = d.get('packages',{}).get(s,{})
+    if not isinstance(sec, dict): continue
+    if not sec.get('enable', True): continue
+    for p in sec.get('pkgs',[]):
+        if p and p not in seen:
+            seen.add(p); out.append(p)
+print(' '.join(out), end='')
+PYEOF
+)
+    PKG_COUNT=$(echo "$PKG_LIST" | wc -w)
+    if [[ $PKG_COUNT -gt 0 ]]; then
+        echo "[quadlet-overlay] rpm-ostree install: $PKG_COUNT packages from mios.toml [packages].sections"
+        echo "[quadlet-overlay] (first run can take 10-15 min; cached subsequent runs are fast)"
+        # shellcheck disable=SC2086 # PKG_LIST intentionally word-split
+        sudo rpm-ostree install --idempotent --allow-inactive $PKG_LIST 2>&1 | tail -40 || {
+            echo "[quadlet-overlay] WARN: rpm-ostree install returned non-zero -- continuing (some packages may have failed; check 'rpm-ostree status')"
+        }
+        # apply-live makes layered packages available NOW (best-effort).
+        # Things that can't apply live (kernel modules, units that
+        # require a fresh PID 1) get queued for the next reboot, which
+        # the build-mios.ps1's `wsl --terminate podman-MiOS-DEV` (added
+        # in 4a8e7f6) provides immediately after this seed completes.
+        echo "[quadlet-overlay] rpm-ostree apply-live (best-effort)..."
+        sudo rpm-ostree apply-live --allow-replacement 2>&1 | tail -10 || true
+    else
+        echo "[quadlet-overlay] WARN: package list resolved EMPTY -- mios.toml [packages].sections not parsed correctly"
+    fi
+else
+    echo "[quadlet-overlay] WARN: rpm-ostree or python3 not available; package install deferred to mios-build-driver"
+fi
+
 sudo install -d -m 0755 /var/lib/mios
 sudo touch "$SENTINEL"
 
