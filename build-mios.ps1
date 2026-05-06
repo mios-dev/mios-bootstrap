@@ -231,7 +231,8 @@ if ($script:IsAdmin) {
     # application rather than a hidden Program Files entry.
     $MiosInstallDir   = Join-Path ${env:SystemDrive} "MiOS"             # C:\MiOS
     $MiosProgramData  = Join-Path ${env:ProgramData}  "MiOS"            # C:\ProgramData\MiOS
-    $MiosRepoDir      = Join-Path $MiosInstallDir   "repo"              # code (git checkouts)
+    $MiosRepoDir      = Join-Path $MiosInstallDir   "repo"              # boot-time default; Update-MiosInstallPaths swaps to M:\ on data disk
+    $MiosBootstrapShadow = Join-Path $MiosRepoDir 'mios-bootstrap'      # boot-time default; data-disk variant goes to M:\MiOS\bootstrap-shadow
     $MiosBinDir       = Join-Path $MiosInstallDir   "bin"               # entry-point scripts + oh-my-posh
     $MiosShareDir     = Join-Path $MiosInstallDir   "share"             # mios-bootstrap etc/usr trees
     $MiosIconsDir     = Join-Path $MiosInstallDir   "icons"             # per-verb .ico files
@@ -249,6 +250,7 @@ if ($script:IsAdmin) {
     $MiosInstallDir   = Join-Path ${env:LOCALAPPDATA} "MiOS"
     $MiosProgramData  = Join-Path $MiosInstallDir    "machine-state"
     $MiosRepoDir      = Join-Path $MiosInstallDir    "repo"
+    $MiosBootstrapShadow = Join-Path $MiosRepoDir    'mios-bootstrap'
     $MiosBinDir       = Join-Path $MiosInstallDir    "bin"
     $MiosShareDir     = Join-Path $MiosInstallDir    "share"
     $MiosIconsDir     = Join-Path $MiosInstallDir    "icons"
@@ -295,7 +297,25 @@ function Update-MiosInstallPaths {
     # "everything MiOS lives here"; we honor that across the board.
     #
     # Caller MUST run this BEFORE Phase 2 (repos clone) so the clones
-    # land at M:\MiOS\repo, not at C:\MiOS\repo.
+    # land at the right place for the new "M:\ IS git" layout.
+    #
+    # 2026-05-06 OPERATOR DIRECTIVE -- "MIOS REPOSITORIES BOTH OVERLAYED
+    # AT THE M:\ ROOT". The previous "$MiosRepoDir = M:\MiOS\repo with
+    # mios/ + mios-bootstrap/ as siblings" layout is gone. New layout:
+    #
+    #   M:\                  mios.git working tree (M:\.git is mios.git's)
+    #                          + mios-bootstrap.git files overlaid on top
+    #                            (Get-MiOS.ps1, build-mios.ps1, bootstrap.ps1)
+    #   M:\MiOS\               Windows install state (subdirs below)
+    #   M:\MiOS\bin            entry-point .ps1 scripts
+    #   M:\MiOS\share          materialized templates (legacy convenience)
+    #   M:\MiOS\machine-state  podman-machine + WSL2 state
+    #   M:\MiOS\distros        WSL2 distro tarballs
+    #   M:\MiOS\images         BIB output artifacts
+    #   M:\MiOS\logs           install logs
+    #   M:\MiOS\bootstrap-shadow  mios-bootstrap.git's actual checkout (.git lives here
+    #                              so fetch+reset on bootstrap doesn't fight mios.git's
+    #                              .git at M:\); files are robocopied onto M:\ root.
     param([Parameter(Mandatory)] [string] $NewRoot)
     $script:MiosInstallDir  = $NewRoot
     $script:MiosBinDir      = Join-Path $NewRoot 'bin'
@@ -305,7 +325,28 @@ function Update-MiosInstallPaths {
     $script:MiosFontsDir    = Join-Path $NewRoot 'fonts'
     # State + artifacts also move onto the data disk.
     $script:MiosProgramData = Join-Path $NewRoot 'machine-state'
-    $script:MiosRepoDir     = Join-Path $NewRoot 'repo'
+    # MiosRepoDir = data-disk root (M:\) when we're running on the
+    # MIOS-DEV partition; legacy NewRoot\repo otherwise. Both repos
+    # overlay to this path; mios.git's .git lives here, mios-bootstrap.git's
+    # .git lives in $MiosBootstrapShadow.
+    $_qualifier = (Split-Path $NewRoot -Qualifier)         # 'M:'
+    $_drive     = if ($_qualifier) { "$_qualifier\" } else { $null }   # 'M:\'
+    $_onDataDisk = $false
+    if ($_drive) {
+        try {
+            $_vol = Get-Volume -DriveLetter $_qualifier.TrimEnd(':') -ErrorAction SilentlyContinue
+            if ($_vol -and $_vol.FileSystemLabel -eq 'MIOS-DEV') {
+                $_onDataDisk = $true
+            }
+        } catch {}
+    }
+    if ($_onDataDisk) {
+        $script:MiosRepoDir         = $_drive                                  # 'M:\'
+        $script:MiosBootstrapShadow = Join-Path $NewRoot 'bootstrap-shadow'    # 'M:\MiOS\bootstrap-shadow'
+    } else {
+        $script:MiosRepoDir         = Join-Path $NewRoot 'repo'                # legacy fallback
+        $script:MiosBootstrapShadow = Join-Path $script:MiosRepoDir 'mios-bootstrap'
+    }
     $script:MiosDistroDir   = Join-Path $NewRoot 'distros'
     $script:MiosImagesDir   = Join-Path $NewRoot 'images'
     $script:MiosMachineCfg  = Join-Path $NewRoot 'config'
@@ -1313,15 +1354,14 @@ $driverCmd
                 }
             }
             '3' {
-                # preflight.ps1 is in mios.git, not mios-bootstrap.git.
-                # mios.git clones to $MiosRepoDir\mios (Phase 2), so the
-                # actual path is $MiosRepoDir\mios\preflight.ps1.
-                # Older $MiosRepoDir\preflight.ps1 fallback covers the
-                # case where the operator manually staged a copy at the
-                # parent dir.
+                # preflight.ps1 is in mios.git, which is now overlaid AT
+                # $MiosRepoDir root (M:\). Per the 2026-05-06 directive
+                # "M:\ IS git", mios.git/preflight.ps1 lives at M:\preflight.ps1.
+                # The legacy $MiosRepoDir\mios\preflight.ps1 fallback is kept
+                # for operators on stale checkouts pre-overlay-refactor.
                 $pflCandidates = @(
-                    (Join-Path $MiosRepoDir 'mios\preflight.ps1'),
-                    (Join-Path $MiosRepoDir 'preflight.ps1')
+                    (Join-Path $MiosRepoDir 'preflight.ps1'),
+                    (Join-Path $MiosRepoDir 'mios\preflight.ps1')
                 )
                 $pfl = $pflCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
                 if ($pfl) {
@@ -2315,9 +2355,10 @@ function Invoke-MiosOverlaySeed {
     # Updated path: the file moved 2026-05-05 to usr/share/doc/mios/reference/.
     # Try the new path first, fall back to the old vendor location for
     # operators on stale checkouts.
-    $packagesMd = Join-Path $MiosRepoDir "mios\usr\share\doc\mios\reference\PACKAGES.md"
+    # mios.git overlay puts /usr at $MiosRepoDir root.
+    $packagesMd = Join-Path $MiosRepoDir "usr\share\doc\mios\reference\PACKAGES.md"
     if (-not (Test-Path $packagesMd)) {
-        $packagesMd = Join-Path $MiosRepoDir "mios\usr\share\mios\PACKAGES.md"
+        $packagesMd = Join-Path $MiosRepoDir "usr\share\mios\PACKAGES.md"
     }
     if (-not (Test-Path $packagesMd)) {
         Log-Warn "PACKAGES.md not found in either canonical location -- legacy overlay seed skipped"
@@ -2350,8 +2391,12 @@ function Invoke-MiosOverlaySeed {
 
     $tomlSources = @(
         (Join-Path $env:APPDATA "MiOS\mios.toml"),
-        (Join-Path $MiosRepoDir "mios-bootstrap\mios.toml"),
-        (Join-Path $MiosRepoDir "mios\usr\share\mios\mios.toml")
+        # Both repos are overlaid at $MiosRepoDir root, so mios.toml
+        # exists once at $MiosRepoDir\mios.toml (mios-bootstrap's copy
+        # last-write-wins via the robocopy overlay) AND once at
+        # $MiosRepoDir\usr\share\mios\mios.toml (mios.git's vendor copy).
+        (Join-Path $MiosRepoDir "mios.toml"),
+        (Join-Path $MiosRepoDir "usr\share\mios\mios.toml")
     )
     $tomlPath = $null
     foreach ($t in $tomlSources) { if (Test-Path $t) { $tomlPath = $t; break } }
@@ -2541,9 +2586,11 @@ function Invoke-MiosQuadletOverlay {
     }
 
     Set-Step "Overlaying MiOS Quadlets + systemd units onto $DevDistro..."
-    $miosRoot = Join-Path $MiosRepoDir "mios"
+    # Per the 2026-05-06 directive "M:\ IS git", mios.git is overlaid AT
+    # $MiosRepoDir root, not at $MiosRepoDir\mios subdir.
+    $miosRoot = $MiosRepoDir
     if (-not (Test-Path (Join-Path $miosRoot "Containerfile"))) {
-        Log-Warn "mios.git checkout missing at $miosRoot -- Quadlet overlay skipped"
+        Log-Warn "mios.git overlay missing at $miosRoot (no Containerfile) -- Quadlet overlay skipped"
         return
     }
     $wslDistro = "podman-$DevDistro"
@@ -2555,8 +2602,16 @@ function Invoke-MiosQuadletOverlay {
     if (-not $sshOk) { Log-Warn "Cannot wsl.exe into $DevDistro -- Quadlet overlay deferred"; return }
 
     # Convert C:\path\to\mios -> /mnt/c/path/to/mios for the WSL side.
-    $drive = $miosRoot.Substring(0,1).ToLower()
-    $miosRootWsl = "/mnt/$drive" + ($miosRoot.Substring(2) -replace '\\','/')
+    # Trim trailing backslash so M:\ -> /mnt/m (no trailing slash, which
+    # would produce /mnt/m/ and break sentinel comparisons in the seed
+    # script that compare against $1).
+    $miosRootTrimmed = $miosRoot.TrimEnd('\')
+    $drive = $miosRootTrimmed.Substring(0,1).ToLower()
+    $miosRootWsl = if ($miosRootTrimmed.Length -le 2) {
+        "/mnt/$drive"     # bare drive root e.g. M:\ -> /mnt/m
+    } else {
+        "/mnt/$drive" + ($miosRootTrimmed.Substring(2) -replace '\\','/')
+    }
 
     $enableAi     = if ($env:MIOS_DEV_ENABLE_AI     -in @('1','true','TRUE','yes')) { '1' } else { '0' }
     $enableRunner = if ($env:MIOS_DEV_ENABLE_RUNNER -in @('1','true','TRUE','yes')) { '1' } else { '0' }
@@ -3002,17 +3057,19 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
                                    [string]$AiModel = "qwen2.5-coder:7b",
                                    [string]$EmbedModel = "nomic-embed-text",
                                    [string]$BakeModels = "qwen2.5-coder:7b,nomic-embed-text") {
-    $repoPath = Join-Path $MiosRepoDir "mios"
+    # mios.git is now overlaid AT $MiosRepoDir root (M:\), per the
+    # 2026-05-06 directive. The build context IS the overlay root.
+    $repoPath = $MiosRepoDir
 
     # ── Universal MiOS-SEED merge ────────────────────────────────────────────
-    # Overlay mios-bootstrap onto mios.git BEFORE invoking podman build so the
-    # build context contains both layers. Without this, only mios.git's tree
-    # is in the build context and bootstrap-owned files (etc/skel/.config/mios/,
-    # etc/mios/profile.toml, mios.toml at root, agent entry-point .md files)
-    # never reach the OCI image -- WSL/bootc deploys would diverge from the
-    # Linux Total-Root-Merge path. seed-merge.ps1 is the canonical PowerShell
-    # implementation; seed-merge.sh is its bash twin invoked from build-mios.sh.
-    $bootstrapPath = Join-Path $MiosRepoDir "mios-bootstrap"
+    # The Phase 2 overlay (lines ~4823+) already robocopies mios-bootstrap.git
+    # onto $MiosRepoDir, so by the time we reach podman build the bootstrap
+    # files (etc/skel/.config/mios/, etc/mios/profile.toml, mios.toml at root,
+    # agent entry-point .md files) are already present in the build context.
+    # seed-merge.ps1 is kept as a defensive idempotent re-run -- if the
+    # operator added new files to mios-bootstrap.git between Phase 2 and
+    # this phase, they get pulled in.
+    $bootstrapPath = $MiosBootstrapShadow
     $seedScript    = Join-Path $bootstrapPath "seed-merge.ps1"
     if (Test-Path $seedScript) {
         Set-Step "Universal MiOS-SEED: overlay mios-bootstrap onto mios.git"
@@ -3862,9 +3919,12 @@ function Install-WindowsBranding {
     }
 
     # ── 3. PowerShell profile + theme ────────────────────────────────
-    $miosThemeSrc = Join-Path $MiosRepoDir 'mios\usr\share\mios\oh-my-posh\mios.omp.json'
+    # mios.git overlay puts the theme at $MiosRepoDir\usr\share\mios\...
+    # (per 2026-05-06 "M:\ IS git" directive). The mios-bootstrap shadow
+    # is checked as a defensive fallback.
+    $miosThemeSrc = Join-Path $MiosRepoDir 'usr\share\mios\oh-my-posh\mios.omp.json'
     if (-not (Test-Path $miosThemeSrc)) {
-        $miosThemeSrc = Join-Path $MiosRepoDir 'mios-bootstrap\usr\share\mios\oh-my-posh\mios.omp.json'
+        $miosThemeSrc = Join-Path $MiosBootstrapShadow 'usr\share\mios\oh-my-posh\mios.omp.json'
     }
     if (Test-Path $miosThemeSrc) {
         New-Item -ItemType Directory -Path $MiosThemesDir -Force | Out-Null
@@ -4732,7 +4792,8 @@ $activeDistro = Find-ActiveDistro
 
 if ($activeDistro) {
     Log-Ok "MiOS repo found in $activeDistro"
-    $miosRepo = Join-Path $MiosRepoDir "mios"
+    # mios.git is overlaid AT $MiosRepoDir root (M:\). Per 2026-05-06.
+    $miosRepo = $MiosRepoDir
     if (Test-Path (Join-Path $miosRepo ".git")) {
         # Hard reset to origin/main -- a soft `pull --ff-only` was
         # silently failing on dirty working trees (e.g. after a
@@ -4820,85 +4881,107 @@ if ($activeDistro) {
     }
     Log-Ok "Directories under $MiosInstallDir ($MiosScope scope)"
 
-    foreach ($r in @(
-        @{ Path=(Join-Path $MiosRepoDir "mios");           Url=$MiosRepoUrl;      Name="mios.git" },
-        @{ Path=(Join-Path $MiosRepoDir "mios-bootstrap"); Url=$MiosBootstrapUrl; Name="mios-bootstrap.git" }
-    )) {
-        if (Test-Path (Join-Path $r.Path ".git")) {
-            # Hard-reset to origin/main so the build context always
-            # matches what's on the remote. `git pull --ff-only` was
-            # too soft -- if the working tree had stale files (from a
-            # legacy-install migration where /XO/XN/XC kept older
-            # files at the destination) the pull silently no-op'd
-            # and the build kept running pre-fix scripts.
-            Set-Step "Updating $($r.Name) (fetch + hard reset)"
-            Push-Location $r.Path
-            try {
-                $fetchExit = Invoke-NativeQuiet { git fetch --depth=1 origin main }
-                if ($fetchExit -eq 0) {
-                    $resetExit = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
-                    if ($resetExit -ne 0) {
-                        Log-Warn "$($r.Name): git reset --hard returned $resetExit"
-                    }
-                } else {
-                    Log-Warn "$($r.Name): git fetch returned $fetchExit -- working tree may be stale"
-                }
-            } finally { Pop-Location }
-        } else {
-            Set-Step "Cloning $($r.Name)"
-            $cloneExit = Invoke-NativeQuiet { git clone --depth 1 $r.Url $r.Path }
-            if ($cloneExit -ne 0) {
-                Log-Fail "$($r.Name): git clone exited $cloneExit"
-                throw "git clone $($r.Url) -> $($r.Path) failed (exit $cloneExit). Check network connectivity and that the URL is reachable."
+    # ── Repos: BOTH overlaid at $MiosRepoDir root (M:\) ──────────────────────
+    # Per the 2026-05-06 directive: M:\ root IS the mios.git working tree
+    # AND has mios-bootstrap.git's files overlaid on top. The previous
+    # "M:\MiOS\repo\mios + M:\MiOS\repo\mios-bootstrap as siblings" layout
+    # is gone. Operator opens M:\ in Explorer and sees Get-MiOS.ps1,
+    # Containerfile, automation/, install.sh, mios.toml, configurator.html,
+    # /usr/, /etc/ -- everything at root.
+    #
+    # mios.git is the PRIMARY tree (M:\.git points here). mios-bootstrap.git
+    # is cloned to $MiosBootstrapShadow (so its .git stays separate -- you
+    # can't have two .gits at the same path), and its files are robocopied
+    # onto M:\ root excluding .git.
+
+    # ── Step 1: mios.git as the M:\ working tree ────────────────────────────
+    # `git clone` refuses non-empty target dirs (M:\ has System Volume
+    # Information / $RECYCLE.BIN / possibly $MiosInstallDir already), so
+    # use `git init + remote add + fetch + reset --hard` to bring the tree
+    # in WITHOUT touching pre-existing untracked files.
+    if (Test-Path (Join-Path $MiosRepoDir ".git")) {
+        Set-Step "Updating mios.git (fetch + hard reset @ $MiosRepoDir)"
+        Push-Location $MiosRepoDir
+        try {
+            $null = Invoke-NativeQuiet { git remote set-url origin $MiosRepoUrl }
+            $fetchExit = Invoke-NativeQuiet { git fetch --depth=1 origin main }
+            if ($fetchExit -eq 0) {
+                $resetExit = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
+                if ($resetExit -ne 0) { Log-Warn "mios.git: git reset --hard returned $resetExit" }
+            } else {
+                Log-Warn "mios.git: git fetch returned $fetchExit -- working tree may be stale"
             }
+        } finally { Pop-Location }
+    } else {
+        Set-Step "Initializing mios.git as the $MiosRepoDir working tree"
+        Push-Location $MiosRepoDir
+        try {
+            $null = Invoke-NativeQuiet { git init -q }
+            $null = Invoke-NativeQuiet { git remote add origin $MiosRepoUrl }
+            $fetchExit = Invoke-NativeQuiet { git fetch --depth=1 origin main }
+            if ($fetchExit -ne 0) {
+                throw "mios.git: git fetch from $MiosRepoUrl failed (exit $fetchExit) at $MiosRepoDir"
+            }
+            $null = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
+            $null = Invoke-NativeQuiet { git branch -f main FETCH_HEAD }
+            $null = Invoke-NativeQuiet { git checkout -q main }
+        } finally { Pop-Location }
+    }
+    Log-Ok "mios.git overlaid at $MiosRepoDir"
+
+    # ── Step 2: mios-bootstrap.git in shadow checkout, files overlaid ──────
+    if (Test-Path (Join-Path $MiosBootstrapShadow ".git")) {
+        Set-Step "Updating mios-bootstrap.git shadow (fetch + hard reset)"
+        Push-Location $MiosBootstrapShadow
+        try {
+            $null = Invoke-NativeQuiet { git remote set-url origin $MiosBootstrapUrl }
+            $fetchExit = Invoke-NativeQuiet { git fetch --depth=1 origin main }
+            if ($fetchExit -eq 0) {
+                $resetExit = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
+                if ($resetExit -ne 0) { Log-Warn "mios-bootstrap.git: git reset --hard returned $resetExit" }
+            } else {
+                Log-Warn "mios-bootstrap.git: git fetch returned $fetchExit -- shadow may be stale"
+            }
+        } finally { Pop-Location }
+    } else {
+        if (-not (Test-Path $MiosBootstrapShadow)) {
+            New-Item -ItemType Directory -Path $MiosBootstrapShadow -Force | Out-Null
         }
-        Log-Ok $r.Name
+        Set-Step "Cloning mios-bootstrap.git to shadow $MiosBootstrapShadow"
+        $cloneExit = Invoke-NativeQuiet { git clone --depth 1 $MiosBootstrapUrl $MiosBootstrapShadow }
+        if ($cloneExit -ne 0) {
+            throw "mios-bootstrap.git: clone from $MiosBootstrapUrl failed (exit $cloneExit)"
+        }
     }
 
-    # ── Materialize bootstrap files into the install dir ─────────────────────
-    # Both repos are cloned into $MiosRepoDir, but a "native Windows app"
-    # install also exposes the bootstrap-side templates and entry scripts
-    # under predictable, non-git-shaped paths so Windows tooling, shortcuts,
-    # and the uninstaller don't have to traverse a .git working tree.
-    #
-    #   $MiosBinDir                     entry-point .ps1 scripts (Get-MiOS, build-mios, uninstall)
-    #   $MiosShareDir\bootstrap\etc     mios-bootstrap/etc tree (skel templates, mios.toml)
-    #   $MiosShareDir\bootstrap\usr     mios-bootstrap/usr tree (system overlay templates)
-    #   $MiosShareDir\system\usr        mios.git/usr tree (factory FHS overlay; read-only ref)
-    #
-    # robocopy is used over Copy-Item so we get incremental sync semantics
-    # (only changed files re-copy on re-run). /MIR mirrors content + deletes
-    # stale files; /NJH /NJS suppress the header/summary so output stays terse.
-    Set-Step "Materializing bootstrap files into install dir"
-    $bootstrapSrc = Join-Path $MiosRepoDir "mios-bootstrap"
-    $miosSrc      = Join-Path $MiosRepoDir "mios"
-    $copyPairs = @(
-        @{ Src=(Join-Path $bootstrapSrc "etc"); Dst=(Join-Path $MiosShareDir "bootstrap\etc") },
-        @{ Src=(Join-Path $bootstrapSrc "usr"); Dst=(Join-Path $MiosShareDir "bootstrap\usr") },
-        @{ Src=(Join-Path $miosSrc      "usr"); Dst=(Join-Path $MiosShareDir "system\usr")    }
-    )
-    foreach ($p in $copyPairs) {
-        if (Test-Path $p.Src) {
-            $null = New-Item -ItemType Directory -Path $p.Dst -Force -ErrorAction SilentlyContinue
-            # robocopy uses exit codes 0-7 to mean SUCCESS (e.g. 1 = files
-            # copied; 2 = extra files at dest, ignored; 4 = mismatched).
-            # Wrap via Invoke-NativeQuiet so the exit code -- whatever it
-            # is -- doesn't trip $ErrorActionPreference='Stop'.
-            $null = Invoke-NativeQuiet { robocopy $p.Src $p.Dst /MIR /NJH /NJS /NFL /NDL /NP }
-        }
+    # Overlay mios-bootstrap files onto $MiosRepoDir (M:\) -- excluding .git
+    # so we don't clobber mios.git's .git dir at M:\.
+    Set-Step "Overlaying mios-bootstrap files onto $MiosRepoDir"
+    $robocopyExit = Invoke-NativeQuiet {
+        robocopy $MiosBootstrapShadow $MiosRepoDir `
+            /E /XD .git /NJH /NJS /NFL /NDL /NP
     }
-    # Stage entry-point scripts under $MiosBinDir so Start Menu shortcuts
-    # and PATH integration target a stable, non-git location.
+    # robocopy exit codes 0-7 = success; 8+ = error
+    if ($robocopyExit -ge 8) {
+        Log-Warn "mios-bootstrap overlay: robocopy exit $robocopyExit (>=8 means error)"
+    }
+    Log-Ok "mios-bootstrap files overlaid at $MiosRepoDir (shadow at $MiosBootstrapShadow)"
+
+    # Drop a VERSION marker at the Windows install dir so external tools
+    # (and the uninstaller) can identify the installed release without
+    # a git query.
+    Set-Content -Path (Join-Path $MiosInstallDir "VERSION") -Value $MiosVersion -Encoding ASCII -Force
+
+    # Stage entry-point scripts under $MiosBinDir for Start Menu shortcuts /
+    # PATH integration that target a stable non-git location. Files come
+    # from M:\ (overlay) since both repos' contents are now there.
     foreach ($script in @("Get-MiOS.ps1","build-mios.ps1","build-mios.sh","bootstrap.ps1","bootstrap.sh")) {
-        $srcFile = Join-Path $bootstrapSrc $script
+        $srcFile = Join-Path $MiosRepoDir $script
         if (Test-Path $srcFile) {
             Copy-Item -Path $srcFile -Destination (Join-Path $MiosBinDir $script) -Force
         }
     }
-    # Drop a VERSION marker at the install root so external tools (and the
-    # operator) can identify the installed release without a git query.
-    Set-Content -Path (Join-Path $MiosInstallDir "VERSION") -Value $MiosVersion -Encoding ASCII -Force
-    Log-Ok "Bootstrap files materialized under $MiosShareDir"
+    Log-Ok "Entry scripts staged at $MiosBinDir"
     End-Phase 2
 
     # ── Phase 3 -- MiOS-DEV distro (formerly MiOS-BUILDER) ───────────────────
@@ -5131,7 +5214,8 @@ if ($activeDistro) {
     # ── Phase 5 -- Verify Windows build context ──────────────────────────────
     # Build runs via 'podman build' from the Windows clone -- no machine exec needed.
     Start-Phase 5
-    $repoPath = Join-Path $MiosRepoDir "mios"
+    # mios.git is overlaid AT $MiosRepoDir root, per 2026-05-06.
+    $repoPath = $MiosRepoDir
     if (Test-Path (Join-Path $repoPath "Containerfile")) {
         Log-Ok "Build context ready at $repoPath"
     } else {
@@ -5274,8 +5358,11 @@ chmod 0640 /etc/mios/install.env
     # legacy install.ps1 redirector if an old install is being re-run.
     $selfSc    = if (Test-Path (Join-Path $MiosBinDir "build-mios.ps1")) {
                      Join-Path $MiosBinDir "build-mios.ps1"
+                 } elseif (Test-Path (Join-Path $MiosRepoDir "build-mios.ps1")) {
+                     # mios-bootstrap is overlaid at $MiosRepoDir root.
+                     Join-Path $MiosRepoDir "build-mios.ps1"
                  } else {
-                     Join-Path $MiosRepoDir "mios-bootstrap\install.ps1"
+                     Join-Path $MiosBootstrapShadow "install.ps1"
                  }
     $uninstSc  = Join-Path $MiosBinDir "uninstall.ps1"
     $uninstCmd = "$pwsh -ExecutionPolicy Bypass -File `"$uninstSc`""
