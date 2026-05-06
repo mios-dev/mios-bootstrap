@@ -1871,12 +1871,24 @@ function Get-PodmanMachineOsImage {
     $base     = "https://$registry/v2/$name"
 
     # ── Step 1: image index ───────────────────────────────────────────
+    # PowerShell 5.1's Invoke-WebRequest -UseBasicParsing returns
+    # .Content as a byte[] for non-text content types (anything not
+    # in its hard-coded text list -- application/json IS text but
+    # application/vnd.oci.image.index.v1+json is NOT, despite the
+    # `+json` suffix). Piping the byte[] to ConvertFrom-Json
+    # stringifies the array to "123 34 115 ..." and produces an empty
+    # object -- which is exactly the "got mediaType=" symptom seen in
+    # the 16:35 log. Force UTF-8 decode so ConvertFrom-Json sees the
+    # actual JSON text.
     Set-Step "Resolving $Repo`:$Tag (OCI index)"
     $idxResp = Invoke-WebRequest -UseBasicParsing -Uri "$base/manifests/$Tag" `
         -Headers @{ 'Accept' = 'application/vnd.oci.image.index.v1+json' } `
         -ErrorAction Stop
-    $index = $idxResp.Content | ConvertFrom-Json
-    if ($index.mediaType -notlike '*image.index*') {
+    $idxJson = if ($idxResp.Content -is [byte[]]) {
+        [System.Text.Encoding]::UTF8.GetString($idxResp.Content)
+    } else { [string]$idxResp.Content }
+    $index = $idxJson | ConvertFrom-Json
+    if ($index.mediaType -notlike '*image.index*' -and $index.mediaType -notlike '*manifest.list*') {
         throw "Expected OCI image index at $Repo`:$Tag, got mediaType=$($index.mediaType)"
     }
 
@@ -1892,10 +1904,14 @@ function Get-PodmanMachineOsImage {
     }
 
     # ── Step 3: platform manifest -> single layer ─────────────────────
+    # Same byte[]-vs-string trap as Step 1 -- decode explicitly.
     $pmResp = Invoke-WebRequest -UseBasicParsing -Uri "$base/manifests/$($pm.digest)" `
         -Headers @{ 'Accept' = 'application/vnd.oci.image.manifest.v1+json' } `
         -ErrorAction Stop
-    $manifest = $pmResp.Content | ConvertFrom-Json
+    $pmJson = if ($pmResp.Content -is [byte[]]) {
+        [System.Text.Encoding]::UTF8.GetString($pmResp.Content)
+    } else { [string]$pmResp.Content }
+    $manifest = $pmJson | ConvertFrom-Json
     $layer = $manifest.layers | Select-Object -First 1
     if (-not $layer) {
         throw "Platform manifest $($pm.digest) has no layers"
