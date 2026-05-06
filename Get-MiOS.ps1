@@ -292,7 +292,17 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     $relaunchCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
 try {
-    `$src = Invoke-RestMethod -Uri '$rawUrl' -ErrorAction Stop
+    # Cache-Control: no-cache + Pragma: no-cache + a unique If-None-Match
+    # tag tell Fastly (and any intermediate proxies) to revalidate against
+    # origin instead of serving the cached body. raw.githubusercontent.com
+    # honors these on a best-effort basis -- combined with the cb=<epoch>
+    # query string above this gives us belt-and-braces cache busting.
+    `$noCacheHdr = @{
+        'Cache-Control' = 'no-cache, no-store, max-age=0'
+        'Pragma'        = 'no-cache'
+        'If-None-Match' = "mios-bootstrap-`$([guid]::NewGuid().ToString('N'))"
+    }
+    `$src = Invoke-RestMethod -Uri '$rawUrl' -Headers `$noCacheHdr -ErrorAction Stop
     `$head = if (`$src) { `$src.TrimStart().Substring(0, [Math]::Min(64, `$src.TrimStart().Length)) } else { '' }
     `$lt    = [char]60                              # '<'
     `$dtTok = `$lt + '!DOC' + 'TYPE'                # '<!' + 'DOCTYPE' (split so this file never contains the joined literal)
