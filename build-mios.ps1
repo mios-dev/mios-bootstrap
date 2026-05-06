@@ -132,33 +132,35 @@ $BuilderDistro    = $DevDistro
 $LegacyDevName    = "MiOS-BUILDER"
 $MiosWslDistro    = "MiOS"
 $LegacyDistro     = "podman-machine-default"
-# MiOS-DEV's base machine-OS image. We DO NOT pin a specific tag by
-# default any more, because:
+# MiOS-DEV's base machine-OS image. Pinned to the floating `next` tag
+# at quay.io/podman/machine-os per the always-target-latest contract
+# (memory: feedback_mios_target_latest.md). Operator's words:
 #
-#   * `podman machine init --image <bare OCI ref>` does NOT recognize
-#     the bare-ref form -- podman tries to stat() the value as a local
-#     file path. On Windows that's a GetFileAttributesEx call on
-#     "quay.io/podman/machine-os:<tag>" which fails with "The system
-#     cannot find the path specified" because `:` is interpreted as a
-#     drive-letter separator. The user-visible failure was:
-#         FATAL: Error: GetFileAttributesEx quay.io/podm...
-#     in Phase 3 with the previous pin "quay.io/podman/machine-os:6.0".
-#   * To pass an OCI ref to `podman machine init --image`, the value
-#     MUST be prefixed with `docker://`. Bare refs are silently treated
-#     as file paths, no error from the parser, just an unhelpful stat
-#     failure downstream.
-#   * Hard-pinning a specific tag also tends to break with podman
-#     client version drift -- a podman 4.x client doesn't understand
-#     a 6.x machine-os, and vice versa.
+#   "the podman-MiOS-DEV is using the podman-os:NEXT or 6.0 -- Correct?!"
 #
-# Behavior: if $env:MIOS_MACHINE_IMAGE is set we pass it through (and
-# auto-prefix `docker://` if it looks like an OCI ref). Otherwise we
-# omit --image entirely and let podman use its bundled default, which
-# always matches the installed podman client version.
-$MachineImage = $env:MIOS_MACHINE_IMAGE
-if ($MachineImage -and $MachineImage -notmatch '^(docker|https?|file)://' -and $MachineImage -match '^[a-z0-9.-]+\.[a-z]{2,}/') {
-    # Looks like a bare OCI ref (host.tld/repo:tag) -- prefix it so
-    # podman parses it as a docker-transport URL, not a file path.
+# Probed quay.io/v2/podman/machine-os/tags/list as of 2026-05-06: the
+# floating tags are `next` (development branch, latest) and `6.0`
+# (newest stable non-floating). We pin `next` -- it's what the operator
+# asked for first and matches the always-bleeding-edge preference.
+#
+# Caveats baked in:
+#   * `podman machine init --image <bare OCI ref>` doesn't recognize
+#     the bare-ref form on Windows -- podman tries to stat() the value
+#     as a local file path, hitting GetFileAttributesEx on a string
+#     containing `:` (drive separator) and failing with the truncated
+#     "The system cannot find the path specified" we saw in earlier runs.
+#     The `docker://` prefix is REQUIRED.
+#   * The operator can override via $env:MIOS_MACHINE_IMAGE -- e.g. set
+#     to "docker://quay.io/podman/machine-os:6.0" to pin to the stable
+#     6.0 tag, or any HTTPS qcow2 URL for a custom image.
+$MachineImage = if ($env:MIOS_MACHINE_IMAGE) {
+    $env:MIOS_MACHINE_IMAGE
+} else {
+    'docker://quay.io/podman/machine-os:next'
+}
+if ($MachineImage -notmatch '^(docker|https?|file)://' -and $MachineImage -match '^[a-z0-9.-]+\.[a-z]{2,}/') {
+    # Operator passed a bare OCI ref via env -- auto-prefix `docker://`
+    # so podman parses it as a docker-transport URL, not a file path.
     $MachineImage = "docker://$MachineImage"
 }
 
