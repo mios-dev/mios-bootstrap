@@ -569,6 +569,80 @@ function Initialize-DataDisk {
     Write-Good "${DriveLetter}:\\ created (${ShrinkMB} MB NTFS, label=$VolumeLabel)"
 }
 
+# Junction every candidate podman-machine storage path onto M:\ so the
+# eventual `podman machine init` lands the WSL distro VHDX (multi-GB) on
+# the dedicated 256 GB partition rather than on C:\. Per
+# feedback_mios_dev_on_m_drive.md, this MUST happen before any podman
+# command runs -- if podman creates files at the source path first, the
+# junction can't be applied to a non-empty dir without a move-then-junction
+# dance.
+#
+# Podman v4.x and v5.x use different default storage paths on Windows
+# depending on machine provider, user vs. system scope, and version
+# upgrades that didn't migrate the data. We junction ALL candidates so
+# whichever one the installed podman picks resolves to M:\.
+function Set-PodmanMachineStorageOnM {
+    param([string]$MRoot = 'M:\podman\machine')
+    if (-not (Test-Path $MRoot)) {
+        New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
+        Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray
+    }
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA  'containers\podman\machine'),
+        (Join-Path $env:USERPROFILE   '.local\share\containers\podman\machine'),
+        (Join-Path $env:PROGRAMDATA   'containers\podman\machine')
+    )
+    foreach ($p in $candidates) {
+        if (-not $p) { continue }
+        $parent = Split-Path $p -Parent
+        if (-not (Test-Path $parent)) {
+            try { New-Item -ItemType Directory -Path $parent -Force | Out-Null } catch {}
+        }
+        if (Test-Path $p) {
+            $item = Get-Item $p -Force -ErrorAction SilentlyContinue
+            if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                $current = ($item.Target -join '').TrimStart('\??\')
+                if ($current -ieq $MRoot) {
+                    Write-Host "    [=] $p -> $MRoot (already junctioned)" -ForegroundColor DarkGray
+                    continue
+                }
+                # Different target -- remove and re-link below.
+                cmd /c "rmdir `"$p`"" 2>$null | Out-Null
+            } else {
+                # Real directory exists. If empty, remove. If non-empty,
+                # move contents to M:\ first so we don't lose state.
+                $kids = Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue
+                if ($kids -and $kids.Count -gt 0) {
+                    Write-Host "    [*] moving existing $p contents to $MRoot ..." -ForegroundColor DarkGray
+                    try {
+                        foreach ($k in $kids) {
+                            $dst = Join-Path $MRoot $k.Name
+                            if (-not (Test-Path $dst)) {
+                                Move-Item -LiteralPath $k.FullName -Destination $MRoot -Force -ErrorAction Stop
+                            }
+                        }
+                    } catch {
+                        Write-Host "    [!] move failed for $p : $($_.Exception.Message) -- forcing remove" -ForegroundColor Yellow
+                    }
+                }
+                try {
+                    Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop
+                } catch {
+                    Write-Host "    [!] couldn't remove $p (locked) -- skipping junction for this path" -ForegroundColor Yellow
+                    continue
+                }
+            }
+        }
+        # Now create the junction.
+        $rc = (cmd /c "mklink /J `"$p`" `"$MRoot`"" 2>&1)
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "    [+] junctioned $p -> $MRoot" -ForegroundColor DarkGray
+        } else {
+            Write-Host "    [!] mklink /J $p -> $MRoot failed: $rc" -ForegroundColor Yellow
+        }
+    }
+}
+
 # 4b. Full-reset every artifact MiOS has ever installed on this host.
 #
 # CONTRACT (per feedback_mios_entry_full_reset.md): every irm|iex run is
@@ -701,6 +775,16 @@ Write-Good "Full-reset complete; starting fresh bootstrap."
 # this dedicated 256 GB partition. Idempotent: skips if M:\
 # already exists with the right label.
 Initialize-DataDisk
+
+# Junction every candidate podman-machine storage path to M:\ so the
+# eventual `podman machine init MiOS-DEV` lands the WSL VHDX on the
+# 256 GB data partition, not on C:\. Per
+# feedback_mios_dev_on_m_drive.md, this MUST happen BEFORE any podman
+# command runs (the bootstrap, build-mios.ps1, anything). The full
+# reset above already cleared the source dirs, so the junctions go in
+# clean.
+Write-Info "Redirecting podman-machine storage to M:\\podman\\machine ..."
+Set-PodmanMachineStorageOnM
 
 # Create the canonical Windows install root structure now that M:\
 # is guaranteed to exist. The reset above wiped M:\MiOS, so this
