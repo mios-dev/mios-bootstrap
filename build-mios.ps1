@@ -969,13 +969,13 @@ function Show-Dashboard {
             $tgtRow = $dashStart + $i
             if ($tgtRow -lt 0 -or $tgtRow -ge $bufH) { continue }
             [Console]::SetCursorPosition(0, $tgtRow)
-            # Write the 80-cap row, then ANSI \e[K (clear-to-EOL) to
-            # wipe any stale content past col 80 left over from log
-            # lines, prior wider renders, or wt.exe windows that didn't
-            # honor SetWindowSize. Modern wt.exe + conhost both
-            # process \e[K cleanly; ancient hosts ignore it (degrades
-            # gracefully).
-            [Console]::Write($rows[$i] + "`e[K")
+            # No ANSI \e[K -- the operator's terminal sometimes does NOT
+            # process the escape, in which case the literal "[K" leaks
+            # into the dashboard view (seen in 2026-05-06 paste). The
+            # strict-clamp on $winW above caps every row at 80 chars
+            # already, so stale content past col 80 from prior renders
+            # is not the concern it was; rely on row-overwrite alone.
+            [Console]::Write($rows[$i])
         }
         # ── Ghost-row blanking ────────────────────────────────────────
         # If a previous render placed MORE rows than this one, blank
@@ -2289,22 +2289,38 @@ function New-BuilderDistro([hashtable]$HW) {
 }
 
 function Invoke-MiosOverlaySeed {
-    # Seed the full MiOS package surface as a live overlay inside the
-    # MiOS-DEV WSL2 distro. Reads PACKAGES.md from the cloned mios.git
-    # checkout and runs `dnf5 install` per fenced ```packages-*``` block.
+    # DEPRECATED 2026-05-06: bare invocation is a silent no-op.
     #
-    # Why: every CLI/utility/dev tool that ships in the deployed MiOS
-    # OCI image is installed live on the Windows-side dev machine too,
-    # so `wsl -d podman-MiOS-DEV` lands the operator in a shell that
-    # is package-equivalent to a deployed MiOS host (minus kernel/UEFI
-    # which only apply to bare-metal/Hyper-V/QEMU shapes).
+    # Original purpose: read PACKAGES.md fenced ```packages-*``` blocks
+    # from the cloned mios.git checkout and run `dnf5 install` per
+    # block inside MiOS-DEV. Replaced by Invoke-MiosQuadletOverlay
+    # (which makes / a git working tree of mios.git) plus
+    # automation/lib/packages.sh (which resolves mios.toml
+    # [packages.<section>].pkgs as the SSOT).
     #
-    # Idempotent via a sentinel: skip if /var/lib/mios/.overlay-seeded
-    # is newer than the source PACKAGES.md.
-    Set-Step "Seeding MiOS package overlay onto $DevDistro..."
-    $packagesMd = Join-Path $MiosRepoDir "mios\usr\share\mios\PACKAGES.md"
+    # Per project_mios_self_replication_vision.md the package surface
+    # is now baked into the OCI image at build time and made live on
+    # MiOS-DEV via `bootc switch` + reboot at the end of the
+    # mios-build-driver flow. There's no more "live overlay" install
+    # step on the Windows side -- the dev VM gets the same packages
+    # by becoming the OCI image, not by running dnf at the host level.
+    #
+    # Force-enable for testing-only via MIOS_FORCE_LEGACY_PACKAGES_MD=1
+    # (intentionally undocumented in the operator-facing flow).
+    if ($env:MIOS_FORCE_LEGACY_PACKAGES_MD -ne '1') {
+        return
+    }
+    Log-Warn "MIOS_FORCE_LEGACY_PACKAGES_MD=1 -- running deprecated PACKAGES.md overlay seed (you are off the canonical path)"
+    Set-Step "Seeding MiOS package overlay onto $DevDistro (LEGACY)..."
+    # Updated path: the file moved 2026-05-05 to usr/share/doc/mios/reference/.
+    # Try the new path first, fall back to the old vendor location for
+    # operators on stale checkouts.
+    $packagesMd = Join-Path $MiosRepoDir "mios\usr\share\doc\mios\reference\PACKAGES.md"
     if (-not (Test-Path $packagesMd)) {
-        Log-Warn "PACKAGES.md not found at $packagesMd -- overlay seed skipped"
+        $packagesMd = Join-Path $MiosRepoDir "mios\usr\share\mios\PACKAGES.md"
+    }
+    if (-not (Test-Path $packagesMd)) {
+        Log-Warn "PACKAGES.md not found in either canonical location -- legacy overlay seed skipped"
         return
     }
     $wslDistro = "podman-$DevDistro"
@@ -5012,17 +5028,28 @@ if ($activeDistro) {
         New-BuilderDistro -HW $HW
     }
 
-    # Run the overlay seed regardless of whether the machine was just created or
-    # was already running. Idempotent via /var/lib/mios/.overlay-seeded -- a
-    # second pass is a no-op when PACKAGES.md hasn't changed since last seed.
-    # This is what catches the re-run case (operator runs build-mios.ps1 again
-    # after editing PACKAGES.md): every section delta gets installed live.
-    Invoke-MiosOverlaySeed
+    # Invoke-MiosOverlaySeed is deliberately NOT called anymore.
+    # It was the legacy PACKAGES.md fenced-block parser that ran
+    # `dnf5 install` per ```packages-*``` block. As of 2026-05-05 the
+    # SSOT is mios.toml `[packages.<section>].pkgs` (resolved via
+    # automation/lib/packages.sh), and PACKAGES.md was relegated to
+    # docs at usr/share/doc/mios/reference/PACKAGES.md. The legacy
+    # function's path check now warns "overlay seed skipped" on every
+    # run because it looks at the moved path -- pure noise that
+    # confused the operator's "ignition failed" reading on 2026-05-06.
+    # Removed from the call chain. The function body itself is left
+    # in place under a deprecation guard so any stale external caller
+    # still loads cleanly; bare invocation is now a no-op.
+    #
+    # The actual overlay work happens below in Invoke-MiosQuadletOverlay,
+    # which `git fetch + reset --hard FETCH_HEAD`s mios.git to / inside
+    # MiOS-DEV (the canonical "/ IS the git working tree" surface).
 
-    # Quadlet/systemd overlay -- copies the MiOS FHS overlay into MiOS-DEV and
-    # enables the lightweight container set (cockpit.socket, mios-cockpit-link,
-    # mios-forge). Heavy services (mios-ai, mios-forgejo-runner) are opt-in via
-    # MIOS_DEV_ENABLE_AI=1 / MIOS_DEV_ENABLE_RUNNER=1. Idempotent via
+    # Quadlet/systemd overlay -- mounts mios.git into MiOS-DEV's / via
+    # `git fetch + reset --hard`, enables sysusers/tmpfiles, runs the
+    # canonical fetcher set (fonts, oh-my-posh, ollama). Heavy services
+    # (mios-ai, mios-forgejo-runner) are opt-in via MIOS_DEV_ENABLE_AI=1
+    # / MIOS_DEV_ENABLE_RUNNER=1. Idempotent via
     # /var/lib/mios/.quadlet-overlay-seeded sentinel.
     Invoke-MiosQuadletOverlay
 
