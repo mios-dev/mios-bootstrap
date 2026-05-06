@@ -1796,7 +1796,22 @@ function New-BuilderDistro([hashtable]$HW) {
     if ($MachineImage) {
         $initArgs += @('--image', $MachineImage)
     }
-    & podman @initArgs 2>&1 | ForEach-Object {
+    # Wrap the init invocation in a fresh child scope with
+    # $ErrorActionPreference='Continue'. Without this, podman's normal
+    # post-start stderr line (e.g. "API forwarding for Docker API
+    # clients is not available...") trips the script's outer EAP=Stop
+    # via the 2>&1 stream merge and surfaces as a Phase 3 FATAL even
+    # though `podman machine init` exited 0 and the machine is fully
+    # up. $LASTEXITCODE survives the scope exit (it's an automatic
+    # variable populated globally by every native command invocation),
+    # so the if-($initRc -ne 0) check below sees the real exit code,
+    # not a phantom from a stream-merged warning.
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        & podman @initArgs 2>&1 | ForEach-Object {
             Write-Log "podman-init: $_"
             $initOut.Add([string]$_) | Out-Null
             if ($initSw.ElapsedMilliseconds -ge 150) {
@@ -1806,6 +1821,7 @@ function New-BuilderDistro([hashtable]$HW) {
                 $initSw.Restart()
             }
         }
+    }
     $initRc      = $LASTEXITCODE
     $initJoined  = ($initOut -join " ")
     if ($initRc -ne 0) {
@@ -1836,14 +1852,22 @@ function New-BuilderDistro([hashtable]$HW) {
                 & podman machine rm --force $BuilderDistro 2>&1 |
                     ForEach-Object { Write-Log "podman-recover-rm: $_" }
 
-                # Retry init from a clean slate.
+                # Retry init from a clean slate. Same EAP=Continue wrap as
+                # the primary init invocation above so podman's chatty
+                # post-start stderr doesn't trip $ErrorActionPreference=Stop.
                 $retryOut = [System.Collections.Generic.List[string]]::new()
-                & podman @initArgs 2>&1 | ForEach-Object {
-                    Write-Log "podman-init-retry: $_"
-                    $retryOut.Add([string]$_) | Out-Null
-                    $clean = ($_ -replace '\x1b\[[0-9;]*[mGKHFJ]','').Trim()
-                    if ($clean) { $script:CurStep = $clean.Substring(0,[math]::Min($clean.Length,80)) }
-                    Show-Dashboard
+                & {
+                    $ErrorActionPreference = 'Continue'
+                    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                        $PSNativeCommandUseErrorActionPreference = $false
+                    }
+                    & podman @initArgs 2>&1 | ForEach-Object {
+                        Write-Log "podman-init-retry: $_"
+                        $retryOut.Add([string]$_) | Out-Null
+                        $clean = ($_ -replace '\x1b\[[0-9;]*[mGKHFJ]','').Trim()
+                        if ($clean) { $script:CurStep = $clean.Substring(0,[math]::Min($clean.Length,80)) }
+                        Show-Dashboard
+                    }
                 }
                 if ($LASTEXITCODE -ne 0) {
                     throw "podman machine init retry failed (exit $LASTEXITCODE) after force-rm: $(($retryOut | Select-Object -Last 5) -join ' / ')"
