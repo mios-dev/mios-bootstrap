@@ -846,6 +846,25 @@ function Move-BelowDash {
     } catch {}
 }
 
+# Invoke a native command with stderr collected into the success stream
+# but WITHOUT the "$ErrorActionPreference='Stop' + 2>&1" trap that
+# causes a chatty stderr (git's "Cloning into ...", "From https://...",
+# "Receiving objects: ...") to surface as a fatal exception. Returns
+# the command's $LASTEXITCODE so callers can do their own checks. Kept
+# minimal -- callers that want to inspect stdout/stderr can swap to
+# Invoke-NativeQuiet's variable-capture variant below.
+function Invoke-NativeQuiet {
+    param([scriptblock]$Cmd)
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        & $Cmd 2>&1 | Out-Null
+        $LASTEXITCODE
+    }
+}
+
 # Post-bootstrap interactive menu. Called from the BootstrapOnly path
 # in MAIN after Install-MiosLauncher has dropped the Start Menu /
 # Desktop shortcuts -- the operator now has a fully-provisioned dev
@@ -1521,7 +1540,7 @@ function New-BuilderDistro([hashtable]$HW) {
             throw "podman machine init failed (exit $initRc)"
         }
     }
-    & podman machine set --default $BuilderDistro 2>&1 | Out-Null
+    $null = Invoke-NativeQuiet { podman machine set --default $BuilderDistro }
     Log-Ok "$DevDistro ready as default Podman machine"
 
     # Rootful machine-os distros are not accessible via wsl.exe or podman machine ssh.
@@ -3045,7 +3064,7 @@ function Install-WindowsBranding {
     # Geist (Vercel) -- shallow clone the upstream repo, copy *.otf + *.ttf
     $geistTmp = Join-Path $env:TEMP "mios-geist-$([guid]::NewGuid().ToString('N').Substring(0,8))"
     try {
-        & git clone --depth=1 --quiet https://github.com/vercel/geist-font.git $geistTmp 2>&1 | Out-Null
+        $null = Invoke-NativeQuiet { git clone --depth=1 --quiet https://github.com/vercel/geist-font.git $geistTmp }
         if (Test-Path $geistTmp) {
             $count = 0
             Get-ChildItem -Path $geistTmp -Recurse -Include '*.otf','*.ttf' | ForEach-Object {
@@ -3951,11 +3970,14 @@ if ($activeDistro) {
         Set-Step "Updating Windows-side repo (fetch + hard reset) and syncing to $activeDistro"
         Push-Location $miosRepo
         try {
-            & git fetch --depth=1 origin main 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                & git reset --hard FETCH_HEAD 2>&1 | Out-Null
+            $fetchExit = Invoke-NativeQuiet { git fetch --depth=1 origin main }
+            if ($fetchExit -eq 0) {
+                $resetExit = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
+                if ($resetExit -ne 0) {
+                    Log-Warn "git reset --hard returned $resetExit"
+                }
             } else {
-                Log-Warn "git fetch returned $LASTEXITCODE -- working tree may be stale"
+                Log-Warn "git fetch returned $fetchExit -- working tree may be stale"
             }
         } finally { Pop-Location }
         Sync-RepoToDistro -Distro $activeDistro -WinPath $miosRepo | Out-Null
@@ -4041,19 +4063,23 @@ if ($activeDistro) {
             Set-Step "Updating $($r.Name) (fetch + hard reset)"
             Push-Location $r.Path
             try {
-                & git fetch --depth=1 origin main 2>&1 | Out-Null
-                if ($LASTEXITCODE -eq 0) {
-                    & git reset --hard FETCH_HEAD 2>&1 | Out-Null
-                    if ($LASTEXITCODE -ne 0) {
-                        Log-Warn "$($r.Name): git reset --hard returned $LASTEXITCODE"
+                $fetchExit = Invoke-NativeQuiet { git fetch --depth=1 origin main }
+                if ($fetchExit -eq 0) {
+                    $resetExit = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
+                    if ($resetExit -ne 0) {
+                        Log-Warn "$($r.Name): git reset --hard returned $resetExit"
                     }
                 } else {
-                    Log-Warn "$($r.Name): git fetch returned $LASTEXITCODE -- working tree may be stale"
+                    Log-Warn "$($r.Name): git fetch returned $fetchExit -- working tree may be stale"
                 }
             } finally { Pop-Location }
         } else {
             Set-Step "Cloning $($r.Name)"
-            git clone --depth 1 $r.Url $r.Path 2>&1 | Out-Null
+            $cloneExit = Invoke-NativeQuiet { git clone --depth 1 $r.Url $r.Path }
+            if ($cloneExit -ne 0) {
+                Log-Fail "$($r.Name): git clone exited $cloneExit"
+                throw "git clone $($r.Url) -> $($r.Path) failed (exit $cloneExit). Check network connectivity and that the URL is reachable."
+            }
         }
         Log-Ok $r.Name
     }
@@ -4083,7 +4109,11 @@ if ($activeDistro) {
     foreach ($p in $copyPairs) {
         if (Test-Path $p.Src) {
             $null = New-Item -ItemType Directory -Path $p.Dst -Force -ErrorAction SilentlyContinue
-            & robocopy $p.Src $p.Dst /MIR /NJH /NJS /NFL /NDL /NP 2>&1 | Out-Null
+            # robocopy uses exit codes 0-7 to mean SUCCESS (e.g. 1 = files
+            # copied; 2 = extra files at dest, ignored; 4 = mismatched).
+            # Wrap via Invoke-NativeQuiet so the exit code -- whatever it
+            # is -- doesn't trip $ErrorActionPreference='Stop'.
+            $null = Invoke-NativeQuiet { robocopy $p.Src $p.Dst /MIR /NJH /NJS /NFL /NDL /NP }
         }
     }
     # Stage entry-point scripts under $MiosBinDir so Start Menu shortcuts
@@ -4347,8 +4377,12 @@ MIOS_OLLAMA_BAKE_MODELS="$MiosOllamaBakeModels"
     $writeCmd  = "mkdir -p /etc/mios && cat > /etc/mios/install.env && chmod 0640 /etc/mios/install.env"
     $written = $false
 
-    # Try wsl.exe (works when machine runs 'MiOS' after bootc switch)
-    $envContent | & wsl.exe -d $BuilderDistro --user root --exec bash -c $writeCmd 2>&1 | Out-Null
+    # Try wsl.exe (works when machine runs 'MiOS' after bootc switch).
+    # `*>$null` discards stdout AND stderr without funneling stderr to
+    # the success pipeline, so $ErrorActionPreference='Stop' can't trip
+    # on a chatty native-command stderr line. $LASTEXITCODE is set
+    # independently of stream redirection.
+    $envContent | & wsl.exe -d $BuilderDistro --user root --exec bash -c $writeCmd *>$null
     if ($LASTEXITCODE -eq 0) { $written = $true }
 
     # Try the dev-distro shell via Invoke-DistroSh (auto-picks
@@ -4363,7 +4397,7 @@ mkdir -p /etc/mios
 printf '%s' '$envB64' | base64 -d > /etc/mios/install.env
 chmod 0640 /etc/mios/install.env
 "@
-        Invoke-DistroSh -Bash $writeBaked -MachineName $BuilderDistro 2>&1 | Out-Null
+        Invoke-DistroSh -Bash $writeBaked -MachineName $BuilderDistro *>$null
         if ($LASTEXITCODE -eq 0) { $written = $true }
     }
 
@@ -4375,7 +4409,7 @@ chmod 0640 /etc/mios/install.env
             -v /:/host:z `
             docker.io/library/alpine:latest `
             sh -c "mkdir -p /host/etc/mios && cat > /host/etc/mios/install.env && chmod 0640 /host/etc/mios/install.env" `
-            2>&1 | Out-Null
+            *>$null
         if ($LASTEXITCODE -eq 0) { $written = $true }
     }
 
