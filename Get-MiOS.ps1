@@ -326,22 +326,55 @@ try {
     #      hosts with conhost as the default terminal (Win10, or Win11
     #      with "Default Terminal" set to "Windows Console Host") opens
     #      a separate conhost window that pwsh can size programmatically.
+    # wt.exe argument grammar:
+    #     wt [global-args] new-tab [tab-args] [commandline]
+    # `nt` is the short form of `new-tab`. `--title` is a TAB-ARG (must
+    # follow `nt`) and the title MUST NOT contain a space -- Start-Process
+    # flattens -ArgumentList back into a string and ProcessCreate then
+    # splits on whitespace, so "MiOS Bootstrap" becomes two argv tokens
+    # and wt tries to spawn a command literally named "Bootstrap" ->
+    # 2147942402 (0x80070002, file-not-found). Single-token title
+    # sidesteps that. `-w -1` is a GLOBAL arg meaning "new WT window"
+    # (vs new tab in the operator's existing window).
+    #
+    # Resolution chain (try in order, fall through on failure):
+    #   1. wt.exe via App Execution Alias at WindowsApps\wt.exe.
+    #      Common breakage: "The stub received bad data" -- the alias
+    #      stub forwards to the UWP terminal, but `-Verb RunAs` flips
+    #      the security context mid-forward and the UWP package
+    #      activation fails. Hits Server SKUs and some Win11 builds.
+    #   2. wt.exe resolved via the real UWP install path at
+    #      Program Files\WindowsApps\Microsoft.WindowsTerminal_*\wt.exe
+    #      (skips the alias stub entirely).
+    #   3. Plain Start-Process pwsh -Verb RunAs (conhost). Always works.
     $wtExe = Get-Command wt.exe -ErrorAction SilentlyContinue
+    $elevated = $false
     if ($wtExe) {
-        # wt.exe argument grammar:
-        #     wt [global-args] new-tab [tab-args] [commandline]
-        # `nt` is the short form of `new-tab`. `--title` is a TAB-ARG
-        # (must follow `nt`) and the title MUST NOT contain a space --
-        # Start-Process flattens -ArgumentList back into a string and
-        # ProcessCreate then splits on whitespace, so "MiOS Bootstrap"
-        # becomes two argv tokens and wt tries to spawn a command
-        # literally named "Bootstrap" -> 2147942402 (0x80070002,
-        # file-not-found). Single-token title sidesteps that.
-        # `-w -1` is a GLOBAL arg meaning "new WT window" (vs new tab
-        # in the operator's existing window).
         $wtArgs = @('-w','-1','nt','--title','MiOS-Bootstrap',$shell) + $shellArgs
-        Start-Process wt.exe -ArgumentList $wtArgs -Verb RunAs
-    } else {
+        try {
+            Start-Process wt.exe -ArgumentList $wtArgs -Verb RunAs -ErrorAction Stop
+            $elevated = $true
+        } catch {
+            Write-Host "  [!] wt.exe (App Execution Alias) elevation failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            # Try the real UWP-installed wt.exe directly, bypassing the alias stub.
+            $realWt = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Filter 'wt.exe' -Recurse -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -match 'Microsoft\.WindowsTerminal_' } |
+                      Select-Object -First 1 -ExpandProperty FullName
+            if ($realWt) {
+                Write-Host "  [*] Retrying via real UWP path: $realWt" -ForegroundColor Cyan
+                try {
+                    Start-Process $realWt -ArgumentList $wtArgs -Verb RunAs -ErrorAction Stop
+                    $elevated = $true
+                } catch {
+                    Write-Host "  [!] Direct UWP wt.exe also failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+            if (-not $elevated) {
+                Write-Host "  [*] Falling through to plain pwsh elevation (conhost window)." -ForegroundColor Cyan
+            }
+        }
+    }
+    if (-not $elevated) {
         Start-Process $shell -ArgumentList $shellArgs -Verb RunAs
     }
     Write-Host "  [+] New pwsh window opened. Continuing the bootstrap there." -ForegroundColor Green
