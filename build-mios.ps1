@@ -35,20 +35,22 @@
 # Windows-side tail entirely.
 
 param(
-    # -BootstrapOnly: localhost-side preflight + dev VM provision +
-    # smoke test + rename + Windows install. Stops BEFORE the OCI image
-    # build (Phase 6+). This is the curl-bash entry path -- after it
-    # completes the operator has a fully-functional MiOS-DEV WSL2 distro
-    # plus Windows-side icons (oh-my-posh, fonts, theme, Start Menu).
-    # The "Build MiOS" Start Menu shortcut then drives the full image
-    # build via -BuildOnly when the operator is ready.
+    # -BootstrapOnly / -BuildOnly / -FullBuild: LEGACY FLAGS, KEPT FOR
+    # CALL-SITE COMPATIBILITY ONLY. Per the self-replication contract
+    # (project memory: project_mios_self_replication_vision.md), the
+    # Windows side runs ONLY: ack -> MiOS-DEV podman-machine setup ->
+    # SSH handoff. Phase 6+ (Identity / OCI build / WSL2 export /
+    # Hyper-V deploy) MUST run inside MiOS-DEV via /usr/libexec/mios/
+    # mios-build-driver, NOT on Windows.
+    #
+    # These flags are now no-ops -- the script always behaves as if
+    # -BootstrapOnly was the only mode. -FullBuild and -BuildOnly emit
+    # a deprecation note and are otherwise ignored. Operators who want
+    # the old in-Windows pipeline can revert to a pre-352aee3 build of
+    # this script; nothing else honors them any more.
     [switch]$BootstrapOnly,
-
-    # -BuildOnly: skip the dev VM provisioning (assumes the bootstrap
-    # phase already ran and MiOS-DEV is registered). Jump to identity
-    # prompts + OCI image build + deploy. This is what the "Build MiOS"
-    # Start Menu launcher invokes.
     [switch]$BuildOnly,
+    [switch]$FullBuild,
 
     # -Unattended: take all defaults; no interactive prompts.
     [switch]$Unattended
@@ -56,6 +58,27 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = "SilentlyContinue"
+
+# ── Self-replication enforcement: Windows ALWAYS halts at Phase 5 ────────────
+# Per the self-replication architecture, the Windows side has STRICT scope:
+# ack + MiOS-DEV podman-machine setup + SSH handoff. The legacy -FullBuild /
+# -BuildOnly flags that bypassed this and ran identity / OCI / disk-image
+# phases ON WINDOWS are deprecated AND IGNORED here. We force $BootstrapOnly
+# to $true unconditionally so every code path that gates "stop after
+# Windows phases" via `if ($BootstrapOnly)` keeps the bootstrap halted.
+# Operators who need the old behavior must revert to a pre-352aee3 build.
+if ($BuildOnly -or $FullBuild) {
+    Write-Host ""
+    Write-Host "  [warn] -BuildOnly / -FullBuild are deprecated -- the build pipeline now" -ForegroundColor Yellow
+    Write-Host "         runs INSIDE MiOS-DEV. Use the post-bootstrap menu (option 1) to" -ForegroundColor Yellow
+    Write-Host "         hand off to the dev distro after the Windows-side setup completes." -ForegroundColor Yellow
+    Write-Host ""
+}
+# Override any passed-in / default value: the Windows side is always
+# bootstrap-only from this commit forward. Note this is set at script scope
+# so the conditional PhaseNames block below picks up the forced value.
+$BootstrapOnly = $true
+$script:BootstrapOnly = $true
 
 # Acknowledgment banner. Inlined (script is irm-piped). Respects
 # $env:MIOS_AGREEMENT_BANNER=quiet for unattended runs.
