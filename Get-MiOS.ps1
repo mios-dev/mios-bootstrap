@@ -531,13 +531,29 @@ if (Test-Path $RepoDir) {
 }
 
 Write-Info "Cloning $RepoUrl ($Branch, depth=1) -> $RepoDir ..."
-# `*>$null` discards stdout AND stderr without piping stderr through
-# the success stream, so $ErrorActionPreference='Stop' can't trip on
-# git's normal "Cloning into ..." progress banner. $LASTEXITCODE is
-# set independently of stream redirection.
-& git clone --branch $Branch --depth 1 $RepoUrl $RepoDir *>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Err "git clone $RepoUrl -> $RepoDir failed (exit $LASTEXITCODE)."
+# Naive `& git clone ... *>$null` does NOT reliably suppress the
+# $ErrorActionPreference='Stop' throw on git's normal stderr banner
+# ("Cloning into '...'"). The redirect operator runs at the pipeline
+# output level but PowerShell still synthesizes ErrorRecord objects
+# for native-command stderr lines, and EAP=Stop can act on the first
+# one before the redirect takes effect.
+#
+# Reliable pattern: invoke inside `& { ... }` with EAP=Continue and
+# $PSNativeCommandUseErrorActionPreference=$false (PS 7.4+) set in
+# the child scope. stderr is then collected harmlessly into the
+# success stream where Out-Null discards it. $LASTEXITCODE survives
+# the scope exit so we can check it. Same shape as
+# build-mios.ps1's Invoke-NativeQuiet helper.
+$cloneExit = & {
+    $ErrorActionPreference = 'Continue'
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    & git clone --branch $Branch --depth 1 $RepoUrl $RepoDir 2>&1 | Out-Null
+    $LASTEXITCODE
+}
+if ($cloneExit -ne 0) {
+    Write-Err "git clone $RepoUrl -> $RepoDir failed (exit $cloneExit)."
     Write-Err "Re-run manually to see git's diagnostic output:"
     Write-Err "  git clone --branch $Branch --depth 1 $RepoUrl `"$RepoDir`""
     exit 1
