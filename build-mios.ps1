@@ -449,10 +449,28 @@ $BuildDetailLog = Join-Path $MiosLogDir "mios-build-$LogStamp.log"
 # Initialize the unified log with a session header so post-mortem readers
 # can identify the run boundary the same way Start-Transcript used to.
 try {
+    # Capture build-mios.ps1's own commit SHA when running from a git
+    # working tree. This is invaluable for diagnosing "is the user
+    # actually running the latest build-mios.ps1?" -- GitHub raw +
+    # Fastly caching can serve a stale outer Get-MiOS.ps1 / cached
+    # mios-bootstrap clone for ~5 minutes after a push, and without
+    # this stamp it's impossible to tell from the log whether a
+    # specific fix was reachable.
+    $scriptCommit = "(unknown)"
+    try {
+        $scriptDir = if ($PSCommandPath) { Split-Path $PSCommandPath -Parent }
+                     elseif ($MyInvocation.MyCommand.Path) { Split-Path $MyInvocation.MyCommand.Path -Parent }
+                     else { $null }
+        if ($scriptDir -and (Test-Path (Join-Path $scriptDir '.git'))) {
+            $sha = & git -C $scriptDir rev-parse --short HEAD 2>$null
+            if ($LASTEXITCODE -eq 0 -and $sha) { $scriptCommit = "$sha" }
+        }
+    } catch {}
     [System.IO.File]::AppendAllText(
         $LogFile,
         ("=" * 78 + "`n" +
          "MiOS install session  start=$LogStamp  pid=$PID  user=$env:USERNAME  host=$env:COMPUTERNAME`n" +
+         "                     build-mios.ps1 commit=$scriptCommit  version=$MiosVersion`n" +
          "=" * 78 + "`n"),
         [Text.Encoding]::UTF8)
 } catch {}
@@ -4460,6 +4478,31 @@ if ($activeDistro) {
     if ($machineRunning) {
         Log-Ok "$BuilderDistro already running"
     } else {
+        # Belt-and-braces sweep: even if NONE of the three detection
+        # paths above (Running probe, Stopped+start probe, wsl.exe
+        # legacy probe) flagged the machine as live, podman may still
+        # have a registration on disk for $BuilderDistro from a prior
+        # SIGINT'd / aborted run. Hitting `podman machine init` on an
+        # existing registration produces:
+        #     Error: vm "MiOS-DEV" already exists on hypervisor
+        # which the dashboard surfaces as a Phase 3 FATAL with no
+        # recovery path that the operator can act on.
+        #
+        # Pre-purge: ask `podman machine ls` (any state, any case) for
+        # the registration. If it exists we KNOW the previous detection
+        # paths considered it not-startable, otherwise $machineRunning
+        # would already be $true. Force-remove so init has a clean
+        # slate. Safe at Phase 3: no MiOS image / operator data lives
+        # in the dev VM yet, and the rebuild is what the operator
+        # signed up for by re-running the bootstrap.
+        try {
+            $registered = (& podman machine ls --format "{{.Name}}" 2>$null) |
+                          Where-Object { $_ -match "(?i)^$([regex]::Escape($BuilderDistro))\s*$" }
+            if ($registered) {
+                Log-Warn "Stale $BuilderDistro registration detected (not running, not startable) -- force-removing before re-init"
+                & podman machine rm --force $BuilderDistro 2>&1 | ForEach-Object { Write-Log "podman-rm-prepurge: $_" }
+            }
+        } catch {}
         New-BuilderDistro -HW $HW
     }
 
