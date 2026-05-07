@@ -29,30 +29,42 @@ user-editable layer of the three-layer profile model.
 
 ## Install
 
-### Windows 11 (Podman Desktop + WSL2)
+### Windows 11
 
-**Canonical entry — paste into Win+R or any PowerShell:**
+**Canonical entry — `WinKey+R` → paste → Enter → accept UAC:**
 
 ```text
 powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"
 ```
 
-This runs from anywhere — Win+R Run dialog, cmd.exe, or PowerShell — without needing an existing pwsh session, ExecutionPolicy override, or admin elevation up front. The script itself prompts for the agreement gate, then handles everything (M:\ provisioning, WT MiOS profile, Geist Mono NF, oh-my-posh, fastfetch, native-app shortcuts).
+That `irm | iex` shape is the entry contract. Run it from the Windows
+Run dialog, cmd.exe, or any PowerShell session — no pre-existing pwsh,
+no ExecutionPolicy override, no manual elevation needed.
 
-Alternative entries:
+`Get-MiOS.ps1` handles everything end-to-end:
 
-```powershell
-# Inside an existing pwsh session
-irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex
+1. **Self-cache-busts** on entry — Fastly's 5-min TTL on
+   `raw.githubusercontent.com` is invisible to you; every paste pulls
+   origin-fresh.
+2. **Two-pass self-elevation** — Pass 1 (user) installs Windows Terminal
+   + MiOS scheme, Geist Mono Nerd Font, oh-my-posh, fastfetch, and the
+   MiOS native-app shortcut on Desktop + Start Menu. Pass 2 (admin)
+   shrinks `C:\` and creates `M:\` at exactly 256 GB NTFS, installs
+   Podman Desktop, provisions the `MiOS-DEV` podman machine, and clones
+   `mios.git` + `mios-bootstrap` onto `M:\`.
+3. **Auto-chains** into `/usr/libexec/mios/mios-build-driver` inside
+   `MiOS-DEV` for the OCI build (Phase 6+: identity, OCI build, deploy).
 
-# Skip the install wrapper, jump straight to the bootstrap
-irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/build-mios.ps1 | iex
+**Equivalent shortcut: `mios.bat`** — `WinKey+R` → `mios.bat` (or double-
+click the file). The .bat invokes the same `irm | iex` one-liner above
+with cache-bust appended (`?cb=<unix-time>`); it self-elevates via cmd's
+`net session` probe instead of the script's two-pass dance. Either entry
+is valid; the `irm | iex` shape is the contract.
 
-# Download mios.bat from the repo root and double-click it
-curl -L https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/mios.bat -o %TEMP%\mios.bat && %TEMP%\mios.bat
-```
-
-After installation, `mios-build` (in any MiOS terminal) runs the full OCI image build inside the dev VM.
+After installation, the `MiOS` Start Menu app opens the launcher (Build,
+Enter Dev VM, Update, Dashboard, Configurator, Re-run Bootstrap, Open
+Install Root). `mios-build` from any MiOS terminal re-runs the OCI build
+inside the dev VM.
 
 Each interactive prompt auto-accepts the resolved-from-`mios.toml`
 default after **90 seconds** idle. Override with
