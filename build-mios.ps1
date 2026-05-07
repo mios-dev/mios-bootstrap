@@ -724,7 +724,7 @@ function Write-Log {
 }
 
 # ── Dashboard state ───────────────────────────────────────────────────────────
-$script:DW         = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 2), 78))
+$script:DW         = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 4), 76))
 # Per the self-replication architecture, the Windows side (BootstrapOnly,
 # the default for irm | iex entry) does ONLY:
 #   ack -> hardware/env probe -> minimal mios-bootstrap clone ->
@@ -5439,7 +5439,7 @@ try {
 # load-time resize failed but THIS one succeeded, the original $DW (set
 # from a wider parent terminal) would still drive the dashboard at the
 # wrong width. Re-reading WindowWidth here closes that gap.
-$script:DW = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 2), 78))
+$script:DW = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 4), 76))
 
 Show-Dashboard   # draw initial (all phases pending)
 
