@@ -2769,20 +2769,22 @@ try {
     # `$RawUI.CursorPosition assignment, which is exactly the crash
     # commit 1e3484f hit -- "The handle is invalid").
     `$_logPathLit = `$_logPath -replace "'", "''"
-    # Prelude lines stay SINGLE-QUOTED so the inner pwsh doesn't
-    # interpolate `$null / `$false to empty strings before the rendered
-    # script lands on disk. Without this, `& chcp.com 65001 *> `$null`
-    # becomes `& chcp.com 65001 *>  ` and the parser explodes with
-    # "Missing file specification after redirection operator".
+    # Backtick-escape `$null / `$false IN THE OUTER TEMPLATE -- the
+    # OUTER pwsh interpolates `$variable` regardless of whether the
+    # inner string is single- or double-quoted (single quotes inside
+    # @"..."@ are just literal char). Without the backtick, `$null`
+    # gets stripped to empty BEFORE the rendered script ever lands
+    # on disk, producing `*>  } catch {}` -- the operator's
+    # "Missing file specification after redirection operator" crash.
     `$_preludeLines = @(
-        'try { & chcp.com 65001 *> $null } catch {}',
-        'try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}',
-        'try { [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new($false) } catch {}',
-        'try { $OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}',
-        ("try { Start-Transcript -Path '" + `$_logPathLit + "' -Force -ErrorAction Stop *> " + '$null' + " } catch {}")
+        'try { & chcp.com 65001 *> `$null } catch {}',
+        'try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}',
+        'try { [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new(`$false) } catch {}',
+        'try { `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}',
+        ("try { Start-Transcript -Path '" + `$_logPathLit + "' -Force -ErrorAction Stop *> ```$null } catch {}")
     )
     `$_prelude  = (`$_preludeLines -join "``n") + "``n"
-    `$_postlude = "``ntry { Stop-Transcript *> " + '$null' + " } catch {}``n"
+    `$_postlude = "``ntry { Stop-Transcript *> ```$null } catch {}``n"
     `$tmpScript = Join-Path `$env:TEMP ('mios-getmios-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
     [IO.File]::WriteAllText(`$tmpScript, (`$_prelude + `$src + `$_postlude), [System.Text.UTF8Encoding]::new(`$false))
     & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript
