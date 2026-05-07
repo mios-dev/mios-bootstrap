@@ -2320,6 +2320,33 @@ function New-BuilderDistro([hashtable]$HW) {
                 & podman machine rm --force $BuilderDistro 2>&1 |
                     ForEach-Object { Write-Log "podman-recover-rm: $_" }
 
+                # Sweep candidate podman-machine storage paths for
+                # dangling reparse points. A previous admin run that
+                # provisioned M:\ might have symlinked
+                # %LOCALAPPDATA%\containers\podman\machine -> M:\podman\machine,
+                # then the operator wiped M:\ (or ran without admin so
+                # M:\ never came back). The dangling symlink makes
+                # podman init's Mkdir() fail with the exact error
+                # "Cannot create a file when that file already exists".
+                # cmd /c rmdir removes the LINK without following it,
+                # so the target (if any) stays untouched.
+                $podmanMachineCands = @(
+                    (Join-Path $env:LOCALAPPDATA 'containers\podman\machine'),
+                    (Join-Path $env:USERPROFILE  '.local\share\containers\podman\machine'),
+                    (Join-Path $env:PROGRAMDATA  'containers\podman\machine')
+                )
+                foreach ($p in $podmanMachineCands) {
+                    if (-not (Test-Path -LiteralPath $p)) { continue }
+                    $itm = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+                    if ($itm -and ($itm.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                        $tgt = ($itm.Target -join '').TrimStart('\??\')
+                        if ($tgt -and -not (Test-Path -LiteralPath $tgt)) {
+                            Log-Warn "podman-recover: dangling reparse-point at $p -> $tgt (target gone) -- removing link"
+                            cmd /c "rmdir `"$p`"" 2>&1 | ForEach-Object { Write-Log "podman-recover-rmdir: $_" }
+                        }
+                    }
+                }
+
                 # Retry init from a clean slate. Same EAP=Continue wrap as
                 # the primary init invocation above so podman's chatty
                 # post-start stderr doesn't trip $ErrorActionPreference=Stop.
