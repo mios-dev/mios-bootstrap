@@ -92,6 +92,42 @@ $ErrorActionPreference = "Stop"
 # land fresh on the next canonical-one-liner paste -- the only run that
 # pays the stale-cache cost is the very first one after this prefix is
 # itself deployed (the cached version pre-dates the prefix).
+# ── Cleanup of stale legacy profile body BEFORE anything else ────────────────
+# Earlier failed runs may have left a corrupted, mojibake'd profile.ps1 at
+# the legacy fallback path %USERPROFILE%\MiOS-bootstrap\powershell\. The
+# OUTER WinR pwsh dot-sources $PROFILE.CurrentUserAllHosts (the redirector)
+# at startup, BEFORE our script runs -- if the redirector's target file
+# has bad UTF-8 bytes, the parse error fires every time the operator pastes
+# the irm|iex one-liner. We can't suppress that startup load (it happened
+# before we got control), but we CAN delete the bad file here so it doesn't
+# fire AGAIN on subsequent runs. The canonical profile location is M:\MiOS\
+# powershell\profile.ps1 (written by Pass-1 with UTF-8 BOM); the
+# %USERPROFILE%\MiOS-bootstrap\ tree is purely a stale fallback artifact.
+try {
+    $_legacyProfile = Join-Path $env:USERPROFILE 'MiOS-bootstrap'
+    if (Test-Path -LiteralPath $_legacyProfile) {
+        Remove-Item -LiteralPath $_legacyProfile -Recurse -Force -ErrorAction SilentlyContinue
+        # Also rewrite the redirector to point at the M:\ canonical
+        # location so the NEXT pwsh launch loads a clean profile (or
+        # no-ops via the redirector's `if (Test-Path)` guard if Pass-1
+        # hasn't yet staged the M:\ copy on this run).
+        $_profilePath = $PROFILE.CurrentUserAllHosts
+        if (-not $_profilePath) { $_profilePath = $PROFILE }
+        if ($_profilePath -and (Test-Path -LiteralPath $_profilePath)) {
+            try {
+                $_existing = Get-Content -LiteralPath $_profilePath -Raw -ErrorAction SilentlyContinue
+                $_marker  = '# >>> MiOS oh-my-posh init >>>'
+                $_endMark = '# <<< MiOS oh-my-posh init <<<'
+                if ($_existing -match [regex]::Escape($_marker)) {
+                    $_pattern = "(?s)$([regex]::Escape($_marker)).*?$([regex]::Escape($_endMark))"
+                    $_cleaned = [regex]::Replace($_existing, $_pattern, '').TrimEnd()
+                    Set-Content -LiteralPath $_profilePath -Value $_cleaned -Encoding UTF8 -NoNewline
+                }
+            } catch {}
+        }
+    }
+} catch {}
+
 if (-not $env:MIOS_CACHE_BUSTED -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     $env:MIOS_CACHE_BUSTED = '1'
     try {
