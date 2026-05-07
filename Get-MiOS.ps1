@@ -819,26 +819,44 @@ function Install-MiOSTerminalProfile {
     $_themeScrollbar   = Get-MiosTomlValue -Section 'theme'      -Key 'scrollbar_state'    -Default 'hidden'
     $_themePadding     = Get-MiosTomlValue -Section 'theme'      -Key 'padding'            -Default '0'
     $_themeSuppress    = Get-MiosTomlValue -Section 'theme'      -Key 'suppress_app_title' -Default $true
+    # Operator's color accent for the MiOS profile's tab tint (matches
+    # mios.toml [colors].accent = #1A407F operator-blue).
+    $_themeAccent = Get-MiosTomlValue -Section 'colors' -Key 'accent' -Default '#1A407F'
     $commonProfileProps = [ordered]@{
+        # ── Color scheme ─────────────────────────────────────────────
         colorScheme              = (Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
+        # ── Font ─────────────────────────────────────────────────────
         font                     = [ordered]@{
             face   = $_themeFontFace
             size   = $_themeFontSize
             weight = $_themeFontWeight
         }
+        # ── Cursor ───────────────────────────────────────────────────
         cursorShape              = $_themeCursor
         antialiasingMode         = 'cleartype'
-        # Acrylic + transparency from mios.toml [theme].
+        intenseTextStyle         = 'all'      # bold + bright for strong-color text
+        # ── Acrylic + transparency (from mios.toml [theme]) ─────────
         useAcrylic               = $_themeAcrylic
         opacity                  = $_themeOpacity
         systemBackdrop           = $_themeBackdrop
+        # ── Layout / chrome ─────────────────────────────────────────
         padding                  = $_themePadding
         suppressApplicationTitle = $_themeSuppress
-        # Hide the scrollbar entirely -- WT's scrollbar consumes a
-        # full column even when there's nothing to scroll, leaving
-        # the framed dashboard visibly off-center. With this set,
-        # all 80 cells are usable and the frame fits flush.
+        # Hide the scrollbar entirely so all 80 cells are usable and
+        # the dashboard frame fits flush.
         scrollbarState           = $_themeScrollbar
+        # ── Behavior ─────────────────────────────────────────────────
+        snapOnInput              = $true      # auto-scroll to bottom on key press
+        altGrAliasing            = $true      # honor AltGr for non-US layouts
+        closeOnExit              = 'graceful' # auto-close window when shell exits cleanly
+        bellStyle                = 'none'     # no audible bell -- visual is via prompt
+        tabTitle                 = 'MiOS'     # static tab title (suppressApplicationTitle keeps this)
+        tabColor                 = $_themeAccent  # operator-blue tint on the tab
+        # ── Experimental: animations stay ON, retro CRT effect OFF ─
+        # (animations are global in WT root, not per-profile -- we
+        #  don't set disableAnimations here; default false = animations on,
+        #  preserving tab-fade / acrylic-recompute / pane-resize tweens.)
+        'experimental.retroTerminalEffect' = $false
         hidden                   = $false
     }
 
