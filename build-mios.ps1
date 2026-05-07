@@ -4913,13 +4913,23 @@ if ($x -lt $work.X) { $x = $work.X }
 if ($y -lt $work.Y) { $y = $work.Y }
 
 # Resolve wt.exe to WT Preview specifically (the dev-channel install
-# MiOS owns). Only fall back to the App Execution Alias if Preview
-# isn't on disk -- that way we never accidentally launch into Stable
-# WT, which doesn't have MiOS settings.json applied.
-$wtPreview = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue |
-    Sort-Object Name -Descending | Select-Object -First 1 |
-    ForEach-Object { Join-Path $_.FullName 'wt.exe' } |
-    Where-Object { Test-Path $_ } | Select-Object -First 1
+# MiOS owns). Get-AppxPackage InstallLocation is canonical; falls
+# through to a glob over WindowsApps and finally the App Execution
+# Alias only if Preview isn't on disk.
+$wtPreview = $null
+try {
+    $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminalPreview' -ErrorAction SilentlyContinue
+    if ($pkg -and $pkg.InstallLocation) {
+        $cand = Join-Path $pkg.InstallLocation 'wt.exe'
+        if (Test-Path -LiteralPath $cand) { $wtPreview = $cand }
+    }
+} catch {}
+if (-not $wtPreview) {
+    $wtPreview = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -First 1 |
+        ForEach-Object { Join-Path $_.FullName 'wt.exe' } |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+}
 $wtExe = if ($wtPreview) { $wtPreview } else { (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
 if (-not $wtExe) {
     [System.Windows.Forms.MessageBox]::Show("Windows Terminal Preview (wt.exe) is not installed. Run 'irm | iex' Get-MiOS.ps1 to install it.", "MiOS", 'OK', 'Error') | Out-Null
@@ -5242,8 +5252,15 @@ if ($activeDistro) {
         Log-Ok "Repo synced to $activeDistro"
     }
     End-Phase 1
-    # Skip phases 2-8, go straight to build
-    for ($s = 2; $s -le 8; $s++) {
+    # Skip the intermediate phases, go straight to build. BootstrapOnly
+    # mode has TotalPhases=6 (PhStat indices 0..5) and FullBuild has
+    # 14 (indices 0..13). Capping the loop at TotalPhases-1 keeps both
+    # modes safe -- the previous unbounded `2..8` indexed PhStat[6..8]
+    # in BootstrapOnly mode and threw "Index was outside the bounds
+    # of the array" the moment phase 6 was touched. Caught by MAIN's
+    # try/catch and surfaced as the dashboard's FATAL banner.
+    $skipMax = [math]::Min(8, $script:TotalPhases - 1)
+    for ($s = 2; $s -le $skipMax; $s++) {
         $script:PhStat[$s] = 2
         $script:PhStart[$s] = [datetime]::Now
         $script:PhEnd[$s]   = [datetime]::Now

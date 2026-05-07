@@ -550,13 +550,14 @@ function Install-MiOSTerminalProfile {
     $profileCmdline = '"' + $defaultPwsh + '" -NoLogo'
 
     # Per-profile shared settings -- apply to BOTH "MiOS" and "MiOS-DEV"
-    # so they look/feel identical. NONE of these touch global theme; the
-    # operator's other WT profiles are unaffected.
-    #
-    # Acrylic = gaussian-blur-behind material (vs. Mica's wallpaper-only).
-    # useAcrylic+systemBackdrop="acrylic" extends the blur to the window
-    # backdrop too. opacity=50 = 50% blur intensity. padding=0 +
-    # suppressApplicationTitle=true keeps the body frame-flush.
+    # so they look/feel identical. Belt-AND-braces acrylic settings:
+    # WT 1.16-1.17 reads `useAcrylic` (legacy bool) and `opacity`. WT
+    # 1.18+ reads `systemBackdrop` (per-profile). Setting BOTH means
+    # acrylic 50% transparency renders correctly across every WT
+    # version the operator might end up on. `useMica` is NOT set --
+    # it's not a documented WT key (mica is selected via
+    # systemBackdrop="mica"), and shipping unknown keys can cause WT's
+    # schema validator to reject the profile and fall back to defaults.
     $commonProfileProps = [ordered]@{
         colorScheme              = 'MiOS'
         font                     = [ordered]@{
@@ -566,10 +567,10 @@ function Install-MiOSTerminalProfile {
         }
         cursorShape              = 'bar'
         antialiasingMode         = 'cleartype'
+        # Acrylic 50% transparency -- MiOS spec.
         useAcrylic               = $true
-        useMica                  = $false
-        systemBackdrop           = 'acrylic'
         opacity                  = 50
+        systemBackdrop           = 'acrylic'
         padding                  = '0'
         suppressApplicationTitle = $true
         hidden                   = $false
@@ -667,10 +668,11 @@ function Install-MiOSTerminalProfile {
         }
         cursorShape              = 'bar'
         antialiasingMode         = 'cleartype'
+        # Acrylic 50% transparency in profiles.defaults so EVERY profile
+        # the operator opens through MiOS-themed WT inherits the look.
         useAcrylic               = $true
-        useMica                  = $false
-        systemBackdrop           = 'acrylic'
         opacity                  = 50
+        systemBackdrop           = 'acrylic'
         padding                  = '0'
         suppressApplicationTitle = $true
     }
@@ -1143,14 +1145,23 @@ try {
     #      Program Files\WindowsApps\Microsoft.WindowsTerminal_*\wt.exe
     #      (skips the alias stub entirely).
     #   3. Plain Start-Process pwsh -Verb RunAs (conhost). Always works.
-    # Resolve wt.exe to the WT PREVIEW install specifically. The App
-    # Execution Alias might still point to Stable WT if both are
-    # installed — we want our launches to land in Preview where the
-    # MiOS settings live.
-    $wtPreviewExe = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue |
-        Sort-Object Name -Descending | Select-Object -First 1 |
-        ForEach-Object { Join-Path $_.FullName 'wt.exe' } |
-        Where-Object { Test-Path $_ } | Select-Object -First 1
+    # Resolve wt.exe to the WT PREVIEW install specifically -- via
+    # Get-AppxPackage InstallLocation (more reliable than the
+    # WindowsApps directory glob, which varies per arch + version).
+    $wtPreviewExe = $null
+    try {
+        $previewPkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminalPreview' -ErrorAction SilentlyContinue
+        if ($previewPkg -and $previewPkg.InstallLocation) {
+            $cand = Join-Path $previewPkg.InstallLocation 'wt.exe'
+            if (Test-Path -LiteralPath $cand) { $wtPreviewExe = $cand }
+        }
+    } catch {}
+    if (-not $wtPreviewExe) {
+        $wtPreviewExe = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1 |
+            ForEach-Object { Join-Path $_.FullName 'wt.exe' } |
+            Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
     $wtExeCmd = Get-Command wt.exe -ErrorAction SilentlyContinue
     $wtExe = if ($wtPreviewExe) { [PSCustomObject]@{ Source = $wtPreviewExe } } else { $wtExeCmd }
     $elevated = $false
