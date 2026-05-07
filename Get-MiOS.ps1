@@ -2941,12 +2941,18 @@ try {
             # the framed dashboard + hint band ("build  config  dash
             # dev  pull  update  help"). Operator types `mios build`
             # to start the pipeline.
+            # Do NOT append 'pwsh' as the command -- doing so overrides
+            # the MiOS profile's bound commandline (mios.ps1 / mios.exe
+            # via Install-MiosLauncher). Without that override, the
+            # profile launches its native command which loads the
+            # framed dashboard + fastfetch + hint band. With 'pwsh'
+            # appended, we just got bare PS 7.6.1 banner + cwd
+            # System32 (the elevated default), no dashboard.
             `$_wtArgs = @(
                 '--pos', "`$(`$_x2),`$(`$_y2)",
                 '--size', "$_elevCols,$_elevRows",
                 '--focus',
-                '-p', 'MiOS',
-                'pwsh'
+                '-p', 'MiOS'
             )
             `$_spawnedAt = Get-Date
             Start-Process -FilePath `$_wtExe -ArgumentList `$_wtArgs -ErrorAction Stop
