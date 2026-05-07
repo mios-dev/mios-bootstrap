@@ -454,45 +454,58 @@ function Install-MiOSTerminalProfile {
     }
     $profileCmdline = '"' + $defaultPwsh + '" -NoLogo'
 
+    # Per-profile shared settings — apply to BOTH "MiOS" and "MiOS-DEV"
+    # so they look/feel identical. NONE of these touch global theme; the
+    # operator's other WT profiles are unaffected.
+    #
+    # Acrylic = gaussian-blur-behind material (vs. Mica's wallpaper-only).
+    # useAcrylic+systemBackdrop="acrylic" extends the blur to the window
+    # backdrop too. opacity=50 = 50% blur intensity. padding=0 +
+    # suppressApplicationTitle=true keeps the body frame-flush.
+    $commonProfileProps = [ordered]@{
+        colorScheme              = 'MiOS'
+        font                     = [ordered]@{
+            face   = 'GeistMono Nerd Font Mono'
+            size   = 12
+            weight = 'normal'
+        }
+        cursorShape              = 'bar'
+        antialiasingMode         = 'cleartype'
+        useAcrylic               = $true
+        useMica                  = $false
+        systemBackdrop           = 'acrylic'
+        opacity                  = 50
+        padding                  = '0'
+        suppressApplicationTitle = $true
+        hidden                   = $false
+    }
+
+    $miosDevGuid = '{a8b5c2d3-e4f5-6789-abcd-ef0123456790}'
+
     $miosProfile = [ordered]@{
         guid              = $miosGuid
         name              = 'MiOS'
         commandline       = $profileCmdline
         startingDirectory = 'M:\\'
-        colorScheme       = 'MiOS'
-        font              = [ordered]@{
-            face   = 'GeistMono Nerd Font Mono'
-            size   = 12
-            weight = 'normal'
-        }
-        cursorShape       = 'bar'
-        antialiasingMode  = 'cleartype'
-        # Acrylic blur + 50% opacity. Acrylic = the gaussian-blur-behind
-        # material (vs. Mica's wallpaper-only material). useAcrylic=true
-        # is the per-profile background blur; systemBackdrop="acrylic"
-        # extends it to the window-level chrome (the underlying frame
-        # behind launchMode=focus). opacity=50 sets the blur intensity
-        # at 50% transparent over the desktop. Mica is OFF (acrylic and
-        # mica are mutually exclusive).
-        useAcrylic        = $true
-        useMica           = $false
-        systemBackdrop    = 'acrylic'
-        opacity           = 50
-        # Borderless / minimum padding so the 80-col dashboard frame
-        # touches the window edge with no titlebar/tab-row stealing rows.
-        # The titlebar itself is hidden by launchMode=focus + the global
-        # showTabsInTitlebar=false; the underlying frame stays acrylic-
-        # blurred (matched to the body) for visual continuity.
-        padding           = '0'
-        suppressApplicationTitle = $true
-        hidden            = $false
     }
+    foreach ($k in $commonProfileProps.Keys) { $miosProfile[$k] = $commonProfileProps[$k] }
 
-    # Read existing settings.json — preserve the operator's other
-    # profiles, schemes, keybindings. WT writes JSONC (comments + trailing
-    # commas). PowerShell's ConvertFrom-Json refuses both pre-7.0; strip
-    # them out before parsing, but write back as plain JSON (WT accepts
-    # plain JSON without complaint).
+    # MiOS-DEV profile: drops the operator straight into the MiOS-DEV WSL2
+    # distro as the mios user, cwd /. Same look as MiOS (acrylic, font,
+    # scheme) so the only visible difference is the prompt context.
+    $miosDevProfile = [ordered]@{
+        guid              = $miosDevGuid
+        name              = 'MiOS-DEV'
+        commandline       = 'wsl.exe -d MiOS-DEV --cd / --user mios'
+        startingDirectory = $null
+    }
+    foreach ($k in $commonProfileProps.Keys) { $miosDevProfile[$k] = $commonProfileProps[$k] }
+
+    # Read existing settings.json — preserve EVERY existing global
+    # (launchMode, defaultProfile, theme, keybindings, etc.). We touch
+    # only schemes[] and profiles.list[] entries that are ours.
+    # WT writes JSONC; ConvertFrom-Json on PS5.1 chokes on it, so strip
+    # comments + trailing commas before parsing.
     $raw = ''
     if (Test-Path -LiteralPath $settingsPath) {
         try { $raw = Get-Content -LiteralPath $settingsPath -Raw -ErrorAction Stop } catch { $raw = '' }
@@ -516,34 +529,14 @@ function Install-MiOSTerminalProfile {
         $wtJson = ConvertFrom-Json '{ "profiles": { "list": [] }, "schemes": [] }'
     }
 
-    # Root-level globals. launchMode=focus ⇒ no titlebar, no tab row,
-    # no minimize/maximize buttons — the "borderless / frameless" request.
-    # showTabsInTitlebar=false + alwaysShowTabs=false also hide tabs in
-    # non-focus tabs that the operator opens later.
-    # Root-level globals.
-    # launchMode=focus      : no titlebar, no tab row, no min/max buttons.
-    # disableAnimations=false: keep WT's tab-fade / pane-resize / acrylic-
-    #                        blur recompute animations live. The dashboard
-    #                        is in-place repainted by Show-Dashboard with
-    #                        a strict-clamped width, so animations layered
-    #                        over it don't drift the frame.
-    # showTabsInTitlebar/   : keep the chrome dead even outside focus mode
-    #   alwaysShowTabs=false  so a stray tab-open doesn't surface a titlebar.
-    # initialCols/Rows=80/30: TTY0/text-mode-3+ canonical dimensions, 4:3
-    #                        pixel aspect with standard 1:2 monospace cells.
-    $wtJson | Add-Member -NotePropertyName launchMode                  -NotePropertyValue 'focus' -Force
-    $wtJson | Add-Member -NotePropertyName showTabsInTitlebar          -NotePropertyValue $false  -Force
-    $wtJson | Add-Member -NotePropertyName alwaysShowTabs              -NotePropertyValue $false  -Force
-    # useAcrylicInTabRow=true matches the operator's request: even though
-    # the titlebar/tab row is hidden by launchMode=focus, the underlying
-    # acrylic surface is consistent with the body so any later tab-open
-    # (Ctrl-T) shows a 50% acrylic tab row, not a flat solid one.
-    $wtJson | Add-Member -NotePropertyName useAcrylicInTabRow          -NotePropertyValue $true   -Force
-    $wtJson | Add-Member -NotePropertyName showTerminalTitleInTitlebar -NotePropertyValue $false  -Force
-    $wtJson | Add-Member -NotePropertyName initialCols                 -NotePropertyValue 80      -Force
-    $wtJson | Add-Member -NotePropertyName initialRows                 -NotePropertyValue 30      -Force
-    $wtJson | Add-Member -NotePropertyName centerOnLaunch              -NotePropertyValue $true   -Force
-    $wtJson | Add-Member -NotePropertyName disableAnimations           -NotePropertyValue $false  -Force
+    # NO ROOT-LEVEL CHANGES. The previous draft set launchMode/showTabs
+    # InTitlebar/initialCols/initialRows/centerOnLaunch/etc. as GLOBALS,
+    # which polluted every WT profile the operator had configured. That
+    # was wrong — the borderless / 80x30 / centered behavior is achieved
+    # for the MiOS bootstrap window via wt.exe COMMAND-LINE flags
+    # (--focus --pos --size) at launch, scoped strictly to that one
+    # window. Other WT windows the operator opens via their own profiles
+    # are untouched.
 
     # Schemes: upsert MiOS.
     if (-not $wtJson.schemes) {
@@ -560,12 +553,17 @@ function Install-MiOSTerminalProfile {
     if (-not $wtJson.profiles.list) {
         $wtJson.profiles | Add-Member -NotePropertyName list -NotePropertyValue @() -Force
     }
-    # Filter out any prior MiOS entry by GUID *or* by the name we used in
-    # earlier revisions ("MiOS-Bootstrap"), so the upsert is one-and-only-one.
+    # Filter out any prior MiOS / MiOS-DEV entries by GUID *or* by the
+    # names we've used in earlier revisions, so the upsert is exactly two.
     $existingList = @($wtJson.profiles.list | Where-Object {
-        $_.guid -ne $miosGuid -and $_.name -ne 'MiOS' -and $_.name -ne 'MiOS-Bootstrap'
+        $_.guid -ne $miosGuid -and
+        $_.guid -ne $miosDevGuid -and
+        $_.name -ne 'MiOS' -and
+        $_.name -ne 'MiOS-DEV' -and
+        $_.name -ne 'MiOS-Bootstrap'
     })
     $existingList += [PSCustomObject]$miosProfile
+    $existingList += [PSCustomObject]$miosDevProfile
     $wtJson.profiles.list = $existingList
 
     # Write back.
@@ -573,7 +571,7 @@ function Install-MiOSTerminalProfile {
         $parent = Split-Path -Parent $settingsPath
         if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
         ($wtJson | ConvertTo-Json -Depth 32) | Set-Content -LiteralPath $settingsPath -Encoding UTF8
-        Write-Host "  [+] MiOS-Bootstrap profile + MiOS scheme injected; launchMode=focus, 80x30 centered." -ForegroundColor Green
+        Write-Host "  [+] MiOS + MiOS-DEV profiles + MiOS scheme upserted (no global theme changes)." -ForegroundColor Green
         return $miosGuid
     } catch {
         Write-Host "  [!] settings.json write failed: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -635,16 +633,28 @@ $endMark
     Write-Host "  [+] PowerShell profile updated with MiOS oh-my-posh init: $profilePath" -ForegroundColor Green
 }
 
-# Compute centered window position (in pixels) for an 80x30 cell window
-# (canonical TTY0 / text-mode-3+ dimensions, 4:3 pixel aspect with the
-# standard 1:2 monospace cell ratio). Cell metrics for Geist Mono 12pt
-# at 100% DPI are roughly 10 px wide × 20 px tall (with lineHeight=1.0
-# the cells flatten to a clean 1:2 ratio): 80×10 = 800 px wide,
-# 30×20 = 600 px tall, ratio 800/600 = 4:3 exactly. We pad a few pixels
-# for the acrylic edge / scrollbar that focus mode leaves in.
-# Operators on different DPI / multi-monitor setups will get the window
-# approximately centered on the primary display — wt.exe clamps to the
-# screen rect anyway.
+# DPI-aware centered position for an 80x30 acrylic focus-mode window.
+#
+# Cell metrics (Geist Mono 12pt @ 100% DPI, lineHeight=1.0): ~10 × 20 px
+# → grid 800 × 600 px → 4:3 exactly.
+#
+# Window-level slack (DWM frame + scrollbar + acrylic edge in focus mode):
+# +20 px width, +12 px height. So the wt.exe outer rect is ~820 × 612 px
+# at 100% DPI on a typical Win11 build.
+#
+# Robustness layers:
+#   1. SetProcessDPIAware() — without this, on 125%/150% scaled displays
+#      Screen.WorkingArea returns LOGICAL pixels and our --pos math is
+#      off by the scale factor (window lands top-left).
+#   2. Cursor-monitor detection — PrimaryScreen always sends the window
+#      to display #1 even when the operator is on display #2. Use
+#      Screen.FromPoint(Cursor.Position) so the window opens on whichever
+#      monitor the operator is actively using.
+#   3. Post-launch correction — wt.exe sometimes ignores --pos in focus
+#      mode (1.18+ regression). Move-MiOSWindowToCenter (called from the
+#      relaunch path after Start-Process) finds the WT hwnd and moves it
+#      to the true center. This is the belt-AND-braces guarantee that
+#      'exit' is type-able because the window is on-screen.
 function Get-MiOSCenteredWindowPosition {
     param(
         [int]$Cols   = 80,
@@ -653,16 +663,76 @@ function Get-MiOSCenteredWindowPosition {
         [int]$CellH  = 20
     )
     try {
+        Add-Type -Namespace 'MiOS.Native' -Name 'Dpi' -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+'@ -ErrorAction SilentlyContinue
+        try { [MiOS.Native.Dpi]::SetProcessDPIAware() | Out-Null } catch {}
+    } catch {}
+
+    try {
         Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-        $w = ($Cols * $CellW) + 16   # +scrollbar/border slack
-        $h = ($Rows * $CellH) + 8
-        $x = [int][Math]::Max(0, ($screen.Width  - $w) / 2 + $screen.X)
-        $y = [int][Math]::Max(0, ($screen.Height - $h) / 2 + $screen.Y)
-        return "$x,$y"
+        $cursor = [System.Windows.Forms.Cursor]::Position
+        $screen = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
+
+        $winW = ($Cols * $CellW) + 20   # cells + DWM frame + scrollbar
+        $winH = ($Rows * $CellH) + 12   # cells + DWM frame T+B
+        $x = [int]($screen.X + ($screen.Width  - $winW) / 2)
+        $y = [int]($screen.Y + ($screen.Height - $winH) / 2)
+        if ($x -lt $screen.X) { $x = $screen.X }
+        if ($y -lt $screen.Y) { $y = $screen.Y }
+        return @{ Pos = "$x,$y"; ScreenLeft = $screen.X; ScreenTop = $screen.Y; ScreenWidth = $screen.Width; ScreenHeight = $screen.Height }
     } catch {
-        return '0,0'
+        return @{ Pos = '0,0'; ScreenLeft = 0; ScreenTop = 0; ScreenWidth = 1920; ScreenHeight = 1080 }
     }
+}
+
+# Post-launch re-center: WT in focus mode sometimes lands at (0,0) or at
+# the previous WT window's last position because it ignores --pos. We
+# wait up to ~3s for a WindowsTerminal.exe process to surface a top-level
+# hwnd, GetWindowRect to read its real outer-rect size, then SetWindowPos
+# to (screenCenter - rect/2). This guarantees the window is exactly
+# screen-center regardless of what WT did with --pos.
+function Move-MiOSWindowToCenter {
+    param(
+        [hashtable]$ScreenInfo,
+        [int]$TimeoutMs = 4000
+    )
+    try {
+        Add-Type -Namespace 'MiOS.Native' -Name 'Win' -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+[DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+public struct RECT { public int Left, Top, Right, Bottom; }
+'@ -ErrorAction SilentlyContinue
+    } catch {}
+
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+    $hwnd = [IntPtr]::Zero
+    while ((Get-Date) -lt $deadline) {
+        $wt = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
+              Sort-Object StartTime -Descending |
+              Select-Object -First 1
+        if ($wt -and $wt.MainWindowHandle -ne [IntPtr]::Zero) {
+            if ([MiOS.Native.Win]::IsWindowVisible($wt.MainWindowHandle)) {
+                $hwnd = $wt.MainWindowHandle
+                break
+            }
+        }
+        Start-Sleep -Milliseconds 150
+    }
+    if ($hwnd -eq [IntPtr]::Zero) { return $false }
+
+    $rect = New-Object MiOS.Native.Win+RECT
+    if (-not [MiOS.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) { return $false }
+    $w = $rect.Right - $rect.Left
+    $h = $rect.Bottom - $rect.Top
+    if ($w -le 0 -or $h -le 0) { return $false }
+
+    $x = [int]($ScreenInfo.ScreenLeft + ($ScreenInfo.ScreenWidth  - $w) / 2)
+    $y = [int]($ScreenInfo.ScreenTop  + ($ScreenInfo.ScreenHeight - $h) / 2)
+    # SWP_NOSIZE=0x1, SWP_NOZORDER=0x4, SWP_SHOWWINDOW=0x40
+    [void][MiOS.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $x, $y, 0, 0, 0x44)
+    return $true
 }
 
 # 1. ALWAYS spawn a fresh elevated pwsh window. The original `irm | iex`
@@ -681,7 +751,8 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     Install-MiOSGeistFont           | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
     Install-MiOSTerminalProfile     | Out-Null
-    $miosWindowPos = Get-MiOSCenteredWindowPosition -Cols 80 -Rows 30
+    $miosWindowInfo = Get-MiOSCenteredWindowPosition -Cols 80 -Rows 30
+    $miosWindowPos  = $miosWindowInfo.Pos
 
     Write-Host "  [*] Spawning a fresh elevated pwsh window for the bootstrap run..." -ForegroundColor Cyan
     if (-not $isAdmin) {
@@ -934,6 +1005,16 @@ try {
                 }
             }
         }
+    }
+    if ($elevated -and $wtExe) {
+        # Belt-and-braces re-center: WT in focus mode often ignores --pos
+        # on the first launch (lands at 0,0 or at the previous WT
+        # window's last saved position). Wait for the WT hwnd to surface,
+        # then SetWindowPos to true screen center based on actual outer
+        # window dims. Without this the operator can be left with an
+        # off-screen window that's only closeable via 'exit' typed
+        # blind — defeating the whole point of focus mode.
+        try { Move-MiOSWindowToCenter -ScreenInfo $miosWindowInfo | Out-Null } catch {}
     }
     if (-not $elevated) {
         Write-Host ''

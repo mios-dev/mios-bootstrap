@@ -4763,17 +4763,112 @@ $endMark
     # Replaces the previous six per-verb shortcuts. Operators launch
     # MiOS, get the hub menu, pick a verb. All verbs reachable from
     # one icon. Desktop and Start Menu both point at the same hub.
-    # Per-verb shortcuts are intentionally not generated -- the Start
-    # Menu noise was a recurring user complaint and the underlying
-    # bin scripts (mios-hub, mios-dash, mios-dev, ...) are still
-    # directly invocable from any pwsh shell as PROFILE functions.
+    #
+    # Native-app behavior: the .lnk targets a tiny launcher script
+    # (mios-launch.ps1) staged under $MiosBinDir. The launcher computes
+    # the screen-centered pixel position for an 80x30 acrylic window on
+    # whichever monitor the cursor is on, runs `wt.exe -p MiOS --focus`
+    # at that position, then re-centers via Win32 SetWindowPos using
+    # the WT window's actual outer rect. Result: every double-click
+    # lands a borderless, screen-centered MiOS terminal — even on
+    # multi-monitor + scaled-DPI hosts.
     $hubResizePrelude = "try { `$H=Get-Host; `$H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 80,30) } catch {}"
+    $miosLauncher = Join-Path $MiosBinDir 'mios-launch.ps1'
+    $launcherSrc = @'
+# mios-launch.ps1 -- native-app launcher for MiOS / MiOS-DEV WT profiles.
+# Spawns wt.exe with the requested profile in focus mode (borderless,
+# no titlebar, no tab row), 80 cols x 30 rows, screen-centered on
+# whichever monitor the cursor is currently on. Re-centers post-launch
+# via Win32 SetWindowPos to defeat WT's --pos-ignored-in-focus
+# regression. Runs invisibly (parent shortcut uses -WindowStyle Hidden).
+param(
+    [string]$Profile = 'MiOS'
+)
+$ErrorActionPreference = 'SilentlyContinue'
+
+try {
+    Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Dpi' -MemberDefinition @"
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+"@
+    [MiOSLaunch.Native.Dpi]::SetProcessDPIAware() | Out-Null
+} catch {}
+
+Add-Type -AssemblyName System.Windows.Forms
+
+# Cell metrics (Geist Mono 12pt, lineHeight=1.0): ~10 x 20 px.
+# Outer-rect slack for DWM frame + scrollbar + acrylic edge: +20 W, +12 H.
+$Cols   = 80
+$Rows   = 30
+$winW   = ($Cols * 10) + 20
+$winH   = ($Rows * 20) + 12
+
+$cur    = [System.Windows.Forms.Cursor]::Position
+$work   = [System.Windows.Forms.Screen]::FromPoint($cur).WorkingArea
+$x      = [int]($work.X + ($work.Width  - $winW) / 2)
+$y      = [int]($work.Y + ($work.Height - $winH) / 2)
+if ($x -lt $work.X) { $x = $work.X }
+if ($y -lt $work.Y) { $y = $work.Y }
+
+$wt = Get-Command wt.exe -ErrorAction SilentlyContinue
+if (-not $wt) {
+    [System.Windows.Forms.MessageBox]::Show("Windows Terminal (wt.exe) is not installed. Install it from the Microsoft Store and re-launch MiOS.", "MiOS", 'OK', 'Error') | Out-Null
+    exit 1
+}
+
+$wtArgs = @('-w','-1','--pos',"$x,$y",'--size','80,30','--focus','nt','-p',$Profile)
+Start-Process -FilePath $wt.Source -ArgumentList $wtArgs
+
+# Post-launch re-center: WT in focus mode often ignores --pos. Wait
+# briefly for the WT hwnd to surface, then SetWindowPos to the true
+# screen-centered coords using the actual outer-rect dims.
+try {
+    Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Win' -MemberDefinition @"
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out RECT lpRect);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
+public struct RECT { public int Left, Top, Right, Bottom; }
+"@
+} catch {}
+
+$deadline = (Get-Date).AddMilliseconds(4000)
+$hwnd = [IntPtr]::Zero
+while ((Get-Date) -lt $deadline) {
+    $proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
+            Sort-Object StartTime -Descending |
+            Select-Object -First 1
+    if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
+        if ([MiOSLaunch.Native.Win]::IsWindowVisible($proc.MainWindowHandle)) {
+            $hwnd = $proc.MainWindowHandle
+            break
+        }
+    }
+    Start-Sleep -Milliseconds 150
+}
+
+if ($hwnd -ne [IntPtr]::Zero) {
+    $rect = New-Object MiOSLaunch.Native.Win+RECT
+    if ([MiOSLaunch.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) {
+        $rw = $rect.Right - $rect.Left
+        $rh = $rect.Bottom - $rect.Top
+        if ($rw -gt 0 -and $rh -gt 0) {
+            $cx = [int]($work.X + ($work.Width  - $rw) / 2)
+            $cy = [int]($work.Y + ($work.Height - $rh) / 2)
+            # SWP_NOSIZE=0x1 + SWP_NOZORDER=0x4 + SWP_SHOWWINDOW=0x40 = 0x45
+            [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, 0, 0, 0x45)
+        }
+    }
+}
+'@
+    if (-not (Test-Path $MiosBinDir)) { New-Item -ItemType Directory -Path $MiosBinDir -Force | Out-Null }
+    Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
+    Log-Ok "MiOS native launcher staged: $miosLauncher"
+
+    # Shortcut targets the centering launcher with -WindowStyle Hidden so
+    # there's no console-flash before WT appears. -NoProfile keeps the
+    # launcher cold-start fast (typically < 300 ms before wt.exe spawns).
     if ($wtExe) {
-        # Prefer Windows Terminal's MiOS profile (correct font + scheme).
-        # WT's profile commandline already resizes the buffer + launches
-        # the MiOS app; here we just ask WT to open that profile.
-        $hubTarget = $wtExe
-        $hubArgs   = '-p MiOS'
+        $hubTarget = $pwshExe
+        $hubArgs   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$miosLauncher`""
     } else {
         $hubTarget = $pwshExe
         $hubArgs   = "-NoExit -ExecutionPolicy Bypass -Command `"& { $hubResizePrelude; & '$hubPath' }`""
@@ -5641,12 +5736,19 @@ exit 1
     # was removed -- `podman machine ssh MiOS-DEV` fails post-rename
     # because podman hardcodes the `podman-` prefix in WSLDistroName(),
     # and "MiOS Dev Shell" already covers the same use case.
+    # MiOS Terminal / MiOS Dev Shell route through the centering launcher
+    # (mios-launch.ps1) so every double-click lands a borderless 80x30
+    # acrylic window screen-centered, regardless of last-window position
+    # WT might have remembered. -WindowStyle Hidden keeps the wrapper
+    # pwsh invisible — only the WT window appears.
+    $launcherArgs    = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$miosLauncher`""
+    $launcherArgsDev = "$launcherArgs -Profile MiOS-DEV"
     @(
         @{ F="MiOS Setup.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`"";              D="Re-run full 'MiOS' setup" },
         @{ F="Build MiOS.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`" -BuildOnly";    D="Build 'MiOS' OCI image (Phase 6+: identity, podman build, deploy)" },
         @{ F="MiOS Configurator.lnk";  T=$pwsh;     A="-NoProfile -ExecutionPolicy Bypass -File `"$cfgScript`""; D="Edit mios.toml in Epiphany via WSLg" },
-        @{ F="MiOS Terminal.lnk";      T="wsl.exe"; A="-d $MiosWslDistro";                                       D="Open 'MiOS' workstation terminal" },
-        @{ F="MiOS Dev Shell.lnk";     T="wsl.exe"; A="-d $DevDistro --user root";                               D="Open $DevDistro terminal (root)" },
+        @{ F="MiOS Terminal.lnk";      T=$pwsh;     A=$launcherArgs;                                             D="Open MiOS WT profile (borderless, 80x30, screen-centered)" },
+        @{ F="MiOS Dev Shell.lnk";     T=$pwsh;     A=$launcherArgsDev;                                          D="Open MiOS-DEV WT profile (borderless, 80x30, screen-centered)" },
         @{ F="Uninstall MiOS.lnk";     T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$uninstSc`"";             D="Remove MiOS" }
     ) | ForEach-Object { New-Shortcut (Join-Path $StartMenuDir $_.F) $_.T $_.A $_.D $MiosInstallDir }
 
