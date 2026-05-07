@@ -3140,6 +3140,92 @@ function Set-PodmanMachineStorageOnM {
     }
 }
 
+# Junction every winget package storage path onto M:\ so winget-installed
+# CLIs (oh-my-posh, fastfetch, fd, ripgrep, jq, btop4win, etc.) land on
+# the dedicated MIOS-DEV partition rather than scattering across
+# %LOCALAPPDATA% and %PROGRAMFILES%. Per operator: "winget should be
+# installing EVERYTHING to the M:\ partition for ease of uninstallations".
+#
+# Carve-outs (NOT relocatable):
+#   - Windows Terminal (appx-packaged UWP, lives in WindowsApps)
+#   - Podman Desktop (machine-scope MSI, lives in Program Files)
+# These two stay where Microsoft / RedHat installed them; everything
+# else (per-user winget package cache + per-user manifest cache + the
+# winget portable-app stash) gets symlinked to M:\winget\*.
+#
+# Same symlink-not-junction discipline as podman storage paths above:
+# mklink /D, not /J. winget's link resolver follows symlinks; some
+# uninstallers fail on junction targets.
+#
+# Runs BEFORE any winget install so the very first install's package
+# directory creation lands on M:\ from the start. If we redirect
+# AFTER winget has already created the dirs, we'd need to move the
+# contents over -- doable but racy. Idempotent: re-runs are no-ops if
+# the symlinks already point at M:\.
+function Set-WingetStorageOnM {
+    param([string]$MRoot = 'M:\winget')
+    if (-not (Test-Path $MRoot)) {
+        New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
+        Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray
+    }
+    foreach ($_sub in @('Packages','Cache','PortableLinks','PortablePackagesRoot')) {
+        $sd = Join-Path $MRoot $_sub
+        if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
+    }
+    $candidates = @(
+        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages');             Dst = (Join-Path $MRoot 'Packages')             },
+        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Cache');                Dst = (Join-Path $MRoot 'Cache')                },
+        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links');                Dst = (Join-Path $MRoot 'PortableLinks')        },
+        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Portable\PackagesRoot'); Dst = (Join-Path $MRoot 'PortablePackagesRoot') }
+    )
+    foreach ($c in $candidates) {
+        $p = $c.Src; $tgt = $c.Dst
+        if (-not $p) { continue }
+        $parent = Split-Path $p -Parent
+        if (-not (Test-Path $parent)) {
+            try { New-Item -ItemType Directory -Path $parent -Force | Out-Null } catch {}
+        }
+        if (Test-Path $p) {
+            $item = Get-Item $p -Force -ErrorAction SilentlyContinue
+            if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                $current = ($item.Target -join '').TrimStart('\??\')
+                if ($current -ieq $tgt) {
+                    Write-Host "    [=] $p -> $tgt (already linked)" -ForegroundColor DarkGray
+                    continue
+                }
+                cmd /c "rmdir `"$p`"" 2>$null | Out-Null
+            } else {
+                $kids = Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue
+                if ($kids -and $kids.Count -gt 0) {
+                    Write-Host "    [*] moving existing $p contents to $tgt ..." -ForegroundColor DarkGray
+                    try {
+                        foreach ($k in $kids) {
+                            $dst = Join-Path $tgt $k.Name
+                            if (-not (Test-Path $dst)) {
+                                Move-Item -LiteralPath $k.FullName -Destination $tgt -Force -ErrorAction Stop
+                            }
+                        }
+                    } catch {
+                        Write-Host "    [!] move failed: $($_.Exception.Message) -- forcing remove" -ForegroundColor Yellow
+                    }
+                }
+                try {
+                    Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop
+                } catch {
+                    Write-Host "    [!] couldn't remove $p (locked) -- skipping link for this path" -ForegroundColor Yellow
+                    continue
+                }
+            }
+        }
+        $rc = (cmd /c "mklink /D `"$p`" `"$tgt`"" 2>&1)
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "    [+] symlinked $p -> $tgt" -ForegroundColor DarkGray
+        } else {
+            Write-Host "    [!] mklink /D $p -> $tgt failed: $rc" -ForegroundColor Yellow
+        }
+    }
+}
+
 # NOTE: this script does NOT delete anything on the operator's
 # filesystem -- not C:\MiOS, not M:\MiOS, not %USERPROFILE%, not
 # %PROGRAMDATA%, NOTHING. A previous version of this script had a
@@ -3174,6 +3260,14 @@ Initialize-DataDisk
 # clean.
 Write-Info "Redirecting podman-machine storage to M:\\podman\\machine ..."
 Set-PodmanMachineStorageOnM
+
+# Junction winget package storage onto M:\winget\* so winget-installed
+# CLIs land on the dedicated partition. Per operator: "winget should be
+# installing EVERYTHING to the M:\ partition for ease of uninstallations".
+# Runs BEFORE Pass-1's winget tools install + Pass-2's Podman Desktop
+# install so the very first winget invocation already targets M:\.
+Write-Info "Redirecting winget package storage to M:\\winget\\* ..."
+Set-WingetStorageOnM
 
 # Create the canonical Windows install root structure now that M:\
 # is guaranteed to exist. The reset above wiped M:\MiOS, so this
