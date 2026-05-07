@@ -1792,6 +1792,14 @@ if (`$true) {
 function mios-build {
     [CmdletBinding()]
     param([Parameter(ValueFromRemainingArguments)]`$Args)
+    # Force linear log mode for the build dashboard. The interactive
+    # cursor-positioning dashboard (build-mios.ps1's Show-Dashboard)
+    # fights with oh-my-posh's prompt-function installer + PSReadLine
+    # handlers in the MiOS terminal -- rows stack horizontally on a
+    # single buffer line instead of advancing properly. Linear log
+    # mode emits Write-Host calls with proper newlines + the same
+    # box-drawing frame, just rendered top-to-bottom.
+    `$env:MIOS_DASHBOARD_MODE = 'log'
     `$cb = [int][double]::Parse((Get-Date -UFormat %s))
     `$src = Invoke-RestMethod -Uri "`$Script:MiosBootstrapRaw/build-mios.ps1?cb=`$cb" -Headers @{ 'Cache-Control' = 'no-cache' }
     & ([scriptblock]::Create(`$src)) @Args

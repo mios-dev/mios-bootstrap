@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # 'MiOS' Unified Installer & Builder -- Windows 11 / PowerShell
 #
 #   irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.ps1 | iex
@@ -841,13 +841,19 @@ function Show-Dashboard {
     $winW = [math]::Min($winW, [math]::Min($bufW, 80))
     $w    = [math]::Max(40, [math]::Min(80, $winW - 1))
     $in = $w - 4   # inner content width: "| " + content + " |"
-    $sepD = ("+" + ("-" * ($w - 2)) + "+").PadRight($winW)
-    $sepE = ("+" + ("=" * ($w - 2)) + "+").PadRight($winW)
+    # Box-drawing frame chars to match the MiOS terminal's
+    # Show-MiosDashboard styling (oh-my-posh framing). $sepTop and
+    # $sepBot are the rounded top/bottom corners; $sepD is the
+    # divider between sections; sides use thin │.
+    $sepTop = ("╭" + ("─" * ($w - 2)) + "╮").PadRight($winW)
+    $sepBot = ("╰" + ("─" * ($w - 2)) + "╯").PadRight($winW)
+    $sepD   = ("├" + ("─" * ($w - 2)) + "┤").PadRight($winW)
+    $sepE   = $sepTop   # legacy alias -- header uses top corner the first time
 
     # ── Row helper -- script block closes over $in/$winW from caller scope ─────
     $mkRow = {
         param([string]$c)
-        ("| " + $c.PadRight($in) + " |").PadRight($winW)
+        ("│ " + $c.PadRight($in) + " │").PadRight($winW)
     }
 
     # ── State ─────────────────────────────────────────────────────────────────
@@ -910,9 +916,9 @@ function Show-Dashboard {
     $title = " 'MiOS' $MiosVersion$commitTag  --  Build Dashboard"
     $right = "[ $elStr ] "
     $gap   = [math]::Max(0, $in - $title.Length - $right.Length)
-    $hdr   = "| $title" + (" " * $gap) + "$right |"
+    $hdr   = "│ $title" + (" " * $gap) + "$right │"
     $rows.Add($hdr.PadRight($winW))
-    $rows.Add($sepE)
+    $rows.Add($sepD)
 
     # Hardware info row (populated after Get-Hardware; blank during early phases)
     if ($script:HWInfo) {
@@ -995,7 +1001,7 @@ function Show-Dashboard {
     # Log footer -- unified log only ($BuildDetailLog is merged in at exit)
     $logLeaf = try { Split-Path $LogFile -Leaf } catch { "?" }
     $rows.Add((& $mkRow "Log: $logLeaf"))
-    $rows.Add($sepE)
+    $rows.Add($sepBot)
 
     # ── Render at fixed position; full-width overwrite eliminates bleed ────────
     $dashStart = [math]::Min($script:DashRow, [math]::Max(0, $bufH - $rows.Count - 2))
@@ -5099,13 +5105,14 @@ $script:DashboardMode = if ($env:MIOS_DASHBOARD_MODE -eq 'log') {
 
 # ── Banner ───────────────────────────────────────────────────────────────────
 Clear-Host
-$b = "+" + ("=" * ($script:DW - 2)) + "+"
+$bTop = "╭" + ("─" * ($script:DW - 2)) + "╮"
+$bBot = "╰" + ("─" * ($script:DW - 2)) + "╯"
 $pad = [math]::Max(0, $script:DW - 4 - "MiOS $MiosVersion  --  Unified Windows Installer".Length)
-Write-Host $b                                                                       -ForegroundColor Cyan
-Write-Host ("| 'MiOS' $MiosVersion  --  Unified Windows Installer" + (" " * $pad) + " |") -ForegroundColor Cyan
-Write-Host ("| Immutable Fedora AI Workstation" + (" " * ($script:DW - 34)) + " |") -ForegroundColor Cyan
-Write-Host ("| WSL2 + Podman  |  Offline Build Pipeline" + (" " * ($script:DW - 43)) + " |") -ForegroundColor Cyan
-Write-Host $b                                                                       -ForegroundColor Cyan
+Write-Host $bTop                                                                       -ForegroundColor Cyan
+Write-Host ("│ 'MiOS' $MiosVersion  --  Unified Windows Installer" + (" " * $pad) + " │") -ForegroundColor Cyan
+Write-Host ("│ Immutable Fedora AI Workstation" + (" " * ($script:DW - 34)) + " │") -ForegroundColor Cyan
+Write-Host ("│ WSL2 + Podman  │  Offline Build Pipeline" + (" " * ($script:DW - 43)) + " │") -ForegroundColor Cyan
+Write-Host $bBot                                                                       -ForegroundColor Cyan
 Write-Host ""
 
 if ($script:DashboardMode -eq 'log') {
@@ -5988,34 +5995,35 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
 
     $totalTime = fmtSpan ([datetime]::Now - $script:ScriptStart)
     Write-Host ""
-    $b = "+" + ("=" * ($script:DW - 2)) + "+"
+    $bTop = "╭" + ("─" * ($script:DW - 2)) + "╮"
+    $bBot = "╰" + ("─" * ($script:DW - 2)) + "╯"
     if ($ExitCode -eq 0) {
         $artifactDir = Join-Path $MiosDistroDir "artifacts"
-        Write-Host $b -ForegroundColor Green
-        $l = "| 'MiOS' $MiosVersion built and deployed!  (total: $totalTime)"
-        Write-Host ($l.PadRight($script:DW - 1) + "|") -ForegroundColor Green
-        Write-Host ("| OCI   : localhost/mios:latest  in $BuilderDistro".PadRight($script:DW - 1) + "|") -ForegroundColor White
-        $wslLine = "| WSL2  : wsl -d $MiosWslDistro"
+        Write-Host $bTop -ForegroundColor Green
+        $l = "│ 'MiOS' $MiosVersion built and deployed!  (total: $totalTime)"
+        Write-Host ($l.PadRight($script:DW - 1) + "│") -ForegroundColor Green
+        Write-Host ("│ OCI   : localhost/mios:latest  in $BuilderDistro".PadRight($script:DW - 1) + "│") -ForegroundColor White
+        $wslLine = "│ WSL2  : wsl -d $MiosWslDistro"
         $wslDistroOk = (& wsl.exe -l --quiet 2>$null) -join " " -match $MiosWslDistro
         if ($wslDistroOk) {
-            Write-Host ($wslLine.PadRight($script:DW - 1) + "|") -ForegroundColor Cyan
+            Write-Host ($wslLine.PadRight($script:DW - 1) + "│") -ForegroundColor Cyan
         } else {
-            Write-Host ("| WSL2  : see $artifactDir\mios-wsl2.tar".PadRight($script:DW - 1) + "|") -ForegroundColor DarkGray
+            Write-Host ("│ WSL2  : see $artifactDir\mios-wsl2.tar".PadRight($script:DW - 1) + "│") -ForegroundColor DarkGray
         }
         $qcow2 = Join-Path $artifactDir "mios.qcow2"
         $raw   = Join-Path $artifactDir "mios.raw"
-        if (Test-Path $qcow2) { Write-Host ("| QEMU  : $qcow2".PadRight($script:DW - 1) + "|") -ForegroundColor Cyan }
-        if (Test-Path $raw)   { Write-Host ("| RAW   : $raw".PadRight($script:DW - 1) + "|") -ForegroundColor Cyan }
+        if (Test-Path $qcow2) { Write-Host ("│ QEMU  : $qcow2".PadRight($script:DW - 1) + "│") -ForegroundColor Cyan }
+        if (Test-Path $raw)   { Write-Host ("│ RAW   : $raw".PadRight($script:DW - 1) + "│") -ForegroundColor Cyan }
         $hvVm = try { Get-VM -Name $MiosWslDistro -EA SilentlyContinue } catch { $null }
-        if ($hvVm) { Write-Host ("| HV    : Hyper-V VM '$MiosWslDistro' ready -- Start-VM -Name $MiosWslDistro".PadRight($script:DW - 1) + "|") -ForegroundColor Cyan }
-        Write-Host ("| Logs  : $MiosLogDir".PadRight($script:DW - 1) + "|") -ForegroundColor DarkGray
-        Write-Host $b -ForegroundColor Green
+        if ($hvVm) { Write-Host ("│ HV    : Hyper-V VM '$MiosWslDistro' ready -- Start-VM -Name $MiosWslDistro".PadRight($script:DW - 1) + "│") -ForegroundColor Cyan }
+        Write-Host ("│ Logs  : $MiosLogDir".PadRight($script:DW - 1) + "│") -ForegroundColor DarkGray
+        Write-Host $bBot -ForegroundColor Green
     } else {
-        Write-Host $b -ForegroundColor Red
-        Write-Host ("| BUILD FAILED (exit $ExitCode)  --  Errors: $($script:ErrCount)".PadRight($script:DW - 1) + "|") -ForegroundColor Red
-        Write-Host ("| Log  : $LogFile".PadRight($script:DW - 1) + "|") -ForegroundColor Yellow
-        Write-Host ("| Re-run : podman build --no-cache -t localhost/mios:latest $MiosRepoDir\mios".PadRight($script:DW - 1) + "|") -ForegroundColor DarkGray
-        Write-Host $b -ForegroundColor Red
+        Write-Host $bTop -ForegroundColor Red
+        Write-Host ("│ BUILD FAILED (exit $ExitCode)  --  Errors: $($script:ErrCount)".PadRight($script:DW - 1) + "│") -ForegroundColor Red
+        Write-Host ("│ Log  : $LogFile".PadRight($script:DW - 1) + "│") -ForegroundColor Yellow
+        Write-Host ("│ Re-run : podman build --no-cache -t localhost/mios:latest $MiosRepoDir\mios".PadRight($script:DW - 1) + "│") -ForegroundColor DarkGray
+        Write-Host $bBot -ForegroundColor Red
     }
     Write-Host ""
     Write-Host "  Log directory: $MiosLogDir" -ForegroundColor DarkGray
