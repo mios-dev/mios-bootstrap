@@ -5984,16 +5984,21 @@ if ($activeDistro) {
     # re-runs this script with -BuildOnly).
     if ($BootstrapOnly) {
         Log-Ok "-BootstrapOnly mode: dev VM provisioned, Windows install complete."
-        # Flush every async write that Install-MiosLauncher / Log-Ok kicked
-        # off so the post-bootstrap menu doesn't render while log lines
-        # are still landing on screen. Without this barrier the menu's
-        # ╭───╮ rows had Install-MiosLauncher's tail content (.ps1, .lnk,
-        # MiOS.Workstation, etc.) appearing AFTER each row's │ -- because
-        # PowerShell's stdout buffer hadn't flushed by the time
-        # Show-PostBootstrapMenu's Write-Hosts started landing.
+        # Flush + 500ms drain barrier so EVERY async log write from
+        # Install-MiosLauncher / Set-Step lands BEFORE the menu starts.
         try { [Console]::Out.Flush() } catch {}
         try { [Console]::Error.Flush() } catch {}
-        Start-Sleep -Milliseconds 250
+        Start-Sleep -Milliseconds 500
+        # Clear the screen so the menu renders on a clean canvas. The
+        # operator's full transcript is in the log file
+        # ($MiosLogDir\mios-install-*.log); the on-screen scrollback
+        # from the bootstrap is lost but the menu is GUARANTEED clean.
+        # Three previous fix attempts (flush, sleep, full-width pad) all
+        # had log-line tails leak into menu rows -- some interaction
+        # between PowerShell's output buffering, WT's cell rendering,
+        # and Set-Step's throttled prints that I can't fully tame.
+        # Clear-Host sidesteps the entire race.
+        try { Clear-Host } catch {}
         Show-PostBootstrapMenu
         return
     }
