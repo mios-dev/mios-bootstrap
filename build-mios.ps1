@@ -6416,58 +6416,43 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
             Write-Host "     Output streams below; the OCI build runs inside MiOS-DEV." -ForegroundColor DarkGray
             Write-Host ""
 
-            # Source the driver from the M:\ mios.git overlay (Phase 2
-            # cloned it). Use Start-Process with raw stream copy: the
-            # PowerShell `|` operator into a native command corrupts
-            # binary stdin (drops ~24 leading bytes during pipe
-            # initialization, makes base64 -d reject input). Process+
-            # stream is the only reliable path. Driver is ~26K binary
-            # -> ~35K base64, well over the ~32K argv limit, so stdin
-            # streaming is required either way.
+            # The driver lives at M:\usr\libexec\mios\mios-build-driver
+            # (Phase 2 cloned mios.git to M:\). WSL automounts every
+            # Windows drive at /mnt/<letter>/, so the dev distro can
+            # see it directly at /mnt/m/usr/libexec/mios/mios-build-driver --
+            # no need to base64-stage the file via stdin (which had
+            # its own dragons: PowerShell `|` corrupting binary stdin,
+            # ProcessStartInfo.ArgumentList not existing in PS 5.1,
+            # etc.). Just exec it from the mount.
+            #
+            # Probe automount first so we surface a clear error if the
+            # operator's WSL config has [automount].enabled=false. The
+            # default machine-os config has automount on; this is a
+            # belt-and-braces check.
             $localDriver = Join-Path $script:MiosRepoDir 'usr\libexec\mios\mios-build-driver'
-            if (Test-Path -LiteralPath $localDriver) {
-                $stagedOk = $false
-                try {
-                    $bytes = [System.IO.File]::ReadAllBytes($localDriver)
-                    $b64   = [Convert]::ToBase64String($bytes)
-                    $tmpB64 = [IO.Path]::GetTempFileName() + '.b64'
-                    [IO.File]::WriteAllText($tmpB64, $b64, [Text.UTF8Encoding]::new($false))
-
-                    $psi = New-Object System.Diagnostics.ProcessStartInfo
-                    $psi.FileName = 'wsl.exe'
-                    foreach ($a in @('-d', $devDistro, '--user', 'root', '--', 'bash', '-c',
-                                     'base64 -d > /tmp/mios-build-driver && chmod +x /tmp/mios-build-driver')) {
-                        $psi.ArgumentList.Add($a) | Out-Null
-                    }
-                    $psi.RedirectStandardInput = $true
-                    $psi.UseShellExecute = $false
-                    $proc = [System.Diagnostics.Process]::Start($psi)
-                    $fs = [IO.File]::OpenRead($tmpB64)
-                    try { $fs.CopyTo($proc.StandardInput.BaseStream) } finally { $fs.Close(); $proc.StandardInput.Close() }
-                    $proc.WaitForExit()
-                    Remove-Item -LiteralPath $tmpB64 -Force -ErrorAction SilentlyContinue
-                    if ($proc.ExitCode -ne 0) {
-                        Write-Host "  [!] Failed to stage driver into distro (exit $($proc.ExitCode))" -ForegroundColor Yellow
-                    } else {
-                        $stagedOk = $true
-                    }
-                } catch {
-                    Write-Host "  [!] Driver stage failed: $($_.Exception.Message)" -ForegroundColor Yellow
-                }
-                if ($stagedOk) {
-                    # Stage 2: exec the driver interactively so the
-                    # operator sees + interacts with its output. As
-                    # root inside machine-os, sudo is redundant -- run
-                    # bash directly to avoid PAM/sudoers edge cases.
-                    if ($resolvedUser -eq 'root') {
-                        & wsl.exe -d $devDistro --user root -- bash -lc 'exec bash /tmp/mios-build-driver'
-                    } else {
-                        & wsl.exe -d $devDistro --user $resolvedUser -- bash -lc 'exec sudo bash /tmp/mios-build-driver'
-                    }
-                }
-            } else {
+            if (-not (Test-Path -LiteralPath $localDriver)) {
                 Write-Host "  [!] mios-build-driver not found at $localDriver" -ForegroundColor Yellow
                 Write-Host "      Re-run the bootstrap; Phase 2 should have cloned mios.git to M:\." -ForegroundColor DarkGray
+            } else {
+                # Convert M:\path\to\file -> /mnt/m/path/to/file (WSL automount).
+                $wslDriver = '/mnt/' + $localDriver.Substring(0, 1).ToLower() + ($localDriver.Substring(2) -replace '\\','/')
+                $automountOk = $false
+                try {
+                    & wsl.exe -d $devDistro --user root -- test -r $wslDriver 2>$null
+                    if ($LASTEXITCODE -eq 0) { $automountOk = $true }
+                } catch {}
+                if (-not $automountOk) {
+                    Write-Host "  [!] /mnt/m/ not readable inside $devDistro (automount disabled?)" -ForegroundColor Yellow
+                    Write-Host "      Manually run inside $devDistro :  bash $wslDriver" -ForegroundColor DarkGray
+                } else {
+                    # Exec the driver. As root, no sudo needed (avoids
+                    # PAM/sudoers edge cases inside rootful machine-os).
+                    if ($resolvedUser -eq 'root') {
+                        & wsl.exe -d $devDistro --user root -- bash -lc "exec bash $wslDriver"
+                    } else {
+                        & wsl.exe -d $devDistro --user $resolvedUser -- bash -lc "exec sudo bash $wslDriver"
+                    }
+                }
             }
         }
     }
