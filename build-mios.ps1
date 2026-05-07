@@ -6425,10 +6425,34 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
     # re-runs this script with -BuildOnly).
     if ($BootstrapOnly) {
         Log-Ok "-BootstrapOnly mode: dev VM provisioned, Windows install complete."
-        # No interactive menu, no inline summary. The finally block at
-        # script exit handles the single canonical summary; printing
-        # one HERE was producing TWO "MiOS bootstrap complete" headers
-        # in the operator's transcript. Just return -- finally fires next.
+        # ── Operator-facing end-of-Pass-2 summary ────────────────────
+        # Per operator: the bootstrap should "prompt user to open the
+        # MiOS app/terminal profile to the M:\ directory with
+        # everything prepped to go and installed". Print a framed
+        # checklist of what was installed + a clear next-step pointer.
+        # The auto-chain below this return then enters the dev VM and
+        # runs the build; the operator sees this summary first.
+        Write-Host ''
+        Write-Host '  +' ('-' * 76) '+' -ForegroundColor DarkCyan
+        Write-Host '  |  MiOS Windows-side install complete                                        |' -ForegroundColor Cyan
+        Write-Host '  +' ('-' * 76) '+' -ForegroundColor DarkCyan
+        Write-Host ''
+        Write-Host '    Windows side ............................................................' -ForegroundColor DarkGray
+        Write-Host '      [+] M:\ partition (256 GB NTFS, label MIOS-DEV)' -ForegroundColor Green
+        Write-Host '      [+] Podman Desktop + podman-MiOS-DEV machine' -ForegroundColor Green
+        Write-Host '      [+] mios.git + mios-bootstrap overlaid at M:\' -ForegroundColor Green
+        Write-Host '      [+] MiOS terminal essentials layered into MiOS-DEV' -ForegroundColor Green
+        Write-Host '      [+] Native Windows app: Start Menu + Desktop shortcuts' -ForegroundColor Green
+        Write-Host '          (MiOS hub, MiOS-DEV, MiOS Build, MiOS Dashboard,' -ForegroundColor DarkGray
+        Write-Host '           MiOS Configurator, MiOS Update, MiOS Pull)' -ForegroundColor DarkGray
+        Write-Host '      [+] PowerShell mios-* commands available in any pwsh shell' -ForegroundColor Green
+        Write-Host '          (mios build / mios update / mios pull / mios dev /' -ForegroundColor DarkGray
+        Write-Host '           mios dash / mios config / mios help)' -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host '    Next: the bootstrap auto-chains into MiOS-DEV to run' -ForegroundColor White
+        Write-Host '    /usr/libexec/mios/mios-build-driver -- the OCI build runs there.' -ForegroundColor White
+        Write-Host '    Find MiOS in your Start Menu / Desktop / search any time.' -ForegroundColor White
+        Write-Host ''
         try { [Console]::Out.Flush() } catch {}
         return
     }

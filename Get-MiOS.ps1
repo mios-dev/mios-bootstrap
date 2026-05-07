@@ -1793,7 +1793,12 @@ try {
     [MiosWin.N]::GetWindowRect(`$_hwnd, [ref]`$_r) | Out-Null
     `$_w = `$_r.Width  - `$_r.X
     `$_h = `$_r.Height - `$_r.Y
-    `$_s = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    # Center on the ACTIVE display (where the cursor currently is),
+    # NOT PrimaryScreen. On multi-monitor hosts the operator launches
+    # mios.bat from whichever monitor they're working on; the window
+    # should land THERE.
+    `$_cur = [System.Windows.Forms.Cursor]::Position
+    `$_s   = [System.Windows.Forms.Screen]::FromPoint(`$_cur).WorkingArea
     `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_w)) / 2)
     `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_h)) / 2)
     [MiosWin.N]::MoveWindow(`$_hwnd, `$_x, `$_y, `$_w, `$_h, `$true) | Out-Null
@@ -2084,17 +2089,71 @@ function mios-dev {
     & wsl.exe -d MiOS-DEV --cd / --user mios @Args
 }
 
+function mios-dash {
+    # Live MiOS dashboard -- reads system state, framed banner +
+    # fastfetch + service health. Wraps the bin script that
+    # build-mios.ps1 stages at M:\MiOS\bin\mios-dash.ps1.
+    `$dash = if (Test-Path 'M:\MiOS\bin\mios-dash.ps1') { 'M:\MiOS\bin\mios-dash.ps1' }
+            elseif (Test-Path 'C:\MiOS\bin\mios-dash.ps1') { 'C:\MiOS\bin\mios-dash.ps1' }
+            else { `$null }
+    if (`$dash) {
+        & `$dash
+    } else {
+        # Fall back to running Show-MiosDashboard inline since this
+        # profile defined it.
+        if (Get-Command Show-MiosDashboard -ErrorAction SilentlyContinue) {
+            `$cfg  = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' } else { '' }
+            `$logo = if (Test-Path 'M:\MiOS\fastfetch\mios.txt')      { 'M:\MiOS\fastfetch\mios.txt' }      else { '' }
+            Show-MiosDashboard -ConfigPath `$cfg -LogoPath `$logo
+        } else {
+            Write-Host '  [!] mios-dash not available -- run mios-build to deploy it.' -ForegroundColor Yellow
+        }
+    }
+}
+
 function mios-help {
     Write-Host ''
     Write-Host '  MiOS commands' -ForegroundColor Cyan
     Write-Host '  -------------' -ForegroundColor DarkCyan
-    Write-Host '  mios-build    run the full MiOS OS bootstrap (WSL2 + podman + dev VM)' -ForegroundColor White
-    Write-Host '  mios-update   re-run Get-MiOS.ps1 (refresh terminal install)' -ForegroundColor White
-    Write-Host '  mios-pull     git fetch + hard reset M:\ to origin/main' -ForegroundColor White
-    Write-Host '  mios-config   open the HTML configurator (mios.toml editor)' -ForegroundColor White
-    Write-Host '  mios-dev      wsl into the MiOS-DEV distro (root /, user mios)' -ForegroundColor White
-    Write-Host '  mios-help     this list' -ForegroundColor White
+    Write-Host '  mios <verb>   unified dispatcher (tab-complete supported)' -ForegroundColor White
+    Write-Host '                  or use mios-<verb> directly:' -ForegroundColor DarkGray
+    Write-Host '  mios build    run the full MiOS OS bootstrap (WSL2 + podman + dev VM)' -ForegroundColor White
+    Write-Host '  mios update   re-run Get-MiOS.ps1 (refresh terminal install)' -ForegroundColor White
+    Write-Host '  mios pull     git fetch + hard reset M:\ to origin/main' -ForegroundColor White
+    Write-Host '  mios config   open the HTML configurator (mios.toml editor)' -ForegroundColor White
+    Write-Host '  mios dev      wsl into the MiOS-DEV distro (root /, user mios)' -ForegroundColor White
+    Write-Host '  mios dash     live MiOS dashboard (services + fastfetch)' -ForegroundColor White
+    Write-Host '  mios help     this list' -ForegroundColor White
     Write-Host ''
+}
+
+# Unified `mios <verb>` dispatcher. Operator types `mios build` or
+# `mios b<TAB>` (PSReadLine + the ArgumentCompleter below complete to
+# `mios build`). Falls through to `mios-<verb>` so the same wrappers
+# back both call shapes.
+function mios {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0)]
+        [ValidateSet('build','update','pull','config','dev','dash','help')]
+        [string]`$Verb = 'help',
+        [Parameter(ValueFromRemainingArguments)]
+        `$Args
+    )
+    `$cmd = "mios-`$Verb"
+    if (Get-Command `$cmd -ErrorAction SilentlyContinue) {
+        & `$cmd @Args
+    } else {
+        Write-Host "  [!] mios: '`$Verb' is not a known verb. Try: mios help" -ForegroundColor Yellow
+    }
+}
+
+# Tab-completion for `mios <verb>` so `mios b<TAB>` -> `mios build`.
+Register-ArgumentCompleter -CommandName mios -ParameterName Verb -ScriptBlock {
+    param(`$cmdName, `$paramName, `$wordToComplete, `$cmdAst, `$fakeBoundParam)
+    @('build','update','pull','config','dev','dash','help') |
+        Where-Object { `$_ -like "`$wordToComplete*" } |
+        ForEach-Object { [System.Management.Automation.CompletionResult]::new(`$_, `$_, 'ParameterValue', `$_) }
 }
 "@
     Set-Content -Path $miosProfileScript -Value $miosScriptBody -Encoding UTF8
@@ -2402,7 +2461,9 @@ try {
     [MiosWin.N]::GetWindowRect(`$hwnd, [ref]`$dummy) | Out-Null
     `$winW = `$dummy.Width  - `$dummy.X
     `$winH = `$dummy.Height - `$dummy.Y
-    `$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    # Center on the ACTIVE display (cursor position), not PrimaryScreen.
+    `$cur = [System.Windows.Forms.Cursor]::Position
+    `$screen = [System.Windows.Forms.Screen]::FromPoint(`$cur).WorkingArea
     `$x = `$screen.X + [int](([math]::Max(0, `$screen.Width  - `$winW)) / 2)
     `$y = `$screen.Y + [int](([math]::Max(0, `$screen.Height - `$winH)) / 2)
     [MiosWin.N]::MoveWindow(`$hwnd, `$x, `$y, `$winW, `$winH, `$true) | Out-Null
