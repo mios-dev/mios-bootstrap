@@ -947,6 +947,67 @@ namespace MiOS.NativeApp {
     Write-Host "  [+] MiOS installed as a native Windows app." -ForegroundColor Green
 }
 
+# Canonical MiOS branding ASCII art (also at /usr/share/mios/branding/mios.txt
+# inside the deployed MiOS Linux image). Used by fastfetch as the
+# "logo" via raw-source mode.
+$Script:MiosBrandingTxt = @'
+      ___                       ___           ___
+     /\__\          ___        /\  \         /\  \
+    /::|  |        /\  \      /::\  \       /::\  \
+   /:|:|  |        \:\  \    /:/\:\  \     /:/\ \  \
+  /:/|:|__|__      /::\__\  /:/  \:\  \   _\:\~\ \  \
+ /:/ |::::\__\  __/:/\/__/ /:/__/ \:\__\ /\ \:\ \ \__\
+ \/__/~~/:/  / /\/:/  /    \:\  \ /:/  / \:\ \:\ \/__/
+       /:/  /  \::/__/      \:\  /:/  /   \:\ \:\__\
+      /:/  /    \:\__\       \:\/:/  /     \:\/:/  /
+     /:/  /      \/__/        \::/  /       \::/  /
+     \/__/                     \/__/         \/__/
+'@
+
+# Canonical MiOS fastfetch config -- Windows variant of mios.git's
+# /usr/share/mios/fastfetch/config.jsonc. MiOS palette colors (Hokusai)
+# applied to title/keys/separator. Modules trimmed to Windows-relevant
+# ones (no Linux-side packages/locale/swap noise). Logo source is a
+# placeholder __MIOS_LOGO__ that Install-MiOSFastfetch / the profile
+# script's self-heal substitute with the actual mios.txt path.
+$Script:MiosFastfetchConfig = @'
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "type": "raw",
+    "source": "__MIOS_LOGO__",
+    "color": { "1": "#1A407F" },
+    "position": "top",
+    "padding": { "top": 1, "right": 0, "left": 2 }
+  },
+  "display": {
+    "separator": "  ",
+    "color": {
+      "keys": "#F35C15",
+      "title": "#E7DFD3",
+      "output": "#B7C9D7"
+    }
+  },
+  "modules": [
+    "title",
+    { "type": "separator", "string": "─" },
+    { "type": "os",           "key": "OS"       },
+    { "type": "host",         "key": "Host"     },
+    { "type": "kernel",       "key": "Kernel"   },
+    { "type": "uptime",       "key": "Uptime"   },
+    { "type": "shell",        "key": "Shell"    },
+    { "type": "terminal",     "key": "Terminal" },
+    { "type": "terminalfont", "key": "Font"     },
+    { "type": "cpu",          "key": "CPU"      },
+    { "type": "gpu",          "key": "GPU"      },
+    { "type": "memory",       "key": "Memory"   },
+    { "type": "disk",         "key": "Disk"     },
+    { "type": "localip",      "key": "Local IP" },
+    { "type": "datetime",     "key": "Time"     }
+  ]
+}
+'@
+
 # Canonical MiOS oh-my-posh theme content. Hoisted to script scope so
 # both Install-MiOSOhMyPoshTheme (writes the file at install time) and
 # Install-MiOSPowerShellProfile (embeds it as a self-heal blob in the
@@ -1025,6 +1086,66 @@ $Script:MiosOmpJson = @'
 }
 '@
 
+function Install-MiOSFastfetch {
+    # winget install fastfetch + stage MiOS-themed config and ASCII
+    # logo at M:\MiOS\fastfetch\ (or LOCALAPPDATA fallback). The PS
+    # profile invokes `fastfetch -c <staged>` on every MiOS shell
+    # session start so the operator sees a MiOS-branded MOTD.
+    $alreadyInstalled = $false
+    if (Get-Command fastfetch -ErrorAction SilentlyContinue) { $alreadyInstalled = $true }
+    if (-not $alreadyInstalled) {
+        try {
+            $probe = & winget list --id Fastfetch-cli.Fastfetch --exact 2>$null
+            if ($LASTEXITCODE -eq 0 -and ($probe -join "`n") -match 'Fastfetch-cli\.Fastfetch') {
+                $alreadyInstalled = $true
+            }
+        } catch {}
+    }
+    if (-not $alreadyInstalled) {
+        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            Write-Host "  [!] winget not available; cannot auto-install fastfetch." -ForegroundColor Yellow
+            Write-Host "      Install manually: https://github.com/fastfetch-cli/fastfetch/releases" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  [*] Installing fastfetch via winget..." -ForegroundColor Cyan
+            try {
+                & winget install --id Fastfetch-cli.Fastfetch --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  [+] fastfetch installed." -ForegroundColor Green
+                } else {
+                    Write-Host "  [!] winget exit code $LASTEXITCODE -- fastfetch may not be installed." -ForegroundColor Yellow
+                }
+            } catch {
+                Write-Host "  [!] winget install fastfetch failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+    } else {
+        Write-Host "  [+] fastfetch already installed." -ForegroundColor DarkGray
+    }
+
+    # Stage the config + logo on M:\ (or LOCALAPPDATA fallback).
+    $miosRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path $env:LOCALAPPDATA 'MiOS' }
+    $ffDir = Join-Path $miosRoot 'fastfetch'
+    if (-not (Test-Path $ffDir)) { New-Item -ItemType Directory -Path $ffDir -Force | Out-Null }
+    $logoPath   = Join-Path $ffDir 'mios.txt'
+    $configPath = Join-Path $ffDir 'config.jsonc'
+
+    Set-Content -Path $logoPath -Value $Script:MiosBrandingTxt -Encoding UTF8
+
+    # Bake the actual logo path into the JSONC -- escape backslashes
+    # for the JSON string ("M:\\MiOS\\fastfetch\\mios.txt").
+    $logoPathJson = $logoPath -replace '\\', '\\'
+    $resolvedConfig = $Script:MiosFastfetchConfig -replace '__MIOS_LOGO__', $logoPathJson
+    Set-Content -Path $configPath -Value $resolvedConfig -Encoding UTF8
+
+    if ((Test-Path $configPath) -and (Test-Path $logoPath)) {
+        Write-Host "  [+] fastfetch theme staged: $configPath" -ForegroundColor DarkGray
+        Write-Host "  [+] MiOS branding logo:    $logoPath" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  [!] fastfetch theme staging FAILED at $ffDir" -ForegroundColor Yellow
+    }
+    return $configPath
+}
+
 function Install-MiOSOhMyPoshTheme {
     # Stage mios.omp.json at M:\MiOS\themes\ (or LOCALAPPDATA fallback)
     # so the $PROFILE init block finds it on first launch -- prevents
@@ -1073,45 +1194,80 @@ function Install-MiOSPowerShellProfile {
     # The C:\ user profile only gets a thin redirector that dot-sources
     # this file -- so future edits to the M:\ copy take effect on next
     # shell launch with no C:\ round-trip.
-    # Build the M:\ profile script. It self-heals: if no candidate
-    # mios.omp.json exists at dot-source time, it writes the embedded
-    # base64 blob to %LOCALAPPDATA%\MiOS\themes\mios.omp.json so
-    # oh-my-posh always finds a config and never shows "CONFIG NOT
-    # FOUND" -- even if the operator ran an older Get-MiOS.ps1 that
-    # didn't stage the omp.json explicitly.
-    $ompBlobBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosOmpJson))
+    # Build the M:\ profile script. Self-heals every embedded artifact
+    # (oh-my-posh config + fastfetch config + MiOS ASCII logo) on
+    # dot-source if the file isn't already staged on disk -- so even
+    # an operator who irm|iex'd an older Get-MiOS.ps1 without these
+    # stages gets a fully-themed MiOS terminal on the next pwsh launch.
+    $ompBlobBase64    = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosOmpJson))
+    $ffConfigBase64   = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosFastfetchConfig))
+    $ffLogoBase64     = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosBrandingTxt))
     $miosScriptBody = @"
-# MiOS PowerShell profile -- oh-my-posh init.
+# MiOS PowerShell profile -- fastfetch MOTD + oh-my-posh init.
 # Source of truth: this file lives on M:\ and is dot-sourced from
-# `$PROFILE.CurrentUserAllHosts. Edit here, restart pwsh, prompt updates.
-# Self-heals mios.omp.json from an embedded base64 blob if no copy
-# is on disk (covers the irm|iex-already-ran-once-without-staging case).
+# `$PROFILE.CurrentUserAllHosts. Edit here, restart pwsh, updates.
+# Self-heals every artifact (mios.omp.json, fastfetch config.jsonc,
+# mios.txt ASCII logo) from embedded base64 blobs if the canonical
+# disk copy is missing -- so any pwsh launch in a MiOS terminal
+# gets a fully-themed experience even if irm|iex was a stale build.
+
 if (`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') {
+
+    # ── Resolve / self-heal MiOS artifact paths ───────────────────
+    `$miosArtifactRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path `$env:LOCALAPPDATA 'MiOS' }
+    function _MiosSelfHeal {
+        param([string]`$RelDir, [string]`$FileName, [string]`$Blob)
+        `$dir = Join-Path `$miosArtifactRoot `$RelDir
+        if (-not (Test-Path `$dir)) { New-Item -ItemType Directory -Path `$dir -Force | Out-Null }
+        `$path = Join-Path `$dir `$FileName
+        if (-not (Test-Path -LiteralPath `$path)) {
+            try { [System.IO.File]::WriteAllBytes(`$path, [Convert]::FromBase64String(`$Blob)) } catch { return `$null }
+        }
+        return `$path
+    }
+
+    # oh-my-posh config -- probe canonical paths, self-heal if missing.
     `$miosOmp = `$null
-    `$candidates = @()
-    if (`$env:MIOS_OMP_JSON) { `$candidates += `$env:MIOS_OMP_JSON }
-    `$candidates += @(
+    `$ompCands = @()
+    if (`$env:MIOS_OMP_JSON) { `$ompCands += `$env:MIOS_OMP_JSON }
+    `$ompCands += @(
         'M:\MiOS\themes\mios.omp.json',
         'M:\usr\share\mios\oh-my-posh\mios.omp.json',
         'C:\MiOS\themes\mios.omp.json',
         'C:\MiOS\usr\share\mios\oh-my-posh\mios.omp.json',
         (Join-Path `$env:LOCALAPPDATA 'MiOS\themes\mios.omp.json')
     )
-    foreach (`$c in `$candidates) {
+    foreach (`$c in `$ompCands) {
         if (`$c -and (Test-Path -LiteralPath `$c)) { `$miosOmp = `$c; break }
     }
     if (-not `$miosOmp) {
-        # Self-heal: decode the embedded blob and write it.
-        `$blob = '$ompBlobBase64'
-        try {
-            `$selfHealRoot = if (Test-Path 'M:\') { 'M:\MiOS\themes' } else { Join-Path `$env:LOCALAPPDATA 'MiOS\themes' }
-            if (-not (Test-Path `$selfHealRoot)) { New-Item -ItemType Directory -Path `$selfHealRoot -Force | Out-Null }
-            `$miosOmp = Join-Path `$selfHealRoot 'mios.omp.json'
-            [System.IO.File]::WriteAllBytes(`$miosOmp, [Convert]::FromBase64String(`$blob))
-        } catch {
-            `$miosOmp = `$null
+        `$miosOmp = _MiosSelfHeal 'themes' 'mios.omp.json' '$ompBlobBase64'
+    }
+
+    # ── Fastfetch MOTD on session start ───────────────────────────
+    if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
+        # Self-heal logo + config.
+        `$miosLogo   = _MiosSelfHeal 'fastfetch' 'mios.txt'      '$ffLogoBase64'
+        `$miosFFCfg  = _MiosSelfHeal 'fastfetch' 'config.jsonc'  '$ffConfigBase64'
+        if (`$miosLogo -and `$miosFFCfg) {
+            # Patch the placeholder logo path with the actual one
+            # (only needed on a fresh self-heal; subsequent runs no-op).
+            try {
+                `$cfgRaw = Get-Content -LiteralPath `$miosFFCfg -Raw
+                if (`$cfgRaw -match '__MIOS_LOGO__') {
+                    `$cfgRaw = `$cfgRaw -replace '__MIOS_LOGO__', (`$miosLogo -replace '\\', '\\')
+                    Set-Content -LiteralPath `$miosFFCfg -Value `$cfgRaw -Encoding UTF8
+                }
+            } catch {}
+            # Run fastfetch -- only on INTERACTIVE sessions (skip when
+            # this profile is dot-sourced inside a script context).
+            if (`$Host.UI.RawUI -and (-not `$env:MIOS_SKIP_MOTD)) {
+                try { fastfetch -c `$miosFFCfg } catch {}
+            }
         }
     }
+
+    # ── oh-my-posh init ───────────────────────────────────────────
     if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
         if (`$miosOmp -and (Test-Path -LiteralPath `$miosOmp)) {
             oh-my-posh init pwsh --config `$miosOmp | Invoke-Expression
@@ -1329,20 +1485,22 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
         Write-Host "  [!] Windows theme registry write failed: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 
-    Write-Host "  [*] Step 1/4: Installing Windows Terminal Preview (winget dev channel)..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 1/6: Installing Windows Terminal (base) via winget..." -ForegroundColor Cyan
     if (-not (Install-MiOSWindowsTerminal)) {
-        Write-Host "  [!] WT Preview install failed -- bootstrap cannot continue without a themed WT to launch into." -ForegroundColor Red
-        Write-Host "      Install manually and re-run: winget install Microsoft.WindowsTerminal.Preview" -ForegroundColor DarkGray
+        Write-Host "  [!] WT install failed -- bootstrap cannot continue without a themed WT to launch into." -ForegroundColor Red
+        Write-Host "      Install manually and re-run: winget install Microsoft.WindowsTerminal" -ForegroundColor DarkGray
         exit 1
     }
-    Write-Host "  [*] Step 2/4: Patching WT Preview settings.json with MiOS theme..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 2/6: Patching WT settings.json with MiOS scheme + profiles..." -ForegroundColor Cyan
     Install-MiOSTerminalProfile     | Out-Null
-    Write-Host "  [*] Step 3/4: Installing GeistMono Nerd Font (per-user, HKCU)..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 3/6: Installing GeistMono Nerd Font (per-user, HKCU)..." -ForegroundColor Cyan
     Install-MiOSGeistFont           | Out-Null
-    Write-Host "  [*] Step 4/5: Staging mios.omp.json + wiring oh-my-posh init..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 4/6: Installing fastfetch + staging MiOS-themed config..." -ForegroundColor Cyan
+    Install-MiOSFastfetch           | Out-Null
+    Write-Host "  [*] Step 5/6: Staging mios.omp.json + wiring oh-my-posh init..." -ForegroundColor Cyan
     Install-MiOSOhMyPoshTheme       | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
-    Write-Host "  [*] Step 5/5: Registering MiOS as a native Windows app (Start Menu + Add/Remove Programs)..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 6/6: Registering MiOS as a native Windows app..." -ForegroundColor Cyan
     Install-MiOSNativeApp           | Out-Null
 
     # Per operator: do NOT auto-launch anything. The MiOS app is now
