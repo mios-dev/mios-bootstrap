@@ -1515,12 +1515,16 @@ foreach ($mod in $psModules) {
         $rx = '(?ms)^\[packages\.windows\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
         $m  = [regex]::Match($tomlText, $rx)
         if ($m.Success) {
-            $list = $m.Groups['list'].Value
+            # Strip TOML inline comments PER LINE first, then split by
+            # comma. Doing it the other way around lets `# comment` text
+            # bleed into the next entry because PS regex `$` without (?m)
+            # matches end-of-string, eating across newlines.
+            $stripped = ($m.Groups['list'].Value -split "`n" |
+                         ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -join ' '
             $wingetTools = @(
-                $list -split ',' |
+                $stripped -split ',' |
                 ForEach-Object {
-                    # Strip TOML inline comments + surrounding quotes + whitespace.
-                    $s = ($_ -replace '#.*$', '').Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
+                    $s = $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
                     if ($s) { $s }
                 }
             )

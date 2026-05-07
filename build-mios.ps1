@@ -6131,10 +6131,16 @@ if ($activeDistro) {
             $rx = '(?ms)^\[packages\.dev_vm_essentials\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
             $m  = [regex]::Match($tomlText, $rx)
             if ($m.Success) {
+                # Strip TOML inline comments per line FIRST, then split.
+                # PS regex without (?m) makes `$` match end-of-string, which
+                # would let `# comment` text bleed across newlines into the
+                # next package entry.
+                $stripped = ($m.Groups['list'].Value -split "`n" |
+                             ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -join ' '
                 $pkgs = @(
-                    $m.Groups['list'].Value -split ',' |
+                    $stripped -split ',' |
                     ForEach-Object {
-                        $s = ($_ -replace '#.*$', '').Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
+                        $s = $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
                         if ($s) { $s }
                     }
                 )
