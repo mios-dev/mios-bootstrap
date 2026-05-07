@@ -1125,13 +1125,51 @@ function End-Phase([int]$i, [switch]$Fail, [switch]$Warn) {
     }
 }
 
+$script:MiosScrollRegionActive = $false
+
+function Initialize-MiosScrollRegion {
+    # ANSI DECSTBM scroll region. Sets the terminal's scroll region to
+    # rows 1..(WindowHeight-1), leaving the LAST visible row reserved
+    # for the pinned progress bar. Subsequent Write-Host calls scroll
+    # WITHIN the region; the bottom row stays untouched until we
+    # explicitly write to it via Show-MiosProgressBar.
+    #
+    # Must be called AFTER Clear-Host -- Clear-Host resets DECSTBM.
+    # Caller is also responsible for resetting the region at exit
+    # via Reset-MiosScrollRegion.
+    if ($script:DashboardMode -ne 'log') { return }
+    try {
+        $bH  = [Console]::WindowHeight
+        $esc = [char]27
+        # ESC [ 1 ; <bH-1> r  -- scroll region rows 1..bH-1 (1-indexed).
+        [Console]::Out.Write("$esc[1;$($bH-1)r")
+        # Move cursor to top of scroll region so the next Write-Host
+        # starts at row 1, not below the reserved bar row.
+        [Console]::Out.Write("$esc[1;1H")
+        [Console]::Out.Flush()
+        $script:MiosScrollRegionActive = $true
+    } catch {
+        $script:MiosScrollRegionActive = $false
+    }
+}
+
+function Reset-MiosScrollRegion {
+    if (-not $script:MiosScrollRegionActive) { return }
+    try {
+        $esc = [char]27
+        # ESC [ r -- reset scroll region to full window
+        [Console]::Out.Write("$esc[r")
+        [Console]::Out.Flush()
+    } catch {}
+    $script:MiosScrollRegionActive = $false
+}
+
 function Show-MiosProgressBar {
-    # Inline progress bar. Counts COMPLETED phases (PhStat entries
-    # >= 2 i.e. OK/FAIL/WARN). 50-cell bar, operator-blue filled,
-    # dim unfilled. Called from End-Phase only (NOT from Set-Step --
-    # per-step ANSI-pinning fights PowerShell's normal output flow
-    # and produces interleaved garbage; one bar per phase boundary
-    # is the right cadence).
+    # Pinned progress bar. When MiosScrollRegionActive, writes to the
+    # reserved bottom row using ANSI cursor-save/goto/restore -- log
+    # output continues scrolling above, the bar stays put. Without an
+    # active scroll region (host doesn't support DECSTBM), falls back
+    # to inline Write-Host.
     if (-not $script:PhStat) { return }
     $done = [int]($script:PhStat | Where-Object { $_ -ge 2 } | Measure-Object).Count
     $total = [int]$script:TotalPhases
@@ -1142,7 +1180,26 @@ function Show-MiosProgressBar {
     if ($filled -lt 0) { $filled = 0 }
     if ($filled -gt $barW) { $filled = $barW }
     $bar = ("█" * $filled) + ("░" * ($barW - $filled))
-    Write-Host "  [$bar] $done/$total ($pct%)" -ForegroundColor Cyan
+    $text = "  [$bar] $done/$total ($pct%)"
+
+    if ($script:MiosScrollRegionActive) {
+        try {
+            $bH  = [Console]::WindowHeight
+            $bW  = [Console]::WindowWidth
+            $esc = [char]27
+            $padded = $text.PadRight($bW - 1)
+            if ($padded.Length -gt $bW - 1) { $padded = $padded.Substring(0, $bW - 1) }
+            # ESC 7 = save cursor + attrs (DECSC)
+            # ESC [ <bH> ; 1 H = goto bottom row
+            # ESC [ 2 K = clear line
+            # ESC 8 = restore cursor + attrs (DECRC)
+            [Console]::Out.Write("$esc`7$esc[$bH;1H$esc[2K$padded$esc`8")
+            [Console]::Out.Flush()
+            return
+        } catch {}
+    }
+    # Fallback: inline.
+    Write-Host $text -ForegroundColor Cyan
 }
 
 # Throttle Set-Step prints in log mode -- the build pipeline calls
@@ -5283,6 +5340,14 @@ Write-Host (_BoxRow "WSL2 + Podman  │  Offline Build Pipeline")          -Fore
 Write-Host $bBot -ForegroundColor Cyan
 Write-Host ""
 
+# Pin the progress bar to the bottom row via ANSI DECSTBM scroll
+# region. After this call, Write-Host scrolls within rows 1..bH-1;
+# the bar at row bH stays put until Show-MiosProgressBar updates it.
+# Re-initializing on every -BuildOnly invocation since Clear-Host
+# upstream resets the region.
+Initialize-MiosScrollRegion
+Show-MiosProgressBar
+
 if ($script:DashboardMode -eq 'log') {
     Write-Host "Note: console doesn't support in-place repaint -- running in linear log mode." -ForegroundColor Yellow
     Write-Host "      Phase transitions + throttled step updates print sequentially below." -ForegroundColor DarkYellow
@@ -6161,6 +6226,10 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
     # Always show final summary and keep window open
     try { [Console]::SetCursorPosition(0, $script:DashRow + $script:DashHeight) } catch {}
 
+    # Reset the scroll region BEFORE the final summary so the box
+    # below renders edge-to-edge without being clipped by the
+    # bottom-row reservation. Also clears the pinned bar.
+    Reset-MiosScrollRegion
     $totalTime = fmtSpan ([datetime]::Now - $script:ScriptStart)
     Write-Host ""
     $bTop = "╭" + ("─" * ($script:DW - 2)) + "╮"
