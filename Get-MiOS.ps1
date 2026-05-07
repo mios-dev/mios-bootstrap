@@ -2716,16 +2716,72 @@ try {
     `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_winH)) / 2)
     [MEW.N]::MoveWindow(`$_h, `$_x, `$_y, `$_winW, `$_winH, `$true) | Out-Null
 } catch {}
+Write-Host ''
+Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
+Write-Host ('      Cache-busted Get-MiOS.ps1 fetch: ' + '$_rawUrl') -ForegroundColor DarkGray
+Write-Host ''
 try {
     `$src = Invoke-RestMethod -Uri '$_rawUrl' -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } -ErrorAction Stop
-    & ([scriptblock]::Create(`$src))
+    # Write to a temp .ps1 and run as a CHILD pwsh process so any
+    # 'exit N' calls inside Get-MiOS.ps1 terminate the child, NOT our
+    # hosting elevation window. Without this, any preflight 'exit 1'
+    # killed the elevated host before the operator could read the
+    # error or pause for inspection -- the window appeared to "die
+    # silently". Per operator: "the incorrectly launched powershell
+    # window... just dies silently--seemingly no logs in sight!!!"
+    `$tmpScript = Join-Path `$env:TEMP ('mios-getmios-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
+    [IO.File]::WriteAllText(`$tmpScript, `$src, [System.Text.UTF8Encoding]::new(`$false))
+    # Log path: M:\MiOS\logs if M:\ exists (the canonical install-on-M
+    # location), else %TEMP%. Tee the child pwsh's output so the
+    # operator has a log REGARDLESS of which phase fails -- even a
+    # Step 1/6 'exit 1' (e.g. WT install failed) leaves a complete
+    # transcript on disk for triage.
+    `$_logBase = if (Test-Path 'M:\MiOS') {
+        New-Item -ItemType Directory -Path 'M:\MiOS\logs' -Force -ErrorAction SilentlyContinue | Out-Null
+        'M:\MiOS\logs'
+    } else { `$env:TEMP }
+    `$_logPath = Join-Path `$_logBase ('getmios-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+    Write-Host ('  [*] Logging to: ' + `$_logPath) -ForegroundColor DarkGray
+    & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript 2>&1 | Tee-Object -FilePath `$_logPath
+    `$_rc = `$LASTEXITCODE
+    Remove-Item -LiteralPath `$tmpScript -Force -ErrorAction SilentlyContinue
+    if (`$_rc -ne 0) {
+        Write-Host ''
+        Write-Host ('  [!] Bootstrap exited with code ' + `$_rc) -ForegroundColor Red
+        Write-Host ('      Log: ' + `$_logPath) -ForegroundColor DarkGray
+        Write-Host '      build-mios.ps1''s own log lands at M:\MiOS\logs\mios-install-*.log on success.' -ForegroundColor DarkGray
+        Write-Host ''
+    } else {
+        # Bootstrap completed -- per operator: "mios.bat DOES EVERYTHING--
+        # ALL THE WAY TO LAUNCHING THE MIOS APP WITH IT ALL SETUP AND
+        # THEMED AND SIZED ACCORDINGLY". Spawn mios-launch.ps1 (the
+        # native-app launcher staged on M:\) which opens the WT MiOS
+        # profile at the configured cols x rows centered on the active
+        # display, with acrylic + 50% transparency + scrollbar-less +
+        # frame-less chrome. This is THE handoff to daily-use MiOS.
+        `$_launcher = 'M:\MiOS\bin\mios-launch.ps1'
+        if (Test-Path -LiteralPath `$_launcher) {
+            Write-Host ''
+            Write-Host '  [+] Launching MiOS app window (WT MiOS profile)...' -ForegroundColor Green
+            try {
+                Start-Process -FilePath 'pwsh.exe' `
+                    -ArgumentList @('-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File', `$_launcher) `
+                    -ErrorAction Stop
+            } catch {
+                Write-Host ('  [!] MiOS app launch failed: ' + `$_.Exception.Message) -ForegroundColor Yellow
+                Write-Host ('      Launch manually: pwsh -File ' + `$_launcher) -ForegroundColor DarkGray
+            }
+        } else {
+            Write-Host ('  [!] Native-app launcher missing: ' + `$_launcher) -ForegroundColor Yellow
+        }
+    }
 } catch {
     Write-Host ''
-    Write-Host ('  [!] Bootstrap failed: ' + `$_) -ForegroundColor Red
+    Write-Host ('  [!] Bootstrap fetch/run failed: ' + `$_.Exception.Message) -ForegroundColor Red
     Write-Host ''
 }
 Write-Host ''
-Write-Host '  Press Enter to close...' -ForegroundColor DarkGray -NoNewline
+Write-Host '  Press Enter to close this elevated bootstrap window...' -ForegroundColor DarkGray -NoNewline
 `$null = Read-Host
 "@
     $_innerBytes   = [Text.Encoding]::Unicode.GetBytes($_innerCmd)
