@@ -284,6 +284,56 @@ $script:MiosDistroDir      = $MiosDistroDir
 $script:MiosImagesDir      = $MiosImagesDir
 $script:MiosMachineCfg     = $MiosMachineCfg
 
+# Early M:\ detection: if the MIOS-DEV partition is already mounted
+# (from a previous admin run), redirect EVERY install path onto it
+# UNCONDITIONALLY -- regardless of whether THIS run is admin. The
+# operator's expectation per memory feedback_mios_repo_context_invariant
+# is "EVERY MiOS artifact lives on M:\ when M:\ is provisioned".
+# Without this early redirect, a non-admin re-run of build-mios.ps1
+# falls back to C:\Users\Administrator\AppData\Local\MiOS even when
+# M:\ is right there waiting -- which is exactly the operator's
+# "should ALL be installing to the created M:\ partition!!!" symptom.
+$_miosDataLetter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER } else { 'M' }
+try {
+    $_miosVol = Get-Volume -DriveLetter $_miosDataLetter -ErrorAction SilentlyContinue
+    if ($_miosVol -and $_miosVol.FileSystemLabel -eq 'MIOS-DEV') {
+        $_miosNewRoot = Join-Path "${_miosDataLetter}:\" 'MiOS'
+        if (-not (Test-Path $_miosNewRoot)) { New-Item -ItemType Directory -Path $_miosNewRoot -Force | Out-Null }
+        # Update-MiosInstallPaths is defined below; do an inline
+        # equivalent here so the redirect lands BEFORE Phase 0 runs.
+        $script:MiosInstallDir      = $_miosNewRoot
+        $script:MiosBinDir          = Join-Path $_miosNewRoot 'bin'
+        $script:MiosShareDir        = Join-Path $_miosNewRoot 'share'
+        $script:MiosIconsDir        = Join-Path $_miosNewRoot 'icons'
+        $script:MiosThemesDir       = Join-Path $_miosNewRoot 'themes'
+        $script:MiosFontsDir        = Join-Path $_miosNewRoot 'fonts'
+        $script:MiosProgramData     = Join-Path $_miosNewRoot 'machine-state'
+        $script:MiosDistroDir       = Join-Path $script:MiosProgramData 'distros'
+        $script:MiosImagesDir       = Join-Path $script:MiosProgramData 'images'
+        $script:MiosMachineCfg      = Join-Path $script:MiosProgramData 'config'
+        # M:\ root IS the mios.git working tree per the 2026-05-06
+        # directive ("M:\ IS git"). Repo lives at the drive root,
+        # mios-bootstrap shadow at M:\MiOS\bootstrap-shadow.
+        $script:MiosRepoDir         = "${_miosDataLetter}:\"
+        $script:MiosBootstrapShadow = Join-Path $_miosNewRoot 'bootstrap-shadow'
+        # Mirror the locals so any later code that still reads $MiosInstallDir
+        # (without $script: prefix) gets the same redirect.
+        $MiosInstallDir      = $script:MiosInstallDir
+        $MiosBinDir          = $script:MiosBinDir
+        $MiosShareDir        = $script:MiosShareDir
+        $MiosIconsDir        = $script:MiosIconsDir
+        $MiosThemesDir       = $script:MiosThemesDir
+        $MiosFontsDir        = $script:MiosFontsDir
+        $MiosProgramData     = $script:MiosProgramData
+        $MiosDistroDir       = $script:MiosDistroDir
+        $MiosImagesDir       = $script:MiosImagesDir
+        $MiosMachineCfg      = $script:MiosMachineCfg
+        $MiosRepoDir         = $script:MiosRepoDir
+        $MiosBootstrapShadow = $script:MiosBootstrapShadow
+        Write-Host "  [+] M:\ MIOS-DEV partition detected -- ALL install paths redirected to M:\" -ForegroundColor Green
+    }
+} catch {}
+
 # Per-user state regardless of scope. These resolve via $env:USERNAME /
 # $env:USERPROFILE so each Windows account on a machine-wide install
 # still gets its own logs and per-user identity overlay -- the "user
