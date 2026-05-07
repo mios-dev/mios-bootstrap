@@ -1379,20 +1379,33 @@ function Show-PostBootstrapMenu {
         }
     } catch {}
     while ($true) {
-        Write-Host ""
-        Write-Host "  ╭── MiOS bootstrap complete ───────────────────────────────╮" -ForegroundColor Green
-        if ($devDistro) {
-            Write-Host ("  │  Dev distro:  {0}{1}│" -f $devDistro, (' ' * [Math]::Max(0, 43 - $devDistro.Length))) -ForegroundColor DarkGray
-            Write-Host ("  │  Enter via:   wsl -d {0} --user mios{1}│" -f $devDistro, (' ' * [Math]::Max(0, 24 - $devDistro.Length))) -ForegroundColor DarkGray
-            Write-Host "  ├──────────────────────────────────────────────────────────┤" -ForegroundColor Green
+        # Pad each menu row to the FULL terminal width so any prior
+        # log-line tails get clobbered (avoids the ".ps1 / .lnk /
+        # mios-pul" tail-leak the operator caught at the right edge
+        # of the menu). $W = inner content width inside │ ... │.
+        $W = $script:DW - 4    # leading "  │ " (4) + trailing " │" handled in row
+        $hr   = "─" * $W
+        $top  = "  ╭" + ("─── MiOS bootstrap complete " + ("─" * 99)).Substring(0, $W) + "╮"
+        $div  = "  ├" + $hr + "┤"
+        $bot  = "  ╰" + $hr + "╯"
+        function _Row { param([string]$Inner)
+            if ($Inner.Length -gt ($W - 2)) { $Inner = $Inner.Substring(0, $W - 2) }
+            "  │ " + $Inner.PadRight($W - 2) + " │"
         }
-        Write-Host "  │  1) Continue to build (OCI image + deployables)          │" -ForegroundColor White
-        Write-Host "  │  2) Change settings (open mios.toml in configurator)     │" -ForegroundColor White
-        Write-Host "  │  3) System checks (preflight + dev VM health)            │" -ForegroundColor White
-        Write-Host "  │  4) Logs / reports                                       │" -ForegroundColor White
-        Write-Host "  │  5) Enter dev distro now (wsl -d ...)                    │" -ForegroundColor White
-        Write-Host "  │  6) Close                                                │" -ForegroundColor White
-        Write-Host "  ╰──────────────────────────────────────────────────────────╯" -ForegroundColor Green
+        Write-Host ""
+        Write-Host $top -ForegroundColor Green
+        if ($devDistro) {
+            Write-Host (_Row ("Dev distro:  {0}" -f $devDistro))                     -ForegroundColor DarkGray
+            Write-Host (_Row ("Enter via:   wsl -d {0} --user mios" -f $devDistro))   -ForegroundColor DarkGray
+            Write-Host $div -ForegroundColor Green
+        }
+        Write-Host (_Row "1) Continue to build (OCI image + deployables)")           -ForegroundColor White
+        Write-Host (_Row "2) Change settings (open mios.toml in configurator)")       -ForegroundColor White
+        Write-Host (_Row "3) System checks (preflight + dev VM health)")              -ForegroundColor White
+        Write-Host (_Row "4) Logs / reports")                                         -ForegroundColor White
+        Write-Host (_Row "5) Enter dev distro now (wsl -d ...)")                      -ForegroundColor White
+        Write-Host (_Row "6) Close")                                                  -ForegroundColor White
+        Write-Host $bot -ForegroundColor Green
         $choice = Read-Host "  Pick [1-6]"
         switch ($choice.Trim()) {
             '1' {
@@ -5971,6 +5984,16 @@ if ($activeDistro) {
     # re-runs this script with -BuildOnly).
     if ($BootstrapOnly) {
         Log-Ok "-BootstrapOnly mode: dev VM provisioned, Windows install complete."
+        # Flush every async write that Install-MiosLauncher / Log-Ok kicked
+        # off so the post-bootstrap menu doesn't render while log lines
+        # are still landing on screen. Without this barrier the menu's
+        # ╭───╮ rows had Install-MiosLauncher's tail content (.ps1, .lnk,
+        # MiOS.Workstation, etc.) appearing AFTER each row's │ -- because
+        # PowerShell's stdout buffer hadn't flushed by the time
+        # Show-PostBootstrapMenu's Write-Hosts started landing.
+        try { [Console]::Out.Flush() } catch {}
+        try { [Console]::Error.Flush() } catch {}
+        Start-Sleep -Milliseconds 250
         Show-PostBootstrapMenu
         return
     }
