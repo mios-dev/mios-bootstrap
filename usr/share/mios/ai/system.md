@@ -144,11 +144,12 @@ prompt path   $MIOS_AI_SYSTEM_PROMPT
 conforms to current OpenAI Platform specifications:
 
 - **Chat Completions** (`POST /v1/chat/completions`) — universal,
-  the form supported by every OpenAI-compatible runtime
-  (LocalAI, Ollama, vLLM, LM Studio, llama.cpp, LiteLLM, OpenRouter).
+  the form supported by every OpenAI-API-compatible local runtime
+  (LocalAI, Ollama, vLLM, LM Studio, llama.cpp, LiteLLM proxy).
 - **Responses API** (`POST /v1/responses`) — preferred for new work
   on hosts with translation support; `instructions`+`input`+`tools`+`text.format`.
-- **Embeddings** (`POST /v1/embeddings`) — `text-embedding-3-*` shape.
+- **Embeddings** (`POST /v1/embeddings`) — OpenAI-API embedding shape;
+  default model from `mios.toml [ai].embed_model` (`nomic-embed-text`).
 - **Function calling (strict mode)** — `strict: true`,
   `additionalProperties: false` on every nested object, every property
   in `required`, optional fields modeled as `["type","null"]` unions.
