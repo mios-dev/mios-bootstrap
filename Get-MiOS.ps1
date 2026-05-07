@@ -1094,8 +1094,8 @@ $Script:MiosOmpJson = @'
     "Palette: mios.toml [colors] (Hokusai + operator neutrals).",
     "MiOS-owned segments use the MiOS palette; language segments keep",
     "brand colors so Node-green / Python-blue+yellow / Rust-orange stay",
-    "instantly recognizable. Squared Powerline arrows only -- rounded",
-    "caps (E0B4 / E0B6) dropped for cross-terminal compat."
+    "instantly recognizable. Rounded powerline caps (U+E0B4 right,",
+    "U+E0B6 left) for soft, full-radius segment ends."
   ],
   "blocks": [
     {
@@ -1111,7 +1111,7 @@ $Script:MiosOmpJson = @'
         {
           "type": "shell",
           "style": "powerline",
-          "powerline_symbol": "\ue0b0",
+          "powerline_symbol": "\ue0b4",
           "background": "#1A407F",
           "foreground": "#E7DFD3",
           "template": " \uf120 {{ .Name }} "
@@ -1119,7 +1119,7 @@ $Script:MiosOmpJson = @'
         {
           "type": "root",
           "style": "powerline",
-          "powerline_symbol": "\ue0b0",
+          "powerline_symbol": "\ue0b4",
           "background": "#DC271B",
           "foreground": "#F35C15",
           "template": " \uf292 "
@@ -1127,7 +1127,7 @@ $Script:MiosOmpJson = @'
         {
           "type": "path",
           "style": "powerline",
-          "powerline_symbol": "\ue0b0",
+          "powerline_symbol": "\ue0b4",
           "background": "#F35C15",
           "foreground": "#282262",
           "properties": {
@@ -1141,7 +1141,7 @@ $Script:MiosOmpJson = @'
         {
           "type": "git",
           "style": "powerline",
-          "powerline_symbol": "\ue0b0",
+          "powerline_symbol": "\ue0b4",
           "background": "#3E7765",
           "background_templates": [
             "{{ if or (.Working.Changed) (.Staging.Changed) }}#F35C15{{ end }}",
@@ -1160,7 +1160,7 @@ $Script:MiosOmpJson = @'
         {
           "type": "executiontime",
           "style": "powerline",
-          "powerline_symbol": "\ue0b0",
+          "powerline_symbol": "\ue0b4",
           "background": "#948E8E",
           "foreground": "#282262",
           "properties": {
@@ -1179,7 +1179,7 @@ $Script:MiosOmpJson = @'
           "type": "node",
           "style": "powerline",
           "invert_powerline": true,
-          "powerline_symbol": "\ue0b2",
+          "powerline_symbol": "\ue0b6",
           "background": "#303030",
           "foreground": "#3C873A",
           "properties": {
@@ -1193,7 +1193,7 @@ $Script:MiosOmpJson = @'
           "type": "python",
           "style": "powerline",
           "invert_powerline": true,
-          "powerline_symbol": "\ue0b2",
+          "powerline_symbol": "\ue0b6",
           "background": "#306998",
           "foreground": "#FFE873",
           "template": " \ue235 {{ if .Error }}{{ .Error }}{{ else }}{{ if .Venv }}{{ .Venv }} {{ end }}{{ .Full }}{{ end }} "
@@ -1202,7 +1202,7 @@ $Script:MiosOmpJson = @'
           "type": "go",
           "style": "powerline",
           "invert_powerline": true,
-          "powerline_symbol": "\ue0b2",
+          "powerline_symbol": "\ue0b6",
           "background": "#E7DFD3",
           "foreground": "#06aad5",
           "template": " \ue626 {{ if .Error }}{{ .Error }}{{ else }}{{ .Full }}{{ end }} "
@@ -1211,7 +1211,7 @@ $Script:MiosOmpJson = @'
           "type": "rust",
           "style": "powerline",
           "invert_powerline": true,
-          "powerline_symbol": "\ue0b2",
+          "powerline_symbol": "\ue0b6",
           "background": "#E7DFD3",
           "foreground": "#925837",
           "template": " \ue7a8 {{ if .Error }}{{ .Error }}{{ else }}{{ .Full }}{{ end }} "
@@ -1220,7 +1220,7 @@ $Script:MiosOmpJson = @'
           "type": "dotnet",
           "style": "powerline",
           "invert_powerline": true,
-          "powerline_symbol": "\ue0b2",
+          "powerline_symbol": "\ue0b6",
           "background": "#0e0e0e",
           "foreground": "#0d6da8",
           "template": " \ue77f {{ if .Unsupported }}\uf071{{ else }}{{ .Full }}{{ end }} "
@@ -1229,7 +1229,7 @@ $Script:MiosOmpJson = @'
           "type": "kubectl",
           "style": "powerline",
           "invert_powerline": true,
-          "powerline_symbol": "\ue0b2",
+          "powerline_symbol": "\ue0b6",
           "background": "#1A407F",
           "foreground": "#E7DFD3",
           "template": " \uf308 {{ .Context }}{{ if .Namespace }} :: {{ .Namespace }}{{ end }} "
@@ -1238,7 +1238,7 @@ $Script:MiosOmpJson = @'
           "type": "aws",
           "style": "powerline",
           "invert_powerline": true,
-          "powerline_symbol": "\ue0b2",
+          "powerline_symbol": "\ue0b6",
           "background": "#565656",
           "foreground": "#F35C15",
           "template": " \ue7ad {{ .Profile }}{{ if .Region }}@{{ .Region }}{{ end }} "
@@ -1247,7 +1247,7 @@ $Script:MiosOmpJson = @'
           "type": "os",
           "style": "powerline",
           "invert_powerline": true,
-          "powerline_symbol": "\ue0b2",
+          "powerline_symbol": "\ue0b6",
           "background": "#B7C9D7",
           "foreground": "#282262",
           "properties": {
@@ -1261,7 +1261,7 @@ $Script:MiosOmpJson = @'
           "type": "battery",
           "style": "powerline",
           "invert_powerline": true,
-          "powerline_symbol": "\ue0b2",
+          "powerline_symbol": "\ue0b6",
           "background": "#F35C15",
           "background_templates": [
             "{{ if eq \"Charging\" .State.String }}#3E7765{{ end }}",
@@ -1280,7 +1280,7 @@ $Script:MiosOmpJson = @'
           "type": "time",
           "style": "powerline",
           "invert_powerline": true,
-          "powerline_symbol": "\ue0b2",
+          "powerline_symbol": "\ue0b6",
           "background": "#1A407F",
           "foreground": "#E7DFD3",
           "properties": {
