@@ -5260,19 +5260,22 @@ $endMark
                 $existingProfile = $wtJson.profiles.list | Where-Object { $_.guid -eq $miosGuid } | Select-Object -First 1
             }
             if ($existingProfile) {
-                # Rebind commandline + icon to the post-install hub. Leave
-                # font/scheme/padding/launchMode untouched -- those are
-                # owned by Get-MiOS.ps1's installer and we don't want to
-                # rewrite them on every build run.
-                $existingProfile.commandline = $miosCmd
-                $existingProfile.startingDirectory = $Script:MiOSRoot
+                # Update ONLY the icon. DO NOT touch commandline /
+                # startingDirectory -- those are owned by Get-MiOS.ps1's
+                # Install-MiOSTerminalProfile which sets them to load the
+                # canonical PS profile body (oh-my-posh + Show-MiosDashboard
+                # + fastfetch + verb hints). Earlier revisions overwrote
+                # commandline to point at mios.ps1 (a hub script) which
+                # bypassed the profile body and produced a bare pwsh
+                # session with no theme / no oh-my-posh / no dashboard --
+                # the "Windows PowerShell\nCONFIG NOT FOUND" symptom.
                 if ($icoPath -and (-not $existingProfile.PSObject.Properties['icon'])) {
                     $existingProfile | Add-Member -NotePropertyName icon -NotePropertyValue $icoPath -Force
                 } elseif ($icoPath) {
                     $existingProfile.icon = $icoPath
                 }
                 $wtJson | ConvertTo-Json -Depth 32 | Set-Content -Path $wtSettings -Encoding UTF8
-                Log-Ok "Windows Terminal MiOS profile rebound to $hubPath"
+                Log-Ok "Windows Terminal MiOS profile icon refreshed (commandline left untouched per Get-MiOS.ps1 ownership)"
             } else {
                 Log-Warn "Windows Terminal MiOS profile not found (Get-MiOS.ps1 entry didn't run?) -- skipping rebind"
             }

@@ -815,13 +815,23 @@ function Install-MiOSTerminalProfile {
     $_themeAcrylic     = Get-MiosTomlValue -Section 'theme'      -Key 'acrylic'            -Default $true
     $_themeOpacity     = Get-MiosTomlValue -Section 'theme'      -Key 'opacity'            -Default 50
     $_themeBackdrop    = Get-MiosTomlValue -Section 'theme'      -Key 'system_backdrop'    -Default 'acrylic'
-    $_themeCursor      = Get-MiosTomlValue -Section 'theme'      -Key 'cursor_shape'       -Default 'bar'
+    # filledBox = full-cell block, mimics Linux terminal default cursor
+    # (gnome-terminal / xterm / konsole all default to a steady block).
+    # WT inherits the blink rate from Windows global keyboard settings.
+    $_themeCursor      = Get-MiosTomlValue -Section 'theme'      -Key 'cursor_shape'       -Default 'filledBox'
     $_themeScrollbar   = Get-MiosTomlValue -Section 'theme'      -Key 'scrollbar_state'    -Default 'hidden'
     $_themePadding     = Get-MiosTomlValue -Section 'theme'      -Key 'padding'            -Default '0'
     $_themeSuppress    = Get-MiosTomlValue -Section 'theme'      -Key 'suppress_app_title' -Default $true
     # Operator's color accent for the MiOS profile's tab tint (matches
-    # mios.toml [colors].accent = #1A407F operator-blue).
+    # mios.toml [colors].accent = #1A407F operator-blue). VALIDATE
+    # the resolved value is a hex color before using -- WT's settings.
+    # json schema rejects empty strings here ("Have: '' Expected:
+    # color (#rrggbb, #rgb)"), which kills the WHOLE MiOS profile and
+    # falls back to default WT chrome (no acrylic, no scheme, etc.).
     $_themeAccent = Get-MiosTomlValue -Section 'colors' -Key 'accent' -Default '#1A407F'
+    if ([string]::IsNullOrWhiteSpace($_themeAccent) -or ($_themeAccent -notmatch '^#[0-9A-Fa-f]{3,8}$')) {
+        $_themeAccent = '#1A407F'
+    }
     $commonProfileProps = [ordered]@{
         # ── Color scheme ─────────────────────────────────────────────
         colorScheme              = (Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
