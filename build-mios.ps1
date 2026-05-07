@@ -2275,6 +2275,22 @@ function Get-PodmanMachineOsImage {
 
 function New-BuilderDistro([hashtable]$HW) {
     Set-Step "Initializing $DevDistro ($($HW.Cpus) CPUs / $($HW.RamGB)GB / $($HW.DiskGB)GB disk)"
+    # Redirect podman-machine state (the VHDX, registry, configs) onto
+    # M:\ when M:\ is mounted -- no admin required. Podman honors
+    # XDG_DATA_HOME for storage paths on Windows (machine-state lands
+    # at <XDG_DATA_HOME>\containers\podman\machine). This is the
+    # non-admin path equivalent of Set-PodmanMachineStorageOn's
+    # mklink /D approach (which requires elevation).
+    # Without this, the dev distro's VHDX (multi-GB, grows during the
+    # OCI build) lands on C: instead of the operator's M:\ partition.
+    if ((Test-Path 'M:\') -and -not $env:XDG_DATA_HOME) {
+        $miosPodmanRoot = 'M:\podman'
+        if (-not (Test-Path $miosPodmanRoot)) {
+            New-Item -ItemType Directory -Path $miosPodmanRoot -Force | Out-Null
+        }
+        $env:XDG_DATA_HOME = $miosPodmanRoot
+        Log-Ok "podman-machine state redirected to M:\podman (XDG_DATA_HOME)"
+    }
     # Cap at the OS-reported physical RAM (what podman validates) minus 512 MB safety margin.
     # Nominal $HW.RamGB rounds up from actual hardware, causing podman to reject the request.
     $ramMB = [math]::Max(4096, [math]::Min($HW.OsTotalRamMB - 512, $HW.RamGB * 1024 - 512))
