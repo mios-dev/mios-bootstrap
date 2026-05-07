@@ -5243,39 +5243,47 @@ $endMark
         $wtSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'
     }
     $hubPathForJson = $hubPath -replace '\\', '\\'
-    $miosCmd = ('pwsh.exe -NoExit -ExecutionPolicy Bypass -Command "& { try { $H=Get-Host; $H.UI.RawUI.BufferSize=(New-Object Management.Automation.Host.Size 80,9000); $H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 80,30) } catch {}; & ''' + $hubPathForJson + ''' }"')
+    # Per operator: "MiOS app IS also MiOS-DEV/podman-MiOS-DEV!!!
+    # Make the GLOBAL MiOS app WINDOWS use the INSTALLED MIOS PROFILE!!!"
+    # The MiOS WT app launches DIRECTLY into the dev VM (the WSL distro
+    # provisioned in Phase 3). When the operator presses Win+Space (or
+    # opens the MiOS shortcut), wt -p MiOS spawns wsl into MiOS-DEV
+    # which immediately runs mios-dash showing the framed Linux
+    # dashboard (the one the operator just confirmed works manually).
+    $_resolvedDistro = $BuilderDistro
+    $miosCmd = "wsl.exe -d $_resolvedDistro --user mios --cd ~"
     if (Test-Path $wtSettings) {
         try {
-            # JSONC tolerance: strip comments + trailing commas before parsing
-            # so this works on PS5.1 (ConvertFrom-Json refuses JSONC there).
             $wtRaw = Get-Content $wtSettings -Raw
             $wtRaw = [regex]::Replace($wtRaw, '(?ms)/\*.*?\*/', '')
             $wtRaw = [regex]::Replace($wtRaw, '(?m)^\s*//.*$', '')
             $wtRaw = [regex]::Replace($wtRaw, ',(\s*[}\]])', '$1')
             $wtJson = $wtRaw | ConvertFrom-Json
 
-            $miosGuid = '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}'
-            $existingProfile = $null
+            $miosGuid    = '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}'
+            $miosDevGuid = '{a8b5c2d3-e4f5-6789-abcd-ef0123456790}'
             if ($wtJson.profiles -and $wtJson.profiles.list) {
-                $existingProfile = $wtJson.profiles.list | Where-Object { $_.guid -eq $miosGuid } | Select-Object -First 1
-            }
-            if ($existingProfile) {
-                # Update ONLY the icon. DO NOT touch commandline /
-                # startingDirectory -- those are owned by Get-MiOS.ps1's
-                # Install-MiOSTerminalProfile which sets them to load the
-                # canonical PS profile body (oh-my-posh + Show-MiosDashboard
-                # + fastfetch + verb hints). Earlier revisions overwrote
-                # commandline to point at mios.ps1 (a hub script) which
-                # bypassed the profile body and produced a bare pwsh
-                # session with no theme / no oh-my-posh / no dashboard --
-                # the "Windows PowerShell\nCONFIG NOT FOUND" symptom.
-                if ($icoPath -and (-not $existingProfile.PSObject.Properties['icon'])) {
-                    $existingProfile | Add-Member -NotePropertyName icon -NotePropertyValue $icoPath -Force
-                } elseif ($icoPath) {
-                    $existingProfile.icon = $icoPath
+                # Rebind BOTH MiOS and MiOS-DEV profiles to wsl into the
+                # dev VM. They're "one of the same" per the operator.
+                # Get-MiOS.ps1's Pass-1 owns the chrome (acrylic, font,
+                # scheme); we own the commandline (which dev distro to
+                # enter) since only Pass-2 knows the resolved name.
+                foreach ($p in $wtJson.profiles.list) {
+                    if ($p.guid -eq $miosGuid -or $p.guid -eq $miosDevGuid) {
+                        $p.commandline = $miosCmd
+                        if ($p.PSObject.Properties['startingDirectory']) {
+                            # null = let wsl pick the user's HOME (~).
+                            $p.startingDirectory = $null
+                        }
+                        if ($icoPath -and (-not $p.PSObject.Properties['icon'])) {
+                            $p | Add-Member -NotePropertyName icon -NotePropertyValue $icoPath -Force
+                        } elseif ($icoPath) {
+                            $p.icon = $icoPath
+                        }
+                    }
                 }
                 $wtJson | ConvertTo-Json -Depth 32 | Set-Content -Path $wtSettings -Encoding UTF8
-                Log-Ok "Windows Terminal MiOS profile icon refreshed (commandline left untouched per Get-MiOS.ps1 ownership)"
+                Log-Ok "Windows Terminal MiOS + MiOS-DEV profiles rebound to: $miosCmd"
             } else {
                 Log-Warn "Windows Terminal MiOS profile not found (Get-MiOS.ps1 entry didn't run?) -- skipping rebind"
             }
