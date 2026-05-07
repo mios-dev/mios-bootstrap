@@ -2785,6 +2785,22 @@ function Invoke-MiosQuadletOverlay {
     }
 
     Set-Step "Overlaying MiOS Quadlets + systemd units onto $DevDistro..."
+
+    # Early-out: rootful machine-os distros are NOT wsl.exe-accessible
+    # by design. The previous --exec probe-with-timeout still left
+    # hung wsl.exe processes that didn't always Kill cleanly. Probe
+    # the machine's rootful flag via podman's API (which IS reachable
+    # because Phase 3 just verified it) and skip the entire overlay
+    # if rootful -- the Quadlet provisioning happens INSIDE the
+    # mios-build-driver via OCI build instead.
+    try {
+        $mInfo = (& podman machine inspect $DevDistro 2>$null) | ConvertFrom-Json -ErrorAction Stop
+        if ($mInfo -and $mInfo[0].Rootful) {
+            Log-Warn "Rootful machine-os detected -- Quadlet overlay deferred (handled by OCI build inside MiOS-DEV)"
+            return
+        }
+    } catch {}
+
     # Per the 2026-05-06 directive "M:\ IS git", mios.git is overlaid AT
     # $MiosRepoDir root, not at $MiosRepoDir\mios subdir.
     $miosRoot = $MiosRepoDir
