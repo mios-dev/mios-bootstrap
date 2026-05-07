@@ -2930,7 +2930,8 @@ try {
             }
             if (-not `$_wtExe) { throw 'wt.exe not found -- WT install verification failed' }
             # Centered position on the cursor's active monitor (cursor
-            # was preserved from pre-UAC capture).
+            # was preserved from pre-UAC capture). $_winWPx / $_winHPx
+            # are baked literals (820 x 412 for 80x20 cells).
             `$_pt2 = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
             `$_s2  = [System.Windows.Forms.Screen]::FromPoint(`$_pt2).WorkingArea
             `$_x2  = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_winWPx)) / 2)
@@ -2947,8 +2948,50 @@ try {
                 '-p', 'MiOS',
                 'pwsh'
             )
+            `$_spawnedAt = Get-Date
             Start-Process -FilePath `$_wtExe -ArgumentList `$_wtArgs -ErrorAction Stop
-            Write-Host '       wt.exe -p MiOS opened; type `mios build` (or any verb) inside.' -ForegroundColor DarkGray
+            # POST-SPAWN CORRECTION: wt.exe --pos is unreliable in
+            # --focus mode (Microsoft regression in 1.18+). The window
+            # opens on the wrong monitor or at (0,0). Win32 SetWindowPos
+            # the moment its hwnd surfaces -- this is the only way to
+            # GUARANTEE the active-monitor centering the operator paid
+            # for with the pre-UAC cursor capture.
+            Add-Type -Namespace MEW -Name W -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle r);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
+'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
+            `$_deadline = (Get-Date).AddMilliseconds(8000)
+            `$_wtHwnd = [IntPtr]::Zero
+            while ((Get-Date) -lt `$_deadline) {
+                `$_proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
+                          Where-Object { `$_.StartTime -ge `$_spawnedAt.AddSeconds(-1) } |
+                          Sort-Object StartTime -Descending | Select-Object -First 1
+                if (`$_proc -and `$_proc.MainWindowHandle -ne [IntPtr]::Zero -and [MEW.W]::IsWindowVisible(`$_proc.MainWindowHandle)) {
+                    `$_wtHwnd = `$_proc.MainWindowHandle
+                    break
+                }
+                Start-Sleep -Milliseconds 150
+            }
+            if (`$_wtHwnd -ne [IntPtr]::Zero) {
+                # Re-center 3x with 350ms gaps -- WT animates from its
+                # last-known position to its current rect on first paint;
+                # one SetWindowPos loses the race. Three spaced moves stick.
+                for (`$_i = 0; `$_i -lt 3; `$_i++) {
+                    `$_rWt = New-Object System.Drawing.Rectangle
+                    if ([MEW.W]::GetWindowRect(`$_wtHwnd, [ref]`$_rWt)) {
+                        `$_rwW = `$_rWt.Width  - `$_rWt.X
+                        `$_rwH = `$_rWt.Height - `$_rWt.Y
+                        if (`$_rwW -gt 0 -and `$_rwH -gt 0) {
+                            `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - `$_rwW)) / 2)
+                            `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - `$_rwH)) / 2)
+                            [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, `$_rwW, `$_rwH, 0x04)
+                        }
+                    }
+                    Start-Sleep -Milliseconds 350
+                }
+            }
+            Write-Host '       wt.exe -p MiOS opened, centered on active monitor; type `mios build` inside.' -ForegroundColor DarkGray
         } catch {
             Write-Host ('  [!] MiOS app launch failed: ' + `$_.Exception.Message) -ForegroundColor Yellow
             Write-Host '      Manual launch: Start Menu -> MiOS, or `wt -p MiOS` from any pwsh.' -ForegroundColor DarkGray
