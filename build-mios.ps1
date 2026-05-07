@@ -4912,25 +4912,18 @@ $y      = [int]($work.Y + ($work.Height - $winH) / 2)
 if ($x -lt $work.X) { $x = $work.X }
 if ($y -lt $work.Y) { $y = $work.Y }
 
-# Resolve wt.exe to WT Preview specifically (the dev-channel install
-# MiOS owns). Get-AppxPackage InstallLocation is canonical; falls
-# through to a glob over WindowsApps and finally the App Execution
-# Alias only if Preview isn't on disk.
-$wtPreview = $null
+# Resolve wt.exe to WT STABLE -- per operator pivot: target the base
+# Windows Terminal install, not Preview. Get-AppxPackage InstallLocation
+# is canonical; App Execution Alias is the fallback.
+$wtStable = $null
 try {
-    $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminalPreview' -ErrorAction SilentlyContinue
+    $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
     if ($pkg -and $pkg.InstallLocation) {
         $cand = Join-Path $pkg.InstallLocation 'wt.exe'
-        if (Test-Path -LiteralPath $cand) { $wtPreview = $cand }
+        if (Test-Path -LiteralPath $cand) { $wtStable = $cand }
     }
 } catch {}
-if (-not $wtPreview) {
-    $wtPreview = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue |
-        Sort-Object Name -Descending | Select-Object -First 1 |
-        ForEach-Object { Join-Path $_.FullName 'wt.exe' } |
-        Where-Object { Test-Path $_ } | Select-Object -First 1
-}
-$wtExe = if ($wtPreview) { $wtPreview } else { (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
+$wtExe = if ($wtStable) { $wtStable } else { (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
 if (-not $wtExe) {
     [System.Windows.Forms.MessageBox]::Show("Windows Terminal Preview (wt.exe) is not installed. Run 'irm | iex' Get-MiOS.ps1 to install it.", "MiOS", 'OK', 'Error') | Out-Null
     exit 1

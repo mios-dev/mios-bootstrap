@@ -327,39 +327,24 @@ function Test-MiOSFontInstalled {
 # agreements so Server SKUs (which display the agreement EULA on first
 # winget call) don't hang the bootstrap.
 function Wait-MiOSWindowsTerminalReady {
-    # winget install returns the moment the MSIX is downloaded — AppX
-    # deployment continues asynchronously after that, so the package
-    # registration + per-user LocalState dir don't exist yet. Without
-    # this wait, Install-MiOSTerminalProfile saw "WT not installed" and
-    # silently no-op'd; the operator's launch went through wt.exe alias
-    # to a default-themed Preview that had no MiOS settings.
-    #
-    # Three readiness gates, polled with backoff:
-    #   1. Get-AppxPackage  -- the package is registered with the AppX
-    #      runtime (PackageFullName resolved, runtime knows about it).
-    #   2. LocalState dir   -- per-user storage tree materialized.
-    #   3. wt.exe on disk   -- the UWP install dir has the binary
-    #      ready to launch (WT.exe alias still works at this point but
-    #      we want a guaranteed direct-launch path for our --focus
-    #      bootstrap window below).
+    # Per operator: target the BASE Windows Terminal install (Stable),
+    # NOT Preview. Polls until WT Stable's AppX package is registered
+    # AND its LocalState dir is materialized.
     $deadline = (Get-Date).AddSeconds(90)
-    $previewLocal = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState'
+    $stableLocal = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState'
 
     while ((Get-Date) -lt $deadline) {
         $pkg = $null
-        try { $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminalPreview' -ErrorAction SilentlyContinue } catch {}
-        $localOk = Test-Path -LiteralPath $previewLocal
+        try { $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue } catch {}
+        $localOk = Test-Path -LiteralPath $stableLocal
         $exeOk = $false
         if ($pkg -and $pkg.InstallLocation) {
             $wtExe = Join-Path $pkg.InstallLocation 'wt.exe'
             if (Test-Path -LiteralPath $wtExe) { $exeOk = $true }
         }
         if ($pkg -and $exeOk) {
-            # If the LocalState dir hasn't been created yet (first-ever
-            # install, no prior WT launch), force-create it so our
-            # settings.json write target exists.
             if (-not $localOk) {
-                try { New-Item -ItemType Directory -Path $previewLocal -Force | Out-Null } catch {}
+                try { New-Item -ItemType Directory -Path $stableLocal -Force | Out-Null } catch {}
             }
             return $true
         }
@@ -369,45 +354,41 @@ function Wait-MiOSWindowsTerminalReady {
 }
 
 function Install-MiOSWindowsTerminal {
-    # Operator's invariant: MiOS owns ONLY the Windows Terminal Preview
-    # (dev channel) install. The stable WT install -- if present -- is
-    # left strictly alone, because the operator may use it for non-MiOS
-    # work and doesn't want their stable settings.json overwritten with
-    # MiOS globals/defaults. So we ALWAYS ensure Preview is installed
-    # (even when Stable is already there) and ALWAYS target Preview's
-    # settings.json -- not Stable's, not the unpackaged location.
+    # Operator pivot: MiOS targets the BASE Windows Terminal install,
+    # NOT Preview. We do NOT pollute the operator's globals or default
+    # profile -- we just upsert the MiOS / MiOS-DEV profiles into the
+    # operator's existing settings.json so they appear in the WT
+    # profile dropdown. Borderless / centered / sized launch comes
+    # from wt.exe COMMAND-LINE flags at launch time, not globals.
     $appx = $null
-    try { $appx = Get-AppxPackage -Name 'Microsoft.WindowsTerminalPreview' -ErrorAction SilentlyContinue } catch {}
+    try { $appx = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue } catch {}
     if ($appx) {
-        Write-Host "  [+] Windows Terminal Preview already installed (MiOS targets ONLY this install)." -ForegroundColor DarkGray
-        # Even though it's installed, run readiness wait so callers
-        # downstream are guaranteed an existing LocalState dir.
+        Write-Host "  [+] Windows Terminal (base install) already present." -ForegroundColor DarkGray
         [void](Wait-MiOSWindowsTerminalReady)
         return $true
     }
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Host "  [!] winget not available; cannot auto-install Windows Terminal Preview." -ForegroundColor Yellow
-        Write-Host "      Install manually from: https://aka.ms/terminal-preview" -ForegroundColor DarkGray
+        Write-Host "  [!] winget not available; cannot auto-install Windows Terminal." -ForegroundColor Yellow
+        Write-Host "      Install manually from the Microsoft Store." -ForegroundColor DarkGray
         return $false
     }
-    Write-Host "  [*] Installing Windows Terminal Preview via winget (dev channel)..." -ForegroundColor Cyan
+    Write-Host "  [*] Installing Windows Terminal (base) via winget..." -ForegroundColor Cyan
     try {
-        & winget install --id Microsoft.WindowsTerminal.Preview --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+        & winget install --id Microsoft.WindowsTerminal --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
     } catch {
         Write-Host "  [!] winget install failed: $($_.Exception.Message)" -ForegroundColor Yellow
         return $false
     }
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  [!] winget exit code $LASTEXITCODE -- Preview install may not have completed." -ForegroundColor Yellow
+        Write-Host "  [!] winget exit code $LASTEXITCODE -- WT install may not have completed." -ForegroundColor Yellow
         return $false
     }
     Write-Host "  [*] winget install returned -- waiting for AppX deployment to finish..." -ForegroundColor Cyan
     if (-not (Wait-MiOSWindowsTerminalReady)) {
-        Write-Host "  [!] Windows Terminal Preview did not become ready within 90s." -ForegroundColor Yellow
-        Write-Host "      Settings patch may not stick on first launch -- re-run irm|iex after WT first-runs." -ForegroundColor DarkGray
+        Write-Host "  [!] Windows Terminal did not become ready within 90s." -ForegroundColor Yellow
         return $false
     }
-    Write-Host "  [+] Windows Terminal Preview installed and ready." -ForegroundColor Green
+    Write-Host "  [+] Windows Terminal installed and ready." -ForegroundColor Green
     return $true
 }
 
@@ -479,19 +460,16 @@ function Install-MiOSGeistFont {
     }
 }
 
-# Resolve the WT Preview settings.json path. WE ONLY TOUCH PREVIEW. The
-# stable WT install (if any) is left untouched -- the operator may use
-# it for non-MiOS work and doesn't want our globals overwriting theirs.
-# Returns $null if Preview isn't installed (caller should run
-# Install-MiOSWindowsTerminal first).
+# Resolve the WT settings.json path. Per operator: target the BASE
+# (Stable) Windows Terminal install. Returns $null if WT Stable isn't
+# installed (caller should run Install-MiOSWindowsTerminal first).
 function Get-MiOSTerminalSettingsPath {
-    $previewSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'
-    $previewLocal    = Split-Path -Parent $previewSettings
-    if (Test-Path -LiteralPath $previewSettings) { return $previewSettings }
-    # LocalState dir exists but settings.json hasn't been written yet
-    # (fresh AppX deployment -- WT writes settings on first launch). We
-    # return the path so the caller can write a fresh file there.
-    if (Test-Path -LiteralPath $previewLocal) { return $previewSettings }
+    $stableSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'
+    $stableLocal    = Split-Path -Parent $stableSettings
+    if (Test-Path -LiteralPath $stableSettings) { return $stableSettings }
+    # LocalState exists but settings.json not yet written (fresh install,
+    # WT not yet first-launched). Return the path so we can create it.
+    if (Test-Path -LiteralPath $stableLocal) { return $stableSettings }
     return $null
 }
 
@@ -632,67 +610,30 @@ function Install-MiOSTerminalProfile {
         $wtJson = ConvertFrom-Json '{ "profiles": { "list": [] }, "schemes": [] }'
     }
 
-    # ── Global WT theme: MiOS everywhere ──────────────────────────────
-    # Per operator: the Windows Terminal install IS a MiOS install.
-    # Set every global so every WT window opens borderless, frameless,
-    # centered, 80x30, MiOS-themed. profiles.defaults makes ALL profiles
-    # (the operator's pre-existing PowerShell, CMD, Azure, etc.)
-    # inherit MiOS appearance unless they explicitly override.
-    $wtJson | Add-Member -NotePropertyName launchMode                  -NotePropertyValue 'focus' -Force
-    $wtJson | Add-Member -NotePropertyName showTabsInTitlebar          -NotePropertyValue $false  -Force
-    $wtJson | Add-Member -NotePropertyName alwaysShowTabs              -NotePropertyValue $false  -Force
-    $wtJson | Add-Member -NotePropertyName showTerminalTitleInTitlebar -NotePropertyValue $false  -Force
-    $wtJson | Add-Member -NotePropertyName useAcrylicInTabRow          -NotePropertyValue $true   -Force
-    $wtJson | Add-Member -NotePropertyName initialCols                 -NotePropertyValue 80      -Force
-    $wtJson | Add-Member -NotePropertyName initialRows                 -NotePropertyValue 30      -Force
-    $wtJson | Add-Member -NotePropertyName centerOnLaunch              -NotePropertyValue $true   -Force
-    $wtJson | Add-Member -NotePropertyName alwaysOnTop                 -NotePropertyValue $true   -Force
-    $wtJson | Add-Member -NotePropertyName disableAnimations           -NotePropertyValue $false  -Force
-    $wtJson | Add-Member -NotePropertyName theme                       -NotePropertyValue 'dark'  -Force
-    # Make the MiOS profile the default profile (Ctrl-Shift-T, double-
-    # click on WT shortcut, taskbar pin → all open MiOS).
-    $wtJson | Add-Member -NotePropertyName defaultProfile              -NotePropertyValue $miosGuid -Force
-
-    # Ensure profiles container exists before defaults / list manipulation.
-    # NOTE: PS 5.1's parser chokes on [PSCustomObject]@{...} in a paren-
-    # group inside a pipeline (`-NotePropertyValue ([PSCustomObject]@{...})`),
-    # so we hoist each cast to a local variable.
+    # NO GLOBAL WRITES. Per operator pivot: do NOT set launchMode,
+    # defaultProfile, centerOnLaunch, profiles.defaults, theme, etc.
+    # The operator's existing settings.json globals stay untouched.
+    # MiOS only adds itself as TWO profiles + ONE color scheme. The
+    # frameless / centered / 80x30 / always-on-top behavior all comes
+    # from wt.exe command-line args at launch time.
     if (-not $wtJson.profiles) {
         $emptyProfilesObj = [PSCustomObject]@{ list = @() }
         $wtJson | Add-Member -NotePropertyName profiles -NotePropertyValue $emptyProfilesObj -Force
     }
 
-    # profiles.defaults inheritance: every profile gets MiOS look unless
-    # it explicitly overrides. The operator's pre-existing PowerShell /
-    # CMD / Azure / WSL profiles all become MiOS-themed automatically.
-    $defaultsBlock = [ordered]@{
-        colorScheme              = 'MiOS'
-        font                     = [ordered]@{
-            face   = 'GeistMono Nerd Font Mono'
-            size   = 12
-            weight = 'normal'
-        }
-        cursorShape              = 'bar'
-        antialiasingMode         = 'cleartype'
-        # Acrylic 50% transparency in profiles.defaults so EVERY profile
-        # the operator opens through MiOS-themed WT inherits the look.
-        useAcrylic               = $true
-        opacity                  = 50
-        systemBackdrop           = 'acrylic'
-        padding                  = '0'
-        suppressApplicationTitle = $true
-    }
-    $defaultsObj = [PSCustomObject]$defaultsBlock
-    $wtJson.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue $defaultsObj -Force
-
-    # Schemes: upsert MiOS.
+    # Schemes: upsert MiOS (force [object[]] so a single-entry schemes
+    # array doesn't get unwrapped to a bare object by ConvertTo-Json).
     if (-not $wtJson.schemes) {
         $wtJson | Add-Member -NotePropertyName schemes -NotePropertyValue @() -Force
     }
     $miosSchemeObj = [PSCustomObject]$miosScheme
     $existingSchemes = @($wtJson.schemes | Where-Object { $_.name -ne 'MiOS' })
     $existingSchemes += $miosSchemeObj
-    $wtJson.schemes = $existingSchemes
+    # Force [object[]] -- ConvertTo-Json otherwise unwraps single-element
+    # arrays to bare objects, which makes WT's schemes lookup miss the
+    # MiOS scheme entirely (the "PROFILE IS NOT SET TO COLOR PALETTE"
+    # symptom). Comma-prefix forces array preservation through assignment.
+    $wtJson.schemes = [object[]]$existingSchemes
 
     # Profiles.list ensure-exists.
     if (-not $wtJson.profiles.list) {
@@ -711,7 +652,7 @@ function Install-MiOSTerminalProfile {
     $miosDevProfileObj = [PSCustomObject]$miosDevProfile
     $existingList += $miosProfileObj
     $existingList += $miosDevProfileObj
-    $wtJson.profiles.list = $existingList
+    $wtJson.profiles.list = [object[]]$existingList
 
     # Write back.
     try {
@@ -730,6 +671,252 @@ function Install-MiOSTerminalProfile {
 # pointed at mios.omp.json. The theme file is shipped under the install
 # dir; if it isn't there yet (first-run, before build-mios.ps1 stages it),
 # we fall back to a built-in oh-my-posh theme so the prompt still renders.
+function Install-MiOSNativeApp {
+    # Make MiOS a first-class Windows app the moment irm|iex finishes:
+    #   * Start Menu MiOS.lnk  (so Win-search "MiOS" returns it)
+    #   * Desktop MiOS.lnk     (one-click launch)
+    #   * HKCU Uninstall key   (Settings > Apps > Installed apps lists it)
+    #   * AppUserModelID stamp (taskbar grouping + Pin to Start identity)
+    #   * Best-effort programmatic Pin to Start (Win10 only -- Win11 hint)
+    #
+    # Target dir for the launcher script: M:\MiOS\bin\mios-launch.ps1
+    # (operator's M:\-everywhere invariant). Falls back to %LOCALAPPDATA%
+    # if M:\ isn't yet provisioned.
+
+    $miosRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path $env:LOCALAPPDATA 'MiOS' }
+    $miosBin  = Join-Path $miosRoot 'bin'
+    if (-not (Test-Path $miosBin)) { New-Item -ItemType Directory -Path $miosBin -Force | Out-Null }
+
+    $launcherPath = Join-Path $miosBin 'mios-launch.ps1'
+
+    # Resolve Stable WT's wt.exe via Get-AppxPackage; the launcher prefers
+    # this over the App Execution Alias for deterministic profile binding.
+    $wtStablePath = $null
+    try {
+        $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
+        if ($pkg -and $pkg.InstallLocation) {
+            $cand = Join-Path $pkg.InstallLocation 'wt.exe'
+            if (Test-Path -LiteralPath $cand) { $wtStablePath = $cand }
+        }
+    } catch {}
+
+    # Compute the centered position once, hardcode it into the launcher
+    # so each click is reproducible. (Cursor-monitor recomputed at
+    # launch time too, see body.)
+    $launcherBody = @'
+# mios-launch.ps1 -- native MiOS app launcher.
+# Spawns wt.exe with the MiOS profile in focus mode (frameless,
+# borderless, no titlebar/tab-row), 80 cols x 30 rows, screen-centered
+# on whichever monitor the cursor is currently on, always-on-top.
+# Runs invisibly (parent shortcut uses -WindowStyle Hidden).
+$ErrorActionPreference = 'SilentlyContinue'
+
+try {
+    Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Dpi' -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
+    [MiOSLaunch.Native.Dpi]::SetProcessDPIAware() | Out-Null
+} catch {}
+
+Add-Type -AssemblyName System.Windows.Forms
+
+# Cell metrics: Geist Mono 12pt @ 100% DPI ~ 10x20 px.
+$Cols = 80; $Rows = 30
+$winW = ($Cols * 10) + 20
+$winH = ($Rows * 20) + 12
+
+$cur  = [System.Windows.Forms.Cursor]::Position
+$work = [System.Windows.Forms.Screen]::FromPoint($cur).WorkingArea
+$x = [int]($work.X + ($work.Width  - $winW) / 2); if ($x -lt $work.X) { $x = $work.X }
+$y = [int]($work.Y + ($work.Height - $winH) / 2); if ($y -lt $work.Y) { $y = $work.Y }
+
+# Resolve wt.exe to Stable specifically.
+$wtExe = $null
+try {
+    $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
+    if ($pkg -and $pkg.InstallLocation) {
+        $cand = Join-Path $pkg.InstallLocation 'wt.exe'
+        if (Test-Path -LiteralPath $cand) { $wtExe = $cand }
+    }
+} catch {}
+if (-not $wtExe) { $wtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
+if (-not $wtExe) {
+    [System.Windows.Forms.MessageBox]::Show("Windows Terminal is not installed. Run irm|iex Get-MiOS.ps1 to install.","MiOS","OK","Error") | Out-Null
+    exit 1
+}
+
+$wtArgs = @('-w','-1','--pos',"$x,$y",'--size','80,30','--focus','nt','-p','MiOS')
+Start-Process -FilePath $wtExe -ArgumentList $wtArgs
+
+# Post-launch retry-center + always-on-top via Win32.
+try {
+    Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Win' -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out RECT lpRect); [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags); [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd); public struct RECT { public int Left, Top, Right, Bottom; }'
+} catch {}
+
+$deadline = (Get-Date).AddMilliseconds(4000)
+$hwnd = [IntPtr]::Zero
+while ((Get-Date) -lt $deadline) {
+    $proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1
+    if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero -and [MiOSLaunch.Native.Win]::IsWindowVisible($proc.MainWindowHandle)) {
+        $hwnd = $proc.MainWindowHandle; break
+    }
+    Start-Sleep -Milliseconds 150
+}
+if ($hwnd -ne [IntPtr]::Zero) {
+    $topmost = [IntPtr]::new(-1)
+    for ($i = 0; $i -lt 3; $i++) {
+        $rect = New-Object MiOSLaunch.Native.Win+RECT
+        if ([MiOSLaunch.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) {
+            $rw = $rect.Right - $rect.Left; $rh = $rect.Bottom - $rect.Top
+            if ($rw -gt 0 -and $rh -gt 0) {
+                $cx = [int]($work.X + ($work.Width - $rw) / 2)
+                $cy = [int]($work.Y + ($work.Height - $rh) / 2)
+                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, $topmost, $cx, $cy, $rw, $rh, 0x40)
+                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, $rw, $rh, 0x04)
+            }
+        }
+        Start-Sleep -Milliseconds 350
+    }
+}
+'@
+    Set-Content -Path $launcherPath -Value $launcherBody -Encoding UTF8
+    Write-Host "  [+] MiOS launcher staged: $launcherPath" -ForegroundColor DarkGray
+
+    # Resolve a pwsh.exe for the .lnk target.
+    $pwshExe = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+    if (-not $pwshExe) { $pwshExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source }
+    if (-not $pwshExe) { Write-Host "  [!] No pwsh.exe found; cannot create launcher .lnk." -ForegroundColor Yellow; return }
+
+    $lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
+    $lnkDesc = 'MiOS -- Immutable Fedora AI Workstation. Borderless 80x30 acrylic terminal.'
+
+    # Resolve an icon: prefer M:\MiOS\icons\mios.ico if present, else
+    # fall back to wt.exe's embedded icon (still better than the
+    # default PowerShell shortcut icon).
+    $iconPath = Join-Path $miosRoot 'icons\mios.ico'
+    if (-not (Test-Path -LiteralPath $iconPath)) {
+        $altIcon = 'M:\MiOS\icons\mios.ico'
+        if (Test-Path -LiteralPath $altIcon) { $iconPath = $altIcon } else { $iconPath = '' }
+    }
+
+    $shell = New-Object -ComObject WScript.Shell
+    $writeLnk = {
+        param([string]$Path)
+        $sc = $shell.CreateShortcut($Path)
+        $sc.TargetPath       = $pwshExe
+        $sc.Arguments        = $lnkArgs
+        $sc.WorkingDirectory = $miosRoot
+        $sc.Description      = $lnkDesc
+        $sc.WindowStyle      = 7   # 7 = Minimized; with -WindowStyle Hidden the parent flashes briefly otherwise
+        if ($iconPath) { $sc.IconLocation = "$iconPath,0" }
+        $sc.Save()
+    }
+
+    # Start Menu (per-user; survives on non-admin runs).
+    $startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\MiOS'
+    if (-not (Test-Path $startMenuDir)) { New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null }
+    $smLnk = Join-Path $startMenuDir 'MiOS.lnk'
+    & $writeLnk $smLnk
+    Write-Host "  [+] Start Menu: $smLnk" -ForegroundColor DarkGray
+
+    # Desktop.
+    $desktopDir = [Environment]::GetFolderPath('Desktop')
+    if ($desktopDir -and (Test-Path $desktopDir)) {
+        $deskLnk = Join-Path $desktopDir 'MiOS.lnk'
+        & $writeLnk $deskLnk
+        Write-Host "  [+] Desktop: $deskLnk" -ForegroundColor DarkGray
+    }
+
+    # AppUserModelID on both shortcuts so taskbar/Start group correctly.
+    if (-not ('MiOS.NativeApp.Aumid' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace MiOS.NativeApp {
+    [StructLayout(LayoutKind.Sequential)] public struct PROPERTYKEY { public Guid fmtid; public uint pid; }
+    [StructLayout(LayoutKind.Sequential)] public struct PROPVARIANT { public ushort vt; public ushort r1; public ushort r2; public ushort r3; public IntPtr p; public IntPtr p2; }
+    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPropertyStore {
+        [PreserveSig] int GetCount(out uint c);
+        [PreserveSig] int GetAt(uint i, out PROPERTYKEY k);
+        [PreserveSig] int GetValue(ref PROPERTYKEY k, out PROPVARIANT v);
+        [PreserveSig] int SetValue(ref PROPERTYKEY k, ref PROPVARIANT v);
+        [PreserveSig] int Commit();
+    }
+    public static class Aumid {
+        [DllImport("shell32.dll", CharSet=CharSet.Unicode, PreserveSig=false)]
+        public static extern void SHGetPropertyStoreFromParsingName(string p, IntPtr b, int f, ref Guid g, out IPropertyStore o);
+        [DllImport("ole32.dll", PreserveSig=false)]
+        public static extern void PropVariantClear(ref PROPVARIANT v);
+        public static void Set(string lnk, string id) {
+            Guid ipsGuid = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99");
+            IPropertyStore ps;
+            SHGetPropertyStoreFromParsingName(lnk, IntPtr.Zero, 2, ref ipsGuid, out ps);
+            try {
+                PROPERTYKEY pk = new PROPERTYKEY { fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), pid = 5 };
+                IntPtr s = Marshal.StringToCoTaskMemUni(id);
+                PROPVARIANT pv = new PROPVARIANT { vt = 31, p = s };
+                try { ps.SetValue(ref pk, ref pv); ps.Commit(); }
+                finally { PropVariantClear(ref pv); }
+            } finally { Marshal.FinalReleaseComObject(ps); }
+        }
+    }
+}
+'@ -Language CSharp -ErrorAction SilentlyContinue
+    }
+    if ('MiOS.NativeApp.Aumid' -as [type]) {
+        try {
+            [MiOS.NativeApp.Aumid]::Set($smLnk, 'MiOS.Workstation')
+            if ($desktopDir -and (Test-Path "$desktopDir\MiOS.lnk")) {
+                [MiOS.NativeApp.Aumid]::Set("$desktopDir\MiOS.lnk", 'MiOS.Workstation')
+            }
+            Write-Host "  [+] AppUserModelID = MiOS.Workstation stamped on shortcuts." -ForegroundColor DarkGray
+        } catch {
+            Write-Host "  [!] AppUserModelID stamp failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    # Add/Remove Programs registration -- HKCU so non-admin runs work.
+    try {
+        $uninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS'
+        if (-not (Test-Path $uninstKey)) { New-Item -Path $uninstKey -Force | Out-Null }
+        Set-ItemProperty -Path $uninstKey -Name 'DisplayName'     -Value 'MiOS - Immutable Fedora AI Workstation' -Force
+        Set-ItemProperty -Path $uninstKey -Name 'DisplayVersion'  -Value 'v0.2.4' -Force
+        Set-ItemProperty -Path $uninstKey -Name 'Publisher'       -Value 'mios-dev' -Force
+        Set-ItemProperty -Path $uninstKey -Name 'InstallLocation' -Value $miosRoot -Force
+        Set-ItemProperty -Path $uninstKey -Name 'URLInfoAbout'    -Value 'https://github.com/mios-dev/mios' -Force
+        if ($iconPath) { Set-ItemProperty -Path $uninstKey -Name 'DisplayIcon' -Value $iconPath -Force }
+        Set-ItemProperty -Path $uninstKey -Name 'NoModify' -Value 1 -Type DWord -Force
+        Set-ItemProperty -Path $uninstKey -Name 'NoRepair' -Value 1 -Type DWord -Force
+        # UninstallString: a one-line PS that removes the shortcuts +
+        # uninstall key + launcher. The full-fat uninstaller comes
+        # later from build-mios.ps1 (handles WSL distros etc.); this
+        # is the minimum viable for "Settings > Apps > Uninstall".
+        $uninstCmd = "$pwshExe -NoProfile -ExecutionPolicy Bypass -Command `"Remove-Item -LiteralPath '$smLnk','$desktopDir\MiOS.lnk' -Force -EA SilentlyContinue; Remove-Item -LiteralPath '$uninstKey' -Recurse -Force -EA SilentlyContinue`""
+        Set-ItemProperty -Path $uninstKey -Name 'UninstallString' -Value $uninstCmd -Force
+        Write-Host "  [+] Add/Remove Programs entry registered (HKCU\...\Uninstall\MiOS)." -ForegroundColor DarkGray
+    } catch {
+        Write-Host "  [!] Uninstall key write failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+
+    # Best-effort Pin to Start (Win10 only; Win11 has no programmatic verb).
+    try {
+        $shellApp = New-Object -ComObject Shell.Application
+        $folderObj = $shellApp.Namespace($startMenuDir)
+        $itemObj = $folderObj.ParseName('MiOS.lnk')
+        $pinVerb = $itemObj.Verbs() | Where-Object { ($_.Name -replace '&','') -match '^(Pin to Start|Pin to taskbar)$' } | Select-Object -First 1
+        if ($pinVerb) {
+            $pinVerb.DoIt()
+            Write-Host "  [+] MiOS pinned to Start menu." -ForegroundColor Green
+        } else {
+            $os = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption
+            if ($os -match 'Windows 11') {
+                Write-Host "  [i] Windows 11 removed programmatic Pin-to-Start. Right-click MiOS in Start search -> Pin to Start." -ForegroundColor DarkGray
+            }
+        }
+    } catch {}
+
+    Write-Host "  [+] MiOS installed as a native Windows app." -ForegroundColor Green
+}
+
 function Install-MiOSPowerShellProfile {
     # Per the M:\-everywhere invariant: the actual oh-my-posh init
     # script lives at M:\MiOS\powershell\profile.ps1. The C:\ user
@@ -1012,13 +1199,28 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     Install-MiOSGeistFont           | Out-Null
     Write-Host "  [*] Step 4/4: Wiring oh-my-posh init into PowerShell profile..." -ForegroundColor Cyan
     Install-MiOSPowerShellProfile   | Out-Null
-    $miosWindowInfo = Get-MiOSCenteredWindowPosition -Cols 80 -Rows 30
-    $miosWindowPos  = $miosWindowInfo.Pos
+    Write-Host "  [*] Step 5/5: Registering MiOS as a native Windows app (Start Menu + Add/Remove Programs)..." -ForegroundColor Cyan
+    Install-MiOSNativeApp           | Out-Null
 
-    Write-Host "  [*] Spawning a fresh elevated pwsh window for the bootstrap run..." -ForegroundColor Cyan
-    if (-not $isAdmin) {
-        Write-Host "  [*] You'll see a UAC prompt momentarily; approve it to continue." -ForegroundColor DarkGray
-    }
+    # Per operator: do NOT auto-launch anything. The MiOS app is now
+    # installed -- the operator launches it on their own from Start
+    # Menu or Desktop. No elevated wt.exe spawn, no UAC prompt, no
+    # auto-bootstrap. Clean exit with a one-screen summary.
+    Write-Host ''
+    Write-Host '+============================================================+' -ForegroundColor Cyan
+    Write-Host '|  MiOS install complete.                                    |' -ForegroundColor Cyan
+    Write-Host '+============================================================+' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '  Launch from:  Start Menu  ->  MiOS' -ForegroundColor White
+    Write-Host '          or:   Desktop     ->  MiOS' -ForegroundColor White
+    Write-Host ''
+    Write-Host '  The MiOS terminal opens centered, borderless, 80x30, acrylic,' -ForegroundColor DarkGray
+    Write-Host '  Geist Mono Nerd Font, Hokusai palette, always-on-top.' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  To run the full MiOS OS bootstrap (WSL2 + podman + dev VM),' -ForegroundColor DarkGray
+    Write-Host '  open a MiOS terminal and run:  irm $RepoUrl/raw/main/build-mios.ps1 | iex' -ForegroundColor DarkGray
+    Write-Host ''
+    return
 
     # Derive the raw.githubusercontent.com URL from the .git clone URL.
     # GitHub's "/raw/" path on github.com only works WITHOUT the .git
@@ -1199,25 +1401,18 @@ try {
     #      Program Files\WindowsApps\Microsoft.WindowsTerminal_*\wt.exe
     #      (skips the alias stub entirely).
     #   3. Plain Start-Process pwsh -Verb RunAs (conhost). Always works.
-    # Resolve wt.exe to the WT PREVIEW install specifically -- via
-    # Get-AppxPackage InstallLocation (more reliable than the
-    # WindowsApps directory glob, which varies per arch + version).
-    $wtPreviewExe = $null
+    # Resolve wt.exe to WT STABLE -- the base install. Falls back to
+    # the App Execution Alias when the AppxPackage lookup fails.
+    $wtStableExe = $null
     try {
-        $previewPkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminalPreview' -ErrorAction SilentlyContinue
-        if ($previewPkg -and $previewPkg.InstallLocation) {
-            $cand = Join-Path $previewPkg.InstallLocation 'wt.exe'
-            if (Test-Path -LiteralPath $cand) { $wtPreviewExe = $cand }
+        $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
+        if ($pkg -and $pkg.InstallLocation) {
+            $cand = Join-Path $pkg.InstallLocation 'wt.exe'
+            if (Test-Path -LiteralPath $cand) { $wtStableExe = $cand }
         }
     } catch {}
-    if (-not $wtPreviewExe) {
-        $wtPreviewExe = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1 |
-            ForEach-Object { Join-Path $_.FullName 'wt.exe' } |
-            Where-Object { Test-Path $_ } | Select-Object -First 1
-    }
     $wtExeCmd = Get-Command wt.exe -ErrorAction SilentlyContinue
-    $wtExe = if ($wtPreviewExe) { [PSCustomObject]@{ Source = $wtPreviewExe } } else { $wtExeCmd }
+    $wtExe = if ($wtStableExe) { [PSCustomObject]@{ Source = $wtStableExe } } else { $wtExeCmd }
     $elevated = $false
     if ($wtExe) {
         # Global args (before `nt`) configure the WT WINDOW; tab args
