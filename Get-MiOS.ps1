@@ -1063,8 +1063,8 @@ $Script:MiosFastfetchConfig = @'
     { "type": "cpu",      "key": "CPU"      },
     { "type": "gpu",      "key": "GPU",       "format": "{name}" },
     { "type": "memory",   "key": "Memory"   },
-    { "type": "disk",     "key": "Disk C:",   "folders": "C:" },
-    { "type": "disk",     "key": "Disk M:",   "folders": "M:" },
+    { "type": "disk",     "key": "Disk C:",   "folders": "C:\\" },
+    { "type": "disk",     "key": "Disk M:",   "folders": "M:\\" },
     { "type": "datetime", "key": "Time"     }
   ]
 }
@@ -1503,6 +1503,15 @@ function Install-MiOSPowerShellProfile {
 # Self-heals every artifact (mios.omp.json, fastfetch config.jsonc,
 # mios.txt ASCII logo) from embedded base64 blobs if the canonical
 # disk copy is missing.
+
+# ONCE-PER-SESSION GUARD. This script is dot-sourced from BOTH
+# (a) the redirector in `$PROFILE.CurrentUserAllHosts AND
+# (b) the WT MiOS profile's -Command preamble.
+# Without this guard, both pathways fire Show-MiosDashboard +
+# oh-my-posh init -- the operator sees TWO stacked framed
+# dashboards. Session-scoped flag short-circuits subsequent calls.
+if (`$Global:MiosProfileLoaded) { return }
+`$Global:MiosProfileLoaded = `$true
 
 # NO TERMINAL-TYPE GATE. Always run the PSReadLine reload + oh-my-
 # posh init. The WT_SESSION gate on the previous version was
