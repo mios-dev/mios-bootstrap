@@ -97,28 +97,50 @@ $ErrorActionPreference = "Stop"
 # (or whatever their conhost default is). Resize to 80x40 (the
 # [terminal.install] default) and center on the cursor's active monitor
 # so the readme/acknowledgements + cache-bust banner are centered and
-# fit without wrap. Done BEFORE any Write-Host so the operator never
-# sees a bigger-than-final window briefly.
+# fit without wrap.
+#
+# RESIZE ORDER MATTERS: SetWindowSize requires buffer >= window. If
+# current buffer < target cols, SetWindowSize fails. If current window
+# > target cols, SetBufferSize fails. Branch on current width.
 try {
-    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-    Add-Type -Namespace MiOSWinR -Name N -MemberDefinition @'
+    $_curW = [Console]::WindowWidth
+    if ($_curW -gt 80) {
+        # Shrink window first, then buffer.
+        [Console]::SetWindowSize(80, 40)
+        [Console]::SetBufferSize(80, 9000)
+    } else {
+        # Enlarge buffer first, then window.
+        [Console]::SetBufferSize(80, 9000)
+        [Console]::SetWindowSize(80, 40)
+    }
+} catch {}
+# Center on cursor's active monitor via Win32 MoveWindow. Wrap each
+# Add-Type separately so a "type already defined" exception on a
+# re-entry doesn't skip the MoveWindow call.
+try { Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue } catch {}
+if (-not ('MiOSWinR.N' -as [type])) {
+    try {
+        Add-Type -Namespace MiOSWinR -Name N -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-'@ -ErrorAction SilentlyContinue
-    try { [MiOSWinR.N]::SetProcessDPIAware() | Out-Null } catch {}
-    # Resize cell buffer first then window (window can't be > buffer).
-    try { [Console]::SetBufferSize(80, 9000) } catch {}
-    try { [Console]::SetWindowSize(80, 40)   } catch {}
-    # Center on cursor's active monitor (Geist Mono 12pt cell metrics:
-    # 10x20 px; chrome 20x12 px -> 80x40 -> 820 x 812 px outer).
-    $_winWPx = (80 * 10) + 20
-    $_winHPx = (40 * 20) + 12
+'@ -ErrorAction Stop
+    } catch {}
+}
+try { [MiOSWinR.N]::SetProcessDPIAware() | Out-Null } catch {}
+try {
+    # Geist Mono 12pt @ 100% DPI: cell 10x20 px, chrome 20x12 px.
+    # 80x40 cells -> 820 x 812 px outer rect.
+    $_winWPx = 820
+    $_winHPx = 812
     $_cur    = [System.Windows.Forms.Cursor]::Position
     $_work   = [System.Windows.Forms.Screen]::FromPoint($_cur).WorkingArea
     $_x      = $_work.X + [int](([math]::Max(0, $_work.Width  - $_winWPx)) / 2)
     $_y      = $_work.Y + [int](([math]::Max(0, $_work.Height - $_winHPx)) / 2)
-    [MiOSWinR.N]::MoveWindow([MiOSWinR.N]::GetConsoleWindow(), $_x, $_y, $_winWPx, $_winHPx, $true) | Out-Null
+    $_hwnd   = [MiOSWinR.N]::GetConsoleWindow()
+    if ($_hwnd -ne [IntPtr]::Zero) {
+        [MiOSWinR.N]::MoveWindow($_hwnd, $_x, $_y, $_winWPx, $_winHPx, $true) | Out-Null
+    }
 } catch {}
 
 # ── Cleanup of stale legacy profile body BEFORE anything else ────────────────
@@ -427,12 +449,15 @@ function Invoke-MiOSAgreementGate {
     }
     if ($env:MIOS_GETMIOS_RELAUNCHED -eq '1') { return $true }   # inner call inherits outer accept
 
-    # Render scrollable summary. Out-Host -Paging works on the standard
-    # Console host; falls back to plain Write-Host when the host doesn't
-    # support paging (transcript / redirected).
+    # Render the agreement summary. Plain Write-Host (no paging) so
+    # the operator sees the full text scroll past in the 80x40 window
+    # and the Read-Host prompt appears directly underneath. Out-Host
+    # -Paging was problematic: at 80x40 the agreement is ~80 lines so
+    # it triggered the pager (<SPACE> next page; <CR> next line; Q
+    # quit) which the operator hated. The operator can scroll back up
+    # to read if they want; the prompt is what matters for consent.
     $text = Show-MiOSAgreement
-    try   { $text -split "`r?`n" | Out-Host -Paging }
-    catch { Write-Host $text }
+    Write-Host $text
 
     # Prompt loop.
     while ($true) {
