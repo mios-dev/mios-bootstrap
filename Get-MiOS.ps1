@@ -239,7 +239,7 @@ Invoke-MiOSAgreementGate | Out-Null
 # Windows Terminal "MiOS" profile + Geist Mono Nerd Font + oh-my-posh
 # wiring. Runs ONCE on the outer (pre-elevation) pass so the elevated
 # relaunch can pin -p MiOS and inherit the correct font, scheme,
-# padding, Mica backdrop, 50% transparency, and (most importantly) a
+# padding, acrylic backdrop, 50% blur, 12pt Geist, and a
 # borderless 80x30 focus-mode window centered on the primary display.
 #
 # Canonical dimensions: 80 cols × 30 rows.
@@ -462,25 +462,27 @@ function Install-MiOSTerminalProfile {
         colorScheme       = 'MiOS'
         font              = [ordered]@{
             face   = 'GeistMono Nerd Font Mono'
-            size   = 11
+            size   = 12
             weight = 'normal'
         }
         cursorShape       = 'bar'
         antialiasingMode  = 'cleartype'
-        # Mica window backdrop + 50% opacity. systemBackdrop=mica is the
-        # WT >= 1.18 path (per-profile); useMica=true is the older
-        # window-level fallback. useAcrylic must be false (acrylic and
-        # mica are mutually exclusive). opacity=50 makes the entire
-        # window 50% transparent over the Mica wallpaper material.
-        useAcrylic        = $false
-        useMica           = $true
-        systemBackdrop    = 'mica'
+        # Acrylic blur + 50% opacity. Acrylic = the gaussian-blur-behind
+        # material (vs. Mica's wallpaper-only material). useAcrylic=true
+        # is the per-profile background blur; systemBackdrop="acrylic"
+        # extends it to the window-level chrome (the underlying frame
+        # behind launchMode=focus). opacity=50 sets the blur intensity
+        # at 50% transparent over the desktop. Mica is OFF (acrylic and
+        # mica are mutually exclusive).
+        useAcrylic        = $true
+        useMica           = $false
+        systemBackdrop    = 'acrylic'
         opacity           = 50
         # Borderless / minimum padding so the 80-col dashboard frame
         # touches the window edge with no titlebar/tab-row stealing rows.
         # The titlebar itself is hidden by launchMode=focus + the global
-        # showTabsInTitlebar=false; the underlying frame stays "flat"
-        # (no 3D bevel) for cross-WT-version compatibility.
+        # showTabsInTitlebar=false; the underlying frame stays acrylic-
+        # blurred (matched to the body) for visual continuity.
         padding           = '0'
         suppressApplicationTitle = $true
         hidden            = $false
@@ -520,7 +522,7 @@ function Install-MiOSTerminalProfile {
     # non-focus tabs that the operator opens later.
     # Root-level globals.
     # launchMode=focus      : no titlebar, no tab row, no min/max buttons.
-    # disableAnimations=true: prevents Mica's wallpaper-bleed animation
+    # disableAnimations=true: prevents acrylic's blur recompute animation
     #                        from re-painting the dashboard mid-render.
     # showTabsInTitlebar/   : keep the chrome dead even outside focus mode
     #   alwaysShowTabs=false  so a stray tab-open doesn't surface a titlebar.
@@ -529,7 +531,11 @@ function Install-MiOSTerminalProfile {
     $wtJson | Add-Member -NotePropertyName launchMode                  -NotePropertyValue 'focus' -Force
     $wtJson | Add-Member -NotePropertyName showTabsInTitlebar          -NotePropertyValue $false  -Force
     $wtJson | Add-Member -NotePropertyName alwaysShowTabs              -NotePropertyValue $false  -Force
-    $wtJson | Add-Member -NotePropertyName useAcrylicInTabRow          -NotePropertyValue $false  -Force
+    # useAcrylicInTabRow=true matches the operator's request: even though
+    # the titlebar/tab row is hidden by launchMode=focus, the underlying
+    # acrylic surface is consistent with the body so any later tab-open
+    # (Ctrl-T) shows a 50% acrylic tab row, not a flat solid one.
+    $wtJson | Add-Member -NotePropertyName useAcrylicInTabRow          -NotePropertyValue $true   -Force
     $wtJson | Add-Member -NotePropertyName showTerminalTitleInTitlebar -NotePropertyValue $false  -Force
     $wtJson | Add-Member -NotePropertyName initialCols                 -NotePropertyValue 80      -Force
     $wtJson | Add-Member -NotePropertyName initialRows                 -NotePropertyValue 30      -Force
@@ -628,10 +634,11 @@ $endMark
 
 # Compute centered window position (in pixels) for an 80x30 cell window
 # (canonical TTY0 / text-mode-3+ dimensions, 4:3 pixel aspect with the
-# standard 1:2 monospace cell ratio). Cell metrics for Geist Mono 11pt
-# at 100% DPI are roughly 9 px wide × 18 px tall (after the lineHeight=1
-# flatten WT applies to focus-mode windows); we pad a few pixels for the
-# inner-window scrollbar / Mica border that focus mode leaves in.
+# standard 1:2 monospace cell ratio). Cell metrics for Geist Mono 12pt
+# at 100% DPI are roughly 10 px wide × 20 px tall (with lineHeight=1.0
+# the cells flatten to a clean 1:2 ratio): 80×10 = 800 px wide,
+# 30×20 = 600 px tall, ratio 800/600 = 4:3 exactly. We pad a few pixels
+# for the acrylic edge / scrollbar that focus mode leaves in.
 # Operators on different DPI / multi-monitor setups will get the window
 # approximately centered on the primary display — wt.exe clamps to the
 # screen rect anyway.
@@ -639,8 +646,8 @@ function Get-MiOSCenteredWindowPosition {
     param(
         [int]$Cols   = 80,
         [int]$Rows   = 30,
-        [int]$CellW  = 9,
-        [int]$CellH  = 18
+        [int]$CellW  = 10,
+        [int]$CellH  = 20
     )
     try {
         Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
