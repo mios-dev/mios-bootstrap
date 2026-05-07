@@ -1344,36 +1344,74 @@ function Install-MiOSTerminalExtras {
     #   * GitHub.cli              -- `gh` CLI for github operations
     #
     # All idempotent: probes existing install before re-installing.
-    # Preload PowerShellGet + PackageManagement + bootstrap NuGet provider:
-    # without these the Install-Module dispatcher resolves the COMMAND but
-    # can't load the BACKING module ("Install-Module was found in module
-    # 'PowerShellGet', but the module could not be loaded"). Force-import
-    # makes the loader resolve and stage the dependency graph (NuGet PP
-    # included) before the install attempts run.
-    try { Import-Module PackageManagement -ErrorAction SilentlyContinue -Force } catch {}
-    try { Import-Module PowerShellGet     -ErrorAction SilentlyContinue -Force } catch {}
-    try {
-        $nuget = Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue |
-                 Sort-Object Version -Descending | Select-Object -First 1
-        if (-not $nuget -or $nuget.Version -lt [Version]'2.8.5.201') {
-            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -ErrorAction SilentlyContinue | Out-Null
+    #
+    # MUST run under PowerShell 7+, not Windows PowerShell 5.1:
+    #   * PS 5.1 ships PowerShellGet 1.0.0.1, which can resolve Install-Module
+    #     as a *command* but fails to load the *module* dependency graph
+    #     (NuGet PackageProvider) -- the operator-visible error is
+    #     "Install-Module was found in PowerShellGet, but the module could
+    #     not be loaded". Force-Import + bootstrapping NuGet doesn't fully
+    #     fix this on a fresh 5.1 install.
+    #   * CompletionPredictor + Microsoft.WinGet.CommandNotFound require
+    #     PS 7+ at *runtime* anyway (they use the PSReadLine 2.2 predictor
+    #     API only available in pwsh 7).
+    #   * PS 5.1 and PS 7 have SEPARATE per-user module paths
+    #     (~/Documents/WindowsPowerShell/Modules vs ~/Documents/PowerShell/Modules)
+    #     -- installing from 5.1 wouldn't help pwsh 7 see them at runtime.
+    #
+    # If launched via `powershell` (5.1), trampoline this step through
+    # pwsh.exe so installs land in pwsh 7's user-module path.
+    $isPs7 = $PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.PSVersion.Major -ge 7
+    $pwshExe = $null
+    if (-not $isPs7) {
+        foreach ($c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe",
+                         "$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
+            if ($c -and (Test-Path -LiteralPath $c)) { $pwshExe = $c; break }
         }
-    } catch {}
-    try { Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch {}
+        if (-not $pwshExe) {
+            $cmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+            if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) { $pwshExe = $cmd.Source }
+        }
+    }
 
-    $psModules = @('Terminal-Icons', 'posh-git', 'CompletionPredictor', 'Microsoft.WinGet.CommandNotFound')
-    foreach ($mod in $psModules) {
-        $have = Get-Module -ListAvailable -Name $mod -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($have) {
-            Write-Host "  [+] PS module already present: $mod $($have.Version)" -ForegroundColor DarkGray
-            continue
-        }
-        try {
-            Install-Module -Name $mod -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
-            Write-Host "  [+] Installed PS module: $mod" -ForegroundColor Green
-        } catch {
-            Write-Host "  [!] $mod install failed: $($_.Exception.Message)" -ForegroundColor Yellow
-        }
+    $modulesScript = @'
+$ErrorActionPreference = 'Continue'
+try { Import-Module PackageManagement -ErrorAction SilentlyContinue -Force } catch {}
+try { Import-Module PowerShellGet     -ErrorAction SilentlyContinue -Force } catch {}
+try {
+    $nuget = Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue |
+             Sort-Object Version -Descending | Select-Object -First 1
+    if (-not $nuget -or $nuget.Version -lt [Version]'2.8.5.201') {
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+} catch {}
+try { Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch {}
+$psModules = @('Terminal-Icons', 'posh-git', 'CompletionPredictor', 'Microsoft.WinGet.CommandNotFound')
+foreach ($mod in $psModules) {
+    $have = Get-Module -ListAvailable -Name $mod -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($have) {
+        Write-Host "  [+] PS module already present: $mod $($have.Version)" -ForegroundColor DarkGray
+        continue
+    }
+    try {
+        Install-Module -Name $mod -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
+        Write-Host "  [+] Installed PS module: $mod" -ForegroundColor Green
+    } catch {
+        Write-Host "  [!] $mod install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+'@
+
+    if ($isPs7) {
+        & ([scriptblock]::Create($modulesScript))
+    } elseif ($pwshExe) {
+        Write-Host "  [*] PS 5.1 host detected -- trampolining module install through pwsh 7 ($pwshExe)" -ForegroundColor DarkGray
+        $bytes = [Text.Encoding]::Unicode.GetBytes($modulesScript)
+        $enc = [Convert]::ToBase64String($bytes)
+        & $pwshExe -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc
+    } else {
+        Write-Host "  [!] PS 5.1 host and no pwsh 7 found -- skipping CompletionPredictor/WinGet.CommandNotFound." -ForegroundColor Yellow
+        Write-Host "      Install pwsh 7 then re-run irm|iex to pick up these modules." -ForegroundColor DarkGray
     }
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-Host "  [!] winget not available; skipping CLI extras." -ForegroundColor Yellow

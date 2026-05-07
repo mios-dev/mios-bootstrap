@@ -2560,15 +2560,28 @@ function New-BuilderDistro([hashtable]$HW) {
     # Build runs from the Windows Podman client via the machine's API -- no exec needed.
     # Just verify the API is up (it should be immediately after --now).
     Set-Step "Verifying $DevDistro Podman API..."
-    $deadline = (Get-Date).AddSeconds(30)
+    # Use `podman machine inspect --format {{.State}}` -- it returns the
+    # canonical state string ("running" / "starting" / "stopped"). The
+    # older `podman machine ls --format {{.Running}}` boolean is broken on
+    # podman 5.8: it returns "false" for several seconds AFTER the machine
+    # is actually up (LastUp shows "Currently starting" while State is
+    # already "running"). Inspect.State flips first and is what podman
+    # itself uses for socket-readiness gating.
+    $deadline = (Get-Date).AddSeconds(90)
     $apiOk = $false
+    $lastState = ''
     while ((Get-Date) -lt $deadline) {
-        $ml = (& podman machine ls --format "{{.Name}} {{.Running}}" 2>$null) |
-              Where-Object { $_ -match "(?i)^$([regex]::Escape($BuilderDistro))\s+true" }
-        if ($ml) { $apiOk = $true; break }
+        try {
+            $stateOut = & podman machine inspect $BuilderDistro --format '{{.State}}' 2>$null
+            $lastState = ($stateOut | Select-Object -First 1) -as [string]
+            if ($lastState) { $lastState = $lastState.Trim() }
+        } catch { $lastState = '' }
+        if ($lastState -eq 'running') { $apiOk = $true; break }
         Start-Sleep -Seconds 2
     }
-    if (-not $apiOk) { throw "$BuilderDistro not in running state after 30 s -- check: podman machine ls" }
+    if (-not $apiOk) {
+        throw "$BuilderDistro not in running state after 90 s (last seen: '$lastState') -- check: podman machine ls"
+    }
     Log-Ok "$DevDistro Podman API ready"
     # Overlay seed is invoked once at end of Phase 3 (covers both the
     # newly-created path and the already-running path); see the call
