@@ -6281,15 +6281,36 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
         Write-Host "    Log:    $LogFile" -ForegroundColor Yellow
     }
     Write-Host ""
-    # Skip the Read-Host pause when MIOS_AUTO_CHAIN is set (mios-build
-    # function sets this before invoking us so it can chain into the
-    # dev distro + run mios-build-driver immediately after this script
-    # returns). Without the skip, the auto-chain hung waiting for the
-    # operator to press Enter -- the operator's "scripts don't even
-    # do anything" symptom.
-    if (-not $Unattended -and -not $env:MIOS_AUTO_CHAIN) {
-        Write-Host "  Press Enter to close..." -ForegroundColor DarkGray -NoNewline
-        $null = Read-Host
+    # NO "Press Enter to close..." pause. The bootstrap finishes with
+    # an automatic chain into the dev distro to run mios-build-driver
+    # (the actual OCI build). Operator's terminal stays open in the
+    # distro shell after the driver finishes; if they want the
+    # bootstrap log they read $LogFile directly.
+    if ($ExitCode -eq 0 -and -not $Unattended -and -not $env:MIOS_NO_AUTO_CHAIN) {
+        $devDistro = $null
+        try {
+            $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" |
+                       ForEach-Object { ($_ -replace [char]0,'').Trim() } |
+                       Where-Object { $_ }
+            foreach ($c in @('MiOS-DEV','podman-MiOS-DEV','MiOS-BUILDER','podman-MiOS-BUILDER')) {
+                if ($wslList -contains $c) { $devDistro = $c; break }
+            }
+        } catch {}
+        if ($devDistro) {
+            $resolvedUser = 'root'
+            try {
+                $passwd = (& wsl.exe -d $devDistro --user root -- cat /etc/passwd 2>$null) -join "`n"
+                if ($passwd -match '(?m)^mios:') { $resolvedUser = 'mios' }
+                elseif ($passwd -match '(?m)^core:') { $resolvedUser = 'core' }
+            } catch {}
+            Write-Host "  -> Launching $devDistro (--user $resolvedUser) to run mios-build-driver..." -ForegroundColor Cyan
+            Write-Host "     Output streams below; the OCI build runs inside MiOS-DEV." -ForegroundColor DarkGray
+            Write-Host ""
+            $driverPath = '/usr/libexec/mios/mios-build-driver'
+            $fallback   = 'https://raw.githubusercontent.com/mios-dev/mios/main/usr/libexec/mios/mios-build-driver'
+            $cmd = "if [ -x '$driverPath' ]; then exec sudo bash '$driverPath'; else echo '[handoff] driver not in image -- fetching latest'; t=`$(mktemp); if curl -fsSL '$fallback' -o `"`$t`"; then chmod +x `"`$t`"; exec sudo bash `"`$t`"; else echo '[handoff] FATAL: could not fetch driver'; exec bash; fi; fi"
+            & wsl.exe -d $devDistro --user $resolvedUser -- bash -lc $cmd
+        }
     }
     # Stop the background heartbeat runspace cleanly before exit. There is
     # no transcript to close (the unified log is written directly via

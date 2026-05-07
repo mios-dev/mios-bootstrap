@@ -1792,56 +1792,14 @@ if (`$true) {
 function mios-build {
     [CmdletBinding()]
     param([Parameter(ValueFromRemainingArguments)]`$Args)
-    # mios-build = bootstrap + auto-launch into MiOS-DEV + run the
-    # OCI build driver. Two stages:
-    #   1. Run the Windows-side bootstrap (build-mios.ps1) to ensure
-    #      the dev distro is provisioned + the M:\ overlays are
-    #      current. Idempotent on re-run -- existing distro is reused.
-    #   2. wsl into the dev distro + exec /usr/libexec/mios/mios-build-driver
-    #      which does the actual OCI image build, deployable export,
-    #      and bootc switch. Operator never has to remember the chain.
+    # Fetch + run build-mios.ps1. The bootstrap auto-chains into the
+    # dev distro and runs mios-build-driver itself (in its finally
+    # block) -- no Stage 2 needed here. mios-build is just a thin
+    # convenience wrapper around the irm|iex.
     `$env:MIOS_DASHBOARD_MODE = 'log'
-    # Tell build-mios.ps1's finally block to skip its "Press Enter to
-    # close..." Read-Host so control returns here for Stage 2 instead
-    # of hanging.
-    `$env:MIOS_AUTO_CHAIN = '1'
-    try {
-        `$cb = [int][double]::Parse((Get-Date -UFormat %s))
-        `$src = Invoke-RestMethod -Uri "`$Script:MiosBootstrapRaw/build-mios.ps1?cb=`$cb" -Headers @{ 'Cache-Control' = 'no-cache' }
-        & ([scriptblock]::Create(`$src)) @Args
-    } finally {
-        Remove-Item Env:\MIOS_AUTO_CHAIN -ErrorAction SilentlyContinue
-    }
-
-    # Stage 2: detect the dev distro + chain into the build driver.
-    `$devDistro = `$null
-    try {
-        `$wslList = (& wsl.exe -l -q 2>`$null) -split "``r?``n" | ForEach-Object { (`$_ -replace [char]0,'').Trim() } | Where-Object { `$_ }
-        foreach (`$c in @('MiOS-DEV','podman-MiOS-DEV','MiOS-BUILDER','podman-MiOS-BUILDER')) {
-            if (`$wslList -contains `$c) { `$devDistro = `$c; break }
-        }
-    } catch {}
-    if (-not `$devDistro) {
-        Write-Host '  [!] No MiOS dev distro found after bootstrap -- cannot auto-launch into the build driver.' -ForegroundColor Yellow
-        return
-    }
-    # Resolve user: mios > core > root. Pre-OCI-build the mios user
-    # doesn't exist yet, so we land as core/root; the driver runs as
-    # root inside the distro regardless via sudo.
-    `$user = 'root'
-    try {
-        `$passwd = (& wsl.exe -d `$devDistro --user root -- cat /etc/passwd 2>`$null) -join "``n"
-        if (`$passwd -match '(?m)^mios:') { `$user = 'mios' }
-        elseif (`$passwd -match '(?m)^core:') { `$user = 'core' }
-    } catch {}
-    Write-Host ''
-    Write-Host "  -> Launching `$devDistro (--user `$user) to run mios-build-driver..." -ForegroundColor Cyan
-    Write-Host '     The OCI build runs inside MiOS-DEV; output streams here.' -ForegroundColor DarkGray
-    Write-Host ''
-    `$driverPath = '/usr/libexec/mios/mios-build-driver'
-    `$fallback = 'https://raw.githubusercontent.com/mios-dev/mios/main/usr/libexec/mios/mios-build-driver'
-    `$cmd = "if [ -x '`$driverPath' ]; then exec sudo bash '`$driverPath'; else echo '[handoff] driver not found in distro -- fetching latest from origin'; t=`$(mktemp); if curl -fsSL '`$fallback' -o ""`$t""; then chmod +x ""`$t""; exec sudo bash ""`$t""; else echo '[handoff] FATAL: could not fetch driver'; exec bash; fi; fi"
-    & wsl.exe -d `$devDistro --user `$user -- bash -lc `$cmd
+    `$cb = [int][double]::Parse((Get-Date -UFormat %s))
+    `$src = Invoke-RestMethod -Uri "`$Script:MiosBootstrapRaw/build-mios.ps1?cb=`$cb" -Headers @{ 'Cache-Control' = 'no-cache' }
+    & ([scriptblock]::Create(`$src)) @Args
 }
 
 function mios-update {
