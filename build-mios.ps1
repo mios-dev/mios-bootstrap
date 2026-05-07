@@ -6322,10 +6322,34 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
             Write-Host "  -> Launching $devDistro (--user $resolvedUser) to run mios-build-driver..." -ForegroundColor Cyan
             Write-Host "     Output streams below; the OCI build runs inside MiOS-DEV." -ForegroundColor DarkGray
             Write-Host ""
-            $driverPath = '/usr/libexec/mios/mios-build-driver'
-            $fallback   = 'https://raw.githubusercontent.com/mios-dev/mios/main/usr/libexec/mios/mios-build-driver'
-            $cmd = "if [ -x '$driverPath' ]; then exec sudo bash '$driverPath'; else echo '[handoff] driver not in image -- fetching latest'; t=`$(mktemp); if curl -fsSL '$fallback' -o `"`$t`"; then chmod +x `"`$t`"; exec sudo bash `"`$t`"; else echo '[handoff] FATAL: could not fetch driver'; exec bash; fi; fi"
-            & wsl.exe -d $devDistro --user $resolvedUser -- bash -lc $cmd
+
+            # Source the driver from the M:\ mios.git overlay (Phase 2
+            # cloned it). Stream base64 via stdin to avoid Windows'
+            # ~32K CreateProcess command-line limit; the driver is
+            # ~26K binary -> ~35K base64, just over the limit if
+            # passed as an argument.
+            $localDriver = Join-Path $script:MiosRepoDir 'usr\libexec\mios\mios-build-driver'
+            if (Test-Path -LiteralPath $localDriver) {
+                try {
+                    $bytes = [System.IO.File]::ReadAllBytes($localDriver)
+                    $b64   = [Convert]::ToBase64String($bytes)
+
+                    # Stage 1: stream b64 via stdin -> base64 -d -> /tmp file.
+                    $b64 | & wsl.exe -d $devDistro --user root -- bash -c 'base64 -d > /tmp/mios-build-driver && chmod +x /tmp/mios-build-driver'
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "  [!] Failed to stage driver into distro (exit $LASTEXITCODE)" -ForegroundColor Yellow
+                    } else {
+                        # Stage 2: exec the driver interactively so the
+                        # operator sees + interacts with its output.
+                        & wsl.exe -d $devDistro --user $resolvedUser -- bash -lc 'exec sudo bash /tmp/mios-build-driver'
+                    }
+                } catch {
+                    Write-Host "  [!] Driver stage failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "  [!] mios-build-driver not found at $localDriver" -ForegroundColor Yellow
+                Write-Host "      Re-run the bootstrap; Phase 2 should have cloned mios.git to M:\." -ForegroundColor DarkGray
+            }
         }
     }
     # Stop the background heartbeat runspace cleanly before exit. There is
