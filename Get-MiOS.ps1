@@ -774,6 +774,7 @@ if (-not $wtExe) {
 }
 
 $wtArgs = @('-w','-1','--pos',"$x,$y",'--size','80,30','--focus','nt','-p','MiOS')
+$spawnedAt = Get-Date
 Start-Process -FilePath $wtExe -ArgumentList $wtArgs
 
 # Post-launch retry-center + always-on-top via Win32.
@@ -781,10 +782,18 @@ try {
     Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Win' -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out RECT lpRect); [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags); [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd); public struct RECT { public int Left, Top, Right, Bottom; }'
 } catch {}
 
-$deadline = (Get-Date).AddMilliseconds(4000)
+$deadline = (Get-Date).AddMilliseconds(8000)
 $hwnd = [IntPtr]::Zero
 while ((Get-Date) -lt $deadline) {
-    $proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1
+    # Pick the WindowsTerminal process whose StartTime is AFTER our
+    # spawnedAt timestamp. Picking "newest WT" without the timestamp
+    # filter accidentally targets the operator's pre-existing WT
+    # window (whose StartTime is later only because StartTime sort
+    # picks the most-recently-active one). Filter by spawn time + 1s
+    # leeway so we always land on OUR newly-spawned WT.
+    $proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
+            Where-Object { $_.StartTime -ge $spawnedAt.AddSeconds(-1) } |
+            Sort-Object StartTime -Descending | Select-Object -First 1
     if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero -and [MiOSLaunch.Native.Win]::IsWindowVisible($proc.MainWindowHandle)) {
         $hwnd = $proc.MainWindowHandle; break
     }
@@ -1402,15 +1411,32 @@ function Install-MiOSPowerShellProfile {
     $ffConfigBase64   = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosFastfetchConfig))
     $ffLogoBase64     = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosBrandingTxt))
     $miosScriptBody = @"
-# MiOS PowerShell profile -- fastfetch MOTD + oh-my-posh init.
+# MiOS PowerShell profile -- PSReadLine reload + fastfetch MOTD +
+# oh-my-posh init.
 # Source of truth: this file lives on M:\ and is dot-sourced from
 # `$PROFILE.CurrentUserAllHosts. Edit here, restart pwsh, updates.
 # Self-heals every artifact (mios.omp.json, fastfetch config.jsonc,
 # mios.txt ASCII logo) from embedded base64 blobs if the canonical
-# disk copy is missing -- so any pwsh launch in a MiOS terminal
-# gets a fully-themed experience even if irm|iex was a stale build.
+# disk copy is missing.
 
 if (`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') {
+
+    # ── PSReadLine reload ─────────────────────────────────────────
+    # PowerShell 7.x ships with an in-box PSReadLine that's too old
+    # for oh-my-posh init's Get-PSReadLineKeyHandler -Chord syntax.
+    # Updating PSReadLine on disk (Install-Module) doesn't help the
+    # CURRENT session because PSReadLine is autoloaded BEFORE the
+    # profile runs. Force-import the newest installed version here
+    # so oh-my-posh init's PSReadLine integration doesn't throw
+    # "A positional parameter cannot be found that accepts argument
+    # 'Spacebar'/'Enter'/'Ctrl+c'".
+    try {
+        `$latestPSRL = Get-Module -ListAvailable -Name PSReadLine |
+                       Sort-Object Version -Descending | Select-Object -First 1
+        if (`$latestPSRL -and `$latestPSRL.Version -ge [version]'2.3.5') {
+            Import-Module PSReadLine -RequiredVersion `$latestPSRL.Version -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
 
     # ── Resolve / self-heal MiOS artifact paths ───────────────────
     `$miosArtifactRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path `$env:LOCALAPPDATA 'MiOS' }
@@ -1474,6 +1500,84 @@ if (`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') {
             oh-my-posh init pwsh | Invoke-Expression
         }
     }
+}
+
+# ── MiOS commands ───────────────────────────────────────────────────
+# Defined in EVERY pwsh session (not gated on WT_SESSION) so the
+# operator can run mios-build / mios-update / mios-help from any shell.
+# Each command fetches its target script fresh from
+# raw.githubusercontent.com so the operator doesn't have to manually
+# pull the mios-bootstrap repo. Cache-busting via ?cb=<unix-time>
+# defeats Fastly's 5-minute max-age.
+
+`$Script:MiosBootstrapRaw = 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main'
+
+function mios-build {
+    [CmdletBinding()]
+    param([Parameter(ValueFromRemainingArguments)]`$Args)
+    `$cb = [int][double]::Parse((Get-Date -UFormat %s))
+    `$src = Invoke-RestMethod -Uri "`$Script:MiosBootstrapRaw/build-mios.ps1?cb=`$cb" -Headers @{ 'Cache-Control' = 'no-cache' }
+    & ([scriptblock]::Create(`$src)) @Args
+}
+
+function mios-update {
+    [CmdletBinding()]
+    param([Parameter(ValueFromRemainingArguments)]`$Args)
+    `$cb = [int][double]::Parse((Get-Date -UFormat %s))
+    `$src = Invoke-RestMethod -Uri "`$Script:MiosBootstrapRaw/Get-MiOS.ps1?cb=`$cb" -Headers @{ 'Cache-Control' = 'no-cache' }
+    & ([scriptblock]::Create(`$src)) @Args
+}
+
+function mios-pull {
+    if (-not (Test-Path 'M:\.git')) {
+        Write-Host '  [!] M:\ is not a git working tree -- run mios-build first.' -ForegroundColor Yellow
+        return
+    }
+    Push-Location 'M:\'
+    try {
+        git fetch --depth=1 origin main
+        if (`$LASTEXITCODE -eq 0) {
+            git reset --hard FETCH_HEAD
+            Write-Host '  [+] M:\ overlay synced to origin/main.' -ForegroundColor Green
+        } else {
+            Write-Host '  [!] git fetch failed -- check network.' -ForegroundColor Yellow
+        }
+    } finally { Pop-Location }
+}
+
+function mios-config {
+    `$cfg = if (Test-Path 'M:\usr\share\mios\configurator\index.html') { 'M:\usr\share\mios\configurator\index.html' }
+           elseif (Test-Path 'C:\MiOS\usr\share\mios\configurator\index.html') { 'C:\MiOS\usr\share\mios\configurator\index.html' }
+           else { `$null }
+    if (`$cfg) {
+        Start-Process `$cfg
+        Write-Host "  [+] Opened `$cfg" -ForegroundColor DarkGray
+    } else {
+        Write-Host '  [!] configurator not found -- run mios-build to deploy it.' -ForegroundColor Yellow
+    }
+}
+
+function mios-dev {
+    [CmdletBinding()]
+    param([Parameter(ValueFromRemainingArguments)]`$Args)
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+        Write-Host '  [!] wsl.exe not on PATH -- WSL2 may not be installed.' -ForegroundColor Yellow
+        return
+    }
+    & wsl.exe -d MiOS-DEV --cd / --user mios @Args
+}
+
+function mios-help {
+    Write-Host ''
+    Write-Host '  MiOS commands' -ForegroundColor Cyan
+    Write-Host '  -------------' -ForegroundColor DarkCyan
+    Write-Host '  mios-build    run the full MiOS OS bootstrap (WSL2 + podman + dev VM)' -ForegroundColor White
+    Write-Host '  mios-update   re-run Get-MiOS.ps1 (refresh terminal install)' -ForegroundColor White
+    Write-Host '  mios-pull     git fetch + hard reset M:\ to origin/main' -ForegroundColor White
+    Write-Host '  mios-config   open the HTML configurator (mios.toml editor)' -ForegroundColor White
+    Write-Host '  mios-dev      wsl into the MiOS-DEV distro (root /, user mios)' -ForegroundColor White
+    Write-Host '  mios-help     this list' -ForegroundColor White
+    Write-Host ''
 }
 "@
     Set-Content -Path $miosProfileScript -Value $miosScriptBody -Encoding UTF8
