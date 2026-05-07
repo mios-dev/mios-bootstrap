@@ -724,7 +724,7 @@ function Write-Log {
 }
 
 # ── Dashboard state ───────────────────────────────────────────────────────────
-$script:DW         = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 4), 76))
+$script:DW         = [math]::Max(60, [math]::Min(([Console]::WindowWidth - 6), 72))
 # Per the self-replication architecture, the Windows side (BootstrapOnly,
 # the default for irm | iex entry) does ONLY:
 #   ack -> hardware/env probe -> minimal mios-bootstrap clone ->
@@ -5439,7 +5439,7 @@ try {
 # load-time resize failed but THIS one succeeded, the original $DW (set
 # from a wider parent terminal) would still drive the dashboard at the
 # wrong width. Re-reading WindowWidth here closes that gap.
-$script:DW = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 4), 76))
+$script:DW = [math]::Max(60, [math]::Min(([Console]::WindowWidth - 6), 72))
 
 Show-Dashboard   # draw initial (all phases pending)
 
@@ -5987,24 +5987,11 @@ if ($activeDistro) {
     # re-runs this script with -BuildOnly).
     if ($BootstrapOnly) {
         Log-Ok "-BootstrapOnly mode: dev VM provisioned, Windows install complete."
-        # No interactive menu. The operator already has every verb wired
-        # as PowerShell functions in their MiOS terminal profile:
-        #   mios-build    full OCI image + deployables build
-        #   mios-config   open mios.toml configurator
-        #   mios-pull     refresh M:\ from origin/main
-        #   mios-dev      enter the dev distro
-        #   mios-help     list all commands
-        # An interactive menu HERE just fights with the parallel
-        # build-mios.ps1 instance that mios-build spawns in a new wt
-        # tab + Install-MiosLauncher's still-flushing log lines, and
-        # produces the rendering issues the operator caught us on
-        # repeatedly. Exit cleanly with a one-line summary instead.
+        # No interactive menu, no inline summary. The finally block at
+        # script exit handles the single canonical summary; printing
+        # one HERE was producing TWO "MiOS bootstrap complete" headers
+        # in the operator's transcript. Just return -- finally fires next.
         try { [Console]::Out.Flush() } catch {}
-        Write-Host ""
-        Write-Host "  MiOS bootstrap complete." -ForegroundColor Green
-        Write-Host "  Dev distro: $script:BuilderDistro (enter via mios-dev)" -ForegroundColor DarkGray
-        Write-Host "  Run mios-help in any MiOS terminal for the available commands." -ForegroundColor DarkGray
-        Write-Host ""
         return
     }
 
@@ -6294,7 +6281,13 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
         Write-Host "    Log:    $LogFile" -ForegroundColor Yellow
     }
     Write-Host ""
-    if (-not $Unattended) {
+    # Skip the Read-Host pause when MIOS_AUTO_CHAIN is set (mios-build
+    # function sets this before invoking us so it can chain into the
+    # dev distro + run mios-build-driver immediately after this script
+    # returns). Without the skip, the auto-chain hung waiting for the
+    # operator to press Enter -- the operator's "scripts don't even
+    # do anything" symptom.
+    if (-not $Unattended -and -not $env:MIOS_AUTO_CHAIN) {
         Write-Host "  Press Enter to close..." -ForegroundColor DarkGray -NoNewline
         $null = Read-Host
     }

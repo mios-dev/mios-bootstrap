@@ -1801,9 +1801,17 @@ function mios-build {
     #      which does the actual OCI image build, deployable export,
     #      and bootc switch. Operator never has to remember the chain.
     `$env:MIOS_DASHBOARD_MODE = 'log'
-    `$cb = [int][double]::Parse((Get-Date -UFormat %s))
-    `$src = Invoke-RestMethod -Uri "`$Script:MiosBootstrapRaw/build-mios.ps1?cb=`$cb" -Headers @{ 'Cache-Control' = 'no-cache' }
-    & ([scriptblock]::Create(`$src)) @Args
+    # Tell build-mios.ps1's finally block to skip its "Press Enter to
+    # close..." Read-Host so control returns here for Stage 2 instead
+    # of hanging.
+    `$env:MIOS_AUTO_CHAIN = '1'
+    try {
+        `$cb = [int][double]::Parse((Get-Date -UFormat %s))
+        `$src = Invoke-RestMethod -Uri "`$Script:MiosBootstrapRaw/build-mios.ps1?cb=`$cb" -Headers @{ 'Cache-Control' = 'no-cache' }
+        & ([scriptblock]::Create(`$src)) @Args
+    } finally {
+        Remove-Item Env:\MIOS_AUTO_CHAIN -ErrorAction SilentlyContinue
+    }
 
     # Stage 2: detect the dev distro + chain into the build driver.
     `$devDistro = `$null
