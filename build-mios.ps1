@@ -6103,7 +6103,14 @@ if ($activeDistro) {
     # PSNativeCommandUseErrorActionPreference=$true), either of those
     # throws straight to the outer FATAL handler. The actual install
     # success is checked via $LASTEXITCODE below.
-    $miosEssentials = 'mkpasswd whois openssl python3-passlib bootc git iptables nftables'
+    # Layered tooling: build essentials (mkpasswd / openssl / passlib / bootc /
+    # git / iptables / nftables) PLUS the MiOS terminal experience tooling
+    # (fastfetch for the dashboard, oh-my-posh for the themed prompt,
+    # bash-completion for tab-complete, ncurses + util-linux for general
+    # interactive shell ergonomics). Per operator: every MiOS terminal
+    # window must look like MiOS the moment it opens, even before the
+    # bootc switch at end-of-build delivers the full image.
+    $miosEssentials = 'mkpasswd whois openssl python3-passlib bootc git iptables nftables fastfetch oh-my-posh bash-completion'
     $essentialsRc = -1
     & {
         $ErrorActionPreference = 'Continue'
@@ -6150,6 +6157,69 @@ firewall_driver = "none"
         Log-Ok "netavark configured for WSL2 (firewall_driver=none in $confDropIn)"
     } else {
         Log-Warn "Failed to write netavark drop-in (exit $($script:_netavarkRc)) -- podman build may fail at first network step"
+    }
+
+    # ── MiOS terminal experience seed inside dev VM ──────────────────
+    # Symlink /usr/libexec/mios + /usr/share/mios to the M:\ overlay
+    # (mios.git's working tree visible at /mnt/m/ via WSL automount)
+    # so mios.git's existing /etc/profile.d/mios-*.sh scripts can find
+    # /usr/libexec/mios/mios-dashboard.sh + /usr/share/mios/oh-my-posh/
+    # at the canonical paths -- without doing a heavy file-by-file
+    # copy. After bootc switch at end-of-build, the OCI image's real
+    # /usr/{libexec,share}/mios ride on top via composefs and the
+    # symlinks become irrelevant.
+    #
+    # Drop a single bridge in /etc/profile.d/ that sources mios.git's
+    # profile.d scripts FROM /mnt/m/ on every interactive login. Auto-
+    # disables once /usr/share/mios is real (post-bootc-switch).
+    Set-Step "Seeding MiOS terminal experience inside $_wslDistroForTerm..."
+    $miosSeedScript = @'
+set -e
+# Symlink the canonical MiOS dirs to the M:\ overlay so existing
+# profile.d scripts (mios-prompt.sh, zz-mios-motd.sh) resolve their
+# dependencies. -e check skips re-symlinking if the path is already
+# real (post-bootc-switch state).
+if [ -d /mnt/m/usr/libexec/mios ] && [ ! -e /usr/libexec/mios ]; then
+    ln -snf /mnt/m/usr/libexec/mios /usr/libexec/mios
+fi
+if [ -d /mnt/m/usr/share/mios ] && [ ! -e /usr/share/mios ]; then
+    ln -snf /mnt/m/usr/share/mios /usr/share/mios
+fi
+# Pre-bootc bridge: source mios.git profile.d scripts from /mnt/m/ on
+# every interactive bash login, IF the canonical /etc/profile.d/mios-*
+# scripts aren't installed yet (pre-bootc-switch). After bootc switch,
+# the canonical scripts exist and this bridge skips silently.
+mkdir -p /etc/profile.d
+cat > /etc/profile.d/00-mios-pre-bootc.sh <<'EOPROFILE'
+# /etc/profile.d/00-mios-pre-bootc.sh
+# Pre-bootc-switch MiOS terminal-experience bridge.
+# Sources mios.git's profile.d scripts from /mnt/m/ until the OCI
+# image's bootc-switch lands them at the canonical /etc/profile.d/.
+# Auto-disables once /etc/profile.d/mios-prompt.sh exists at root.
+if [ ! -e /etc/profile.d/mios-prompt.sh ] && [ -d /mnt/m/etc/profile.d ]; then
+    for _miosf in /mnt/m/etc/profile.d/mios-*.sh /mnt/m/etc/profile.d/zz-mios-*.sh; do
+        [ -r "$_miosf" ] && . "$_miosf"
+    done
+    unset _miosf
+fi
+EOPROFILE
+chmod 0644 /etc/profile.d/00-mios-pre-bootc.sh
+echo "[mios-seed] symlinks + pre-bootc bridge installed"
+'@
+    $seedRc = -1
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        $miosSeedScript | & wsl.exe -d $_wslDistroForTerm --user root -- bash 2>&1 |
+            ForEach-Object { Write-Log "mios-seed: $_" }
+        $script:_seedRc = $LASTEXITCODE
+    }
+    if ($script:_seedRc -eq 0) {
+        Log-Ok "MiOS terminal experience seeded onto $_wslDistroForTerm"
+    } else {
+        Log-Warn "MiOS terminal experience seed failed (exit $($script:_seedRc)) -- bare bash login until bootc switch"
     }
 
     # The overlay seed wrote /etc/wsl.conf [user] default=mios so future
