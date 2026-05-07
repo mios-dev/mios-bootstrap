@@ -77,6 +77,41 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ── Self-cache-bust on entry ────────────────────────────────────────────────
+# raw.githubusercontent.com is fronted by Fastly with `Cache-Control: max-age=300`,
+# so the canonical Run-dialog paste:
+#   powershell -ExecutionPolicy Bypass -Command "irm https://...Get-MiOS.ps1 | iex"
+# returns the 5-min-old cached copy after a push. Operators who test in tight
+# iteration cycles end up running stale code without realizing it.
+#
+# Fix: every cached copy of this script self-relaunches with a `?cb=<unix-time>`
+# query string on first entry. Fastly treats unique URLs as distinct cache
+# keys, so the busted URL always pulls origin-fresh. The `MIOS_CACHE_BUSTED`
+# sentinel breaks the loop on the second pass (the freshly-fetched copy
+# doesn't re-relaunch). Once this prefix is deployed, ALL future pushes
+# land fresh on the next canonical-one-liner paste -- the only run that
+# pays the stale-cache cost is the very first one after this prefix is
+# itself deployed (the cached version pre-dates the prefix).
+if (-not $env:MIOS_CACHE_BUSTED -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
+    $env:MIOS_CACHE_BUSTED = '1'
+    try {
+        $cb = [int][double]::Parse((Get-Date -UFormat %s))
+        $bustedUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$cb"
+        $noCacheHdr = @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' }
+        $freshSrc = Invoke-RestMethod -Uri $bustedUrl -Headers $noCacheHdr -ErrorAction Stop
+        if ($freshSrc -and $freshSrc.Length -gt 1000) {
+            # Got a real script back -- relaunch with the fresh copy.
+            & ([scriptblock]::Create($freshSrc))
+            return
+        }
+        # Empty / suspiciously small response -- fall through to the
+        # cached copy we already have running.
+    } catch {
+        # Network blip / DNS / Fastly outage -- fall through to the
+        # cached copy. Better to run something stale than nothing at all.
+    }
+}
+
 # Acknowledgement gate (full scrollable form -- inlined because this
 # script runs via 'irm | iex' where $PSScriptRoot is empty so we cannot
 # dot-source automation/lib/agreements-banner.ps1 from a clone.
