@@ -4460,13 +4460,18 @@ $endMark
 }
 
 function New-MiosIcon {
-    # Generate one multi-size .ico (16/32/48/64/256) with a "M" glyph
-    # plus an optional accent badge (chevron / arrow / grid / gear /
-    # update-arrows). Writes a multi-image PNG-payload .ico so Windows
-    # Explorer + Taskbar pick the best size for each rendering context.
+    # Generate one multi-size .ico (16/32/48/64/256) styled to match the
+    # MiOS dashboard ASCII art: an isometric 3D cube (top + left-front +
+    # right-front faces) with `/:\`-style hatch marks on each face,
+    # echoing the wireframe blocks of the MIOS letters in the dashboard
+    # banner. The cube is rendered in the MiOS palette (Hokusai bg,
+    # cream front, accent orange top), with an optional badge in the
+    # bottom-right corner for action-verb shortcuts.
     #
-    # Badges live in the bottom-right corner (~36% of canvas); the
-    # main "M" stays centered so all icons read as part of one family.
+    # Visual rationale: at 16-32 px the letter "M" is unrecognizable,
+    # but the iso-cube silhouette + hatched faces stay readable and
+    # clearly map back to the dashboard art. The badge layer
+    # disambiguates verbs (mios-build vs mios-pull etc.).
     param(
         [Parameter(Mandatory)] [string] $Path,
         [ValidateSet('plain','dev','pull','dash','build','update','config')] [string] $Badge = 'plain'
@@ -4480,27 +4485,112 @@ function New-MiosIcon {
         $g.SmoothingMode      = 'AntiAlias'
         $g.TextRenderingHint  = 'AntiAlias'
         $g.InterpolationMode  = 'HighQualityBicubic'
-        # MiOS palette (Hokusai + operator): bg=#282262 accent=#F35C15 fg=#E7DFD3
+        $g.PixelOffsetMode    = 'HighQuality'
+
+        # MiOS palette (Hokusai + operator):
+        #   bg     = #282262   deep Hokusai blue (canvas)
+        #   fg     = #E7DFD3   warm cream (front-left face)
+        #   accent = #F35C15   sunset orange (top face -- "lit" surface)
+        #   shade  = #14112E   near-black blue (right face -- shadowed)
+        #   green  = #3E7765   forest green (non-destructive verb badges)
         $bg     = [System.Drawing.Color]::FromArgb(40, 34, 98)
         $fg     = [System.Drawing.Color]::FromArgb(231, 223, 211)
         $accent = [System.Drawing.Color]::FromArgb(243, 92, 21)
+        $shade  = [System.Drawing.Color]::FromArgb(20, 17, 49)
         $green  = [System.Drawing.Color]::FromArgb(62, 119, 101)
         $g.Clear($bg)
-        $ringPen = New-Object System.Drawing.Pen($accent, [math]::Max(1, $s / 32))
-        $g.DrawEllipse($ringPen, 1, 1, $s - 3, $s - 3)
-        $fontSize = [int]($s * 0.55)
-        $font  = New-Object System.Drawing.Font("Segoe UI", $fontSize, [System.Drawing.FontStyle]::Bold)
-        $sf    = New-Object System.Drawing.StringFormat
-        $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
-        $brush = New-Object System.Drawing.SolidBrush($fg)
-        $g.DrawString('M', $font, $brush, [System.Drawing.RectangleF]::FromLTRB(0, 0, $s, $s), $sf)
 
+        # ── Iso cube vertices ────────────────────────────────────────
+        # Six visible vertices of an isometric cube silhouette, plus
+        # the front (vMid) corner. The cube is centered at (cx, cy)
+        # with extent $r. All face polygons share these vertices so
+        # edges line up exactly.
+        $cx = $s / 2.0
+        $cy = $s / 2.0
+        $r  = $s * 0.36
+        $cos30 = 0.866
+        $hH = $r * 0.55          # half-height (vertical)
+        $hW = $r * $cos30        # half-width (horizontal)
+        $vTop  = [System.Drawing.PointF]::new($cx,        $cy - $hH * 1.10)
+        $vTopR = [System.Drawing.PointF]::new($cx + $hW,  $cy - $hH * 0.55)
+        $vBotR = [System.Drawing.PointF]::new($cx + $hW,  $cy + $hH * 0.55)
+        $vBot  = [System.Drawing.PointF]::new($cx,        $cy + $hH * 1.10)
+        $vBotL = [System.Drawing.PointF]::new($cx - $hW,  $cy + $hH * 0.55)
+        $vTopL = [System.Drawing.PointF]::new($cx - $hW,  $cy - $hH * 0.55)
+        $vMid  = [System.Drawing.PointF]::new($cx,        $cy)
+
+        # Cast to PointF[] explicitly: PowerShell's overload resolver
+        # otherwise picks DrawPolygon(Pen, Point[]) (the int variant)
+        # and tries to coerce PointF -> Point, which throws.
+        [System.Drawing.PointF[]] $topPts   = @($vTop,  $vTopR, $vMid,  $vTopL)
+        [System.Drawing.PointF[]] $leftPts  = @($vTopL, $vMid,  $vBot,  $vBotL)
+        [System.Drawing.PointF[]] $rightPts = @($vTopR, $vBotR, $vBot,  $vMid)
+
+        # Fill the three faces.
+        $brushTop   = New-Object System.Drawing.SolidBrush($accent)
+        $brushLeft  = New-Object System.Drawing.SolidBrush($fg)
+        $brushRight = New-Object System.Drawing.SolidBrush($shade)
+        $g.FillPolygon($brushTop,   $topPts)
+        $g.FillPolygon($brushLeft,  $leftPts)
+        $g.FillPolygon($brushRight, $rightPts)
+        $brushTop.Dispose(); $brushLeft.Dispose(); $brushRight.Dispose()
+
+        # ── Hatch marks (`/:\` echoes of the ASCII art) ──────────────
+        # Skip at 16 px -- the lines turn to mush. At 32+ each face
+        # gets two parallel diagonal strokes to mimic the wireframe
+        # `/:\` cross-hatching of the dashboard letters.
+        if ($s -ge 32) {
+            $hatchPen = New-Object System.Drawing.Pen($bg, [math]::Max(1, $s / 64))
+            # Left face: lines parallel to the top-left -> bottom edge.
+            for ($i = 1; $i -le 2; $i++) {
+                $t = $i / 3.0
+                $a = [System.Drawing.PointF]::new(
+                    $vTopL.X + ($vMid.X  - $vTopL.X) * $t,
+                    $vTopL.Y + ($vMid.Y  - $vTopL.Y) * $t)
+                $b = [System.Drawing.PointF]::new(
+                    $vBotL.X + ($vBot.X  - $vBotL.X) * $t,
+                    $vBotL.Y + ($vBot.Y  - $vBotL.Y) * $t)
+                $g.DrawLine($hatchPen, $a, $b)
+            }
+            # Right face: lines parallel to the top-right -> bottom edge.
+            for ($i = 1; $i -le 2; $i++) {
+                $t = $i / 3.0
+                $a = [System.Drawing.PointF]::new(
+                    $vTopR.X + ($vMid.X  - $vTopR.X) * $t,
+                    $vTopR.Y + ($vMid.Y  - $vTopR.Y) * $t)
+                $b = [System.Drawing.PointF]::new(
+                    $vBotR.X + ($vBot.X  - $vBotR.X) * $t,
+                    $vBotR.Y + ($vBot.Y  - $vBotR.Y) * $t)
+                $g.DrawLine($hatchPen, $a, $b)
+            }
+            # Top face: a single cross-stroke from top-left corner
+            # to mid (just a hint -- two lines clutter the small face).
+            $tA = [System.Drawing.PointF]::new(
+                $vTopL.X + ($vTop.X - $vTopL.X) * 0.5,
+                $vTopL.Y + ($vTop.Y - $vTopL.Y) * 0.5)
+            $tB = [System.Drawing.PointF]::new(
+                $vTopR.X + ($vMid.X - $vTopR.X) * 0.5,
+                $vTopR.Y + ($vMid.Y - $vTopR.Y) * 0.5)
+            $g.DrawLine($hatchPen, $tA, $tB)
+            $hatchPen.Dispose()
+        }
+
+        # ── Edge strokes (cube outline) ──────────────────────────────
+        $edgePen = New-Object System.Drawing.Pen($bg, [math]::Max(1, $s / 36))
+        $g.DrawPolygon($edgePen, $topPts)
+        $g.DrawPolygon($edgePen, $leftPts)
+        $g.DrawPolygon($edgePen, $rightPts)
+        # Inner spine (top-vertex -> mid) for the iso "Y" silhouette.
+        $g.DrawLine($edgePen, $vTop, $vMid)
+        $edgePen.Dispose()
+
+        # ── Badge (verb-specific glyph in bottom-right) ──────────────
         if ($Badge -ne 'plain' -and $s -ge 32) {
             $bSize = [int]($s * 0.36)
             $bX    = $s - $bSize - 1
             $bY    = $s - $bSize - 1
-            # Filled badge circle (green for non-destructive, accent
-            # orange for action verbs).
+            # Green for read-only verbs (dev shell, dashboard, config-edit);
+            # orange for state-mutating verbs (build, pull, update).
             $badgeFill = if ($Badge -in @('dev','dash','config')) { $green } else { $accent }
             $badgeBrush = New-Object System.Drawing.SolidBrush($badgeFill)
             $g.FillEllipse($badgeBrush, $bX, $bY, $bSize, $bSize)
@@ -4514,11 +4604,14 @@ function New-MiosIcon {
                 'update' { [char]0x21BB }   # ↻ clockwise
                 'config' { [char]0x2699 }   # ⚙ gear
             }
-            $g.DrawString([string]$glyphChar, $glyphFont, $brush,
+            $sf = New-Object System.Drawing.StringFormat
+            $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
+            $glyphBrush = New-Object System.Drawing.SolidBrush($fg)
+            $g.DrawString([string]$glyphChar, $glyphFont, $glyphBrush,
                 [System.Drawing.RectangleF]::FromLTRB($bX, $bY, $bX + $bSize, $bY + $bSize), $sf)
-            $glyphFont.Dispose()
+            $glyphFont.Dispose(); $glyphBrush.Dispose()
         }
-        $g.Dispose(); $font.Dispose(); $brush.Dispose(); $ringPen.Dispose()
+        $g.Dispose()
         $bitmaps += ,$bmp
     }
     # Multi-image .ico writer (ICONDIR + ICONDIRENTRY[] + PNG payloads).

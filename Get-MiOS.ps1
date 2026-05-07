@@ -2442,13 +2442,71 @@ function Require-Cmd {
     }
 }
 
+function Ensure-PodmanDesktop {
+    # Auto-install Podman Desktop via winget if `podman` isn't already
+    # on PATH. Uses RedHat.Podman-Desktop (the official manifest --
+    # winget search RedHat.Podman-Desktop). Idempotent: if podman is
+    # present, no-op. After install, refreshes PATH from the registry
+    # so this same pwsh session can find the new podman.exe without
+    # the operator re-opening their shell.
+    if (Get-Command podman -ErrorAction SilentlyContinue) {
+        Write-Good "Podman already installed ($((podman --version) 2>&1))"
+        return
+    }
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Err "winget not found and podman not installed."
+        Write-Err "  Install App Installer from the Microsoft Store, or install"
+        Write-Err "  Podman Desktop manually from https://podman-desktop.io"
+        exit 1
+    }
+    Write-Info "Installing Podman Desktop via winget (RedHat.Podman-Desktop) ..."
+    & winget install --exact --id RedHat.Podman-Desktop `
+        --silent --accept-source-agreements --accept-package-agreements `
+        --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    if ($LASTEXITCODE -ne 0) {
+        # Some hosts reject --scope machine; retry without it (per-user).
+        Write-Info "Retrying winget install at user scope ..."
+        & winget install --exact --id RedHat.Podman-Desktop `
+            --silent --accept-source-agreements --accept-package-agreements 2>&1 |
+            ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "winget install RedHat.Podman-Desktop failed (exit $LASTEXITCODE)"
+        Write-Err "  Manually install from https://podman-desktop.io and re-run."
+        exit 1
+    }
+    # Refresh PATH from registry so the just-installed podman.exe is
+    # visible to Get-Command in THIS pwsh session.
+    $env:PATH = `
+        [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + `
+        [Environment]::GetEnvironmentVariable('PATH','User')
+    if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
+        # Fallback: probe the standard install dir.
+        $pdBin = Join-Path ${env:ProgramFiles} 'RedHat\Podman'
+        if (Test-Path $pdBin) { $env:PATH = "$pdBin;$env:PATH" }
+    }
+    if (Get-Command podman -ErrorAction SilentlyContinue) {
+        Write-Good "Podman Desktop installed ($((podman --version) 2>&1))"
+    } else {
+        Write-Err "Podman Desktop installed but `podman` still not on PATH."
+        Write-Err "  Restart this shell and re-run, or check $env:ProgramFiles\RedHat\Podman."
+        exit 1
+    }
+}
+
 Clear-Host
 Write-Host "MiOS Bootstrap (irm | iex web entry)" -ForegroundColor Cyan
 Write-Host "------------------------------------" -ForegroundColor Cyan
 
 # 4. Prerequisites
+#
+# Podman Desktop is no longer a "Require-Cmd or die" gate -- mios.bat
+# self-elevates so we have admin here, which means winget can install
+# RedHat.Podman-Desktop unattended without bouncing the operator out
+# to a browser. Latest stable (per memory: target latest) -- no
+# version pin, winget picks whatever the manifest currently advertises.
 Require-Cmd "git"    "Install Git from https://git-scm.com/download/win"
-Require-Cmd "podman" "Install Podman Desktop from https://podman-desktop.io"
+Ensure-PodmanDesktop
 Write-Good "Prerequisites OK (git, podman)"
 
 # Initialize-DataDisk: shrink C:\ by EXACTLY 256 GB (262144 MB) and
