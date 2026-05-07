@@ -969,21 +969,35 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     #      still apply -- so font order doesn't break anything else.
     #   4. PowerShell profile (oh-my-posh init line). Lowest priority;
     #      cosmetic, only matters once the operator hits a prompt.
-    # Windows transparency must be ON in the personalization registry
-    # for ANY window's acrylic to render. On clean Windows installs and
-    # most Server SKUs (the operator's CloudWS-602 hostname suggests a
-    # Server cloud workstation) it ships disabled by default. WT will
-    # silently ignore systemBackdrop=acrylic + opacity=50 if this isn't
-    # set -- which produces the EXACT "no acrylic, nothing!" rendering
-    # the operator caught us on. Set the HKCU bit before the WT install
-    # so the very first WT launch sees transparency enabled.
+    # Apply the MiOS palette + transparency settings to the Windows OS
+    # registry so the OPERATOR'S WHOLE DESKTOP is MiOS-themed -- not
+    # just the WT window. EnableTransparency is the precondition for
+    # acrylic to render at all (Server / freshly-imaged Windows ships
+    # with it OFF, which is why "no acrylic, nothing" was happening).
+    # Dark mode + ColorPrevalence + DWM accent paint MiOS's operator-
+    # blue (#1A407F) onto title bars, taskbar, and Start chrome too.
+    #
+    # MiOS canonical accent (mios.toml [colors].accent): #1A407F.
+    # DWM stores AccentColor in 0xAABBGGRR layout (alpha + reverse-byte
+    # BGR), so #1A407F encodes as 0xFF7F401A.
     try {
         $personalize = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
         if (-not (Test-Path $personalize)) { New-Item -Path $personalize -Force | Out-Null }
-        Set-ItemProperty -Path $personalize -Name 'EnableTransparency' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-        Write-Host "  [+] HKCU EnableTransparency = 1 (acrylic compositing armed)." -ForegroundColor DarkGray
+        Set-ItemProperty -Path $personalize -Name 'EnableTransparency'   -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $personalize -Name 'AppsUseLightTheme'    -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $personalize -Name 'SystemUsesLightTheme' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $personalize -Name 'ColorPrevalence'      -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+
+        $dwm = 'HKCU:\Software\Microsoft\Windows\DWM'
+        if (-not (Test-Path $dwm)) { New-Item -Path $dwm -Force | Out-Null }
+        $miosAccentDword = [int][uint32]0xFF7F401A
+        Set-ItemProperty -Path $dwm -Name 'AccentColor'           -Value $miosAccentDword -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $dwm -Name 'ColorizationColor'     -Value $miosAccentDword -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $dwm -Name 'ColorizationAfterglow' -Value $miosAccentDword -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $dwm -Name 'ColorPrevalence'       -Value 1                -Type DWord -Force -ErrorAction SilentlyContinue
+        Write-Host "  [+] Windows global theme set to MiOS palette (dark mode + #1A407F accent + transparency)." -ForegroundColor DarkGray
     } catch {
-        Write-Host "  [!] Could not flip EnableTransparency: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "  [!] Windows theme registry write failed: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 
     Write-Host "  [*] Step 1/4: Installing Windows Terminal Preview (winget dev channel)..." -ForegroundColor Cyan
