@@ -263,6 +263,27 @@ if ($script:IsAdmin) {
     $UninstallRegKey  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS"
 }
 
+# Mirror the path locals to $script: scope so functions defined in
+# this file (which use $script:MiosInstallDir / $script:MiosRepoDir
+# etc. for the AFTER-data-disk-bootstrap variant) ALWAYS find a
+# valid value -- even when Update-MiosInstallPaths never runs (no
+# admin, no M:\ provisioning). Without this mirroring,
+# New-BuilderDistro's `Join-Path $script:MiosInstallDir 'machine-os'`
+# threw "Cannot bind argument to parameter 'Path' because argument
+# is null" the moment Phase 3 fired in CurrentUser scope.
+$script:MiosInstallDir     = $MiosInstallDir
+$script:MiosProgramData    = $MiosProgramData
+$script:MiosRepoDir        = $MiosRepoDir
+$script:MiosBootstrapShadow = $MiosBootstrapShadow
+$script:MiosBinDir         = $MiosBinDir
+$script:MiosShareDir       = $MiosShareDir
+$script:MiosIconsDir       = $MiosIconsDir
+$script:MiosThemesDir      = $MiosThemesDir
+$script:MiosFontsDir       = $MiosFontsDir
+$script:MiosDistroDir      = $MiosDistroDir
+$script:MiosImagesDir      = $MiosImagesDir
+$script:MiosMachineCfg     = $MiosMachineCfg
+
 # Per-user state regardless of scope. These resolve via $env:USERNAME /
 # $env:USERPROFILE so each Windows account on a machine-wide install
 # still gets its own logs and per-user identity overlay -- the "user
@@ -653,7 +674,7 @@ function Write-Log {
 }
 
 # ── Dashboard state ───────────────────────────────────────────────────────────
-$script:DW         = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 2), 80))
+$script:DW         = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 1), 79))
 # Per the self-replication architecture, the Windows side (BootstrapOnly,
 # the default for irm | iex entry) does ONLY:
 #   ack -> hardware/env probe -> minimal mios-bootstrap clone ->
@@ -5181,7 +5202,7 @@ try {
 # load-time resize failed but THIS one succeeded, the original $DW (set
 # from a wider parent terminal) would still drive the dashboard at the
 # wrong width. Re-reading WindowWidth here closes that gap.
-$script:DW = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 2), 80))
+$script:DW = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 1), 79))
 
 Show-Dashboard   # draw initial (all phases pending)
 
