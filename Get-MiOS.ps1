@@ -404,7 +404,17 @@ function Install-MiOSGeistFont {
     try {
         New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
         Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
+        $zipSize = (Get-Item $zipPath).Length
+        if ($zipSize -lt 100000) {
+            # < 100 KB means we got a 404 HTML page or similar, not the
+            # real ~50 MB Geist zip. Bail early with a useful message.
+            Write-Host "  [!] GeistMono.zip download too small ($zipSize bytes) -- likely 404." -ForegroundColor Yellow
+            Write-Host "      Source: $zipUrl" -ForegroundColor DarkGray
+            return $false
+        }
         Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force -ErrorAction Stop
+        $extractedCount = (Get-ChildItem $tmpDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
+        Write-Host "  [*] GeistMono.zip: $([math]::Round($zipSize/1MB,1)) MB, $extractedCount files extracted." -ForegroundColor DarkGray
 
         # ALL MiOS install artifacts land on M:\ per the operator's
         # invariant. Fonts go to M:\MiOS\fonts\ -- Windows accepts any
@@ -538,12 +548,47 @@ function Install-MiOSTerminalProfile {
     # operator's existing PowerShell profile state. Without this
     # explicit re-init, the MiOS terminal could inherit a broken
     # PSReadLine binding state from the operator's pre-existing init.
-    $defaultPwsh = "$env:ProgramFiles\PowerShell\7\pwsh.exe"
-    if (-not (Test-Path -LiteralPath $defaultPwsh)) {
-        $defaultPwsh = "$env:ProgramW6432\PowerShell\7\pwsh.exe"
+    # Resolve pwsh 7 across all install shapes:
+    #   1. MSI install at $env:ProgramFiles\PowerShell\7\pwsh.exe
+    #   2. Microsoft Store install at WindowsApps\Microsoft.PowerShell_*
+    #      (operator's actual setup -- PS 7.6.1 from MS Store).
+    #   3. App Execution Alias via Get-Command (last-ditch).
+    #   4. Windows PS 5.1 (only if no pwsh found at all). 5.1 has the
+    #      OLD PSReadLine that breaks oh-my-posh init -- avoid unless
+    #      truly desperate.
+    $defaultPwsh = $null
+    foreach ($c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe",
+                     "$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
+        if ($c -and (Test-Path -LiteralPath $c)) { $defaultPwsh = $c; break }
     }
-    if (-not (Test-Path -LiteralPath $defaultPwsh)) {
+    if (-not $defaultPwsh) {
+        try {
+            $appxPwsh = Get-AppxPackage -Name 'Microsoft.PowerShell' -ErrorAction SilentlyContinue
+            if ($appxPwsh -and $appxPwsh.InstallLocation) {
+                $cand = Join-Path $appxPwsh.InstallLocation 'pwsh.exe'
+                if (Test-Path -LiteralPath $cand) { $defaultPwsh = $cand }
+            }
+        } catch {}
+    }
+    if (-not $defaultPwsh) {
+        $glob = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.PowerShell_*' -ErrorAction SilentlyContinue |
+                Sort-Object Name -Descending | Select-Object -First 1
+        if ($glob) {
+            $cand = Join-Path $glob.FullName 'pwsh.exe'
+            if (Test-Path -LiteralPath $cand) { $defaultPwsh = $cand }
+        }
+    }
+    if (-not $defaultPwsh) {
+        $cmdPwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+        if ($cmdPwsh -and $cmdPwsh.Source -and (Test-Path -LiteralPath $cmdPwsh.Source)) {
+            $defaultPwsh = $cmdPwsh.Source
+        }
+    }
+    if (-not $defaultPwsh) {
+        # LAST RESORT: PS 5.1. oh-my-posh init's modern Get-PSReadLineKeyHandler
+        # syntax will still work via the M:\ profile's regex-patch.
         $defaultPwsh = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+        Write-Host "  [!] No pwsh 7 found; falling back to Windows PS 5.1 in MiOS profile." -ForegroundColor Yellow
     }
     $miosProfilePath = if (Test-Path 'M:\') { 'M:\MiOS\powershell\profile.ps1' }
                       else { Join-Path $env:USERPROFILE 'MiOS-bootstrap\powershell\profile.ps1' }
@@ -1000,13 +1045,7 @@ $Script:MiosBrandingTxt = @'
 $Script:MiosFastfetchConfig = @'
 {
   "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
-  "logo": {
-    "type": "raw",
-    "source": "__MIOS_LOGO__",
-    "color": { "1": "#1A407F" },
-    "position": "top",
-    "padding": { "top": 1, "right": 0, "left": 2 }
-  },
+  "logo": { "type": "none" },
   "display": {
     "separator": "  ",
     "color": {
@@ -1017,20 +1056,15 @@ $Script:MiosFastfetchConfig = @'
   },
   "modules": [
     "title",
-    { "type": "separator", "string": "─" },
-    { "type": "os",           "key": "OS"       },
-    { "type": "host",         "key": "Host"     },
-    { "type": "kernel",       "key": "Kernel"   },
-    { "type": "uptime",       "key": "Uptime"   },
-    { "type": "shell",        "key": "Shell"    },
-    { "type": "terminal",     "key": "Terminal" },
-    { "type": "terminalfont", "key": "Font"     },
-    { "type": "cpu",          "key": "CPU"      },
-    { "type": "gpu",          "key": "GPU"      },
-    { "type": "memory",       "key": "Memory"   },
-    { "type": "disk",         "key": "Disk"     },
-    { "type": "localip",      "key": "Local IP" },
-    { "type": "datetime",     "key": "Time"     }
+    { "type": "os",       "key": "OS"       },
+    { "type": "host",     "key": "Host"     },
+    { "type": "uptime",   "key": "Uptime"   },
+    { "type": "shell",    "key": "Shell"    },
+    { "type": "cpu",      "key": "CPU"      },
+    { "type": "gpu",      "key": "GPU",       "format": "{name}" },
+    { "type": "memory",   "key": "Memory"   },
+    { "type": "disk",     "key": "Disk",      "folders": "C:" },
+    { "type": "datetime", "key": "Time"     }
   ]
 }
 '@
@@ -1525,28 +1559,69 @@ if (`$true) {
         `$miosOmp = _MiosSelfHeal 'themes' 'mios.omp.json' '$ompBlobBase64'
     }
 
-    # ── Fastfetch MOTD on session start ───────────────────────────
-    # Gated on WT_SESSION since the ASCII logo only renders properly
-    # in WT (conhost / VS Code embedded shell mangles the alignment).
+    # ── Framed MiOS dashboard (mirrors mios-dashboard.sh from mios.git) ─
+    # 80-col fixed frame, centered ASCII logo, framed fastfetch info.
+    # Gated on WT_SESSION since the ╭─╮ box-drawing only renders
+    # properly in WT (conhost / VS Code embedded shell mangles it).
+    function Show-MiosDashboard {
+        param([string]`$ConfigPath, [string]`$LogoPath)
+        `$WIDTH = 80
+        `$INNER = `$WIDTH - 4
+        `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
+
+        function _Strip { param(`$s) `$s -replace '\x1b\[[0-9;]*m','' }
+        function _Frame {
+            param([string]`$Line)
+            `$visible = _Strip `$Line
+            if (`$visible.Length -gt `$INNER) {
+                # Truncate with ellipsis preserving ANSI prefix.
+                `$Line = `$Line.Substring(0, [math]::Min(`$Line.Length, `$INNER + (`$Line.Length - `$visible.Length) - 1)) + '…'
+                `$visible = _Strip `$Line
+            }
+            `$pad = ' ' * [math]::Max(0, `$INNER - `$visible.Length)
+            "`$V `$Line`$pad `$V"
+        }
+        function _Center {
+            param([string]`$Line)
+            `$visible = _Strip `$Line
+            `$totalPad = [math]::Max(0, `$INNER - `$visible.Length)
+            `$lpad = ' ' * [math]::Floor(`$totalPad / 2)
+            `$rpad = ' ' * (`$totalPad - [math]::Floor(`$totalPad / 2))
+            "`$V `$lpad`$Line`$rpad `$V"
+        }
+
+        # Top frame.
+        Write-Host (`$TL + (`$H * (`$WIDTH - 2)) + `$TR) -ForegroundColor Blue
+        # Centered ASCII logo (operator-blue).
+        if (Test-Path -LiteralPath `$LogoPath) {
+            `$logoLines = (Get-Content -LiteralPath `$LogoPath) | Where-Object { `$_ -ne `$null }
+            foreach (`$ll in `$logoLines) { Write-Host (_Center `$ll) -ForegroundColor Blue }
+        }
+        # Divider.
+        Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
+        # Framed fastfetch (no logo -- we drew it above).
+        if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
+            try {
+                `$ffOut = & fastfetch -c `$ConfigPath --logo none 2>&1 | Out-String -Stream
+                foreach (`$ln in `$ffOut) {
+                    if (`$null -eq `$ln) { continue }
+                    Write-Host (_Frame `$ln)
+                }
+            } catch {
+                Write-Host (_Frame "  fastfetch failed: `$(`$_.Exception.Message)")
+            }
+        } else {
+            Write-Host (_Frame '  fastfetch not installed -- run mios-update to refresh.')
+        }
+        # Bottom frame.
+        Write-Host (`$BL + (`$H * (`$WIDTH - 2)) + `$BR) -ForegroundColor Blue
+    }
+
     if ((`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') -and (Get-Command fastfetch -ErrorAction SilentlyContinue)) {
-        # Self-heal logo + config.
         `$miosLogo   = _MiosSelfHeal 'fastfetch' 'mios.txt'      '$ffLogoBase64'
         `$miosFFCfg  = _MiosSelfHeal 'fastfetch' 'config.jsonc'  '$ffConfigBase64'
-        if (`$miosLogo -and `$miosFFCfg) {
-            # Patch the placeholder logo path with the actual one
-            # (only needed on a fresh self-heal; subsequent runs no-op).
-            try {
-                `$cfgRaw = Get-Content -LiteralPath `$miosFFCfg -Raw
-                if (`$cfgRaw -match '__MIOS_LOGO__') {
-                    `$cfgRaw = `$cfgRaw -replace '__MIOS_LOGO__', (`$miosLogo -replace '\\', '\\')
-                    Set-Content -LiteralPath `$miosFFCfg -Value `$cfgRaw -Encoding UTF8
-                }
-            } catch {}
-            # Run fastfetch -- only on INTERACTIVE sessions (skip when
-            # this profile is dot-sourced inside a script context).
-            if (`$Host.UI.RawUI -and (-not `$env:MIOS_SKIP_MOTD)) {
-                try { fastfetch -c `$miosFFCfg } catch {}
-            }
+        if (`$miosLogo -and `$miosFFCfg -and `$Host.UI.RawUI -and (-not `$env:MIOS_SKIP_MOTD)) {
+            try { Show-MiosDashboard -ConfigPath `$miosFFCfg -LogoPath `$miosLogo } catch {}
         }
     }
 
@@ -1846,24 +1921,20 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
         Set-ItemProperty -Path $personalize -Name 'SystemUsesLightTheme' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
         Set-ItemProperty -Path $personalize -Name 'ColorPrevalence'      -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
 
-        # Use the .NET Registry API directly. Set-ItemProperty -Type
-        # DWord rejects negative Int32 values (its validator expects
-        # UInt32 inputs) -- and 0xFF7F401A is 4286529562 which overflows
-        # Int32 to -8437734. The .NET RegistryKey.SetValue method
-        # accepts the raw bit-equal Int32, stores 32 bits, and DWM
-        # reads it back as the unsigned 0xFF7F401A.
-        try {
-            $dwmKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\DWM')
-            try {
-                $miosAccentSigned = [BitConverter]::ToInt32([BitConverter]::GetBytes([uint32]0xFF7F401A), 0)
-                $dwmKey.SetValue('AccentColor',           $miosAccentSigned, 'DWord')
-                $dwmKey.SetValue('ColorizationColor',     $miosAccentSigned, 'DWord')
-                $dwmKey.SetValue('ColorizationAfterglow', $miosAccentSigned, 'DWord')
-                $dwmKey.SetValue('ColorPrevalence',       1,                 'DWord')
-            } finally { $dwmKey.Close() }
-        } catch {
-            Write-Host "  [!] DWM accent registry write failed: $($_.Exception.Message)" -ForegroundColor Yellow
-        }
+        # Use reg.exe directly. Both Set-ItemProperty -Type DWord AND
+        # .NET Microsoft.Win32.RegistryKey.SetValue('DWord') reject
+        # 0xFF7F401A in PS 7 / .NET 8 because their validators want
+        # UInt32 inputs but PS represents the value as Int64
+        # 4286529562, which overflows when downcast to Int32 (->
+        # -8437734) and then fails UInt32's range check. reg.exe
+        # accepts hex literals natively for REG_DWORD and writes the
+        # raw 32-bit pattern -- DWM reads back the unsigned 0xFF7F401A.
+        $dwmKeyReg = 'HKCU\Software\Microsoft\Windows\DWM'
+        $accentHex = '0xFF7F401A'
+        & reg.exe add $dwmKeyReg /v 'AccentColor'           /t REG_DWORD /d $accentHex /f *>$null
+        & reg.exe add $dwmKeyReg /v 'ColorizationColor'     /t REG_DWORD /d $accentHex /f *>$null
+        & reg.exe add $dwmKeyReg /v 'ColorizationAfterglow' /t REG_DWORD /d $accentHex /f *>$null
+        & reg.exe add $dwmKeyReg /v 'ColorPrevalence'       /t REG_DWORD /d '1'        /f *>$null
         Write-Host "  [+] Windows global theme set to MiOS palette (dark mode + #1A407F accent + transparency)." -ForegroundColor DarkGray
     } catch {
         Write-Host "  [!] Windows theme registry write failed: $($_.Exception.Message)" -ForegroundColor Yellow
