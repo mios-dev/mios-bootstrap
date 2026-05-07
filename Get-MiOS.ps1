@@ -2478,7 +2478,17 @@ Register-ArgumentCompleter -CommandName mios -ParameterName Verb -ScriptBlock {
         ForEach-Object { [System.Management.Automation.CompletionResult]::new(`$_, `$_, 'ParameterValue', `$_) }
 }
 "@
-    Set-Content -Path $miosProfileScript -Value $miosScriptBody -Encoding UTF8
+    # Write the profile body with explicit UTF-8 BOM. The body contains
+    # Unicode box-drawing chars (╭ ╮ ╰ ╯ │ ─ ├ ┤) for the dashboard
+    # frame; without a BOM, PowerShell falls back to system codepage
+    # (CP1252 on US Windows) when reading no-BOM files in some
+    # contexts, parsing each UTF-8 byte as a separate Latin-1 char
+    # and exploding with "Unexpected token 'â”€'" at parse time.
+    # [IO.File]::WriteAllText with UTF8Encoding($true) writes the
+    # 3-byte 0xEF 0xBB 0xBF BOM up front so EVERY PS host (5.1, 7.x,
+    # ISE, VS Code) decodes the file as UTF-8 deterministically.
+    $_utf8Bom = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::WriteAllText($miosProfileScript, $miosScriptBody, $_utf8Bom)
 
     # Thin C:\ redirector -- dot-sources the M:\ script.
     $redirector = $miosProfileScript -replace '\\', '\\'
