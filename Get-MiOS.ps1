@@ -2853,6 +2853,233 @@ Write-Host '  Press Enter to close this elevated bootstrap window...' -Foregroun
 # block re-spawned us). No need to gate on MIOS_GETMIOS_RELAUNCHED;
 # all Pass-1 steps below run unconditionally and the trailing fall-
 # through into Pass-2 (M:\ + Podman + dev VM) runs in the same session.
+
+# ── Status helpers (used by Step-0 + Pass-2) ─────────────────────────────────
+# Defined here -- BEFORE Pass-1's Step-0 M:\ block -- so the M:\ provisioning
+# code can call Write-Info/Good/Err. Pass-2 (Clear-Host onwards) reuses these.
+function Write-Info { param([string]$M) Write-Host "  [*] $M" -ForegroundColor Cyan }
+function Write-Good { param([string]$M) Write-Host "  [+] $M" -ForegroundColor Green }
+function Write-Err  { param([string]$M) Write-Host "  [!] $M" -ForegroundColor Red }
+function Require-Cmd {
+    param([string]$Cmd, [string]$InstallHint)
+    if (-not (Get-Command $Cmd -ErrorAction SilentlyContinue)) {
+        Write-Err "$Cmd not found. $InstallHint"
+        exit 1
+    }
+}
+
+function Ensure-PodmanDesktop {
+    if (Get-Command podman -ErrorAction SilentlyContinue) {
+        Write-Good "Podman already installed ($((podman --version) 2>&1))"
+        return
+    }
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Err "winget not found and podman not installed."
+        Write-Err "  Install App Installer from the Microsoft Store, or install"
+        Write-Err "  Podman Desktop manually from https://podman-desktop.io"
+        exit 1
+    }
+    Write-Info "Installing Podman Desktop via winget (RedHat.Podman-Desktop) ..."
+    & winget install --exact --id RedHat.Podman-Desktop `
+        --silent --accept-source-agreements --accept-package-agreements `
+        --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Info "Retrying winget install at user scope ..."
+        & winget install --exact --id RedHat.Podman-Desktop `
+            --silent --accept-source-agreements --accept-package-agreements 2>&1 |
+            ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "winget install RedHat.Podman-Desktop failed (exit $LASTEXITCODE)"
+        Write-Err "  Manually install from https://podman-desktop.io and re-run."
+        exit 1
+    }
+    $env:PATH = `
+        [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + `
+        [Environment]::GetEnvironmentVariable('PATH','User')
+    if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
+        $pdBin = Join-Path ${env:ProgramFiles} 'RedHat\Podman'
+        if (Test-Path $pdBin) { $env:PATH = "$pdBin;$env:PATH" }
+    }
+    if (Get-Command podman -ErrorAction SilentlyContinue) {
+        Write-Good "Podman Desktop installed ($((podman --version) 2>&1))"
+    } else {
+        Write-Err "Podman Desktop installed but ``podman`` still not on PATH."
+        Write-Err "  Restart this shell and re-run, or check $env:ProgramFiles\RedHat\Podman."
+        exit 1
+    }
+}
+
+function Initialize-DataDisk {
+    param(
+        [int]$ShrinkMB     = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'shrink_mb'    -Default 262656),
+        [string]$DriveLetter = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'M'),
+        [string]$VolumeLabel = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'volume_label' -Default 'MIOS-DEV')
+    )
+    $existing = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
+    if ($existing -and $existing.FileSystemLabel -eq $VolumeLabel) {
+        Write-Good "M:\ already provisioned ($([math]::Round($existing.Size/1GB,1)) GB, $($existing.FileSystem), label=$VolumeLabel)"
+        return
+    }
+    if ($existing) {
+        Write-Err "Drive ${DriveLetter}: exists with label '$($existing.FileSystemLabel)' (not '$VolumeLabel')."
+        Write-Err "Either remove the volume manually or pass -DriveLetter <other> to Get-MiOS.ps1."
+        exit 1
+    }
+    $_displayGb = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'display_size_gb' -Default 256
+    Write-Info "Provisioning ${DriveLetter}:\ at $ShrinkMB MB (target $_displayGb GB visible in Explorer) ..."
+    $sysLetter = ([Environment]::GetEnvironmentVariable('SystemDrive')).TrimEnd(':')
+    $cPart       = Get-Partition -DriveLetter $sysLetter
+    $supported   = Get-PartitionSupportedSize -DriveLetter $sysLetter
+    $shrinkBytes = [int64]$ShrinkMB * 1MB
+    $newCSize    = $cPart.Size - $shrinkBytes
+    if ($shrinkBytes -gt ($cPart.Size - $supported.SizeMin)) {
+        Write-Err "Cannot shrink ${sysLetter}: by $ShrinkMB MB."
+        Write-Err "  current ${sysLetter}: size: $([math]::Round($cPart.Size/1GB,1)) GB"
+        Write-Err "  min supported size:    $([math]::Round($supported.SizeMin/1GB,1)) GB"
+        Write-Err "  max shrinkable:         $([math]::Round(($cPart.Size-$supported.SizeMin)/1GB,1)) GB"
+        Write-Err "Free up ${sysLetter}: space (move pagefile / disable hibernation / clean up large files) and retry."
+        exit 1
+    }
+    $disk = Get-Disk -Number $cPart.DiskNumber
+    if ($disk.PartitionStyle -notin @('GPT','MBR')) {
+        Write-Err "Disk $($disk.Number) has unsupported partition style '$($disk.PartitionStyle)'"
+        exit 1
+    }
+    Write-Info "  shrinking ${sysLetter}: $([math]::Round($cPart.Size/1GB,1)) GB -> $([math]::Round($newCSize/1GB,1)) GB ..."
+    Resize-Partition -DriveLetter $sysLetter -Size $newCSize -ErrorAction Stop
+    Write-Info "  creating $VolumeLabel partition (${ShrinkMB} MB) on disk $($disk.Number) ..."
+    $_fs    = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'filesystem'      -Default 'NTFS'
+    $_alloc = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'allocation_unit' -Default 4096
+    $null = New-Partition -DiskNumber $disk.Number -Size $shrinkBytes -DriveLetter $DriveLetter -ErrorAction Stop
+    $null = Format-Volume -DriveLetter $DriveLetter -FileSystem $_fs -NewFileSystemLabel $VolumeLabel `
+        -AllocationUnitSize $_alloc -Confirm:$false -Force
+    Write-Good "${DriveLetter}:\\ created (${ShrinkMB} MB NTFS, label=$VolumeLabel)"
+}
+
+function Set-PodmanMachineStorageOnM {
+    param([string]$MRoot = 'M:\podman\machine')
+    if (-not (Test-Path $MRoot)) {
+        New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
+        Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray
+    }
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA  'containers\podman\machine'),
+        (Join-Path $env:USERPROFILE   '.local\share\containers\podman\machine'),
+        (Join-Path $env:PROGRAMDATA   'containers\podman\machine')
+    )
+    foreach ($p in $candidates) {
+        if (-not $p) { continue }
+        $parent = Split-Path $p -Parent
+        if (-not (Test-Path $parent)) { try { New-Item -ItemType Directory -Path $parent -Force | Out-Null } catch {} }
+        if (Test-Path $p) {
+            $item = Get-Item $p -Force -ErrorAction SilentlyContinue
+            if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                $current = ($item.Target -join '').TrimStart('\??\')
+                $isSymlink = $item.LinkType -eq 'SymbolicLink'
+                if ($current -ieq $MRoot -and $isSymlink) {
+                    Write-Host "    [=] $p -> $MRoot (already symlinked)" -ForegroundColor DarkGray
+                    continue
+                }
+                if ($current -ieq $MRoot -and -not $isSymlink) {
+                    Write-Host "    [~] $p is a JUNCTION (legacy) -- recreating as symlink" -ForegroundColor DarkYellow
+                }
+                cmd /c "rmdir `"$p`"" 2>$null | Out-Null
+            } else {
+                $kids = Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue
+                if ($kids -and $kids.Count -gt 0) {
+                    Write-Host "    [*] moving existing $p contents to $MRoot ..." -ForegroundColor DarkGray
+                    try {
+                        foreach ($k in $kids) {
+                            $dst = Join-Path $MRoot $k.Name
+                            if (-not (Test-Path $dst)) { Move-Item -LiteralPath $k.FullName -Destination $MRoot -Force -ErrorAction Stop }
+                        }
+                    } catch { Write-Host "    [!] move failed for $p : $($_.Exception.Message) -- forcing remove" -ForegroundColor Yellow }
+                }
+                try { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop }
+                catch { Write-Host "    [!] couldn't remove $p (locked) -- skipping junction for this path" -ForegroundColor Yellow; continue }
+            }
+        }
+        $rc = (cmd /c "mklink /D `"$p`" `"$MRoot`"" 2>&1)
+        if ($LASTEXITCODE -eq 0) { Write-Host "    [+] symlinked $p -> $MRoot" -ForegroundColor DarkGray }
+        else                      { Write-Host "    [!] mklink /D $p -> $MRoot failed: $rc" -ForegroundColor Yellow }
+    }
+}
+
+function Set-WingetStorageOnM {
+    param([string]$MRoot = 'M:\winget')
+    if (-not (Test-Path $MRoot)) {
+        New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
+        Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray
+    }
+    foreach ($_sub in @('Packages','Cache','PortableLinks','PortablePackagesRoot')) {
+        $sd = Join-Path $MRoot $_sub
+        if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
+    }
+    $candidates = @(
+        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages');             Dst = (Join-Path $MRoot 'Packages')             },
+        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Cache');                Dst = (Join-Path $MRoot 'Cache')                },
+        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links');                Dst = (Join-Path $MRoot 'PortableLinks')        },
+        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Portable\PackagesRoot'); Dst = (Join-Path $MRoot 'PortablePackagesRoot') }
+    )
+    foreach ($c in $candidates) {
+        $p = $c.Src; $tgt = $c.Dst
+        if (-not $p) { continue }
+        $parent = Split-Path $p -Parent
+        if (-not (Test-Path $parent)) { try { New-Item -ItemType Directory -Path $parent -Force | Out-Null } catch {} }
+        if (Test-Path $p) {
+            $item = Get-Item $p -Force -ErrorAction SilentlyContinue
+            if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                $current = ($item.Target -join '').TrimStart('\??\')
+                if ($current -ieq $tgt) { Write-Host "    [=] $p -> $tgt (already linked)" -ForegroundColor DarkGray; continue }
+                cmd /c "rmdir `"$p`"" 2>$null | Out-Null
+            } else {
+                $kids = Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue
+                if ($kids -and $kids.Count -gt 0) {
+                    Write-Host "    [*] moving existing $p contents to $tgt ..." -ForegroundColor DarkGray
+                    try {
+                        foreach ($k in $kids) {
+                            $dst = Join-Path $tgt $k.Name
+                            if (-not (Test-Path $dst)) { Move-Item -LiteralPath $k.FullName -Destination $tgt -Force -ErrorAction Stop }
+                        }
+                    } catch { Write-Host "    [!] move failed: $($_.Exception.Message) -- forcing remove" -ForegroundColor Yellow }
+                }
+                try { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop }
+                catch { Write-Host "    [!] couldn't remove $p (locked) -- skipping link for this path" -ForegroundColor Yellow; continue }
+            }
+        }
+        $rc = (cmd /c "mklink /D `"$p`" `"$tgt`"" 2>&1)
+        if ($LASTEXITCODE -eq 0) { Write-Host "    [+] symlinked $p -> $tgt" -ForegroundColor DarkGray }
+        else                      { Write-Host "    [!] mklink /D $p -> $tgt failed: $rc" -ForegroundColor Yellow }
+    }
+}
+
+# ── Step 0: M:\ provisioning BEFORE Pass-1 stages anything ───────────────────
+# Per operator: "EVERYTHING MIOS RELATED--EVEN WINDOWS COMPONENTS INSTALLED--
+# ARE ALL INSTALLED ON THE CREATED M:\ Drive/Partition!!!"
+#
+# Pass-1 below stages the WT MiOS profile, MiOS PS profile body, native-app
+# launcher, fastfetch config, oh-my-posh theme. ALL of those have a "M:\ if
+# exists else %USERPROFILE%\..." fallback -- without M:\ provisioned FIRST,
+# files land on C:\ and Pass-2's later Initialize-DataDisk creates an empty
+# M:\ partition while the staged content is stuck in C:\ (split state).
+#
+# This block creates M:\, junctions podman-machine + winget storage paths
+# onto M:\, so Pass-1's WT install + winget tools install + profile staging
+# all land on M:\ from the very first write. The Pass-2 calls to the same
+# functions are idempotent no-ops.
+Write-Host ''
+Write-Host '  [*] Step 0: Provisioning M:\ partition + storage junctions...' -ForegroundColor Cyan
+try { Initialize-DataDisk } catch { Write-Host "  [!] Initialize-DataDisk failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+try {
+    Write-Info "Redirecting podman-machine storage to M:\\podman\\machine ..."
+    Set-PodmanMachineStorageOnM
+} catch { Write-Host "  [!] Set-PodmanMachineStorageOnM failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+try {
+    Write-Info "Redirecting winget package storage to M:\\winget\\* ..."
+    Set-WingetStorageOnM
+} catch { Write-Host "  [!] Set-WingetStorageOnM failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+
 if ($true) {
     $isAdmin = $_isAdmin
     # Strict install order. Each step gates the next:
@@ -3121,69 +3348,12 @@ try {
     try { $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size 80, 30 } catch {}
 }
 
-# 3. Helpers
-function Write-Info { param([string]$M) Write-Host "  [*] $M" -ForegroundColor Cyan }
-function Write-Good { param([string]$M) Write-Host "  [+] $M" -ForegroundColor Green }
-function Write-Err  { param([string]$M) Write-Host "  [!] $M" -ForegroundColor Red }
-function Require-Cmd {
-    param([string]$Cmd, [string]$InstallHint)
-    if (-not (Get-Command $Cmd -ErrorAction SilentlyContinue)) {
-        Write-Err "$Cmd not found. $InstallHint"
-        exit 1
-    }
-}
-
-function Ensure-PodmanDesktop {
-    # Auto-install Podman Desktop via winget if `podman` isn't already
-    # on PATH. Uses RedHat.Podman-Desktop (the official manifest --
-    # winget search RedHat.Podman-Desktop). Idempotent: if podman is
-    # present, no-op. After install, refreshes PATH from the registry
-    # so this same pwsh session can find the new podman.exe without
-    # the operator re-opening their shell.
-    if (Get-Command podman -ErrorAction SilentlyContinue) {
-        Write-Good "Podman already installed ($((podman --version) 2>&1))"
-        return
-    }
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Err "winget not found and podman not installed."
-        Write-Err "  Install App Installer from the Microsoft Store, or install"
-        Write-Err "  Podman Desktop manually from https://podman-desktop.io"
-        exit 1
-    }
-    Write-Info "Installing Podman Desktop via winget (RedHat.Podman-Desktop) ..."
-    & winget install --exact --id RedHat.Podman-Desktop `
-        --silent --accept-source-agreements --accept-package-agreements `
-        --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-    if ($LASTEXITCODE -ne 0) {
-        # Some hosts reject --scope machine; retry without it (per-user).
-        Write-Info "Retrying winget install at user scope ..."
-        & winget install --exact --id RedHat.Podman-Desktop `
-            --silent --accept-source-agreements --accept-package-agreements 2>&1 |
-            ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-    }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Err "winget install RedHat.Podman-Desktop failed (exit $LASTEXITCODE)"
-        Write-Err "  Manually install from https://podman-desktop.io and re-run."
-        exit 1
-    }
-    # Refresh PATH from registry so the just-installed podman.exe is
-    # visible to Get-Command in THIS pwsh session.
-    $env:PATH = `
-        [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + `
-        [Environment]::GetEnvironmentVariable('PATH','User')
-    if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
-        # Fallback: probe the standard install dir.
-        $pdBin = Join-Path ${env:ProgramFiles} 'RedHat\Podman'
-        if (Test-Path $pdBin) { $env:PATH = "$pdBin;$env:PATH" }
-    }
-    if (Get-Command podman -ErrorAction SilentlyContinue) {
-        Write-Good "Podman Desktop installed ($((podman --version) 2>&1))"
-    } else {
-        Write-Err "Podman Desktop installed but `podman` still not on PATH."
-        Write-Err "  Restart this shell and re-run, or check $env:ProgramFiles\RedHat\Podman."
-        exit 1
-    }
-}
+# 3. Helpers (Write-Info / Write-Good / Write-Err / Require-Cmd /
+# Ensure-PodmanDesktop) and the M:\ provisioning functions
+# (Initialize-DataDisk / Set-PodmanMachineStorageOnM /
+# Set-WingetStorageOnM) are defined ABOVE Pass-1 now (so Step 0 can
+# create M:\ before Pass-1 stages files). Their original definitions
+# moved up; this section header retained for orientation.
 
 Clear-Host
 Write-Host "MiOS Bootstrap (irm | iex web entry)" -ForegroundColor Cyan
@@ -3200,61 +3370,10 @@ Require-Cmd "git"    "Install Git from https://git-scm.com/download/win"
 Ensure-PodmanDesktop
 Write-Good "Prerequisites OK (git, podman)"
 
-# Initialize-DataDisk: shrink C:\ and create the MiOS data partition
-# at the configured drive letter / label / size. Defaults source from
-# mios.toml [bootstrap.host_storage]; vendor default = 262656 MB shrink
-# (= 256 GiB + 512 MB buffer) so Windows Explorer reports exactly
-# "256 GB" of Capacity (the bare 262144 MB shrink reports 255 GB after
-# NTFS reserves ~16 MB for boot sector + alignment + initial $MFT).
-# Idempotent: if M:\ already exists with the right label, returns
-# silently. Per feedback_mios_entry_m_drive_clone.md, M:\ is part of
-# the Windows entry contract and runs every irm|iex.
-function Initialize-DataDisk {
-    param(
-        [int]$ShrinkMB     = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'shrink_mb'    -Default 262656),
-        [string]$DriveLetter = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'M'),
-        [string]$VolumeLabel = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'volume_label' -Default 'MIOS-DEV')
-    )
-    $existing = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
-    if ($existing -and $existing.FileSystemLabel -eq $VolumeLabel) {
-        Write-Good "M:\ already provisioned ($([math]::Round($existing.Size/1GB,1)) GB, $($existing.FileSystem), label=$VolumeLabel)"
-        return
-    }
-    if ($existing) {
-        Write-Err "Drive ${DriveLetter}: exists with label '$($existing.FileSystemLabel)' (not '$VolumeLabel')."
-        Write-Err "Either remove the volume manually or pass -DriveLetter <other> to Get-MiOS.ps1."
-        exit 1
-    }
-    $_displayGb = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'display_size_gb' -Default 256
-    Write-Info "Provisioning ${DriveLetter}:\ at $ShrinkMB MB (target $_displayGb GB visible in Explorer) ..."
-    $sysLetter = ([Environment]::GetEnvironmentVariable('SystemDrive')).TrimEnd(':')
-    $cPart       = Get-Partition -DriveLetter $sysLetter
-    $supported   = Get-PartitionSupportedSize -DriveLetter $sysLetter
-    $shrinkBytes = [int64]$ShrinkMB * 1MB
-    $newCSize    = $cPart.Size - $shrinkBytes
-    if ($shrinkBytes -gt ($cPart.Size - $supported.SizeMin)) {
-        Write-Err "Cannot shrink ${sysLetter}: by $ShrinkMB MB."
-        Write-Err "  current ${sysLetter}: size: $([math]::Round($cPart.Size/1GB,1)) GB"
-        Write-Err "  min supported size:    $([math]::Round($supported.SizeMin/1GB,1)) GB"
-        Write-Err "  max shrinkable:         $([math]::Round(($cPart.Size-$supported.SizeMin)/1GB,1)) GB"
-        Write-Err "Free up ${sysLetter}: space (move pagefile / disable hibernation / clean up large files) and retry."
-        exit 1
-    }
-    $disk = Get-Disk -Number $cPart.DiskNumber
-    if ($disk.PartitionStyle -notin @('GPT','MBR')) {
-        Write-Err "Disk $($disk.Number) has unsupported partition style '$($disk.PartitionStyle)'"
-        exit 1
-    }
-    Write-Info "  shrinking ${sysLetter}: $([math]::Round($cPart.Size/1GB,1)) GB -> $([math]::Round($newCSize/1GB,1)) GB ..."
-    Resize-Partition -DriveLetter $sysLetter -Size $newCSize -ErrorAction Stop
-    Write-Info "  creating $VolumeLabel partition (${ShrinkMB} MB) on disk $($disk.Number) ..."
-    $_fs    = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'filesystem'      -Default 'NTFS'
-    $_alloc = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'allocation_unit' -Default 4096
-    $null = New-Partition -DiskNumber $disk.Number -Size $shrinkBytes -DriveLetter $DriveLetter -ErrorAction Stop
-    $null = Format-Volume -DriveLetter $DriveLetter -FileSystem $_fs -NewFileSystemLabel $VolumeLabel `
-        -AllocationUnitSize $_alloc -Confirm:$false -Force
-    Write-Good "${DriveLetter}:\\ created (${ShrinkMB} MB NTFS, label=$VolumeLabel)"
-}
+# Initialize-DataDisk + Set-PodmanMachineStorageOnM + Set-WingetStorageOnM
+# are defined ABOVE (before Pass-1) so Step 0 can call them BEFORE Pass-1
+# stages files. Their original definitions moved up; this header retained
+# for orientation.
 
 # Junction every candidate podman-machine storage path onto M:\ so the
 # eventual `podman machine init` lands the WSL distro VHDX (multi-GB) on
@@ -3268,94 +3387,6 @@ function Initialize-DataDisk {
 # depending on machine provider, user vs. system scope, and version
 # upgrades that didn't migrate the data. We junction ALL candidates so
 # whichever one the installed podman picks resolves to M:\.
-function Set-PodmanMachineStorageOnM {
-    param([string]$MRoot = 'M:\podman\machine')
-    if (-not (Test-Path $MRoot)) {
-        New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
-        Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray
-    }
-    $candidates = @(
-        (Join-Path $env:LOCALAPPDATA  'containers\podman\machine'),
-        (Join-Path $env:USERPROFILE   '.local\share\containers\podman\machine'),
-        (Join-Path $env:PROGRAMDATA   'containers\podman\machine')
-    )
-    foreach ($p in $candidates) {
-        if (-not $p) { continue }
-        $parent = Split-Path $p -Parent
-        if (-not (Test-Path $parent)) {
-            try { New-Item -ItemType Directory -Path $parent -Force | Out-Null } catch {}
-        }
-        if (Test-Path $p) {
-            $item = Get-Item $p -Force -ErrorAction SilentlyContinue
-            if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-                $current = ($item.Target -join '').TrimStart('\??\')
-                $isSymlink = $item.LinkType -eq 'SymbolicLink'
-                if ($current -ieq $MRoot -and $isSymlink) {
-                    Write-Host "    [=] $p -> $MRoot (already symlinked)" -ForegroundColor DarkGray
-                    continue
-                }
-                # Wrong target OR right target but wrong link type
-                # (legacy junction from a pre-2026-05-06 install --
-                # podman 5.8.2 chokes on junctions for this path).
-                # Remove + re-link as symlink below.
-                if ($current -ieq $MRoot -and -not $isSymlink) {
-                    Write-Host "    [~] $p is a JUNCTION (legacy) -- recreating as symlink so podman 5.8.2 stops failing on os.Mkdir" -ForegroundColor DarkYellow
-                }
-                cmd /c "rmdir `"$p`"" 2>$null | Out-Null
-            } else {
-                # Real directory exists. If empty, remove. If non-empty,
-                # move contents to M:\ first so we don't lose state.
-                $kids = Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue
-                if ($kids -and $kids.Count -gt 0) {
-                    Write-Host "    [*] moving existing $p contents to $MRoot ..." -ForegroundColor DarkGray
-                    try {
-                        foreach ($k in $kids) {
-                            $dst = Join-Path $MRoot $k.Name
-                            if (-not (Test-Path $dst)) {
-                                Move-Item -LiteralPath $k.FullName -Destination $MRoot -Force -ErrorAction Stop
-                            }
-                        }
-                    } catch {
-                        Write-Host "    [!] move failed for $p : $($_.Exception.Message) -- forcing remove" -ForegroundColor Yellow
-                    }
-                }
-                try {
-                    Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop
-                } catch {
-                    Write-Host "    [!] couldn't remove $p (locked) -- skipping junction for this path" -ForegroundColor Yellow
-                    continue
-                }
-            }
-        }
-        # Now create the link. Use mklink /D (symbolic link) -- NOT
-        # /J (junction). Why:
-        #
-        # podman 5.8.2's `podman machine ls` calls os.Mkdir on
-        # ~/.local/share/containers/podman/machine and treats EEXIST
-        # as fatal when the path is a NTFS junction. With a junction
-        # there:
-        #     Error: mkdir C:\Users\Administrator\.local\share\containers\podman\machine:
-        #            Cannot create a file when that file already exists.
-        # Same path created as a symlink (mklink /D): no error,
-        # podman writes the wsl/, machine/, machine.pub, port-alloc.*
-        # children straight through to the M:\ target.
-        #
-        # Verified empirically 2026-05-06 against podman 5.8.2:
-        #     /J -> ls FAILS,  init works
-        #     /D -> ls WORKS,  init works, files land in M:\
-        #
-        # mklink /D requires admin OR Developer Mode. The bootstrap
-        # already requires admin for diskpart shrink in
-        # Initialize-MiosDataDisk, so this isn't an additional ask.
-        $rc = (cmd /c "mklink /D `"$p`" `"$MRoot`"" 2>&1)
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "    [+] symlinked $p -> $MRoot" -ForegroundColor DarkGray
-        } else {
-            Write-Host "    [!] mklink /D $p -> $MRoot failed: $rc" -ForegroundColor Yellow
-        }
-    }
-}
-
 # Junction every winget package storage path onto M:\ so winget-installed
 # CLIs (oh-my-posh, fastfetch, fd, ripgrep, jq, btop4win, etc.) land on
 # the dedicated MIOS-DEV partition rather than scattering across
@@ -3378,70 +3409,6 @@ function Set-PodmanMachineStorageOnM {
 # AFTER winget has already created the dirs, we'd need to move the
 # contents over -- doable but racy. Idempotent: re-runs are no-ops if
 # the symlinks already point at M:\.
-function Set-WingetStorageOnM {
-    param([string]$MRoot = 'M:\winget')
-    if (-not (Test-Path $MRoot)) {
-        New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
-        Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray
-    }
-    foreach ($_sub in @('Packages','Cache','PortableLinks','PortablePackagesRoot')) {
-        $sd = Join-Path $MRoot $_sub
-        if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
-    }
-    $candidates = @(
-        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages');             Dst = (Join-Path $MRoot 'Packages')             },
-        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Cache');                Dst = (Join-Path $MRoot 'Cache')                },
-        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links');                Dst = (Join-Path $MRoot 'PortableLinks')        },
-        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Portable\PackagesRoot'); Dst = (Join-Path $MRoot 'PortablePackagesRoot') }
-    )
-    foreach ($c in $candidates) {
-        $p = $c.Src; $tgt = $c.Dst
-        if (-not $p) { continue }
-        $parent = Split-Path $p -Parent
-        if (-not (Test-Path $parent)) {
-            try { New-Item -ItemType Directory -Path $parent -Force | Out-Null } catch {}
-        }
-        if (Test-Path $p) {
-            $item = Get-Item $p -Force -ErrorAction SilentlyContinue
-            if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-                $current = ($item.Target -join '').TrimStart('\??\')
-                if ($current -ieq $tgt) {
-                    Write-Host "    [=] $p -> $tgt (already linked)" -ForegroundColor DarkGray
-                    continue
-                }
-                cmd /c "rmdir `"$p`"" 2>$null | Out-Null
-            } else {
-                $kids = Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue
-                if ($kids -and $kids.Count -gt 0) {
-                    Write-Host "    [*] moving existing $p contents to $tgt ..." -ForegroundColor DarkGray
-                    try {
-                        foreach ($k in $kids) {
-                            $dst = Join-Path $tgt $k.Name
-                            if (-not (Test-Path $dst)) {
-                                Move-Item -LiteralPath $k.FullName -Destination $tgt -Force -ErrorAction Stop
-                            }
-                        }
-                    } catch {
-                        Write-Host "    [!] move failed: $($_.Exception.Message) -- forcing remove" -ForegroundColor Yellow
-                    }
-                }
-                try {
-                    Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop
-                } catch {
-                    Write-Host "    [!] couldn't remove $p (locked) -- skipping link for this path" -ForegroundColor Yellow
-                    continue
-                }
-            }
-        }
-        $rc = (cmd /c "mklink /D `"$p`" `"$tgt`"" 2>&1)
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "    [+] symlinked $p -> $tgt" -ForegroundColor DarkGray
-        } else {
-            Write-Host "    [!] mklink /D $p -> $tgt failed: $rc" -ForegroundColor Yellow
-        }
-    }
-}
-
 # NOTE: this script does NOT delete anything on the operator's
 # filesystem -- not C:\MiOS, not M:\MiOS, not %USERPROFILE%, not
 # %PROGRAMDATA%, NOTHING. A previous version of this script had a
@@ -3459,31 +3426,12 @@ function Set-WingetStorageOnM {
 # situation and surface an actionable error so the operator can
 # decide what to do, rather than silently destroying state.
 
-# 4c. Provision M:\ at exactly 256 GB (NTFS, label MIOS-DEV).
-# Per feedback_mios_entry_m_drive_clone.md, M:\ is part of the
-# Windows entry contract -- the dev VM (podman-MiOS-DEV.vhdx),
-# build artifacts, and the bootstrap source clone all live on
-# this dedicated 256 GB partition. Idempotent: skips if M:\
-# already exists with the right label.
-Initialize-DataDisk
-
-# Junction every candidate podman-machine storage path to M:\ so the
-# eventual `podman machine init MiOS-DEV` lands the WSL VHDX on the
-# 256 GB data partition, not on C:\. Per
-# feedback_mios_dev_on_m_drive.md, this MUST happen BEFORE any podman
-# command runs (the bootstrap, build-mios.ps1, anything). The full
-# reset above already cleared the source dirs, so the junctions go in
-# clean.
-Write-Info "Redirecting podman-machine storage to M:\\podman\\machine ..."
-Set-PodmanMachineStorageOnM
-
-# Junction winget package storage onto M:\winget\* so winget-installed
-# CLIs land on the dedicated partition. Per operator: "winget should be
-# installing EVERYTHING to the M:\ partition for ease of uninstallations".
-# Runs BEFORE Pass-1's winget tools install + Pass-2's Podman Desktop
-# install so the very first winget invocation already targets M:\.
-Write-Info "Redirecting winget package storage to M:\\winget\\* ..."
-Set-WingetStorageOnM
+# Step 0 above (before Pass-1) ALREADY provisioned M:\ + symlinked
+# podman-machine + winget package storage onto M:\. Pass-1's winget
+# tools install + WT install + profile staging all landed on M:\
+# from the very first write. The Initialize-DataDisk + storage-junction
+# functions are idempotent, so this comment block stands as a marker
+# of where the late-bound calls USED to live -- they're no longer needed.
 
 # Create the canonical Windows install root structure now that M:\
 # is guaranteed to exist. The reset above wiped M:\MiOS, so this
