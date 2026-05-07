@@ -31,15 +31,28 @@ user-editable layer of the three-layer profile model.
 
 ### Windows 11 (Podman Desktop + WSL2)
 
+**Canonical entry — paste into Win+R or any PowerShell:**
+
+```text
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"
+```
+
+This runs from anywhere — Win+R Run dialog, cmd.exe, or PowerShell — without needing an existing pwsh session, ExecutionPolicy override, or admin elevation up front. The script itself prompts for the agreement gate, then handles everything (M:\ provisioning, WT MiOS profile, Geist Mono NF, oh-my-posh, fastfetch, native-app shortcuts).
+
+Alternative entries:
+
 ```powershell
-# Canonical one-liner (admin PowerShell):
+# Inside an existing pwsh session
 irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex
 
-# Or the direct invocation if you prefer to skip the wrapper:
+# Skip the install wrapper, jump straight to the bootstrap
 irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/build-mios.ps1 | iex
 
-# The legacy install.ps1 URL still works (now a redirector to build-mios.ps1).
+# Download mios.bat from the repo root and double-click it
+curl -L https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/mios.bat -o %TEMP%\mios.bat && %TEMP%\mios.bat
 ```
+
+After installation, `mios-build` (in any MiOS terminal) runs the full OCI image build inside the dev VM.
 
 Each interactive prompt auto-accepts the resolved-from-`mios.toml`
 default after **90 seconds** idle. Override with
