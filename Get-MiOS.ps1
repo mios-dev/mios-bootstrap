@@ -2907,19 +2907,13 @@ try {
         Write-Host '      build-mios.ps1''s own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.' -ForegroundColor DarkGray
         Write-Host ''
     } else {
-        # Bootstrap completed. Per operator: "launching the installed
-        # MiOS app is the 'mios build' entry point!!! everything needed
-        # before that is handled all by the mios.bat".
-        #
-        # The MiOS app launch IS the build trigger. We spawn wt.exe
-        # directly with --pos/--size/--focus/-p MiOS so the WT MiOS
-        # profile (acrylic 50% / scrollbar-less / frame-less / 80x20)
-        # opens centered on the active monitor, AND we pipe `mios build`
-        # into the hosted pwsh so the build pipeline ignites the moment
-        # the operator sees the themed window. No "type mios build
-        # later" -- the app IS mios build.
+        # Bootstrap completed. Per operator: "drops to the dash with
+        # everything installed and functional and has hints for all
+        # the core 'mios *' invocations". The MiOS app opens to the
+        # framed dashboard + hint band -- the operator types `mios
+        # build` (or other verbs) themselves. No auto-run.
         Write-Host ''
-        Write-Host '  [+] Launching MiOS app -- THIS IS the mios build entry point...' -ForegroundColor Green
+        Write-Host '  [+] Launching MiOS app (dashboard + hints; type a verb to start)...' -ForegroundColor Green
         try {
             # Resolve wt.exe (prefer Stable appx install location for
             # deterministic profile binding; fall back to PATH alias).
@@ -2935,33 +2929,29 @@ try {
                 `$_wtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source
             }
             if (-not `$_wtExe) { throw 'wt.exe not found -- WT install verification failed' }
-            # Pre-compute centered position on the cursor's active
-            # monitor (cursor was preserved from pre-UAC capture).
+            # Centered position on the cursor's active monitor (cursor
+            # was preserved from pre-UAC capture).
             `$_pt2 = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
             `$_s2  = [System.Windows.Forms.Screen]::FromPoint(`$_pt2).WorkingArea
             `$_x2  = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_winWPx)) / 2)
             `$_y2  = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_winHPx)) / 2)
-            # Fire wt.exe with -p MiOS hosting pwsh -NoExit -Command "mios build".
-            # The pwsh in the WT MiOS profile loads the MiOS PS profile body
-            # (oh-my-posh + dashboard + `mios <verb>` dispatcher), then
-            # executes `mios build` which:
-            #   1. Opens mios-config.html in the operator's browser
-            #   2. Waits for save (Enter)
-            #   3. Promotes Downloads/mios.toml -> M:\etc\mios\
-            #   4. mios-pull syncs M:\
-            #   5. Hands off to build-mios.ps1 -BuildOnly -> mios-build-driver
+            # wt.exe with -p MiOS hosting plain pwsh (no -Command):
+            # the MiOS profile loads the PS profile body which renders
+            # the framed dashboard + hint band ("build  config  dash
+            # dev  pull  update  help"). Operator types `mios build`
+            # to start the pipeline.
             `$_wtArgs = @(
                 '--pos', "`$(`$_x2),`$(`$_y2)",
                 '--size', "$_elevCols,$_elevRows",
                 '--focus',
                 '-p', 'MiOS',
-                'pwsh', '-NoExit', '-Command', 'mios build'
+                'pwsh'
             )
             Start-Process -FilePath `$_wtExe -ArgumentList `$_wtArgs -ErrorAction Stop
-            Write-Host '       wt.exe -p MiOS opened; `mios build` is running inside.' -ForegroundColor DarkGray
+            Write-Host '       wt.exe -p MiOS opened; type `mios build` (or any verb) inside.' -ForegroundColor DarkGray
         } catch {
             Write-Host ('  [!] MiOS app launch failed: ' + `$_.Exception.Message) -ForegroundColor Yellow
-            Write-Host '      Manual launch: open Start Menu / Desktop "MiOS Build" shortcut.' -ForegroundColor DarkGray
+            Write-Host '      Manual launch: Start Menu -> MiOS, or `wt -p MiOS` from any pwsh.' -ForegroundColor DarkGray
         }
     }
 } catch {
