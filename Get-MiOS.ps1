@@ -1019,23 +1019,63 @@ $Script:MiosOmpJson = @'
   "version": 4,
   "final_space": true,
   "//": [
-    "MiOS Oh-My-Posh theme. Palette: mios.toml [colors] (Hokusai +",
-    "operator neutrals). MiOS-owned segments use the MiOS palette;",
-    "language segments keep brand colors so Node-green / Python-blue+",
-    "yellow / Rust-orange stay instantly recognizable."
+    "MiOS Oh-My-Posh theme.",
+    "All Nerd Font private-use-area glyphs are encoded as JSON \\uXXXX",
+    "escape sequences (json.dump ensure_ascii=True) so the file roundtrips",
+    "through any editor/git/sync layer without losing the U+E000..F8FF",
+    "code points -- write-tool sanitizers strip raw PUA chars on save.",
+    "Palette: mios.toml [colors] (Hokusai + operator neutrals).",
+    "MiOS-owned segments use the MiOS palette; language segments keep",
+    "brand colors so Node-green / Python-blue+yellow / Rust-orange stay",
+    "instantly recognizable. Squared Powerline arrows only -- rounded",
+    "caps (E0B4 / E0B6) dropped for cross-terminal compat."
   ],
   "blocks": [
     {
       "type": "prompt",
       "alignment": "left",
       "segments": [
-        { "type": "text", "style": "plain", "foreground": "#B7C9D7", "template": "╭─" },
-        { "type": "shell", "style": "powerline", "powerline_symbol": "", "background": "#1A407F", "foreground": "#E7DFD3", "template": "  {{ .Name }} " },
-        { "type": "root", "style": "powerline", "powerline_symbol": "", "background": "#DC271B", "foreground": "#F35C15", "template": "  " },
-        { "type": "path", "style": "powerline", "powerline_symbol": "", "background": "#F35C15", "foreground": "#282262",
-          "properties": { "folder_icon": "  ", "home_icon": "", "style": "agnoster_short", "max_depth": 3 },
-          "template": "  {{ .Path }} " },
-        { "type": "git", "style": "powerline", "powerline_symbol": "", "background": "#3E7765",
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#B7C9D7",
+          "template": "\u256d\u2500"
+        },
+        {
+          "type": "shell",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b0",
+          "background": "#1A407F",
+          "foreground": "#E7DFD3",
+          "template": " \uf120 {{ .Name }} "
+        },
+        {
+          "type": "root",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b0",
+          "background": "#DC271B",
+          "foreground": "#F35C15",
+          "template": " \uf292 "
+        },
+        {
+          "type": "path",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b0",
+          "background": "#F35C15",
+          "foreground": "#282262",
+          "properties": {
+            "folder_icon": " \uf07b ",
+            "home_icon": "\uf015",
+            "style": "agnoster_short",
+            "max_depth": 3
+          },
+          "template": " \uf07b {{ .Path }} "
+        },
+        {
+          "type": "git",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b0",
+          "background": "#3E7765",
           "background_templates": [
             "{{ if or (.Working.Changed) (.Staging.Changed) }}#F35C15{{ end }}",
             "{{ if and (gt .Ahead 0) (gt .Behind 0) }}#DC271B{{ end }}",
@@ -1043,32 +1083,144 @@ $Script:MiosOmpJson = @'
             "{{ if gt .Behind 0 }}#734F39{{ end }}"
           ],
           "foreground": "#282262",
-          "properties": { "branch_icon": " ", "fetch_status": true, "fetch_upstream_icon": true },
-          "template": "  {{ .UpstreamIcon }}{{ .HEAD }}{{ if .BranchStatus }} {{ .BranchStatus }}{{ end }}{{ if .Working.Changed }} ✎{{ .Working.String }}{{ end }}{{ if and (.Working.Changed) (.Staging.Changed) }} |{{ end }}{{ if .Staging.Changed }}<#DC271B> +{{ .Staging.String }}</>{{ end }} " },
-        { "type": "executiontime", "style": "powerline", "powerline_symbol": "", "background": "#948E8E", "foreground": "#282262",
-          "properties": { "style": "roundrock", "threshold": 0 }, "template": "  {{ .FormattedMs }} " }
+          "properties": {
+            "branch_icon": "\ue0a0 ",
+            "fetch_status": true,
+            "fetch_upstream_icon": true
+          },
+          "template": " \ue702 {{ .UpstreamIcon }}{{ .HEAD }}{{ if .BranchStatus }} {{ .BranchStatus }}{{ end }}{{ if .Working.Changed }} \u270e{{ .Working.String }}{{ end }}{{ if and (.Working.Changed) (.Staging.Changed) }} |{{ end }}{{ if .Staging.Changed }}<#DC271B> +{{ .Staging.String }}</>{{ end }} "
+        },
+        {
+          "type": "executiontime",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b0",
+          "background": "#948E8E",
+          "foreground": "#282262",
+          "properties": {
+            "style": "roundrock",
+            "threshold": 0
+          },
+          "template": " \ueba2 {{ .FormattedMs }} "
+        }
       ]
     },
     {
       "type": "prompt",
       "alignment": "right",
       "segments": [
-        { "type": "node", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#303030", "foreground": "#3C873A",
-          "properties": { "fetch_package_manager": true, "npm_icon": " <#cc3a3a></> ", "yarn_icon": " <#348cba></>" },
-          "template": "  {{ if .PackageManagerIcon }}{{ .PackageManagerIcon }} {{ end }}{{ .Full }} " },
-        { "type": "python", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#306998", "foreground": "#FFE873",
-          "template": "  {{ if .Error }}{{ .Error }}{{ else }}{{ if .Venv }}{{ .Venv }} {{ end }}{{ .Full }}{{ end }} " },
-        { "type": "go", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#E7DFD3", "foreground": "#06aad5",
-          "template": "  {{ if .Error }}{{ .Error }}{{ else }}{{ .Full }}{{ end }} " },
-        { "type": "rust", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#E7DFD3", "foreground": "#925837",
-          "template": "  {{ if .Error }}{{ .Error }}{{ else }}{{ .Full }}{{ end }} " },
-        { "type": "kubectl", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#1A407F", "foreground": "#E7DFD3",
-          "template": "  {{ .Context }}{{ if .Namespace }} :: {{ .Namespace }}{{ end }} " },
-        { "type": "os", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#B7C9D7", "foreground": "#282262",
-          "properties": { "linux": "", "macos": "", "windows": "" },
-          "template": " {{ if .WSL }}WSL at {{ end }}{{ .Icon }} " },
-        { "type": "time", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#1A407F", "foreground": "#E7DFD3",
-          "properties": { "time_format": "_2,15:04" }, "template": "  {{ .CurrentDate | date .Format }} " }
+        {
+          "type": "node",
+          "style": "powerline",
+          "invert_powerline": true,
+          "powerline_symbol": "\ue0b2",
+          "background": "#303030",
+          "foreground": "#3C873A",
+          "properties": {
+            "fetch_package_manager": true,
+            "npm_icon": " <#cc3a3a>\ue5fa</> ",
+            "yarn_icon": " <#348cba>\ue6a7</>"
+          },
+          "template": " \ue718 {{ if .PackageManagerIcon }}{{ .PackageManagerIcon }} {{ end }}{{ .Full }} "
+        },
+        {
+          "type": "python",
+          "style": "powerline",
+          "invert_powerline": true,
+          "powerline_symbol": "\ue0b2",
+          "background": "#306998",
+          "foreground": "#FFE873",
+          "template": " \ue235 {{ if .Error }}{{ .Error }}{{ else }}{{ if .Venv }}{{ .Venv }} {{ end }}{{ .Full }}{{ end }} "
+        },
+        {
+          "type": "go",
+          "style": "powerline",
+          "invert_powerline": true,
+          "powerline_symbol": "\ue0b2",
+          "background": "#E7DFD3",
+          "foreground": "#06aad5",
+          "template": " \ue626 {{ if .Error }}{{ .Error }}{{ else }}{{ .Full }}{{ end }} "
+        },
+        {
+          "type": "rust",
+          "style": "powerline",
+          "invert_powerline": true,
+          "powerline_symbol": "\ue0b2",
+          "background": "#E7DFD3",
+          "foreground": "#925837",
+          "template": " \ue7a8 {{ if .Error }}{{ .Error }}{{ else }}{{ .Full }}{{ end }} "
+        },
+        {
+          "type": "dotnet",
+          "style": "powerline",
+          "invert_powerline": true,
+          "powerline_symbol": "\ue0b2",
+          "background": "#0e0e0e",
+          "foreground": "#0d6da8",
+          "template": " \ue77f {{ if .Unsupported }}\uf071{{ else }}{{ .Full }}{{ end }} "
+        },
+        {
+          "type": "kubectl",
+          "style": "powerline",
+          "invert_powerline": true,
+          "powerline_symbol": "\ue0b2",
+          "background": "#1A407F",
+          "foreground": "#E7DFD3",
+          "template": " \uf308 {{ .Context }}{{ if .Namespace }} :: {{ .Namespace }}{{ end }} "
+        },
+        {
+          "type": "aws",
+          "style": "powerline",
+          "invert_powerline": true,
+          "powerline_symbol": "\ue0b2",
+          "background": "#565656",
+          "foreground": "#F35C15",
+          "template": " \ue7ad {{ .Profile }}{{ if .Region }}@{{ .Region }}{{ end }} "
+        },
+        {
+          "type": "os",
+          "style": "powerline",
+          "invert_powerline": true,
+          "powerline_symbol": "\ue0b2",
+          "background": "#B7C9D7",
+          "foreground": "#282262",
+          "properties": {
+            "linux": "\ue712",
+            "macos": "\ue711",
+            "windows": "\ue70f"
+          },
+          "template": " {{ if .WSL }}WSL at {{ end }}{{ .Icon }} "
+        },
+        {
+          "type": "battery",
+          "style": "powerline",
+          "invert_powerline": true,
+          "powerline_symbol": "\ue0b2",
+          "background": "#F35C15",
+          "background_templates": [
+            "{{ if eq \"Charging\" .State.String }}#3E7765{{ end }}",
+            "{{ if eq \"Discharging\" .State.String }}#F35C15{{ end }}",
+            "{{ if eq \"Full\" .State.String }}#3E7765{{ end }}"
+          ],
+          "foreground": "#282262",
+          "properties": {
+            "charged_icon": "\uf240 ",
+            "charging_icon": "\uf1e6 ",
+            "discharging_icon": "\ue234 "
+          },
+          "template": " {{ if not .Error }}{{ .Icon }}{{ .Percentage }}{{ end }}{{ .Error }} \uf295 "
+        },
+        {
+          "type": "time",
+          "style": "powerline",
+          "invert_powerline": true,
+          "powerline_symbol": "\ue0b2",
+          "background": "#1A407F",
+          "foreground": "#E7DFD3",
+          "properties": {
+            "time_format": "_2,15:04"
+          },
+          "template": " \uf073 {{ .CurrentDate | date .Format }} "
+        }
       ]
     },
     {
@@ -1076,15 +1228,62 @@ $Script:MiosOmpJson = @'
       "alignment": "left",
       "newline": true,
       "segments": [
-        { "type": "text", "style": "plain", "foreground": "#B7C9D7", "template": "╰─" },
-        { "type": "status", "style": "plain", "foreground": "#3E7765",
-          "foreground_templates": [ "{{ if gt .Code 0 }}#DC271B{{ end }}" ],
-          "properties": { "always_enabled": true }, "template": " ❯ " }
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#B7C9D7",
+          "template": "\u2570\u2500"
+        },
+        {
+          "type": "status",
+          "style": "plain",
+          "foreground": "#3E7765",
+          "foreground_templates": [
+            "{{ if gt .Code 0 }}#DC271B{{ end }}"
+          ],
+          "properties": {
+            "always_enabled": true
+          },
+          "template": " \u276f "
+        }
       ]
     }
   ]
 }
 '@
+
+function Update-MiOSPSReadLine {
+    # oh-my-posh's init pwsh emits Get-PSReadLineKeyHandler calls that
+    # use named parameters (Get-PSReadLineKeyHandler -Chord Spacebar).
+    # The version of PSReadLine that ships in PowerShell 7.6's box is
+    # too old to accept those args -- it expects positional, and emits
+    # "A positional parameter cannot be found that accepts argument
+    # 'Spacebar'/'Enter'/'Ctrl+c'". This breaks oh-my-posh init, which
+    # then leaves the prompt in a fallback state.
+    #
+    # Fix: install/update PSReadLine via PowerShellGet to >= 2.3.5.
+    # Per-user (-Scope CurrentUser) so we don't need elevation.
+    try {
+        $current = Get-Module -ListAvailable -Name PSReadLine | Sort-Object Version -Descending | Select-Object -First 1
+        if ($current -and $current.Version -ge [version]'2.3.5') {
+            Write-Host "  [+] PSReadLine $($current.Version) already meets oh-my-posh's requirements." -ForegroundColor DarkGray
+            return $true
+        }
+        if (-not (Get-Command Install-Module -ErrorAction SilentlyContinue)) {
+            Write-Host "  [!] PowerShellGet not available; cannot bump PSReadLine. oh-my-posh init may emit warnings." -ForegroundColor Yellow
+            return $false
+        }
+        Write-Host "  [*] Installing/updating PSReadLine to 2.3.5+..." -ForegroundColor Cyan
+        # Trust PSGallery so install doesn't prompt.
+        try { Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch {}
+        Install-Module -Name PSReadLine -MinimumVersion 2.3.5 -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
+        Write-Host "  [+] PSReadLine updated." -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "  [!] PSReadLine update failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+}
 
 function Install-MiOSFastfetch {
     # winget install fastfetch + stage MiOS-themed config and ASCII
@@ -1497,7 +1696,8 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     Install-MiOSGeistFont           | Out-Null
     Write-Host "  [*] Step 4/6: Installing fastfetch + staging MiOS-themed config..." -ForegroundColor Cyan
     Install-MiOSFastfetch           | Out-Null
-    Write-Host "  [*] Step 5/6: Staging mios.omp.json + wiring oh-my-posh init..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 5/6: PSReadLine bump + mios.omp.json + oh-my-posh init wiring..." -ForegroundColor Cyan
+    Update-MiOSPSReadLine           | Out-Null
     Install-MiOSOhMyPoshTheme       | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
     Write-Host "  [*] Step 6/6: Registering MiOS as a native Windows app..." -ForegroundColor Cyan
