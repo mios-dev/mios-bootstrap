@@ -6265,43 +6265,34 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
     }
     Show-Dashboard
 } finally {
-    # Always show final summary and keep window open
-    try { [Console]::SetCursorPosition(0, $script:DashRow + $script:DashHeight) } catch {}
+    # Drain stdout + Install-MiosLauncher's still-flushing log lines
+    # before the final summary writes -- avoids the success-box-rows-
+    # racing-with-launcher-tails rendering issue.
+    try { [Console]::Out.Flush() } catch {}
+    Start-Sleep -Milliseconds 500
 
     $totalTime = fmtSpan ([datetime]::Now - $script:ScriptStart)
     Write-Host ""
-    $bTop = "╭" + ("─" * ($script:DW - 2)) + "╮"
-    $bBot = "╰" + ("─" * ($script:DW - 2)) + "╯"
     if ($ExitCode -eq 0) {
-        $artifactDir = Join-Path $MiosDistroDir "artifacts"
-        Write-Host $bTop -ForegroundColor Green
-        $l = "│ 'MiOS' $MiosVersion built and deployed!  (total: $totalTime)"
-        Write-Host ($l.PadRight($script:DW - 1) + "│") -ForegroundColor Green
-        Write-Host ("│ OCI   : localhost/mios:latest  in $BuilderDistro".PadRight($script:DW - 1) + "│") -ForegroundColor White
-        $wslLine = "│ WSL2  : wsl -d $MiosWslDistro"
-        $wslDistroOk = (& wsl.exe -l --quiet 2>$null) -join " " -match $MiosWslDistro
-        if ($wslDistroOk) {
-            Write-Host ($wslLine.PadRight($script:DW - 1) + "│") -ForegroundColor Cyan
-        } else {
-            Write-Host ("│ WSL2  : see $artifactDir\mios-wsl2.tar".PadRight($script:DW - 1) + "│") -ForegroundColor DarkGray
-        }
-        $qcow2 = Join-Path $artifactDir "mios.qcow2"
-        $raw   = Join-Path $artifactDir "mios.raw"
-        if (Test-Path $qcow2) { Write-Host ("│ QEMU  : $qcow2".PadRight($script:DW - 1) + "│") -ForegroundColor Cyan }
-        if (Test-Path $raw)   { Write-Host ("│ RAW   : $raw".PadRight($script:DW - 1) + "│") -ForegroundColor Cyan }
-        $hvVm = try { Get-VM -Name $MiosWslDistro -EA SilentlyContinue } catch { $null }
-        if ($hvVm) { Write-Host ("│ HV    : Hyper-V VM '$MiosWslDistro' ready -- Start-VM -Name $MiosWslDistro".PadRight($script:DW - 1) + "│") -ForegroundColor Cyan }
-        Write-Host ("│ Logs  : $MiosLogDir".PadRight($script:DW - 1) + "│") -ForegroundColor DarkGray
-        Write-Host $bBot -ForegroundColor Green
+        # Plain-text summary (no box drawing). The previous boxed
+        # success summary was racing with Install-MiosLauncher's tail
+        # log lines and producing fragmented output. Plain Write-Host
+        # lines can't be partially overwritten by stragglers.
+        Write-Host "  MiOS bootstrap complete." -ForegroundColor Green
+        Write-Host "    Total time:   $totalTime"   -ForegroundColor DarkGray
+        Write-Host "    Dev distro:   $BuilderDistro" -ForegroundColor DarkGray
+        Write-Host "    Logs:         $MiosLogDir" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  Next steps (run in any MiOS terminal):" -ForegroundColor Cyan
+        Write-Host "    mios-build    full OCI image build inside MiOS-DEV" -ForegroundColor White
+        Write-Host "    mios-config   open mios.toml configurator"          -ForegroundColor White
+        Write-Host "    mios-dev      enter the dev distro shell"           -ForegroundColor White
+        Write-Host "    mios-help     full command list"                    -ForegroundColor White
     } else {
-        Write-Host $bTop -ForegroundColor Red
-        Write-Host ("│ BUILD FAILED (exit $ExitCode)  --  Errors: $($script:ErrCount)".PadRight($script:DW - 1) + "│") -ForegroundColor Red
-        Write-Host ("│ Log  : $LogFile".PadRight($script:DW - 1) + "│") -ForegroundColor Yellow
-        Write-Host ("│ Re-run : podman build --no-cache -t localhost/mios:latest $MiosRepoDir\mios".PadRight($script:DW - 1) + "│") -ForegroundColor DarkGray
-        Write-Host $bBot -ForegroundColor Red
+        Write-Host "  MiOS bootstrap FAILED (exit $ExitCode)" -ForegroundColor Red
+        Write-Host "    Errors: $($script:ErrCount)" -ForegroundColor Yellow
+        Write-Host "    Log:    $LogFile" -ForegroundColor Yellow
     }
-    Write-Host ""
-    Write-Host "  Log directory: $MiosLogDir" -ForegroundColor DarkGray
     Write-Host ""
     if (-not $Unattended) {
         Write-Host "  Press Enter to close..." -ForegroundColor DarkGray -NoNewline
