@@ -2687,6 +2687,16 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
 # runs in a vanilla black box. Setting it here makes the elevated
 # bootstrap window itself the MiOS terminal experience.
 `$env:TERM_PROGRAM='mios'
+# Force UTF-8 codepage + output encoding BEFORE any output paints.
+# Without this, conhost defaults to CP437/CP1252 and the dashboard's
+# Unicode box-drawing glyphs (╭ ╮ ╰ ╯ │ ─ ├ ┤) render as `?`. Setting
+# OutputEncoding alone isn't enough -- chcp 65001 changes the active
+# codepage for the underlying console, which is what affects glyph
+# substitution.
+try { & chcp.com 65001 *> `$null } catch {}
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
+try { [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new(`$false) } catch {}
+try { `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
 # Pre-UAC cursor location (captured by the launching pwsh BEFORE Start-
 # Process -Verb RunAs); use these constants instead of querying
 # Cursor.Position now (which would read at the UAC Yes-button click
@@ -2729,20 +2739,38 @@ try {
     # error or pause for inspection -- the window appeared to "die
     # silently". Per operator: "the incorrectly launched powershell
     # window... just dies silently--seemingly no logs in sight!!!"
-    `$tmpScript = Join-Path `$env:TEMP ('mios-getmios-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
-    [IO.File]::WriteAllText(`$tmpScript, `$src, [System.Text.UTF8Encoding]::new(`$false))
     # Log path: M:\MiOS\logs if M:\ exists (the canonical install-on-M
-    # location), else %TEMP%. Tee the child pwsh's output so the
-    # operator has a log REGARDLESS of which phase fails -- even a
-    # Step 1/6 'exit 1' (e.g. WT install failed) leaves a complete
-    # transcript on disk for triage.
+    # location), else %TEMP%. The child pwsh runs Start-Transcript
+    # internally so the log gets every Write-Host without the parent
+    # having to pipe through Tee-Object (which DESTROYS the child's
+    # `$Host.UI.RawUI` console handle and makes `$RawUI.CursorPosition
+    # = @{X=0;Y=0}` throw "The handle is invalid" -- exactly the crash
+    # the operator hit in commit 1e3484f).
     `$_logBase = if (Test-Path 'M:\MiOS') {
         New-Item -ItemType Directory -Path 'M:\MiOS\logs' -Force -ErrorAction SilentlyContinue | Out-Null
         'M:\MiOS\logs'
     } else { `$env:TEMP }
     `$_logPath = Join-Path `$_logBase ('getmios-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
     Write-Host ('  [*] Logging to: ' + `$_logPath) -ForegroundColor DarkGray
-    & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript 2>&1 | Tee-Object -FilePath `$_logPath
+    # Wrap the fetched script with: codepage + Start-Transcript prelude.
+    # Start-Transcript captures Write-Host into the log file while
+    # leaving `$Host.UI.RawUI intact for in-script cursor manipulation
+    # (Tee-Object would destroy the console handle and crash any
+    # `$RawUI.CursorPosition assignment, which is exactly the crash
+    # commit 1e3484f hit -- "The handle is invalid").
+    `$_logPathLit = `$_logPath -replace "'", "''"
+    `$_preludeLines = @(
+        "try { & chcp.com 65001 *> `$null } catch {}",
+        "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}",
+        "try { [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new(`$false) } catch {}",
+        "try { `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}",
+        ("try { Start-Transcript -Path '" + `$_logPathLit + "' -Force -ErrorAction Stop *> `$null } catch {}")
+    )
+    `$_prelude  = (`$_preludeLines -join "``n") + "``n"
+    `$_postlude = "``ntry { Stop-Transcript *> `$null } catch {}``n"
+    `$tmpScript = Join-Path `$env:TEMP ('mios-getmios-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
+    [IO.File]::WriteAllText(`$tmpScript, (`$_prelude + `$src + `$_postlude), [System.Text.UTF8Encoding]::new(`$false))
+    & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript
     `$_rc = `$LASTEXITCODE
     Remove-Item -LiteralPath `$tmpScript -Force -ErrorAction SilentlyContinue
     if (`$_rc -ne 0) {
