@@ -236,14 +236,20 @@ function Invoke-MiOSAgreementGate {
 Invoke-MiOSAgreementGate | Out-Null
 
 # ───────────────────────────────────────────────────────────────────────
-# Windows Terminal "MiOS-Bootstrap" profile + Geist Mono Nerd Font +
-# oh-my-posh wiring. Runs ONCE on the outer (pre-elevation) pass so the
-# elevated relaunch can pin -p MiOS-Bootstrap and inherit the correct
-# font, scheme, padding, and (most importantly) a borderless 80x40
-# focus-mode window centered on the primary display. The dashboard
-# inside build-mios.ps1 is strict-clamped to 80 cols; matching the WT
-# window to 80x40 means the dashboard frame fits perfectly with zero
-# wrap or scroll-region shenanigans.
+# Windows Terminal "MiOS" profile + Geist Mono Nerd Font + oh-my-posh
+# wiring. Runs ONCE on the outer (pre-elevation) pass so the elevated
+# relaunch can pin -p MiOS and inherit the correct font, scheme,
+# padding, Mica backdrop, 50% transparency, and (most importantly) a
+# borderless 80x30 focus-mode window centered on the primary display.
+#
+# Canonical dimensions: 80 cols × 30 rows.
+#   * 80×30 is the IBM "text-mode 3+" / TTY0 standard dimension
+#     (alongside 80×25 / 80×50). Universal grub/console fallback.
+#   * 4:3 pixel aspect ratio: with a 1:2 (W:H) monospace cell, 80/30
+#     gives 720×600 px ≈ 1.20:1 → render with lineHeight=1.0 the cells
+#     squash to 9×18 px → 720×540 → exactly 4:3.
+#   * Wide enough for the dashboard frame (80-col strict-clamp) and
+#     tall enough for the menu + footer + 8 phase rows + log row.
 #
 # All three helpers are idempotent: safe to call on every run.
 # ───────────────────────────────────────────────────────────────────────
@@ -461,10 +467,20 @@ function Install-MiOSTerminalProfile {
         }
         cursorShape       = 'bar'
         antialiasingMode  = 'cleartype'
+        # Mica window backdrop + 50% opacity. systemBackdrop=mica is the
+        # WT >= 1.18 path (per-profile); useMica=true is the older
+        # window-level fallback. useAcrylic must be false (acrylic and
+        # mica are mutually exclusive). opacity=50 makes the entire
+        # window 50% transparent over the Mica wallpaper material.
         useAcrylic        = $false
-        opacity           = 100
+        useMica           = $true
+        systemBackdrop    = 'mica'
+        opacity           = 50
         # Borderless / minimum padding so the 80-col dashboard frame
         # touches the window edge with no titlebar/tab-row stealing rows.
+        # The titlebar itself is hidden by launchMode=focus + the global
+        # showTabsInTitlebar=false; the underlying frame stays "flat"
+        # (no 3D bevel) for cross-WT-version compatibility.
         padding           = '0'
         suppressApplicationTitle = $true
         hidden            = $false
@@ -502,14 +518,23 @@ function Install-MiOSTerminalProfile {
     # no minimize/maximize buttons — the "borderless / frameless" request.
     # showTabsInTitlebar=false + alwaysShowTabs=false also hide tabs in
     # non-focus tabs that the operator opens later.
-    $wtJson | Add-Member -NotePropertyName launchMode           -NotePropertyValue 'focus' -Force
-    $wtJson | Add-Member -NotePropertyName showTabsInTitlebar   -NotePropertyValue $false  -Force
-    $wtJson | Add-Member -NotePropertyName alwaysShowTabs       -NotePropertyValue $false  -Force
-    $wtJson | Add-Member -NotePropertyName useAcrylicInTabRow   -NotePropertyValue $false  -Force
-    $wtJson | Add-Member -NotePropertyName showTerminalTitleInTitlebar -NotePropertyValue $false -Force
-    $wtJson | Add-Member -NotePropertyName initialCols          -NotePropertyValue 80      -Force
-    $wtJson | Add-Member -NotePropertyName initialRows          -NotePropertyValue 40      -Force
-    $wtJson | Add-Member -NotePropertyName centerOnLaunch       -NotePropertyValue $true   -Force
+    # Root-level globals.
+    # launchMode=focus      : no titlebar, no tab row, no min/max buttons.
+    # disableAnimations=true: prevents Mica's wallpaper-bleed animation
+    #                        from re-painting the dashboard mid-render.
+    # showTabsInTitlebar/   : keep the chrome dead even outside focus mode
+    #   alwaysShowTabs=false  so a stray tab-open doesn't surface a titlebar.
+    # initialCols/Rows=80/30: TTY0/text-mode-3+ canonical dimensions, 4:3
+    #                        pixel aspect with standard 1:2 monospace cells.
+    $wtJson | Add-Member -NotePropertyName launchMode                  -NotePropertyValue 'focus' -Force
+    $wtJson | Add-Member -NotePropertyName showTabsInTitlebar          -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName alwaysShowTabs              -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName useAcrylicInTabRow          -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName showTerminalTitleInTitlebar -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName initialCols                 -NotePropertyValue 80      -Force
+    $wtJson | Add-Member -NotePropertyName initialRows                 -NotePropertyValue 30      -Force
+    $wtJson | Add-Member -NotePropertyName centerOnLaunch              -NotePropertyValue $true   -Force
+    $wtJson | Add-Member -NotePropertyName disableAnimations           -NotePropertyValue $true   -Force
 
     # Schemes: upsert MiOS.
     if (-not $wtJson.schemes) {
@@ -539,7 +564,7 @@ function Install-MiOSTerminalProfile {
         $parent = Split-Path -Parent $settingsPath
         if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
         ($wtJson | ConvertTo-Json -Depth 32) | Set-Content -LiteralPath $settingsPath -Encoding UTF8
-        Write-Host "  [+] MiOS-Bootstrap profile + MiOS scheme injected; launchMode=focus, 80x40 centered." -ForegroundColor Green
+        Write-Host "  [+] MiOS-Bootstrap profile + MiOS scheme injected; launchMode=focus, 80x30 centered." -ForegroundColor Green
         return $miosGuid
     } catch {
         Write-Host "  [!] settings.json write failed: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -601,19 +626,21 @@ $endMark
     Write-Host "  [+] PowerShell profile updated with MiOS oh-my-posh init: $profilePath" -ForegroundColor Green
 }
 
-# Compute centered window position (in pixels) for an 80x40 cell window
-# rendered with Geist Mono 11pt at 100% DPI. Cell metrics for that face
-# are roughly 9 px wide × 22 px tall on a typical 1920x1080 monitor; we
-# pad a few pixels for the inner-window scrollbar/border that focus mode
-# leaves in. Operators on different DPI / multi-monitor setups will get
-# the window approximately centered on the primary display — wt.exe
-# clamps to the screen rect anyway.
+# Compute centered window position (in pixels) for an 80x30 cell window
+# (canonical TTY0 / text-mode-3+ dimensions, 4:3 pixel aspect with the
+# standard 1:2 monospace cell ratio). Cell metrics for Geist Mono 11pt
+# at 100% DPI are roughly 9 px wide × 18 px tall (after the lineHeight=1
+# flatten WT applies to focus-mode windows); we pad a few pixels for the
+# inner-window scrollbar / Mica border that focus mode leaves in.
+# Operators on different DPI / multi-monitor setups will get the window
+# approximately centered on the primary display — wt.exe clamps to the
+# screen rect anyway.
 function Get-MiOSCenteredWindowPosition {
     param(
         [int]$Cols   = 80,
-        [int]$Rows   = 40,
+        [int]$Rows   = 30,
         [int]$CellW  = 9,
-        [int]$CellH  = 22
+        [int]$CellH  = 18
     )
     try {
         Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
@@ -644,7 +671,7 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     Install-MiOSGeistFont           | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
     Install-MiOSTerminalProfile     | Out-Null
-    $miosWindowPos = Get-MiOSCenteredWindowPosition -Cols 80 -Rows 40
+    $miosWindowPos = Get-MiOSCenteredWindowPosition -Cols 80 -Rows 30
 
     Write-Host "  [*] Spawning a fresh elevated pwsh window for the bootstrap run..." -ForegroundColor Cyan
     if (-not $isAdmin) {
@@ -843,7 +870,7 @@ try {
         $wtArgs = @(
             '-w','-1',
             '--pos',  $miosWindowPos,
-            '--size', '80,40',
+            '--size', '80,30',
             '--focus',
             'nt',
             '--title','MiOS-Bootstrap',
@@ -910,21 +937,21 @@ try {
     return
 }
 
-# 2. Resize host window to 80x40 — the canonical TTY0 / dashboard
-# proportions. The MiOS dashboard frame is strict-clamped to 80 cols
-# (build-mios.ps1 Show-Dashboard) and the menu/build steps fit within
-# 40 rows. Matching the WT window exactly means zero wrap, zero scroll
-# region drift, and the dashboard borders touch the window edge.
-# wt.exe --size 80,40 already requested this for the WT window; this
-# RawUI set is the conhost-fallback path AND a belt-and-braces resize
-# in case WT honored --pos but ignored --size on an older build.
+# 2. Resize host window to 80x30 — the canonical TTY0 / text-mode-3+
+# dimension and the MiOS dashboard's global size. 80 cols × 30 rows
+# yields a 4:3 pixel aspect with standard 1:2 monospace cells, fits
+# the dashboard frame's 80-col strict-clamp, and matches the post-
+# install hub menu's row budget. wt.exe --size 80,30 already requested
+# this for the WT window; this RawUI set is the conhost-fallback path
+# AND a belt-and-braces resize in case WT honored --pos but ignored
+# --size on an older build.
 try {
-    $sz  = New-Object Management.Automation.Host.Size 80, 40
+    $sz  = New-Object Management.Automation.Host.Size 80, 30
     $buf = New-Object Management.Automation.Host.Size 80, 9000
     $Host.UI.RawUI.BufferSize = $buf
     $Host.UI.RawUI.WindowSize = $sz
 } catch {
-    try { $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size 80, 40 } catch {}
+    try { $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size 80, 30 } catch {}
 }
 
 # 3. Helpers

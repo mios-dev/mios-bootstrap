@@ -59,7 +59,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = "SilentlyContinue"
 
-# ── Console resize: 80x40 BEFORE any sizing-dependent state is captured ──────
+# ── Console resize: 80x30 BEFORE any sizing-dependent state is captured ──────
 # $script:DW (~line 543) is computed from [Console]::WindowWidth at script-
 # load time and never re-read. If the parent window opened wider, the
 # dashboard frame draws at the wrong width and log lines bleed past it.
@@ -67,7 +67,7 @@ $ProgressPreference    = "SilentlyContinue"
 # Per feedback_mios_terminal_dimensions.md.
 #
 # The order matters: SetWindowSize requires buffer >= window. If the
-# current buffer is smaller than 80, SetWindowSize(80,40) fails. If
+# current buffer is smaller than 80, SetWindowSize(80,30) fails. If
 # the current window is larger than 80, SetBufferSize(80,9000) fails
 # (buffer can't be smaller than current window). So we branch on the
 # current width.
@@ -78,12 +78,12 @@ try {
     $_curW = [Console]::WindowWidth
     if ($_curW -gt 80) {
         # Shrink window first (buffer can't be < window), then buffer.
-        [Console]::SetWindowSize(80, 40)
+        [Console]::SetWindowSize(80, 30)
         [Console]::SetBufferSize(80, 9000)
     } else {
         # Enlarge buffer first (window can't be > buffer), then window.
         [Console]::SetBufferSize(80, 9000)
-        [Console]::SetWindowSize(80, 40)
+        [Console]::SetWindowSize(80, 30)
     }
     $_resizeAfter = "$([Console]::WindowWidth)x$([Console]::WindowHeight) buf=$([Console]::BufferWidth)x$([Console]::BufferHeight)"
 } catch {
@@ -607,7 +607,7 @@ try {
     # Flush the deferred console-resize diagnostic captured at line ~70
     # (before $LogFile was known, before Write-Log existed). This makes
     # it visible in the unified log so we can tell post-mortem whether
-    # the SetWindowSize(80,40) call actually took.
+    # the SetWindowSize(80,30) call actually took.
     if ($script:_PendingResizeLog) {
         [System.IO.File]::AppendAllText(
             $LogFile,
@@ -821,12 +821,12 @@ function Show-Dashboard {
     # rest of the session.
     #
     # Concrete failure mode (commit 53ac9d8 stacking screenshots):
-    #   1. Load-time resize: 80x40 / 80x9000
+    #   1. Load-time resize: 80x30 / 80x9000
     #   2. `Try-ResizeConsole -Cols 100 -Rows 40` (~line 4501)
     #      enlarges to 100x40 transiently
     #   3. First Show-Dashboard: winW=max(100, 100, 0)=100, rows padded
     #      to 100, DashLastWidth=100
-    #   4. Defensive resize (~line 4395): back to 80x40 / 80x9000
+    #   4. Defensive resize (~line 4395): back to 80x30 / 80x9000
     #   5. Every later Show-Dashboard: winW=max(80, 80, 100)=100
     #   6. Writing a 100-char row on an 80-col buffer auto-wraps at
     #      col 79; 20 chars overflow to the next buffer row; the next
@@ -1293,7 +1293,7 @@ function Show-PostBootstrapMenu {
                 # at wt.exe spawn time. Single-line, single-quoted-on-bash-side, no escapes.
                 $driverPath = '/usr/libexec/mios/mios-build-driver'
                 $fallback   = 'https://raw.githubusercontent.com/mios-dev/mios/main/usr/libexec/mios/mios-build-driver'
-                $driverCmd  = "stty cols 80 rows 40 2>/dev/null; if [ -x '$driverPath' ]; then exec bash '$driverPath'; else echo '[handoff] $driverPath not in $devDistro yet -- fetching latest...'; t=`$(mktemp); if curl -fsSL '$fallback' -o `"`$t`"; then chmod +x `"`$t`"; exec bash `"`$t`"; else echo '[handoff] FATAL: could not fetch driver from $fallback'; exec bash; fi; fi"
+                $driverCmd  = "stty cols 80 rows 30 2>/dev/null; if [ -x '$driverPath' ]; then exec bash '$driverPath'; else echo '[handoff] $driverPath not in $devDistro yet -- fetching latest...'; t=`$(mktemp); if curl -fsSL '$fallback' -o `"`$t`"; then chmod +x `"`$t`"; exec bash `"`$t`"; else echo '[handoff] FATAL: could not fetch driver from $fallback'; exec bash; fi; fi"
                 # wt.exe (Windows Terminal) is the canonical multi-tab host; if it's
                 # missing or the App Execution Alias is broken (per d6e8b66 / earlier
                 # in this session), fall back to a plain Start-Process wsl.exe in a
@@ -1313,23 +1313,23 @@ function Show-PostBootstrapMenu {
                     }
                 }
                 if ($wt) {
-                    # Open a NEW Windows Terminal window at exactly 80x40 to
+                    # Open a NEW Windows Terminal window at exactly 80x30 to
                     # match the dashboard frame (per feedback_mios_terminal_
                     # dimensions.md). `wt.exe --size W,H -- <cmdline>` sets
                     # the initial dimensions of a NEW wt window; `new-tab`
                     # inherits whatever the parent window already has, which
                     # is wrong for the build-pipeline tty.
-                    & $wt --size 80,40 --title "MiOS Build ($devDistro)" `
+                    & $wt --size 80,30 --title "MiOS Build ($devDistro)" `
                         wsl.exe -d $devDistro --user mios --cd "~" -- bash -lc $driverCmd
                 } else {
                     Write-Host "  wt.exe not found -- launching wsl.exe via a sized conhost window." -ForegroundColor Yellow
                     # conhost-side resize: spawn a pwsh window that resizes
-                    # itself to 80x40 before exec'ing wsl.exe. The dashboard
+                    # itself to 80x30 before exec'ing wsl.exe. The dashboard
                     # frame then renders flush against the borders, matching
                     # the wt.exe path's geometry.
                     $resizeShim = @"
 try {
-    [Console]::SetWindowSize(80,40)
+    [Console]::SetWindowSize(80,30)
     [Console]::SetBufferSize(80,9000)
 } catch {}
 & wsl.exe -d '$devDistro' --user mios --cd '~' -- bash -lc @'
@@ -4539,8 +4539,8 @@ $Script:MiOSBin  = $PSScriptRoot
 $Script:MiOSRoot = Split-Path -Parent $Script:MiOSBin
 
 try {
-    $sz  = New-Object Management.Automation.Host.Size 90, 36
-    $buf = New-Object Management.Automation.Host.Size 90, 3000
+    $sz  = New-Object Management.Automation.Host.Size 80, 30
+    $buf = New-Object Management.Automation.Host.Size 80, 9000
     $Host.UI.RawUI.BufferSize = $buf
     $Host.UI.RawUI.WindowSize = $sz
 } catch {}
@@ -4685,7 +4685,7 @@ $endMark
         $wtSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'
     }
     $hubPathForJson = $hubPath -replace '\\', '\\'
-    $miosCmd = ('pwsh.exe -NoExit -ExecutionPolicy Bypass -Command "& { try { $H=Get-Host; $H.UI.RawUI.BufferSize=(New-Object Management.Automation.Host.Size 80,9000); $H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 80,40) } catch {}; & ''' + $hubPathForJson + ''' }"')
+    $miosCmd = ('pwsh.exe -NoExit -ExecutionPolicy Bypass -Command "& { try { $H=Get-Host; $H.UI.RawUI.BufferSize=(New-Object Management.Automation.Host.Size 80,9000); $H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 80,30) } catch {}; & ''' + $hubPathForJson + ''' }"')
     if (Test-Path $wtSettings) {
         try {
             # JSONC tolerance: strip comments + trailing commas before parsing
@@ -4767,7 +4767,7 @@ $endMark
     # Menu noise was a recurring user complaint and the underlying
     # bin scripts (mios-hub, mios-dash, mios-dev, ...) are still
     # directly invocable from any pwsh shell as PROFILE functions.
-    $hubResizePrelude = "try { `$H=Get-Host; `$H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 90,36) } catch {}"
+    $hubResizePrelude = "try { `$H=Get-Host; `$H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 80,30) } catch {}"
     if ($wtExe) {
         # Prefer Windows Terminal's MiOS profile (correct font + scheme).
         # WT's profile commandline already resizes the buffer + launches
@@ -4837,12 +4837,12 @@ try {
 # launching. The probe is still run as a sanity-check in that case
 # so the opt-in falls back to log mode if the host is genuinely
 # broken.
-# 80x40 EXACTLY -- per feedback_mios_terminal_dimensions.md: "every
+# 80x30 EXACTLY -- per feedback_mios_terminal_dimensions.md: "every
 # spawned window must open at exactly 80 cols x 40 rows to match the
 # dashboard frame." Anything wider creates transient state that the
 # dashboard's strict-clamp width logic in Show-Dashboard would have
 # to compensate for; cleaner to never go wide in the first place.
-Try-ResizeConsole -Cols 80 -Rows 40
+Try-ResizeConsole -Cols 80 -Rows 30
 # Interactive (in-place repaint) is now the DEFAULT. Test-DashboardCanRedraw
 # probes [Console]::CursorTop, RawUI.WindowSize, etc. and falls back to log
 # mode automatically if the host can't redraw (transcript host, redirected
@@ -4925,7 +4925,7 @@ if ($script:DashboardMode -eq 'interactive') {
 # load path between line 70 and here changed the window size, this restores
 # it. Idempotent.
 try {
-    [Console]::SetWindowSize(80, 40)
+    [Console]::SetWindowSize(80, 30)
     [Console]::SetBufferSize(80, 9000)
 } catch {}
 
