@@ -5461,8 +5461,12 @@ Add-Type -AssemblyName System.Windows.Forms
 
 # Cell metrics (Geist Mono 12pt, lineHeight=1.0): ~10 x 20 px.
 # Outer-rect slack for DWM frame + scrollbar + acrylic edge: +20 W, +12 H.
+# Dims match the post-bootstrap WT MiOS spawn (mios.toml [terminal]):
+# 80 cols x 20 rows. Earlier this hardcoded 80x30 -- which produced a
+# DIFFERENT-sized window from the post-bootstrap spawn, so clicking
+# the MiOS shortcut opened the "wrong" window.
 $Cols   = 80
-$Rows   = 30
+$Rows   = 20
 $winW   = ($Cols * 10) + 20
 $winH   = ($Rows * 20) + 12
 
@@ -5490,7 +5494,12 @@ if (-not $wtExe) {
     exit 1
 }
 
-$wtArgs = @('-w','-1','--pos',"$x,$y",'--size','80,30','--focus','nt','-p',$Profile)
+# `-w MiOS` (NOT -1) names the window so it matches the post-bootstrap
+# spawn AND the Win+Space global summon binding can target it.
+# No `nt` subcommand -- empty subcommand uses the profile's bound
+# commandline (Windows pwsh + MiOS PS profile body with dashboard +
+# `mios <verb>` dispatcher).
+$wtArgs = @('-w','MiOS','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile)
 Start-Process -FilePath $wtExe -ArgumentList $wtArgs
 
 # Post-launch re-center: WT in focus mode often ignores --pos. Wait
