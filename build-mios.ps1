@@ -2320,30 +2320,57 @@ function New-BuilderDistro([hashtable]$HW) {
                 & podman machine rm --force $BuilderDistro 2>&1 |
                     ForEach-Object { Write-Log "podman-recover-rm: $_" }
 
-                # Sweep candidate podman-machine storage paths for
-                # dangling reparse points. A previous admin run that
-                # provisioned M:\ might have symlinked
-                # %LOCALAPPDATA%\containers\podman\machine -> M:\podman\machine,
-                # then the operator wiped M:\ (or ran without admin so
-                # M:\ never came back). The dangling symlink makes
-                # podman init's Mkdir() fail with the exact error
-                # "Cannot create a file when that file already exists".
-                # cmd /c rmdir removes the LINK without following it,
-                # so the target (if any) stays untouched.
+                # Sweep ALL candidate podman-machine storage paths
+                # unconditionally. A previous run (admin or otherwise)
+                # may have left:
+                #   * a dangling symlink ([Test-Path] returns false on
+                #     these because PS resolves the target -- so the
+                #     prior dangling-only check missed them entirely)
+                #   * a non-dangling symlink to a now-stale target
+                #   * a real directory with stale machine state
+                # ANY of these can make podman init's Mkdir() fail
+                # with "Cannot create a file when that file already
+                # exists". After `podman machine rm --force` the VM
+                # registration is gone, so the on-disk state in these
+                # paths is unambiguously safe to wipe.
+                #
+                # DirectoryInfo lets us probe both regular dirs AND
+                # reparse points without follow-the-link semantics --
+                # Test-Path's "exists" check fails on dangling links.
                 $podmanMachineCands = @(
                     (Join-Path $env:LOCALAPPDATA 'containers\podman\machine'),
                     (Join-Path $env:USERPROFILE  '.local\share\containers\podman\machine'),
                     (Join-Path $env:PROGRAMDATA  'containers\podman\machine')
                 )
                 foreach ($p in $podmanMachineCands) {
-                    if (-not (Test-Path -LiteralPath $p)) { continue }
-                    $itm = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
-                    if ($itm -and ($itm.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-                        $tgt = ($itm.Target -join '').TrimStart('\??\')
-                        if ($tgt -and -not (Test-Path -LiteralPath $tgt)) {
-                            Log-Warn "podman-recover: dangling reparse-point at $p -> $tgt (target gone) -- removing link"
-                            cmd /c "rmdir `"$p`"" 2>&1 | ForEach-Object { Write-Log "podman-recover-rmdir: $_" }
+                    $info = $null
+                    try { $info = New-Object System.IO.DirectoryInfo $p } catch { continue }
+                    if (-not $info) { continue }
+                    $isLink   = $false
+                    $linkOnly = $false
+                    try {
+                        if ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                            $isLink   = $true
+                            $linkOnly = $true
                         }
+                    } catch {
+                        # Attributes throws for dangling symlinks on
+                        # PS 7+; we know it's a link if .Exists is
+                        # false but the parent has a child with the
+                        # same name. Treat as link.
+                        $isLink   = $true
+                        $linkOnly = $true
+                    }
+                    $realDirExists = $false
+                    try { $realDirExists = $info.Exists -and -not $isLink } catch {}
+                    if (-not ($isLink -or $realDirExists)) { continue }
+
+                    if ($linkOnly) {
+                        Log-Warn "podman-recover: removing reparse-point at $p (link, no follow)"
+                        cmd /c "rmdir `"$p`"" 2>&1 | ForEach-Object { Write-Log "podman-recover-rmdir: $_" }
+                    } else {
+                        Log-Warn "podman-recover: removing stale podman-machine state at $p"
+                        Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue
                     }
                 }
 
