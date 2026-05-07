@@ -2112,305 +2112,73 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
         Write-Host "  [!] Profile reload failed (will take effect on next pwsh launch): $($_.Exception.Message)" -ForegroundColor Yellow
     }
 
-    # Per operator: do NOT auto-launch anything. The MiOS app is now
-    # installed -- the operator launches it on their own from Start
-    # Menu or Desktop. No elevated wt.exe spawn, no UAC prompt, no
-    # auto-bootstrap. Clean exit with a one-screen summary.
+    # Steps 1-7 done -- WT, fonts, oh-my-posh, fastfetch, native app
+    # all live under the OPERATOR's user profile (HKCU, OneDrive,
+    # %LOCALAPPDATA%, per-user Start Menu). Bootstrap below
+    # (Initialize-DataDisk + bootstrap.ps1) needs ADMIN to shrink C:\
+    # and machine-scope-winget-install Podman Desktop. UAC-spawn an
+    # elevated pwsh that re-fetches Get-MiOS.ps1 with
+    # MIOS_GETMIOS_RELAUNCHED=1, which causes the inner call to
+    # SKIP this Pass-1 block entirely (no font reinstall) and
+    # fall through to the Pass-2 path (lines below this if-block --
+    # M:\ provisioning + bootstrap.ps1 hand-off).
     Write-Host ''
     Write-Host '+============================================================+' -ForegroundColor Cyan
-    Write-Host '|  MiOS install complete.                                    |' -ForegroundColor Cyan
+    Write-Host '|  MiOS install complete (Pass 1: user profile).            |' -ForegroundColor Cyan
     Write-Host '+============================================================+' -ForegroundColor Cyan
     Write-Host ''
-    Write-Host '  Launch from:  Start Menu  ->  MiOS' -ForegroundColor White
-    Write-Host '          or:   Desktop     ->  MiOS' -ForegroundColor White
-    Write-Host ''
-    Write-Host '  The MiOS terminal opens centered, borderless, 80x30, acrylic,' -ForegroundColor DarkGray
-    Write-Host '  Geist Mono Nerd Font, Hokusai palette, always-on-top.' -ForegroundColor DarkGray
-    Write-Host ''
-    Write-Host '  To run the full MiOS OS bootstrap (WSL2 + podman + dev VM),' -ForegroundColor DarkGray
-    Write-Host '  open a MiOS terminal and run:  irm $RepoUrl/raw/main/build-mios.ps1 | iex' -ForegroundColor DarkGray
-    Write-Host ''
-    return
-
-    # Derive the raw.githubusercontent.com URL from the .git clone URL.
-    # GitHub's "/raw/" path on github.com only works WITHOUT the .git
-    # suffix; the tracked URL has .git for `git clone` so we strip it
-    # here. Using raw.githubusercontent.com directly is the canonical
-    # path for `irm | iex` and avoids the github.com 302 redirect
-    # entirely.
-    #
-    # Cache-buster: Fastly serves raw.githubusercontent.com with a
-    # 5-minute max-age. Right after we push a fix, the operator's
-    # next `irm` can still hit the old cached object until that TTL
-    # expires. Appending ?cb=<unix-time> on the NESTED fetch (inside
-    # the relaunch) gives Fastly a fresh cache key, so even if their
-    # OUTER irm gets stale, the elevated window's fetch is fresh and
-    # any mismatch self-corrects on first run.
-    $rawBase = $RepoUrl -replace '\.git$', '' `
-                       -replace '^https?://github\.com/', 'https://raw.githubusercontent.com/'
-    $cacheBust = [int][double]::Parse((Get-Date -UFormat %s))
-    $rawUrl    = "$rawBase/$Branch/Get-MiOS.ps1?cb=$cacheBust"
-
-    $forwardSwitches = ""
-    if ($FullBuild)  { $forwardSwitches += " -FullBuild" }
-    if ($Unattended) { $forwardSwitches += " -Unattended" }
-    if ($Workflow)   { $forwardSwitches += " -Workflow $Workflow" }
-
-    # Build the relaunch script as a single string. We pass it to pwsh
-    # via -EncodedCommand (UTF-16LE base64) so embedded quotes, dollar
-    # signs, parens, etc. cannot be mangled by Start-Process /
-    # CreateProcess argument-splitting. The previous -Command path got
-    # tripped up by the apostrophe in "(wrong branch '$Branch')" --
-    # CreateProcess saw the embedded quote and terminated the throw
-    # string mid-message, leaving 'likely' looking like a cmdlet.
-    #
-    # HTML-sniff guard: GitHub serves 404s with an HTML body. Without
-    # this check iex would execute the HTML as garbage CSS/text.
-    # HTML-sniff guard for the elevated window's nested fetch.
-    #
-    # IMPORTANT: this entire file MUST NOT contain the literal substring
-    # '<!DOCTYPE' followed by ' html' OR the substring less-than-h-t-m-l
-    # followed by a non-word char. An older deployed version of
-    # Get-MiOS.ps1 had an unanchored regex that scanned the WHOLE
-    # response body for those tokens; if the operator's outer irm hits
-    # a Fastly POP still serving that pre-fix version, the OLD heredoc
-    # runs against THIS file's body. To stay invisible to the legacy
-    # regex during the cache-rollover window we build the marker
-    # strings via char-code concatenation below -- the literal token
-    # never appears anywhere in this source.
-    $relaunchCmd = @"
+    if ($isAdmin) {
+        Write-Host '  [+] Already running as Administrator -- continuing to Pass 2 (M:\ + bootstrap)...' -ForegroundColor Green
+        Write-Host ''
+        # Already admin -- fall out of this if-block and continue
+        # into the Pass-2 code below it (M:\ provisioning + bootstrap.ps1).
+        # No relaunch needed; nothing to set.
+    } else {
+        Write-Host '  [*] Elevating for Pass 2 (M:\ partition + Podman Desktop + dev VM)...' -ForegroundColor Cyan
+        $rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
+        $innerCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
-# Inner pwsh was launched with -NoProfile (clean bootstrap env). Manually
-# dot-source the AllHosts profile so the MiOS oh-my-posh init block runs
-# and the operator's prompt after the bootstrap finishes is rendered in
-# the Hokusai palette + Geist Mono NF glyphs. Silent if the profile or
-# oh-my-posh isn't installed yet -- the block is idempotent on every run.
-if (`$PROFILE.CurrentUserAllHosts -and (Test-Path `$PROFILE.CurrentUserAllHosts)) {
-    try { . `$PROFILE.CurrentUserAllHosts } catch {}
-}
+`$env:MIOS_AGREEMENT_ACK='accepted'
 try {
-    # Cache-Control: no-cache + Pragma: no-cache + a unique If-None-Match
-    # tag tell Fastly (and any intermediate proxies) to revalidate against
-    # origin instead of serving the cached body. raw.githubusercontent.com
-    # honors these on a best-effort basis -- combined with the cb=<epoch>
-    # query string above this gives us belt-and-braces cache busting.
-    `$noCacheHdr = @{
-        'Cache-Control' = 'no-cache, no-store, max-age=0'
-        'Pragma'        = 'no-cache'
-        'If-None-Match' = "mios-bootstrap-`$([guid]::NewGuid().ToString('N'))"
-    }
+    `$noCacheHdr = @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' }
     `$src = Invoke-RestMethod -Uri '$rawUrl' -Headers `$noCacheHdr -ErrorAction Stop
-    `$head = if (`$src) { `$src.TrimStart().Substring(0, [Math]::Min(64, `$src.TrimStart().Length)) } else { '' }
-    `$lt    = [char]60                              # '<'
-    `$dtTok = `$lt + '!DOC' + 'TYPE'                # '<!' + 'DOCTYPE' (split so this file never contains the joined literal)
-    `$hTok  = `$lt + 'ht' + 'ml'                    # less-than h-t-m-l, also split
-    if (-not `$src -or `$head.StartsWith(`$dtTok) -or `$head.StartsWith(`$hTok)) {
-        throw 'Get-MiOS.ps1 fetch returned a page (404 or wrong branch). URL: $rawUrl'
-    }
-    & ([scriptblock]::Create(`$src))$forwardSwitches
+    & ([scriptblock]::Create(`$src))
 } catch {
     Write-Host ''
     Write-Host ('  [!] Bootstrap failed: ' + `$_) -ForegroundColor Red
-    Write-Host '      URL: $rawUrl' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  Press Enter to close...' -ForegroundColor DarkGray -NoNewline
-    `$null = Read-Host
 }
+Write-Host ''
+Write-Host '  Press Enter to close...' -ForegroundColor DarkGray -NoNewline
+`$null = Read-Host
 "@
-
-    # PowerShell's -EncodedCommand expects UTF-16LE base64.
-    $bytes   = [System.Text.Encoding]::Unicode.GetBytes($relaunchCmd)
-    $encoded = [Convert]::ToBase64String($bytes)
-
-    # Resolve $shell to a directly-launchable on-disk path. PowerShell 7
-    # has THREE possible install shapes on Windows, and only ONE of them
-    # is launchable via Start-Process -Verb RunAs:
-    #
-    #   (a) MSI / standalone install at $env:ProgramFiles\PowerShell\7\pwsh.exe
-    #       -- LAUNCHABLE. Plain NTFS file, no ACL surprise, no alias
-    #       indirection. PREFERRED.
-    #
-    #   (b) Microsoft Store install at
-    #       $env:ProgramFiles\WindowsApps\Microsoft.PowerShell_*\pwsh.exe
-    #       -- NOT LAUNCHABLE directly. WindowsApps\ is owned by
-    #       TrustedInstaller with restricted ACLs; even the elevated
-    #       Administrator gets ERROR_ACCESS_DENIED (0x80070005) when
-    #       Start-Process tries to exec a binary from there. The only
-    #       supported entry point is via the App Execution Alias at
-    #       %LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe, which itself
-    #       fails on -Verb RunAs with ERROR_FILE_CANNOT_BE_ACCESSED
-    #       (0x80070780) because the alias-forward chain doesn't survive
-    #       UAC elevation. Both Store-install paths are unusable for our
-    #       elevation use case -- we deliberately SKIP them.
-    #
-    #   (c) Windows PowerShell 5.1 at
-    #       %WINDIR%\System32\WindowsPowerShell\v1.0\powershell.exe
-    #       -- LAUNCHABLE. Ships with every Windows install, fixed
-    #       canonical path, no alias chain, no TrustedInstaller ACL.
-    #       Older PS edition (5.1 vs 7.x) but the bootstrap relaunch
-    #       payload uses only Invoke-RestMethod + [scriptblock]::Create
-    #       + Read-Host, all of which work identically in 5.1. UNIVERSAL
-    #       FALLBACK.
-    #
-    # Resolution order: (a) MSI pwsh -> (c) Windows PS 5.1. We never
-    # attempt (b) because Start-Process can't launch from WindowsApps\
-    # under any elevation flow, alias or no alias.
-    $shell = $null
-    foreach ($c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe",
-                     "$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
-        if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) { $shell = $c; break }
-    }
-    if (-not $shell) {
-        $winPwsh = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-        if (Test-Path -LiteralPath $winPwsh -PathType Leaf) { $shell = $winPwsh }
-    }
-    if (-not $shell) {
-        # Truly degenerate: no MSI pwsh AND no Windows PS 5.1 (nuked
-        # System32?). Last-ditch alias path from PATH so Start-Process at
-        # least surfaces a clear error rather than silently hanging.
-        $shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-    }
-    $shellArgs = @(
-        '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-        '-NoExit',
-        '-EncodedCommand', $encoded
-    )
-
-    # Force a NEW STANDALONE WINDOW. Without this the elevated relaunch
-    # lands as a tab inside whatever existing Windows Terminal window
-    # the user already had open -- not what we want for an installer
-    # that paints a fixed-size 110-col dashboard. Strategy:
-    #   1. If wt.exe (Windows Terminal) is installed, spawn through it
-    #      with `-w -1 nt` -- "-w -1" creates a brand-new WT window
-    #      (not a new tab in window 0) and `nt` opens a new tab inside
-    #      that fresh window. The window is sized via the WT profile
-    #      defaults; the inner pwsh resizes via $Host.UI.RawUI.WindowSize
-    #      below to a guaranteed 110x42.
-    #   2. Otherwise fall back to plain Start-Process pwsh -- which on
-    #      hosts with conhost as the default terminal (Win10, or Win11
-    #      with "Default Terminal" set to "Windows Console Host") opens
-    #      a separate conhost window that pwsh can size programmatically.
-    # wt.exe argument grammar:
-    #     wt [global-args] new-tab [tab-args] [commandline]
-    # `nt` is the short form of `new-tab`. `--title` is a TAB-ARG (must
-    # follow `nt`) and the title MUST NOT contain a space -- Start-Process
-    # flattens -ArgumentList back into a string and ProcessCreate then
-    # splits on whitespace, so "MiOS Bootstrap" becomes two argv tokens
-    # and wt tries to spawn a command literally named "Bootstrap" ->
-    # 2147942402 (0x80070002, file-not-found). Single-token title
-    # sidesteps that. `-w -1` is a GLOBAL arg meaning "new WT window"
-    # (vs new tab in the operator's existing window).
-    #
-    # Resolution chain (try in order, fall through on failure):
-    #   1. wt.exe via App Execution Alias at WindowsApps\wt.exe.
-    #      Common breakage: "The stub received bad data" -- the alias
-    #      stub forwards to the UWP terminal, but `-Verb RunAs` flips
-    #      the security context mid-forward and the UWP package
-    #      activation fails. Hits Server SKUs and some Win11 builds.
-    #   2. wt.exe resolved via the real UWP install path at
-    #      Program Files\WindowsApps\Microsoft.WindowsTerminal_*\wt.exe
-    #      (skips the alias stub entirely).
-    #   3. Plain Start-Process pwsh -Verb RunAs (conhost). Always works.
-    # Resolve wt.exe to WT STABLE -- the base install. Falls back to
-    # the App Execution Alias when the AppxPackage lookup fails.
-    $wtStableExe = $null
-    try {
-        $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
-        if ($pkg -and $pkg.InstallLocation) {
-            $cand = Join-Path $pkg.InstallLocation 'wt.exe'
-            if (Test-Path -LiteralPath $cand) { $wtStableExe = $cand }
+        $innerBytes   = [Text.Encoding]::Unicode.GetBytes($innerCmd)
+        $innerEncoded = [Convert]::ToBase64String($innerBytes)
+        # Resolve a directly-launchable pwsh (skip WindowsApps\ -- the
+        # Store install's TrustedInstaller ACL blocks Start-Process
+        # -Verb RunAs there).
+        $shell = $null
+        foreach ($c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe","$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
+            if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) { $shell = $c; break }
         }
-    } catch {}
-    $wtExeCmd = Get-Command wt.exe -ErrorAction SilentlyContinue
-    $wtExe = if ($wtStableExe) { [PSCustomObject]@{ Source = $wtStableExe } } else { $wtExeCmd }
-    $elevated = $false
-    if ($wtExe) {
-        # Global args (before `nt`) configure the WT WINDOW; tab args
-        # (after `nt`) configure the tab. -p MiOS-Bootstrap pins the
-        # profile we just provisioned so the new window inherits the
-        # Geist font, MiOS color scheme, zero padding, suppressed title.
-        # --pos / --size override settings.json initialCols/Rows for this
-        # specific launch; --focus enforces borderless even if an older
-        # WT build doesn't honor launchMode=focus.
-        $wtArgs = @(
-            '-w','-1',
-            '--pos',  $miosWindowPos,
-            '--size', '80,30',
-            '--focus',
-            'nt',
-            '--title','MiOS-Bootstrap',
-            '-p','MiOS',
-            $shell
-        ) + $shellArgs
-        try {
-            $wtTarget = if ($wtPreviewExe) { $wtPreviewExe } else { 'wt.exe' }
-            Start-Process $wtTarget -ArgumentList $wtArgs -Verb RunAs -ErrorAction Stop
-            $elevated = $true
-        } catch {
-            Write-Host "  [!] wt.exe elevation failed: $($_.Exception.Message)" -ForegroundColor Yellow
-            # Last-ditch: stable WT's UWP path (only if Preview wasn't found).
-            $realWt = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Filter 'wt.exe' -Recurse -ErrorAction SilentlyContinue |
-                      Where-Object { $_.FullName -match 'Microsoft\.WindowsTerminal' } |
-                      Select-Object -First 1 -ExpandProperty FullName
-            if ($realWt) {
-                Write-Host "  [*] Retrying via real UWP path: $realWt" -ForegroundColor Cyan
-                try {
-                    Start-Process $realWt -ArgumentList $wtArgs -Verb RunAs -ErrorAction Stop
-                    $elevated = $true
-                } catch {
-                    Write-Host "  [!] Direct UWP wt.exe also failed: $($_.Exception.Message)" -ForegroundColor Yellow
-                }
-            }
-            if (-not $elevated) {
-                Write-Host "  [*] Falling through to plain pwsh elevation (conhost window)." -ForegroundColor Cyan
-            }
+        if (-not $shell) {
+            $w51 = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+            if (Test-Path -LiteralPath $w51 -PathType Leaf) { $shell = $w51 }
         }
-    }
-    if (-not $elevated) {
-        # Plain elevation. Pass -WorkingDirectory $env:WINDIR so the
-        # elevated process gets a WD it's guaranteed to be able to read
-        # (avoids the "Administrator can't see %USERPROFILE%" path-not-
-        # accessible class of 0x80070780 failures when the launching user
-        # had a OneDrive-redirected or non-default home directory).
+        if (-not $shell) { $shell = 'powershell.exe' }
+        $shellArgs = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand', $innerEncoded)
         try {
             Start-Process -FilePath $shell -ArgumentList $shellArgs -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
-            $elevated = $true
+            Write-Host '  [+] Elevated bootstrap window opened. Continuing the install there.' -ForegroundColor Green
         } catch {
-            Write-Host "  [!] $shell elevation failed: $($_.Exception.Message)" -ForegroundColor Yellow
-            # Last-resort fallback: Windows PowerShell 5.1 at the canonical
-            # System32 path (skips any App Execution Alias chain entirely).
-            $winPwsh = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-            if ((Test-Path -LiteralPath $winPwsh -PathType Leaf) -and ($shell -ne $winPwsh)) {
-                Write-Host "  [*] Retrying via Windows PowerShell 5.1: $winPwsh" -ForegroundColor Cyan
-                try {
-                    Start-Process -FilePath $winPwsh -ArgumentList $shellArgs -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
-                    $elevated = $true
-                } catch {
-                    Write-Host "  [!] Windows PowerShell 5.1 elevation also failed: $($_.Exception.Message)" -ForegroundColor Red
-                }
-            }
+            Write-Host "  [!] Self-elevation failed: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host '      Open an elevated PowerShell manually and re-run:' -ForegroundColor DarkGray
+            Write-Host "        irm $rawUrl | iex" -ForegroundColor DarkGray
         }
-    }
-    if ($elevated -and $wtExe) {
-        # Belt-and-braces re-center: WT in focus mode often ignores --pos
-        # on the first launch (lands at 0,0 or at the previous WT
-        # window's last saved position). Wait for the WT hwnd to surface,
-        # then SetWindowPos to true screen center based on actual outer
-        # window dims. Without this the operator can be left with an
-        # off-screen window that's only closeable via 'exit' typed
-        # blind -- defeating the whole point of focus mode.
-        try { Move-MiOSWindowToCenter -ScreenInfo $miosWindowInfo | Out-Null } catch {}
-    }
-    if (-not $elevated) {
-        Write-Host ''
-        Write-Host '  [!] Could not spawn an elevated pwsh window via any path.' -ForegroundColor Red
-        Write-Host '      Manually open an elevated PowerShell and re-run:' -ForegroundColor DarkGray
-        Write-Host "        irm $rawUrl | iex" -ForegroundColor DarkGray
         Write-Host ''
         return
     }
-    Write-Host "  [+] New pwsh window opened. Continuing the bootstrap there." -ForegroundColor Green
-    return
+
 }
 
 # 2. Resize host window to 80x30 -- the canonical TTY0 / text-mode-3+
