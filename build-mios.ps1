@@ -5243,15 +5243,22 @@ $endMark
         $wtSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'
     }
     $hubPathForJson = $hubPath -replace '\\', '\\'
-    # Per operator: "MiOS app IS also MiOS-DEV/podman-MiOS-DEV!!!
-    # Make the GLOBAL MiOS app WINDOWS use the INSTALLED MIOS PROFILE!!!"
-    # The MiOS WT app launches DIRECTLY into the dev VM (the WSL distro
-    # provisioned in Phase 3). When the operator presses Win+Space (or
-    # opens the MiOS shortcut), wt -p MiOS spawns wsl into MiOS-DEV
-    # which immediately runs mios-dash showing the framed Linux
-    # dashboard (the one the operator just confirmed works manually).
-    $_resolvedDistro = $BuilderDistro
-    $miosCmd = "wsl.exe -d $_resolvedDistro --user mios --cd ~"
+    # Per operator (clarified 2026-05-07): "MiOS app opens to a windows
+    # terminal wherein 'mios *' invocations are done on the windows
+    # host first and relevant MiOS-DEV 'mios *' invocations are
+    # directly passed through to the podman-MiOS-DEV machine and then
+    # the terminal is sshd in to the MiOS-DEV environment directly".
+    #
+    # So MiOS profile commandline = Windows-side pwsh (loads MiOS PS
+    # profile body with dashboard + `mios <verb>` dispatcher). The
+    # dispatcher decides per-verb: Windows-host or pass-through to
+    # MiOS-DEV via wsl/ssh. MiOS and MiOS-DEV WT profiles are
+    # DIFFERENT entry points to the SAME branded experience -- MiOS
+    # = Windows terminal, MiOS-DEV = direct dev VM shell.
+    #
+    # Get-MiOS.ps1's Install-MiOSTerminalProfile owns commandline +
+    # startingDirectory; we ONLY refresh the icon here (Pass-2 has
+    # access to mios.ico after Generate-MiosIcons ran).
     if (Test-Path $wtSettings) {
         try {
             $wtRaw = Get-Content $wtSettings -Raw
@@ -5263,18 +5270,10 @@ $endMark
             $miosGuid    = '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}'
             $miosDevGuid = '{a8b5c2d3-e4f5-6789-abcd-ef0123456790}'
             if ($wtJson.profiles -and $wtJson.profiles.list) {
-                # Rebind BOTH MiOS and MiOS-DEV profiles to wsl into the
-                # dev VM. They're "one of the same" per the operator.
-                # Get-MiOS.ps1's Pass-1 owns the chrome (acrylic, font,
-                # scheme); we own the commandline (which dev distro to
-                # enter) since only Pass-2 knows the resolved name.
                 foreach ($p in $wtJson.profiles.list) {
                     if ($p.guid -eq $miosGuid -or $p.guid -eq $miosDevGuid) {
-                        $p.commandline = $miosCmd
-                        if ($p.PSObject.Properties['startingDirectory']) {
-                            # null = let wsl pick the user's HOME (~).
-                            $p.startingDirectory = $null
-                        }
+                        # ICON ONLY -- commandline + startingDirectory
+                        # owned by Get-MiOS.ps1's Pass-1 patcher.
                         if ($icoPath -and (-not $p.PSObject.Properties['icon'])) {
                             $p | Add-Member -NotePropertyName icon -NotePropertyValue $icoPath -Force
                         } elseif ($icoPath) {
@@ -5283,7 +5282,7 @@ $endMark
                     }
                 }
                 $wtJson | ConvertTo-Json -Depth 32 | Set-Content -Path $wtSettings -Encoding UTF8
-                Log-Ok "Windows Terminal MiOS + MiOS-DEV profiles rebound to: $miosCmd"
+                Log-Ok "Windows Terminal MiOS + MiOS-DEV profile icons refreshed (commandline left untouched)"
             } else {
                 Log-Warn "Windows Terminal MiOS profile not found (Get-MiOS.ps1 entry didn't run?) -- skipping rebind"
             }
