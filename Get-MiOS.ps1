@@ -422,15 +422,24 @@ function Install-MiOSGeistFont {
             New-Item -Path $regKey -Force | Out-Null
         }
 
-        # Prefer the *NerdFontMono* variants (forced fixed-width, the only
-        # safe choice for terminals). Fallback to *NerdFont* if Mono ones
-        # aren't present in the release.
-        $preferred = Get-ChildItem $tmpDir -Filter '*NerdFontMono*.ttf' -Recurse -ErrorAction SilentlyContinue
+        # Get every .ttf file in the extracted tree, then filter by name.
+        # Nerd Fonts release naming has changed multiple times -- the
+        # Get-ChildItem -Filter pattern was missing valid TTFs because
+        # of case-sensitivity and substring quirks on PowerShell 7.6+.
+        # Use -match instead which is case-insensitive by default.
+        $allTtfs = Get-ChildItem $tmpDir -Recurse -File -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Name -match '\.ttf$' }
+        # Prefer "Mono" variants (fixed-width, terminal-safe). Then
+        # general "NerdFont". Then ANY .ttf as last resort.
+        $preferred = $allTtfs | Where-Object { $_.Name -match 'NerdFontMono' }
         if (-not $preferred) {
-            $preferred = Get-ChildItem $tmpDir -Filter '*NerdFont*.ttf' -Recurse -ErrorAction SilentlyContinue
+            $preferred = $allTtfs | Where-Object { $_.Name -match 'NerdFont' }
         }
         if (-not $preferred) {
-            Write-Host "  [!] GeistMono.zip extracted but no .ttf files matched the expected pattern." -ForegroundColor Yellow
+            $preferred = $allTtfs
+        }
+        if (-not $preferred) {
+            Write-Host "  [!] GeistMono.zip extracted but contains no .ttf files. (Found $($allTtfs.Count))" -ForegroundColor Yellow
             return $false
         }
 
@@ -484,11 +493,11 @@ function Install-MiOSTerminalProfile {
     [void](Wait-MiOSWindowsTerminalReady)
     $settingsPath = Get-MiOSTerminalSettingsPath
     if (-not $settingsPath) {
-        Write-Host "  [!] Windows Terminal Preview not ready (LocalState dir missing) -- skipping settings patch." -ForegroundColor Yellow
+        Write-Host "  [!] Windows Terminal not ready (LocalState dir missing) -- skipping settings patch." -ForegroundColor Yellow
         Write-Host "      Re-run irm|iex after WT first-launch creates the dir." -ForegroundColor DarkGray
         return $null
     }
-    Write-Host "  [*] Patching Windows Terminal Preview settings: $settingsPath" -ForegroundColor Cyan
+    Write-Host "  [*] Patching Windows Terminal settings: $settingsPath" -ForegroundColor Cyan
 
     # Stable WT profile GUID for "MiOS-Bootstrap". Re-using the same GUID
     # across runs lets us upsert idempotently instead of polluting the
@@ -1817,13 +1826,24 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
         Set-ItemProperty -Path $personalize -Name 'SystemUsesLightTheme' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
         Set-ItemProperty -Path $personalize -Name 'ColorPrevalence'      -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
 
-        $dwm = 'HKCU:\Software\Microsoft\Windows\DWM'
-        if (-not (Test-Path $dwm)) { New-Item -Path $dwm -Force | Out-Null }
-        $miosAccentDword = [int][uint32]0xFF7F401A
-        Set-ItemProperty -Path $dwm -Name 'AccentColor'           -Value $miosAccentDword -Type DWord -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path $dwm -Name 'ColorizationColor'     -Value $miosAccentDword -Type DWord -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path $dwm -Name 'ColorizationAfterglow' -Value $miosAccentDword -Type DWord -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path $dwm -Name 'ColorPrevalence'       -Value 1                -Type DWord -Force -ErrorAction SilentlyContinue
+        # Use the .NET Registry API directly. Set-ItemProperty -Type
+        # DWord rejects negative Int32 values (its validator expects
+        # UInt32 inputs) -- and 0xFF7F401A is 4286529562 which overflows
+        # Int32 to -8437734. The .NET RegistryKey.SetValue method
+        # accepts the raw bit-equal Int32, stores 32 bits, and DWM
+        # reads it back as the unsigned 0xFF7F401A.
+        try {
+            $dwmKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\DWM')
+            try {
+                $miosAccentSigned = [BitConverter]::ToInt32([BitConverter]::GetBytes([uint32]0xFF7F401A), 0)
+                $dwmKey.SetValue('AccentColor',           $miosAccentSigned, 'DWord')
+                $dwmKey.SetValue('ColorizationColor',     $miosAccentSigned, 'DWord')
+                $dwmKey.SetValue('ColorizationAfterglow', $miosAccentSigned, 'DWord')
+                $dwmKey.SetValue('ColorPrevalence',       1,                 'DWord')
+            } finally { $dwmKey.Close() }
+        } catch {
+            Write-Host "  [!] DWM accent registry write failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
         Write-Host "  [+] Windows global theme set to MiOS palette (dark mode + #1A407F accent + transparency)." -ForegroundColor DarkGray
     } catch {
         Write-Host "  [!] Windows theme registry write failed: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -1848,6 +1868,19 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     Install-MiOSPowerShellProfile   | Out-Null
     Write-Host "  [*] Step 6/6: Registering MiOS as a native Windows app..." -ForegroundColor Cyan
     Install-MiOSNativeApp           | Out-Null
+
+    # Reload the user profile in the CURRENT irm|iex pwsh session so
+    # the regex-patch + PSReadLine reload + MiOS prompt take effect
+    # immediately, without the operator having to close + re-open
+    # pwsh. The redirector was just written -- dot-source it now.
+    try {
+        if ($PROFILE.CurrentUserAllHosts -and (Test-Path -LiteralPath $PROFILE.CurrentUserAllHosts)) {
+            . $PROFILE.CurrentUserAllHosts
+            Write-Host "  [+] Profile reloaded in this session (oh-my-posh + MiOS prompt active)." -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Host "  [!] Profile reload failed (will take effect on next pwsh launch): $($_.Exception.Message)" -ForegroundColor Yellow
+    }
 
     # Per operator: do NOT auto-launch anything. The MiOS app is now
     # installed -- the operator launches it on their own from Start
