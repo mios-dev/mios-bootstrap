@@ -1380,19 +1380,19 @@ function Show-PostBootstrapMenu {
     } catch {}
     while ($true) {
         Write-Host ""
-        Write-Host "  +-- MiOS bootstrap complete --------------------------------+" -ForegroundColor Green
+        Write-Host "  ╭── MiOS bootstrap complete ───────────────────────────────╮" -ForegroundColor Green
         if ($devDistro) {
-            Write-Host ("  |  Dev distro:  {0}{1}|" -f $devDistro, (' ' * [Math]::Max(0, 44 - $devDistro.Length))) -ForegroundColor DarkGray
-            Write-Host ("  |  Enter via:   wsl -d {0}{1}|" -f $devDistro, (' ' * [Math]::Max(0, 36 - $devDistro.Length))) -ForegroundColor DarkGray
-            Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Green
+            Write-Host ("  │  Dev distro:  {0}{1}│" -f $devDistro, (' ' * [Math]::Max(0, 43 - $devDistro.Length))) -ForegroundColor DarkGray
+            Write-Host ("  │  Enter via:   wsl -d {0} --user mios{1}│" -f $devDistro, (' ' * [Math]::Max(0, 24 - $devDistro.Length))) -ForegroundColor DarkGray
+            Write-Host "  ├──────────────────────────────────────────────────────────┤" -ForegroundColor Green
         }
-        Write-Host "  |  1) Continue to build (OCI image + deployables)           |" -ForegroundColor White
-        Write-Host "  |  2) Change settings (open mios.toml in configurator)      |" -ForegroundColor White
-        Write-Host "  |  3) System checks (preflight + dev VM health)             |" -ForegroundColor White
-        Write-Host "  |  4) Logs / reports                                        |" -ForegroundColor White
-        Write-Host "  |  5) Enter dev distro now (wsl -d ...)                     |" -ForegroundColor White
-        Write-Host "  |  6) Close                                                 |" -ForegroundColor White
-        Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Green
+        Write-Host "  │  1) Continue to build (OCI image + deployables)          │" -ForegroundColor White
+        Write-Host "  │  2) Change settings (open mios.toml in configurator)     │" -ForegroundColor White
+        Write-Host "  │  3) System checks (preflight + dev VM health)            │" -ForegroundColor White
+        Write-Host "  │  4) Logs / reports                                       │" -ForegroundColor White
+        Write-Host "  │  5) Enter dev distro now (wsl -d ...)                    │" -ForegroundColor White
+        Write-Host "  │  6) Close                                                │" -ForegroundColor White
+        Write-Host "  ╰──────────────────────────────────────────────────────────╯" -ForegroundColor Green
         $choice = Read-Host "  Pick [1-6]"
         switch ($choice.Trim()) {
             '1' {
@@ -1523,14 +1523,21 @@ $driverCmd
             }
             '5' {
                 if ($devDistro) {
-                    # --user mios: machine-os's daemonContainerNS [boot]
-                    # shim ignores /etc/wsl.conf [user] default=, so we
-                    # have to pass --user explicitly to land in the mios
-                    # account. Falls through silently to the bundled
-                    # `user` if mios doesn't exist (rare edge case where
-                    # sysusers failed during seed).
-                    Write-Host "  -> launching wsl -d $devDistro --user mios ..." -ForegroundColor Cyan
-                    & wsl.exe -d $devDistro --user mios
+                    # Resolve which user actually exists in the distro
+                    # before launching. Rootful machine-os ships with
+                    # `core` (and root) but no `mios` user until the
+                    # OCI build completes -- in which case --user mios
+                    # fails with WSL_E_USER_NOT_FOUND. Probe the
+                    # distro's /etc/passwd to pick the first available
+                    # account in priority order: mios > core > root.
+                    $resolvedUser = 'root'
+                    try {
+                        $passwd = (& wsl.exe -d $devDistro --user root -- cat /etc/passwd 2>$null) -join "`n"
+                        if ($passwd -match '(?m)^mios:') { $resolvedUser = 'mios' }
+                        elseif ($passwd -match '(?m)^core:') { $resolvedUser = 'core' }
+                    } catch {}
+                    Write-Host "  -> launching wsl -d $devDistro --user $resolvedUser ..." -ForegroundColor Cyan
+                    & wsl.exe -d $devDistro --user $resolvedUser
                 } else {
                     Write-Host "  No registered MiOS dev distro found. Try `wsl --list` and enter manually." -ForegroundColor Yellow
                     Write-Host ""
