@@ -2907,30 +2907,61 @@ try {
         Write-Host '      build-mios.ps1''s own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.' -ForegroundColor DarkGray
         Write-Host ''
     } else {
-        # Bootstrap completed -- per operator: "mios.bat DOES EVERYTHING--
-        # ALL THE WAY TO LAUNCHING THE MIOS APP WITH IT ALL SETUP AND
-        # THEMED AND SIZED ACCORDINGLY". Spawn mios-launch.ps1 (the
-        # native-app launcher staged on M:\) which opens the WT MiOS
-        # profile at the configured cols x rows centered on the active
-        # display, with acrylic + 50% transparency + scrollbar-less +
-        # frame-less chrome. This is THE handoff to daily-use MiOS.
-        `$_launcher = 'M:\MiOS\bin\mios-launch.ps1'
-        if (Test-Path -LiteralPath `$_launcher) {
-            Write-Host ''
-            Write-Host '  [+] Launching MiOS app window (WT MiOS profile)...' -ForegroundColor Green
+        # Bootstrap completed. Per operator: "launching the installed
+        # MiOS app is the 'mios build' entry point!!! everything needed
+        # before that is handled all by the mios.bat".
+        #
+        # The MiOS app launch IS the build trigger. We spawn wt.exe
+        # directly with --pos/--size/--focus/-p MiOS so the WT MiOS
+        # profile (acrylic 50% / scrollbar-less / frame-less / 80x20)
+        # opens centered on the active monitor, AND we pipe `mios build`
+        # into the hosted pwsh so the build pipeline ignites the moment
+        # the operator sees the themed window. No "type mios build
+        # later" -- the app IS mios build.
+        Write-Host ''
+        Write-Host '  [+] Launching MiOS app -- THIS IS the mios build entry point...' -ForegroundColor Green
+        try {
+            # Resolve wt.exe (prefer Stable appx install location for
+            # deterministic profile binding; fall back to PATH alias).
+            `$_wtExe = `$null
             try {
-                # Single-line invocation -- line-continuation backticks
-                # don't survive the @"..."@ outer template render reliably
-                # (the operator hit "-ArgumentList not recognized as a
-                # cmdlet" because the backtick-EOL got eaten and pwsh
-                # parsed each line as its own command).
-                Start-Process -FilePath 'pwsh.exe' -ArgumentList @('-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File', `$_launcher) -ErrorAction Stop
-            } catch {
-                Write-Host ('  [!] MiOS app launch failed: ' + `$_.Exception.Message) -ForegroundColor Yellow
-                Write-Host ('      Launch manually: pwsh -File ' + `$_launcher) -ForegroundColor DarkGray
+                `$_pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
+                if (`$_pkg -and `$_pkg.InstallLocation) {
+                    `$_cand = Join-Path `$_pkg.InstallLocation 'wt.exe'
+                    if (Test-Path -LiteralPath `$_cand) { `$_wtExe = `$_cand }
+                }
+            } catch {}
+            if (-not `$_wtExe) {
+                `$_wtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source
             }
-        } else {
-            Write-Host ('  [!] Native-app launcher missing: ' + `$_launcher) -ForegroundColor Yellow
+            if (-not `$_wtExe) { throw 'wt.exe not found -- WT install verification failed' }
+            # Pre-compute centered position on the cursor's active
+            # monitor (cursor was preserved from pre-UAC capture).
+            `$_pt2 = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
+            `$_s2  = [System.Windows.Forms.Screen]::FromPoint(`$_pt2).WorkingArea
+            `$_x2  = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_winWPx)) / 2)
+            `$_y2  = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_winHPx)) / 2)
+            # Fire wt.exe with -p MiOS hosting pwsh -NoExit -Command "mios build".
+            # The pwsh in the WT MiOS profile loads the MiOS PS profile body
+            # (oh-my-posh + dashboard + `mios <verb>` dispatcher), then
+            # executes `mios build` which:
+            #   1. Opens mios-config.html in the operator's browser
+            #   2. Waits for save (Enter)
+            #   3. Promotes Downloads/mios.toml -> M:\etc\mios\
+            #   4. mios-pull syncs M:\
+            #   5. Hands off to build-mios.ps1 -BuildOnly -> mios-build-driver
+            `$_wtArgs = @(
+                '--pos', "`$(`$_x2),`$(`$_y2)",
+                '--size', "$_elevCols,$_elevRows",
+                '--focus',
+                '-p', 'MiOS',
+                'pwsh', '-NoExit', '-Command', 'mios build'
+            )
+            Start-Process -FilePath `$_wtExe -ArgumentList `$_wtArgs -ErrorAction Stop
+            Write-Host '       wt.exe -p MiOS opened; `mios build` is running inside.' -ForegroundColor DarkGray
+        } catch {
+            Write-Host ('  [!] MiOS app launch failed: ' + `$_.Exception.Message) -ForegroundColor Yellow
+            Write-Host '      Manual launch: open Start Menu / Desktop "MiOS Build" shortcut.' -ForegroundColor DarkGray
         }
     }
 } catch {
