@@ -2345,15 +2345,41 @@ function New-BuilderDistro([hashtable]$HW) {
     }
     if (-not $MachineImage) {
         $machineCacheDir = Join-Path $script:MiosInstallDir 'machine-os'
-        try {
-            $MachineImage = Get-PodmanMachineOsImage `
-                -Repo $machineRepo `
-                -Tag  $machineTag `
-                -CacheDir $machineCacheDir
-        } catch {
-            Log-Warn "Pre-stage of $machineRepo`:$machineTag failed: $_"
-            Log-Warn "Will let podman attempt its own pull (likely fails on this client)."
-            $MachineImage = $null
+        # Retry-with-backoff loop. quay.io has been intermittently
+        # 502/503-ing during peak hours; without retry, a 5-minute
+        # outage kills the entire bootstrap. 3 attempts with 5s/15s/30s
+        # backoff covers most transient registry blips. Cache-hit
+        # short-circuit inside Get-PodmanMachineOsImage means a
+        # successful prior fetch makes subsequent retries instant.
+        $MachineImage = $null
+        $lastErr      = $null
+        $delays       = @(0, 5, 15, 30)  # 4 tries: 0s, 5s, 15s, 30s
+        for ($i = 0; $i -lt $delays.Count; $i++) {
+            if ($delays[$i] -gt 0) {
+                Set-Step "Retry $i/$($delays.Count - 1) for $machineRepo`:$machineTag in $($delays[$i])s..."
+                Start-Sleep -Seconds $delays[$i]
+            }
+            try {
+                $MachineImage = Get-PodmanMachineOsImage `
+                    -Repo $machineRepo `
+                    -Tag  $machineTag `
+                    -CacheDir $machineCacheDir
+                break  # success
+            } catch {
+                $lastErr = $_
+                $msg     = "$_"
+                # 502/503/504/timeout = retryable. Anything else (404,
+                # 401, parse error) = permanent, break out.
+                if ($msg -notmatch '\b(50[234]|timed out|timeout|connection reset|connection refused|RemoteIO|temporarily)\b') {
+                    Log-Warn "Pre-stage of $machineRepo`:$machineTag hit non-retryable error: $msg"
+                    break
+                }
+                Log-Warn "Pre-stage attempt $($i+1) failed (retryable): $msg"
+            }
+        }
+        if (-not $MachineImage) {
+            Log-Warn "Pre-stage of $machineRepo`:$machineTag failed after retries: $lastErr"
+            Log-Warn "Will let podman attempt its own pull (likely fails on this client if quay.io is still down)."
         }
     }
 
