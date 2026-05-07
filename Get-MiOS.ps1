@@ -1066,10 +1066,10 @@ $Script:MiosFastfetchConfig = @'
     { "type": "uptime",   "key": "Up"     },
     { "type": "shell",    "key": "Shell"  },
     { "type": "cpu",      "key": "CPU"    },
-    { "type": "gpu",      "key": "GPU",     "format": "{name}" },
+    { "type": "gpu",      "key": "GPU",     "format": "{name}", "hideType": "integrated" },
     { "type": "memory",   "key": "Mem"    },
-    { "type": "disk",     "key": "C:",      "folders": "C:\\", "format": "{size-used} / {size-total}" },
-    { "type": "disk",     "key": "M:",      "folders": "M:\\", "format": "{size-used} / {size-total}" },
+    { "type": "disk",     "key": "C",       "folders": "C:\\", "format": "{size-used} / {size-total}" },
+    { "type": "disk",     "key": "M",       "folders": "M:\\", "format": "{size-used} / {size-total}" },
     { "type": "datetime", "key": "Time"   }
   ]
 }
@@ -1612,10 +1612,25 @@ if (`$true) {
 
         # Top frame.
         Write-Host (`$TL + (`$H * (`$WIDTH - 2)) + `$TR) -ForegroundColor Blue
-        # Centered ASCII logo (operator-blue).
+        # Centered ASCII logo (operator-blue). Center the BLOCK (not
+        # each line individually) -- the logo's internal alignment
+        # depends on each line's leading whitespace, so per-line
+        # centering would skew the 3D blocks. Find the longest line,
+        # compute one left-padding, apply to every line, right-pad
+        # each line to the longest length so the right border is flush.
         if (Test-Path -LiteralPath `$LogoPath) {
-            `$logoLines = (Get-Content -LiteralPath `$LogoPath) | Where-Object { `$_ -ne `$null }
-            foreach (`$ll in `$logoLines) { Write-Host (_Center `$ll) -ForegroundColor Blue }
+            `$logoLines = @(Get-Content -LiteralPath `$LogoPath) | Where-Object { `$_ -ne `$null }
+            `$maxLen = 0
+            foreach (`$ll in `$logoLines) {
+                `$len = (_Strip `$ll).Length
+                if (`$len -gt `$maxLen) { `$maxLen = `$len }
+            }
+            `$blockLPad = ' ' * [math]::Max(0, [math]::Floor((`$INNER - `$maxLen) / 2))
+            foreach (`$ll in `$logoLines) {
+                `$stripped = _Strip `$ll
+                `$rPad = ' ' * [math]::Max(0, `$maxLen - `$stripped.Length)
+                Write-Host (_Frame (`$blockLPad + `$ll + `$rPad)) -ForegroundColor Blue
+            }
         }
         # Divider.
         Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
