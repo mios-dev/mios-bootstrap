@@ -5542,14 +5542,17 @@ try {
 # dashboard's strict-clamp width logic in Show-Dashboard would have
 # to compensate for; cleaner to never go wide in the first place.
 Try-ResizeConsole -Cols 80 -Rows 30
-# Interactive (in-place repaint) is now the DEFAULT. Test-DashboardCanRedraw
-# probes [Console]::CursorTop, RawUI.WindowSize, etc. and falls back to log
-# mode automatically if the host can't redraw (transcript host, redirected
-# stdout, very narrow terminal). Set MIOS_DASHBOARD_MODE=log to force the
-# linear-log fallback explicitly (useful for CI / non-tty pipelines).
-$script:DashboardMode = if ($env:MIOS_DASHBOARD_MODE -eq 'log') {
-    'log'
-} elseif (Test-DashboardCanRedraw) {
+# Linear-log mode is the DEFAULT. Operator complaint:
+#   "the spawned powershell window from irm|iex mios.bat entry still
+#    flickers/pins to shells top row and flashes everytime a new print
+#    occurs"
+# That's the symptom of interactive (in-place repaint) mode -- every
+# Show-Dashboard call rewrites the framed dashboard at the cursor-tracked
+# top row, and conhost/WT pseudo-console tears visibly on per-row
+# SetCursorPosition + Write. Linear log mode just streams Write-Host
+# lines, no repaint, no flicker. Operators who specifically want the
+# framed live dashboard opt in via $env:MIOS_DASHBOARD_MODE='interactive'.
+$script:DashboardMode = if ($env:MIOS_DASHBOARD_MODE -eq 'interactive' -and (Test-DashboardCanRedraw)) {
     'interactive'
 } else {
     'log'

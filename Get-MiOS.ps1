@@ -1459,20 +1459,30 @@ foreach ($mod in $psModules) {
         Write-Host "  [!] winget not available; skipping CLI extras." -ForegroundColor Yellow
         return
     }
-    # Per operator: install all the MiOS-aligned developer + system-info
-    # CLI tools so the operator's Windows shell has the same surface as
-    # the deployed MiOS Linux side. fastfetch is staged in Step 4/6
-    # earlier with the MiOS-themed config.jsonc + branding.
+    # Per operator: install EVERYTHING a fresh Windows host needs to run
+    # MiOS-DEV end-to-end. Critical runtime/toolchain that Pass 2 +
+    # podman + WSL2 + build-mios.ps1 depend on PLUS the MiOS terminal
+    # CLI surface that mirrors the deployed Linux side. No bloat (no
+    # browser / editor / utility GUIs -- those don't belong in the
+    # bootstrap, the operator brings their own).
     $wingetTools = @(
-        'sharkdp.bat',          # syntax-highlighted cat
-        'junegunn.fzf',         # fuzzy finder
-        'GitHub.cli',           # gh CLI
-        'aristocratos.btop4win',# btop system monitor (Windows port)
-        'fastfetch-cli.fastfetch', # already in Step 4/6 but idempotent here too
-        'sharkdp.fd',           # fast `find` alternative
-        'BurntSushi.ripgrep.MSVC', # rg
-        'jqlang.jq',            # JSON query
-        'Microsoft.WindowsTerminal' # ensure WT installed (mostly already from Step 1)
+        # ── Critical runtime / toolchain ─────────────────────────────────────
+        'Git.Git',                   # git clone + fetch + reset (Pass 2 needs)
+        'Microsoft.PowerShell',      # pwsh 7 (trampoline + Pass-2 host)
+        'Microsoft.WSL',             # Windows Subsystem for Linux 2
+        'Microsoft.WindowsTerminal', # WT (also Step 1; idempotent)
+        '7zip.7zip',                 # archive support (.7z, .tar.zst, .xz)
+        'Microsoft.VCRedist.2015+.x64', # VC++ runtime
+
+        # ── MiOS terminal CLI surface ────────────────────────────────────────
+        'sharkdp.bat',               # syntax-highlighted cat
+        'sharkdp.fd',                # fast find
+        'BurntSushi.ripgrep.MSVC',   # rg
+        'junegunn.fzf',              # fuzzy finder
+        'jqlang.jq',                 # JSON query
+        'GitHub.cli',                # gh
+        'aristocratos.btop4win',     # btop (Windows port)
+        'fastfetch-cli.fastfetch'    # fastfetch (also Step 4/6; idempotent)
     )
     foreach ($pkg in $wingetTools) {
         try {
