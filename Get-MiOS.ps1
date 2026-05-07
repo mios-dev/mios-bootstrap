@@ -1459,7 +1459,21 @@ foreach ($mod in $psModules) {
         Write-Host "  [!] winget not available; skipping CLI extras." -ForegroundColor Yellow
         return
     }
-    $wingetTools = @('sharkdp.bat', 'junegunn.fzf', 'GitHub.cli')
+    # Per operator: install all the MiOS-aligned developer + system-info
+    # CLI tools so the operator's Windows shell has the same surface as
+    # the deployed MiOS Linux side. fastfetch is staged in Step 4/6
+    # earlier with the MiOS-themed config.jsonc + branding.
+    $wingetTools = @(
+        'sharkdp.bat',          # syntax-highlighted cat
+        'junegunn.fzf',         # fuzzy finder
+        'GitHub.cli',           # gh CLI
+        'aristocratos.btop4win',# btop system monitor (Windows port)
+        'fastfetch-cli.fastfetch', # already in Step 4/6 but idempotent here too
+        'sharkdp.fd',           # fast `find` alternative
+        'BurntSushi.ripgrep.MSVC', # rg
+        'jqlang.jq',            # JSON query
+        'Microsoft.WindowsTerminal' # ensure WT installed (mostly already from Step 1)
+    )
     foreach ($pkg in $wingetTools) {
         try {
             $probe = & winget list --id $pkg --exact 2>$null
@@ -1580,13 +1594,20 @@ function Install-MiOSFastfetch {
     $logoPath   = Join-Path $ffDir 'mios.txt'
     $configPath = Join-Path $ffDir 'config.jsonc'
 
-    Set-Content -Path $logoPath -Value $Script:MiosBrandingTxt -Encoding UTF8
+    # MUST write the JSONC config without a UTF-8 BOM. fastfetch's
+    # JSON parser is strict and rejects files starting with EF BB BF
+    # ("Error: failed to parse JSON config file"). Set-Content
+    # -Encoding UTF8 prepends a BOM on Windows PowerShell 5.1 and
+    # pwsh's "UTF8" alias too. Use System.IO.File.WriteAllText with
+    # an explicit no-BOM encoding to match what fastfetch expects.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($logoPath, $Script:MiosBrandingTxt, $utf8NoBom)
 
     # Bake the actual logo path into the JSONC -- escape backslashes
     # for the JSON string ("M:\\MiOS\\fastfetch\\mios.txt").
     $logoPathJson = $logoPath -replace '\\', '\\'
     $resolvedConfig = $Script:MiosFastfetchConfig -replace '__MIOS_LOGO__', $logoPathJson
-    Set-Content -Path $configPath -Value $resolvedConfig -Encoding UTF8
+    [System.IO.File]::WriteAllText($configPath, $resolvedConfig, $utf8NoBom)
 
     if ((Test-Path $configPath) -and (Test-Path $logoPath)) {
         Write-Host "  [+] fastfetch theme staged: $configPath" -ForegroundColor DarkGray
@@ -1783,12 +1804,16 @@ if (`$true) {
     # properly in WT (conhost / VS Code embedded shell mangles it).
     function Show-MiosDashboard {
         param([string]`$ConfigPath, [string]`$LogoPath)
-        # Frame width: with scrollbarState=hidden in the MiOS profile,
-        # all 80 cells are usable -- the frame fits flush with the
-        # window edges. Still backs off 1 char as a safety margin
-        # against fractional cell rendering of the box-drawing glyphs.
-        `$consoleW = try { [Console]::WindowWidth } catch { 80 }
-        `$WIDTH = [math]::Min(80, [math]::Max(40, `$consoleW - 1))
+        # Frame width: hardcoded to 78 so EVERY rendered frame visibly
+        # leaves a 1-2 col margin on the right edge. Reading
+        # [Console]::WindowWidth here is unreliable -- when the elevated
+        # Pass-2 window's resize hasn't fully propagated yet (or the host
+        # is a pseudo-console that lies about width), consoleW returns the
+        # parent's >80 value, the frame renders at 80 chars, and on a
+        # narrower-than-buffer host it wraps. 78 always fits in 80-col
+        # windows and aligns visually with the launcher menu's inner
+        # content area.
+        `$WIDTH = 78
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
 
