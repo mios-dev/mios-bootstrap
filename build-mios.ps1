@@ -6002,6 +6002,34 @@ if ($activeDistro) {
     # /var/lib/mios/.quadlet-overlay-seeded sentinel.
     Invoke-MiosQuadletOverlay
 
+    # Layer MiOS build essentials onto MiOS-DEV.
+    #
+    # Per feedback_mios_dev_equals_mios.md: the dev VM is MiOS in full
+    # parity. machine-os 6+ is the LOCKED base (per operator), but it
+    # ships stripped down -- no mkpasswd, no openssl, no passlib, no
+    # bootc -- so MiOS content has to LAYER ON TOP at provisioning time
+    # (NOT at runtime inside the driver, which would paper over broken
+    # provisioning). Install the minimum the build pipeline needs so the
+    # driver can assume "everything MiOS has" is present when it starts.
+    #
+    # Full feature parity (every package, container, flatpak, model)
+    # still happens via `bootc switch localhost/mios:latest + reboot`
+    # at the end of mios-build-driver -- this step is just the seed for
+    # the build to RUN.
+    $_wslDistroForTerm = "podman-$BuilderDistro"
+    Set-Step "Layering MiOS build essentials onto $_wslDistroForTerm..."
+    # NB: on Fedora 44 the `mkpasswd` binary moved out of `whois` into
+    # its own `mkpasswd` package -- include both so the build essentials
+    # set is correct on every Fedora vintage the dev VM might run.
+    $miosEssentials = 'mkpasswd whois openssl python3-passlib bootc git'
+    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dnf install -y --quiet $miosEssentials" 2>&1 |
+        ForEach-Object { Write-Log "mios-essentials: $_" }
+    if ($LASTEXITCODE -eq 0) {
+        Log-Ok "MiOS build essentials layered onto $_wslDistroForTerm"
+    } else {
+        Log-Warn "Failed to layer MiOS build essentials (exit $LASTEXITCODE) -- driver will fail when it tries to use mkpasswd / openssl / bootc"
+    }
+
     # The overlay seed wrote /etc/wsl.conf [user] default=mios so future
     # `wsl -d podman-MiOS-DEV` invocations land in the mios user (not the
     # bundled `user` UID 1000). But /etc/wsl.conf is read at distro
@@ -6010,7 +6038,6 @@ if ($activeDistro) {
     # so the next entry (menu option 1 or 5) re-launches with the new
     # default user. Idempotent: if the distro isn't running, --terminate
     # is a no-op.
-    $_wslDistroForTerm = "podman-$BuilderDistro"
     Set-Step "Terminating $_wslDistroForTerm so /etc/wsl.conf takes effect on next entry..."
     & wsl.exe --terminate $_wslDistroForTerm 2>&1 |
         ForEach-Object { Write-Log "wsl-terminate: $_" }
