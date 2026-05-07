@@ -947,23 +947,12 @@ namespace MiOS.NativeApp {
     Write-Host "  [+] MiOS installed as a native Windows app." -ForegroundColor Green
 }
 
-function Install-MiOSOhMyPoshTheme {
-    # Stage mios.omp.json at M:\MiOS\themes\ (or LOCALAPPDATA fallback)
-    # so the $PROFILE init block actually finds it on first launch.
-    # Without this, oh-my-posh runs `init pwsh --config <missing>` and
-    # falls back to the default theme + emits "CONFIG NOT FOUND" in
-    # the prompt -- exactly the symptom the operator caught.
-    $miosRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path $env:LOCALAPPDATA 'MiOS' }
-    $themesDir = Join-Path $miosRoot 'themes'
-    if (-not (Test-Path $themesDir)) { New-Item -ItemType Directory -Path $themesDir -Force | Out-Null }
-    $ompPath = Join-Path $themesDir 'mios.omp.json'
-
-    # mios.omp.json content -- canonical MiOS oh-my-posh theme. Single-
-    # quoted here-string so the \uXXXX nerd-font glyph escapes pass
-    # through to the JSON file unchanged. KEEP IN SYNC with
-    # mios.git:usr/share/mios/oh-my-posh/mios.omp.json -- this is the
-    # operator-facing copy that ships with irm|iex.
-    $ompJson = @'
+# Canonical MiOS oh-my-posh theme content. Hoisted to script scope so
+# both Install-MiOSOhMyPoshTheme (writes the file at install time) and
+# Install-MiOSPowerShellProfile (embeds it as a self-heal blob in the
+# M:\ profile script) reference the same source. KEEP IN SYNC with
+# mios.git:usr/share/mios/oh-my-posh/mios.omp.json.
+$Script:MiosOmpJson = @'
 {
   "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
   "version": 4,
@@ -1035,8 +1024,22 @@ function Install-MiOSOhMyPoshTheme {
   ]
 }
 '@
-    Set-Content -Path $ompPath -Value $ompJson -Encoding UTF8
-    Write-Host "  [+] mios.omp.json staged: $ompPath" -ForegroundColor DarkGray
+
+function Install-MiOSOhMyPoshTheme {
+    # Stage mios.omp.json at M:\MiOS\themes\ (or LOCALAPPDATA fallback)
+    # so the $PROFILE init block finds it on first launch -- prevents
+    # the "CONFIG NOT FOUND" prompt segment.
+    $miosRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path $env:LOCALAPPDATA 'MiOS' }
+    $themesDir = Join-Path $miosRoot 'themes'
+    if (-not (Test-Path $themesDir)) { New-Item -ItemType Directory -Path $themesDir -Force | Out-Null }
+    $ompPath = Join-Path $themesDir 'mios.omp.json'
+    Set-Content -Path $ompPath -Value $Script:MiosOmpJson -Encoding UTF8
+    if (Test-Path -LiteralPath $ompPath) {
+        $sz = (Get-Item $ompPath).Length
+        Write-Host "  [+] mios.omp.json staged: $ompPath ($sz bytes)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  [!] mios.omp.json write FAILED at $ompPath" -ForegroundColor Yellow
+    }
     return $ompPath
 }
 
@@ -1070,16 +1073,19 @@ function Install-MiOSPowerShellProfile {
     # The C:\ user profile only gets a thin redirector that dot-sources
     # this file -- so future edits to the M:\ copy take effect on next
     # shell launch with no C:\ round-trip.
+    # Build the M:\ profile script. It self-heals: if no candidate
+    # mios.omp.json exists at dot-source time, it writes the embedded
+    # base64 blob to %LOCALAPPDATA%\MiOS\themes\mios.omp.json so
+    # oh-my-posh always finds a config and never shows "CONFIG NOT
+    # FOUND" -- even if the operator ran an older Get-MiOS.ps1 that
+    # didn't stage the omp.json explicitly.
+    $ompBlobBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosOmpJson))
     $miosScriptBody = @"
 # MiOS PowerShell profile -- oh-my-posh init.
 # Source of truth: this file lives on M:\ and is dot-sourced from
 # `$PROFILE.CurrentUserAllHosts. Edit here, restart pwsh, prompt updates.
-# Probes every place the canonical mios.omp.json could land:
-#   M:\MiOS\themes\mios.omp.json        deployed install
-#   M:\usr\share\mios\oh-my-posh\...    mios.git overlay at M:\ root
-#   C:\MiOS\themes\mios.omp.json        legacy admin install (fallback)
-#   C:\MiOS\usr\share\mios\oh-my-posh\..   legacy admin install (fallback)
-# `$env:MIOS_OMP_JSON overrides everything for ad-hoc testing.
+# Self-heals mios.omp.json from an embedded base64 blob if no copy
+# is on disk (covers the irm|iex-already-ran-once-without-staging case).
 if (`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') {
     `$miosOmp = `$null
     `$candidates = @()
@@ -1088,13 +1094,26 @@ if (`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') {
         'M:\MiOS\themes\mios.omp.json',
         'M:\usr\share\mios\oh-my-posh\mios.omp.json',
         'C:\MiOS\themes\mios.omp.json',
-        'C:\MiOS\usr\share\mios\oh-my-posh\mios.omp.json'
+        'C:\MiOS\usr\share\mios\oh-my-posh\mios.omp.json',
+        (Join-Path `$env:LOCALAPPDATA 'MiOS\themes\mios.omp.json')
     )
     foreach (`$c in `$candidates) {
         if (`$c -and (Test-Path -LiteralPath `$c)) { `$miosOmp = `$c; break }
     }
+    if (-not `$miosOmp) {
+        # Self-heal: decode the embedded blob and write it.
+        `$blob = '$ompBlobBase64'
+        try {
+            `$selfHealRoot = if (Test-Path 'M:\') { 'M:\MiOS\themes' } else { Join-Path `$env:LOCALAPPDATA 'MiOS\themes' }
+            if (-not (Test-Path `$selfHealRoot)) { New-Item -ItemType Directory -Path `$selfHealRoot -Force | Out-Null }
+            `$miosOmp = Join-Path `$selfHealRoot 'mios.omp.json'
+            [System.IO.File]::WriteAllBytes(`$miosOmp, [Convert]::FromBase64String(`$blob))
+        } catch {
+            `$miosOmp = `$null
+        }
+    }
     if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
-        if (`$miosOmp) {
+        if (`$miosOmp -and (Test-Path -LiteralPath `$miosOmp)) {
             oh-my-posh init pwsh --config `$miosOmp | Invoke-Expression
         } else {
             oh-my-posh init pwsh | Invoke-Expression
