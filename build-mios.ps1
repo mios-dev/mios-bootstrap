@@ -2440,8 +2440,23 @@ function New-BuilderDistro([hashtable]$HW) {
         # try starting it and verify the API.
         if ($initJoined -match '(?i)already exists|vm.*already exists') {
             Log-Warn "podman machine init: $BuilderDistro already exists -- starting instead"
-            $startOut = @(& podman machine start $BuilderDistro 2>&1)
-            $startOut | ForEach-Object { Write-Log "podman-recover-start: $_" }
+            # MUST wrap in EAP=Continue + PSNativeCommandUseErrorActionPreference=$false:
+            # podman returns non-zero on "already running" (which IS our happy
+            # path here), and PS 7.4+ defaults PSNativeCommandUseErrorActionPreference
+            # to $true -- so a non-zero exit throws BEFORE the regex match below
+            # can downgrade it to a Log-Ok. The init call uses the same wrap; this
+            # one was missing it and threw straight to the outer FATAL handler.
+            $startOut = [System.Collections.Generic.List[string]]::new()
+            & {
+                $ErrorActionPreference = 'Continue'
+                if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                    $PSNativeCommandUseErrorActionPreference = $false
+                }
+                & podman machine start $BuilderDistro 2>&1 | ForEach-Object {
+                    Write-Log "podman-recover-start: $_"
+                    $startOut.Add([string]$_) | Out-Null
+                }
+            }
             $startJoined = ($startOut -join " ")
             if ($startJoined -match '(?i)already running') {
                 Log-Ok "$BuilderDistro is already running"

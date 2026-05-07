@@ -432,24 +432,25 @@ function Install-MiOSGeistFont {
             New-Item -Path $regKey -Force | Out-Null
         }
 
-        # Get every .ttf file in the extracted tree, then filter by name.
-        # Nerd Fonts release naming has changed multiple times -- the
-        # Get-ChildItem -Filter pattern was missing valid TTFs because
-        # of case-sensitivity and substring quirks on PowerShell 7.6+.
-        # Use -match instead which is case-insensitive by default.
-        $allTtfs = Get-ChildItem $tmpDir -Recurse -File -ErrorAction SilentlyContinue |
-                   Where-Object { $_.Name -match '\.ttf$' }
+        # Get every font file in the extracted tree (.ttf OR .otf -- the
+        # current Geist Nerd Fonts release ships .otf only). Nerd Fonts
+        # release naming has changed multiple times -- the Get-ChildItem
+        # -Filter pattern was missing valid faces because of case-sensitivity
+        # and substring quirks on PowerShell 7.6+. Use -match instead which
+        # is case-insensitive by default.
+        $allFonts = Get-ChildItem $tmpDir -Recurse -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -match '\.(ttf|otf)$' }
         # Prefer "Mono" variants (fixed-width, terminal-safe). Then
-        # general "NerdFont". Then ANY .ttf as last resort.
-        $preferred = $allTtfs | Where-Object { $_.Name -match 'NerdFontMono' }
+        # general "NerdFont". Then ANY font face as last resort.
+        $preferred = $allFonts | Where-Object { $_.Name -match 'NerdFontMono' }
         if (-not $preferred) {
-            $preferred = $allTtfs | Where-Object { $_.Name -match 'NerdFont' }
+            $preferred = $allFonts | Where-Object { $_.Name -match 'NerdFont' }
         }
         if (-not $preferred) {
-            $preferred = $allTtfs
+            $preferred = $allFonts
         }
         if (-not $preferred) {
-            Write-Host "  [!] GeistMono.zip extracted but contains no .ttf files. (Found $($allTtfs.Count))" -ForegroundColor Yellow
+            Write-Host "  [!] GeistMono.zip extracted but contains no .ttf/.otf files. (Found $($allFonts.Count))" -ForegroundColor Yellow
             return $false
         }
 
@@ -458,13 +459,17 @@ function Install-MiOSGeistFont {
             $dst = Join-Path $userFontDir $ttf.Name
             Copy-Item -LiteralPath $ttf.FullName -Destination $dst -Force
             # Face name for the registry value: derive from filename
-            # ("GeistMonoNerdFontMono-Regular.ttf" -> "GeistMono Nerd Font Mono Regular (TrueType)").
+            # ("GeistMonoNerdFontMono-Regular.ttf" -> "GeistMono Nerd Font Mono Regular (TrueType|OpenType)").
+            # Windows registry keys differ for TTF vs OTF -- TrueType for
+            # .ttf, OpenType for .otf -- and Windows' font loader uses the
+            # suffix to dispatch to the right rasterizer.
             $face = $ttf.BaseName `
                 -replace 'NerdFontMono', ' Nerd Font Mono ' `
                 -replace 'NerdFont',     ' Nerd Font ' `
                 -replace '-',            ' ' `
                 -replace '\s+',          ' '
-            $face = $face.Trim() + ' (TrueType)'
+            $suffix = if ($ttf.Extension -ieq '.otf') { ' (OpenType)' } else { ' (TrueType)' }
+            $face = $face.Trim() + $suffix
             New-ItemProperty -Path $regKey -Name $face -Value $dst -PropertyType String -Force | Out-Null
             $installed++
         }
@@ -709,12 +714,17 @@ function Install-MiOSTerminalProfile {
     }
     # Filter out any prior MiOS / MiOS-DEV entries by GUID *or* by the
     # names we've used in earlier revisions, so the upsert is exactly two.
+    # Also strip podman/WSL auto-generated profiles for our distros
+    # (podman-MiOS-DEV, podman-MiOS-BUILDER, etc.) -- WT auto-creates one
+    # per `podman machine init` call and they accumulate without dedup.
+    # Our branded MiOS-DEV profile already covers that distro.
     $existingList = @($wtJson.profiles.list | Where-Object {
         $_.guid -ne $miosGuid -and
         $_.guid -ne $miosDevGuid -and
         $_.name -ne 'MiOS' -and
         $_.name -ne 'MiOS-DEV' -and
-        $_.name -ne 'MiOS-Bootstrap'
+        $_.name -ne 'MiOS-Bootstrap' -and
+        $_.name -notmatch '^podman-MiOS-'
     })
     $miosProfileObj    = [PSCustomObject]$miosProfile
     $miosDevProfileObj = [PSCustomObject]$miosDevProfile
@@ -1334,6 +1344,23 @@ function Install-MiOSTerminalExtras {
     #   * GitHub.cli              -- `gh` CLI for github operations
     #
     # All idempotent: probes existing install before re-installing.
+    # Preload PowerShellGet + PackageManagement + bootstrap NuGet provider:
+    # without these the Install-Module dispatcher resolves the COMMAND but
+    # can't load the BACKING module ("Install-Module was found in module
+    # 'PowerShellGet', but the module could not be loaded"). Force-import
+    # makes the loader resolve and stage the dependency graph (NuGet PP
+    # included) before the install attempts run.
+    try { Import-Module PackageManagement -ErrorAction SilentlyContinue -Force } catch {}
+    try { Import-Module PowerShellGet     -ErrorAction SilentlyContinue -Force } catch {}
+    try {
+        $nuget = Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue |
+                 Sort-Object Version -Descending | Select-Object -First 1
+        if (-not $nuget -or $nuget.Version -lt [Version]'2.8.5.201') {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -ErrorAction SilentlyContinue | Out-Null
+        }
+    } catch {}
+    try { Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch {}
+
     $psModules = @('Terminal-Icons', 'posh-git', 'CompletionPredictor', 'Microsoft.WinGet.CommandNotFound')
     foreach ($mod in $psModules) {
         $have = Get-Module -ListAvailable -Name $mod -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -1342,7 +1369,6 @@ function Install-MiOSTerminalExtras {
             continue
         }
         try {
-            try { Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch {}
             Install-Module -Name $mod -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
             Write-Host "  [+] Installed PS module: $mod" -ForegroundColor Green
         } catch {
