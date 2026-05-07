@@ -6324,27 +6324,53 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
             Write-Host ""
 
             # Source the driver from the M:\ mios.git overlay (Phase 2
-            # cloned it). Stream base64 via stdin to avoid Windows'
-            # ~32K CreateProcess command-line limit; the driver is
-            # ~26K binary -> ~35K base64, just over the limit if
-            # passed as an argument.
+            # cloned it). Use Start-Process with raw stream copy: the
+            # PowerShell `|` operator into a native command corrupts
+            # binary stdin (drops ~24 leading bytes during pipe
+            # initialization, makes base64 -d reject input). Process+
+            # stream is the only reliable path. Driver is ~26K binary
+            # -> ~35K base64, well over the ~32K argv limit, so stdin
+            # streaming is required either way.
             $localDriver = Join-Path $script:MiosRepoDir 'usr\libexec\mios\mios-build-driver'
             if (Test-Path -LiteralPath $localDriver) {
+                $stagedOk = $false
                 try {
                     $bytes = [System.IO.File]::ReadAllBytes($localDriver)
                     $b64   = [Convert]::ToBase64String($bytes)
+                    $tmpB64 = [IO.Path]::GetTempFileName() + '.b64'
+                    [IO.File]::WriteAllText($tmpB64, $b64, [Text.UTF8Encoding]::new($false))
 
-                    # Stage 1: stream b64 via stdin -> base64 -d -> /tmp file.
-                    $b64 | & wsl.exe -d $devDistro --user root -- bash -c 'base64 -d > /tmp/mios-build-driver && chmod +x /tmp/mios-build-driver'
-                    if ($LASTEXITCODE -ne 0) {
-                        Write-Host "  [!] Failed to stage driver into distro (exit $LASTEXITCODE)" -ForegroundColor Yellow
+                    $psi = New-Object System.Diagnostics.ProcessStartInfo
+                    $psi.FileName = 'wsl.exe'
+                    foreach ($a in @('-d', $devDistro, '--user', 'root', '--', 'bash', '-c',
+                                     'base64 -d > /tmp/mios-build-driver && chmod +x /tmp/mios-build-driver')) {
+                        $psi.ArgumentList.Add($a) | Out-Null
+                    }
+                    $psi.RedirectStandardInput = $true
+                    $psi.UseShellExecute = $false
+                    $proc = [System.Diagnostics.Process]::Start($psi)
+                    $fs = [IO.File]::OpenRead($tmpB64)
+                    try { $fs.CopyTo($proc.StandardInput.BaseStream) } finally { $fs.Close(); $proc.StandardInput.Close() }
+                    $proc.WaitForExit()
+                    Remove-Item -LiteralPath $tmpB64 -Force -ErrorAction SilentlyContinue
+                    if ($proc.ExitCode -ne 0) {
+                        Write-Host "  [!] Failed to stage driver into distro (exit $($proc.ExitCode))" -ForegroundColor Yellow
                     } else {
-                        # Stage 2: exec the driver interactively so the
-                        # operator sees + interacts with its output.
-                        & wsl.exe -d $devDistro --user $resolvedUser -- bash -lc 'exec sudo bash /tmp/mios-build-driver'
+                        $stagedOk = $true
                     }
                 } catch {
                     Write-Host "  [!] Driver stage failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+                if ($stagedOk) {
+                    # Stage 2: exec the driver interactively so the
+                    # operator sees + interacts with its output. As
+                    # root inside machine-os, sudo is redundant -- run
+                    # bash directly to avoid PAM/sudoers edge cases.
+                    if ($resolvedUser -eq 'root') {
+                        & wsl.exe -d $devDistro --user root -- bash -lc 'exec bash /tmp/mios-build-driver'
+                    } else {
+                        & wsl.exe -d $devDistro --user $resolvedUser -- bash -lc 'exec sudo bash /tmp/mios-build-driver'
+                    }
                 }
             } else {
                 Write-Host "  [!] mios-build-driver not found at $localDriver" -ForegroundColor Yellow
