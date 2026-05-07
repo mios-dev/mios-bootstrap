@@ -1379,10 +1379,13 @@ function Show-PostBootstrapMenu {
         }
     } catch {}
     while ($true) {
-        # Pad each menu row to the FULL terminal width so any prior
-        # log-line tails get clobbered (avoids the ".ps1 / .lnk /
-        # mios-pul" tail-leak the operator caught at the right edge
-        # of the menu). $W = inner content width inside │ ... │.
+        # Clear the screen before every menu render so the canvas is
+        # always clean -- whether this is the first render after
+        # bootstrap OR a re-render after the operator picked an
+        # option (wsl entry, configurator, etc.) and returned. Any
+        # output from the previous option (wsl session output, build
+        # tail, etc.) is wiped so the menu draws against blank space.
+        try { Clear-Host } catch {}
         $W = $script:DW - 4    # leading "  │ " (4) + trailing " │" handled in row
         $hr   = "─" * $W
         $top  = "  ╭" + ("─── MiOS bootstrap complete " + ("─" * 99)).Substring(0, $W) + "╮"
