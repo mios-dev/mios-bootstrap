@@ -2352,6 +2352,13 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
 `$env:MIOS_AGREEMENT_ACK='accepted'
 `$env:MIOS_CACHE_BUSTED='1'
+# Tell the MiOS pwsh profile body to render the framed dashboard +
+# oh-my-posh prompt for THIS bootstrap window. The profile gates the
+# dashboard call on `$env:WT_SESSION OR `$env:TERM_PROGRAM='mios';
+# elevated pwsh in conhost has neither, so without this the install
+# runs in a vanilla black box. Setting it here makes the elevated
+# bootstrap window itself the MiOS terminal experience.
+`$env:TERM_PROGRAM='mios'
 # Pre-UAC cursor location (captured by the launching pwsh BEFORE Start-
 # Process -Verb RunAs); use these constants instead of querying
 # Cursor.Position now (which would read at the UAC Yes-button click
@@ -2499,6 +2506,25 @@ if ($true) {
     Install-MiOSTerminalExtras      | Out-Null
     Write-Host "  [*] Step 7/7: Registering MiOS as a native Windows app..." -ForegroundColor Cyan
     Install-MiOSNativeApp           | Out-Null
+
+    # Refresh $env:PATH from registry BEFORE dot-sourcing the profile.
+    # winget just installed oh-my-posh / fastfetch / etc. and updated the
+    # USER + MACHINE PATH, but the current pwsh session inherited the
+    # PATH from the launching (non-admin) pwsh -- it does NOT see those
+    # newly installed binaries. Without this refresh the profile body's
+    # `oh-my-posh init pwsh | iex` silently no-ops and the prompt stays
+    # vanilla; Show-MiosDashboard's `Get-Command fastfetch` returns null
+    # and the dashboard never renders.
+    try {
+        $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
+        $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
+        $env:PATH = (@($_machPath, $_userPath) | Where-Object { $_ }) -join ';'
+    } catch {}
+
+    # Mark this session as the MiOS terminal so the profile body's
+    # WT_SESSION-or-TERM_PROGRAM=mios gate fires Show-MiosDashboard
+    # (the elevated pwsh runs in conhost; WT_SESSION is unset).
+    $env:TERM_PROGRAM = 'mios'
 
     # Reload the user profile in the CURRENT irm|iex pwsh session so
     # the regex-patch + PSReadLine reload + MiOS prompt take effect
