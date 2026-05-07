@@ -6195,10 +6195,41 @@ if ($activeDistro) {
             ForEach-Object { Write-Log "mios-essentials: $_" }
         $script:_essentialsRc = $LASTEXITCODE
     }
-    if ($script:_essentialsRc -eq 0) {
-        Log-Ok "MiOS build essentials layered onto $_wslDistroForTerm"
+    # dnf's exit code is unreliable on rootful machine-os: %post / %triggerin
+    # scriptlets fail with "Transport endpoint is not connected" because there's
+    # no systemd PID 1 to take daemon-reload, and harmless cosmetic ones (e.g.
+    # whois-man alternatives symlink) also exit non-zero. Verify by `rpm -q`
+    # against the actual package names instead. Note: `iptables` resolves to
+    # `iptables-legacy` on Fedora 44; rpm -q on the source name returns
+    # "package iptables is not installed" even when the alternatives provider
+    # IS installed -- so query the resolved provider too.
+    $checkPkgs = ($miosEssentials -split ' ' | Where-Object { $_ } | ForEach-Object { $_ })
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        $rpmCmd = "rpm -q --whatprovides $($checkPkgs -join ' ') 2>&1; echo '---'; rpm -q $($checkPkgs -join ' ') 2>&1"
+        $script:_rpmCheck = (& wsl.exe -d $_wslDistroForTerm --user root -- bash -c $rpmCmd 2>&1) -join "`n"
+    }
+    # Count how many of our requested packages have a verified provider on the
+    # system. `rpm -q --whatprovides foo` prints lines like "foo-1.2-3.fc44.x86_64"
+    # for installed providers, "no package provides foo" for missing.
+    $missing = @()
+    foreach ($p in $checkPkgs) {
+        if ($script:_rpmCheck -notmatch [regex]::Escape("provides $p")) {
+            # whatprovides returned a real package; only flag if BOTH queries
+            # come up empty.
+            if ($script:_rpmCheck -match "package $([regex]::Escape($p)) is not installed" -and
+                $script:_rpmCheck -match "no package provides $([regex]::Escape($p))") {
+                $missing += $p
+            }
+        }
+    }
+    if ($missing.Count -eq 0) {
+        Log-Ok "MiOS build essentials layered onto $_wslDistroForTerm ($($checkPkgs.Count) packages verified)"
     } else {
-        Log-Warn "Failed to layer MiOS build essentials (exit $($script:_essentialsRc)) -- driver will fail when it tries to use mkpasswd / openssl / bootc"
+        Log-Warn "MiOS build essentials partial: missing [$($missing -join ', ')] -- driver may fail when it tries to use those"
     }
 
     # Disable netavark's firewall management. WSL2's kernel doesn't ship
@@ -6280,16 +6311,35 @@ EOPROFILE
 chmod 0644 /etc/profile.d/00-mios-pre-bootc.sh
 echo "[mios-seed] symlinks + pre-bootc bridge installed"
 '@
-    $seedRc = -1
+    # Write the seed script to a tempfile on M:\ (visible inside the dev
+    # VM at /mnt/m/) and invoke bash on the path. Piping the script to
+    # `bash` via PowerShell stdin gets CRLF-mangled -- bash sees `set -\r`
+    # and aborts with "set: -: invalid option" on line 1, killing the
+    # whole script before any work runs (operator log: "bash: line 1:
+    # set: -: invalid option ... syntax error: unexpected end of file
+    # from `if' command on line 9").
+    $seedTmpWin = Join-Path $env:TEMP 'mios-seed.sh'
+    $seedTmpWsl = '/mnt/m/MiOS/.tmp-seed.sh'
+    # Write LF-only via [System.IO.File]::WriteAllText with no-BOM UTF-8;
+    # also drop a copy at /mnt/m/MiOS/.tmp-seed.sh so bash inside the
+    # dev VM has a known automounted path.
+    $utf8NoBom    = New-Object System.Text.UTF8Encoding($false)
+    $miosSeedLF   = $miosSeedScript -replace "`r`n", "`n"
+    $miosTmpDir   = 'M:\MiOS'
+    if (-not (Test-Path -LiteralPath $miosTmpDir)) { New-Item -ItemType Directory -Path $miosTmpDir -Force | Out-Null }
+    [System.IO.File]::WriteAllText('M:\MiOS\.tmp-seed.sh', $miosSeedLF, $utf8NoBom)
+    [System.IO.File]::WriteAllText($seedTmpWin,            $miosSeedLF, $utf8NoBom)
     & {
         $ErrorActionPreference = 'Continue'
         if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
         }
-        $miosSeedScript | & wsl.exe -d $_wslDistroForTerm --user root -- bash 2>&1 |
+        & wsl.exe -d $_wslDistroForTerm --user root -- bash $seedTmpWsl 2>&1 |
             ForEach-Object { Write-Log "mios-seed: $_" }
         $script:_seedRc = $LASTEXITCODE
     }
+    Remove-Item -LiteralPath 'M:\MiOS\.tmp-seed.sh' -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $seedTmpWin -Force -ErrorAction SilentlyContinue
     if ($script:_seedRc -eq 0) {
         Log-Ok "MiOS terminal experience seeded onto $_wslDistroForTerm"
     } else {
