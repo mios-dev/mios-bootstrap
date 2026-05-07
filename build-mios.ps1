@@ -866,12 +866,31 @@ function Update-BuildSubPhase([string]$line) {
 }
 
 function Show-Dashboard {
+    param([switch]$Force)
     # Linear-log mode: SetCursorPosition is a no-op or the host doesn't
     # support repaint -- attempting to render the framed dashboard just
     # stacks frames downward forever (one per Set-Step / phase tick).
     # Bail entirely; Start-Phase / End-Phase / Set-Step emit their own
     # one-line log messages in this mode (see those functions below).
     if ($script:DashboardMode -eq 'log') { return }
+
+    # ── Render throttle ──────────────────────────────────────────────────────
+    # Show-Dashboard is invoked once per stdout line during heavy native
+    # commands (podman build, dnf install, etc.) -- 100+ calls/second
+    # during a layer pull. Each render writes ~25 rows via per-row
+    # SetCursorPosition + Write, and the conhost / WT pseudo-console
+    # tears visibly when repaints land mid-flush. Cap at 10 fps (100 ms
+    # between renders) -- imperceptible lag, no tearing. Force overrides
+    # for end-of-phase / state-change calls that must show NOW.
+    if (-not $Force) {
+        $nowMs = [Environment]::TickCount
+        if ($script:DashLastRenderMs -and ($nowMs - $script:DashLastRenderMs) -lt 100) {
+            return
+        }
+        $script:DashLastRenderMs = $nowMs
+    } else {
+        $script:DashLastRenderMs = [Environment]::TickCount
+    }
     try {
     # ── Sizing -- max 80 cols (standard tty0/console) ──────────────────────────
     # Pad to BufferWidth, not just WindowWidth. The buffer can be wider
@@ -1149,7 +1168,7 @@ function Start-Phase([int]$i) {
         $phaseTag = if ($BootstrapOnly) { "Phase $i" } else { "Phase $i/$($script:TotalPhases - 1)" }
         Write-Host "[$ts] >> $phaseTag -- $($script:PhaseNames[$i])" -ForegroundColor Cyan
     } else {
-        Show-Dashboard
+        Show-Dashboard -Force
     }
 }
 
@@ -1171,7 +1190,7 @@ function End-Phase([int]$i, [switch]$Fail, [switch]$Warn) {
         # sees how far into the build they are without having to count.
         Show-MiosProgressBar
     } else {
-        Show-Dashboard
+        Show-Dashboard -Force
     }
 }
 
@@ -5586,7 +5605,7 @@ try {
 # wrong width. Re-reading WindowWidth here closes that gap.
 $script:DW = [math]::Max(60, [math]::Min(([Console]::WindowWidth - 6), 72))
 
-Show-Dashboard   # draw initial (all phases pending)
+Show-Dashboard -Force   # draw initial (all phases pending)
 
 # ── Phase 0 -- Hardware + Prerequisites ──────────────────────────────────────
 Start-Phase 0
@@ -5596,7 +5615,7 @@ Write-Log "hw: Base=$($HW.BaseImage)  Model=$($HW.AiModel)"
 $gpuShort = $HW.GpuName -replace 'NVIDIA GeForce ','RTX ' -replace 'NVIDIA Quadro ','Quadro '
 $script:HWInfo    = "Host:$($env:COMPUTERNAME)  RAM:$($HW.RamGB)GB  CPU:$($HW.Cpus)c  GPU:$gpuShort  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')"
 $script:IdentInfo = "Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')  Model:$($HW.AiModel)"
-Show-Dashboard
+Show-Dashboard -Force
 
 $preOk = $true
 if (Get-Command git    -EA SilentlyContinue) { Log-Ok "Git $((& git --version 2>&1) -replace 'git version ','')" }
@@ -5660,7 +5679,7 @@ if ($activeDistro) {
         $script:PhStart[$s] = [datetime]::Now
         $script:PhEnd[$s]   = [datetime]::Now
     }
-    Show-Dashboard
+    Show-Dashboard -Force
 
     # Collect GHCR token in rebuild path (phase 6 is skipped above).
     $script:GhcrToken = if ($env:MIOS_GITHUB_TOKEN) { $env:MIOS_GITHUB_TOKEN }
@@ -6022,6 +6041,13 @@ if ($activeDistro) {
     # its own `mkpasswd` package -- include both so the build essentials
     # set is correct on every Fedora vintage the dev VM might run.
     #
+    # iptables/nftables: machine-os 6+ ships without a firewall backend,
+    # which makes podman's netavark networking refuse to set up the
+    # build-container's network ("Must provide a valid firewall backend,
+    # got iptables"). Without one, every `podman build` in the dev VM
+    # dies at the first RUN step that needs network. Install BOTH so
+    # netavark picks whichever is preferred on a given Fedora vintage.
+    #
     # MUST wrap in EAP=Continue + PSNativeCommandUseErrorActionPreference=$false:
     # dnf emits "Failed to set locale, defaulting to C.UTF-8" to stderr
     # (a harmless warning when LANG isn't set in the WSL distro), and
@@ -6031,7 +6057,7 @@ if ($activeDistro) {
     # PSNativeCommandUseErrorActionPreference=$true), either of those
     # throws straight to the outer FATAL handler. The actual install
     # success is checked via $LASTEXITCODE below.
-    $miosEssentials = 'mkpasswd whois openssl python3-passlib bootc git'
+    $miosEssentials = 'mkpasswd whois openssl python3-passlib bootc git iptables nftables'
     $essentialsRc = -1
     & {
         $ErrorActionPreference = 'Continue'
@@ -6193,7 +6219,7 @@ if ($activeDistro) {
     # ── Phase 6 -- Identity ───────────────────────────────────────────────────
     Start-Phase 6
     $script:CurStep = "Waiting for identity input..."
-    Show-Dashboard
+    Show-Dashboard -Force
     # Re-resolve mios.toml [ai] defaults after the configurator step so
     # the prompts seed from whatever the operator saved in the GUI.
     $aiDefaultsPre = Resolve-MiosTomlAiDefaults -RepoDir $MiosRepoDir
@@ -6440,7 +6466,7 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
     if ($script:CurPhase -ge 0 -and $script:CurPhase -lt $script:PhStat.Count -and $script:PhStat[$script:CurPhase] -eq 1) {
         try { End-Phase $script:CurPhase -Fail } catch {}
     }
-    Show-Dashboard
+    Show-Dashboard -Force
 } finally {
     # Drain stdout + Install-MiosLauncher's still-flushing log lines
     # before the final summary writes -- avoids the success-box-rows-

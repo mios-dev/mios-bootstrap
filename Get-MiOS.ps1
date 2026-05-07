@@ -2242,7 +2242,43 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     } else {
         Write-Host '  [*] Elevating for Pass 2 (M:\ partition + Podman Desktop + dev VM)...' -ForegroundColor Cyan
         $rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
+        # Pass-2 inner script: first action is to size the console to 80x30
+        # and center it on the primary monitor, BEFORE any output runs (so the
+        # operator never sees a default 120x30 window briefly before resize).
+        # `[Console]::SetWindowSize` covers conhost; the Win32 SetWindowPos
+        # call covers conhost AND WT's pseudo-console (WT honors the absolute
+        # client-area sizing on its parent HWND).
         $innerCmd = @"
+# Resize + center BEFORE anything else paints.
+try {
+    `$_curW = [Console]::WindowWidth
+    if (`$_curW -gt 80) {
+        [Console]::SetWindowSize(80, 30)
+        [Console]::SetBufferSize(80, 9000)
+    } else {
+        [Console]::SetBufferSize(80, 9000)
+        [Console]::SetWindowSize(80, 30)
+    }
+} catch {}
+try {
+    Add-Type -Namespace MiosWin -Name N -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern System.IntPtr GetDesktopWindow();
+'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    `$hwnd = [MiosWin.N]::GetConsoleWindow()
+    `$dummy = New-Object System.Drawing.Rectangle
+    [MiosWin.N]::GetWindowRect(`$hwnd, [ref]`$dummy) | Out-Null
+    `$winW = `$dummy.Width  - `$dummy.X
+    `$winH = `$dummy.Height - `$dummy.Y
+    `$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    `$x = `$screen.X + [int](([math]::Max(0, `$screen.Width  - `$winW)) / 2)
+    `$y = `$screen.Y + [int](([math]::Max(0, `$screen.Height - `$winH)) / 2)
+    [MiosWin.N]::MoveWindow(`$hwnd, `$x, `$y, `$winW, `$winH, `$true) | Out-Null
+} catch {}
+
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
 `$env:MIOS_AGREEMENT_ACK='accepted'
 try {
