@@ -1674,6 +1674,41 @@ function Install-MiOSPowerShellProfile {
 if (`$Global:MiosProfileLoaded) { return }
 `$Global:MiosProfileLoaded = `$true
 
+# ── Window resize + center (every MiOS pwsh) ────────────────────
+# Per feedback_mios_terminal_dimensions.md every MiOS-spawned
+# window opens at 80x30 and centered on the primary monitor.
+# Apply BEFORE any output paints so the operator never sees a
+# default-sized window briefly before the resize. Idempotent --
+# a second pass via the inner script (Pass-2 elevation) is a
+# no-op.
+try {
+    `$_curW = [Console]::WindowWidth
+    if (`$_curW -gt 80) {
+        [Console]::SetWindowSize(80, 30)
+        [Console]::SetBufferSize(80, 9000)
+    } else {
+        [Console]::SetBufferSize(80, 9000)
+        [Console]::SetWindowSize(80, 30)
+    }
+} catch {}
+try {
+    Add-Type -Namespace MiosWin -Name N -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
+'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    `$_hwnd = [MiosWin.N]::GetConsoleWindow()
+    `$_r = New-Object System.Drawing.Rectangle
+    [MiosWin.N]::GetWindowRect(`$_hwnd, [ref]`$_r) | Out-Null
+    `$_w = `$_r.Width  - `$_r.X
+    `$_h = `$_r.Height - `$_r.Y
+    `$_s = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_w)) / 2)
+    `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_h)) / 2)
+    [MiosWin.N]::MoveWindow(`$_hwnd, `$_x, `$_y, `$_w, `$_h, `$true) | Out-Null
+} catch {}
+
 # NO TERMINAL-TYPE GATE. Always run the PSReadLine reload + oh-my-
 # posh init. The WT_SESSION gate on the previous version was
 # silently skipping the init when WT didn't set the env var early
@@ -2308,7 +2343,18 @@ Write-Host '  Press Enter to close...' -ForegroundColor DarkGray -NoNewline
             if (Test-Path -LiteralPath $w51 -PathType Leaf) { $shell = $w51 }
         }
         if (-not $shell) { $shell = 'powershell.exe' }
-        $shellArgs = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand', $innerEncoded)
+        # NB: -NoProfile is INTENTIONALLY OMITTED. Per operator
+        # ("launch with the same themes and settings as Global MiOS
+        # Dashboards with oh my posh piping--etc--everything!!"), the
+        # Pass-2 elevated window must load the MiOS PowerShell profile
+        # body (M:\MiOS\powershell\profile.ps1) so it gets:
+        #   * the resize+center preamble (every MiOS pwsh dashboard sized)
+        #   * Show-MiosDashboard (framed banner + fastfetch info)
+        #   * oh-my-posh init with the MiOS theme
+        #   * mios-* command shims (mios-build, mios-pull, etc.)
+        # The once-per-session guard ($Global:MiosProfileLoaded) keeps
+        # the profile from rendering twice when WT also fires it.
+        $shellArgs = @('-NoLogo','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand', $innerEncoded)
         try {
             Start-Process -FilePath $shell -ArgumentList $shellArgs -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
             Write-Host '  [+] Elevated bootstrap window opened. Continuing the install there.' -ForegroundColor Green
