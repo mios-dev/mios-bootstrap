@@ -124,6 +124,121 @@ if (-not $env:MIOS_CACHE_BUSTED -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
 # On 'No thanks' or any non-accept reply we exit 78 (EX_CONFIG) before
 # any clone, fetch, or elevation -- nothing on disk is mutated.
 
+# ── mios.toml layered-overlay reader ─────────────────────────────────────────
+# mios.toml is THE global dotfile (per feedback_mios_toml_html_global_dotfile
+# memory). EVERY tunable -- window dims, M:\ size, font, AumID, retry
+# delays, theming, package lists -- sources from here. The HTML
+# configurator edits mios.toml; every consumer reads from it.
+#
+# Resolution order (highest → lowest):
+#   1. ~/.config/mios/mios.toml        (per-user override)
+#   2. M:\etc\mios\mios.toml           (host override; configurator-saved)
+#   3. M:\usr\share\mios\mios.toml     (vendor copy on M:\)
+#   4. C:\MiOS\usr\share\mios\mios.toml (vendor copy in C:\MiOS, dev path)
+#   5. origin/main raw GitHub          (cold first-run, no M:\ yet)
+#
+# Vendor defaults are sufficient (per feedback_mios_defaults_baseline): the
+# stack works with no user toml present. Get-MiosTomlValue returns its
+# `-Default` arg if the key is missing anywhere.
+$script:_MiosTomlCache = @{}
+
+function Resolve-MiosTomlText {
+    if ($script:_MiosTomlCache.ContainsKey('_text') -and $script:_MiosTomlCache['_text']) {
+        return $script:_MiosTomlCache['_text']
+    }
+    $candidates = @(
+        (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
+        'M:\etc\mios\mios.toml',
+        'M:\usr\share\mios\mios.toml',
+        'C:\MiOS\usr\share\mios\mios.toml'
+    )
+    foreach ($p in $candidates) {
+        if ($p -and (Test-Path -LiteralPath $p)) {
+            try {
+                $script:_MiosTomlCache['_text']   = Get-Content -LiteralPath $p -Raw -ErrorAction Stop
+                $script:_MiosTomlCache['_source'] = $p
+                return $script:_MiosTomlCache['_text']
+            } catch {}
+        }
+    }
+    # Cold first-run: pull origin.
+    try {
+        $cb  = [int][double]::Parse((Get-Date -UFormat %s))
+        $url = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/mios.toml?cb=$cb"
+        $script:_MiosTomlCache['_text']   = Invoke-RestMethod -Uri $url `
+            -Headers @{ 'Cache-Control'='no-cache, no-store, max-age=0'; 'Pragma'='no-cache' } `
+            -ErrorAction Stop
+        $script:_MiosTomlCache['_source'] = "origin/main (cold)"
+        return $script:_MiosTomlCache['_text']
+    } catch {
+        $script:_MiosTomlCache['_text']   = ''
+        $script:_MiosTomlCache['_source'] = '(none -- vendor defaults only)'
+        return ''
+    }
+}
+
+function Get-MiosTomlValue {
+    param(
+        [Parameter(Mandatory)] [string]$Section,   # e.g. "terminal" or "bootstrap.host_storage"
+        [Parameter(Mandatory)] [string]$Key,       # e.g. "cols"
+        [Parameter(Mandatory)] $Default            # returned if not found / unparseable
+    )
+    $txt = Resolve-MiosTomlText
+    if (-not $txt) { return $Default }
+    # Slice the section body: from `[Section]` (line-anchored) to the next
+    # `[other.section]` header or EOF.
+    $rxSec = '(?ms)^\[' + [regex]::Escape($Section) + '\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)'
+    $mSec  = [regex]::Match($txt, $rxSec)
+    if (-not $mSec.Success) { return $Default }
+    $body  = $mSec.Groups['body'].Value
+    # Within the body, find `key = value` (TOML allows leading whitespace).
+    $rxKey = '(?m)^[ \t]*' + [regex]::Escape($Key) + '[ \t]*=[ \t]*(?<val>.+?)[ \t]*(?:#.*)?$'
+    $mKey  = [regex]::Match($body, $rxKey)
+    if (-not $mKey.Success) { return $Default }
+    $raw   = $mKey.Groups['val'].Value.Trim()
+    # Coerce by Default's type. Strings get unquoted; arrays get split.
+    if ($Default -is [int]) {
+        $n = 0
+        if ([int]::TryParse(($raw -replace '_',''), [ref]$n)) { return $n }
+        return $Default
+    }
+    if ($Default -is [bool]) {
+        if ($raw -match '^(?i)true$')  { return $true }
+        if ($raw -match '^(?i)false$') { return $false }
+        return $Default
+    }
+    if ($Default -is [double] -or $Default -is [single]) {
+        $d = 0.0
+        if ([double]::TryParse($raw, [ref]$d)) { return $d }
+        return $Default
+    }
+    if ($Default -is [array]) {
+        if ($raw -match '^\[(.*)\]$') {
+            $inner = $Matches[1]
+            $items = @(
+                $inner -split ',' |
+                ForEach-Object {
+                    $s = $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
+                    if ($s) { $s }
+                }
+            )
+            # If Default is an int[] try to coerce each item.
+            if ($Default.Length -gt 0 -and $Default[0] -is [int]) {
+                $coerced = @()
+                foreach ($it in $items) {
+                    $n = 0
+                    if ([int]::TryParse($it, [ref]$n)) { $coerced += $n } else { return $Default }
+                }
+                return ,$coerced
+            }
+            return ,$items
+        }
+        return $Default
+    }
+    # Default to string -- strip TOML string quotes.
+    return $raw.Trim('"', "'")
+}
+
 function Show-MiOSAgreement {
     @"
 ================================================================================
@@ -861,10 +976,12 @@ try {
 
 Add-Type -AssemblyName System.Windows.Forms
 
-# Cell metrics: Geist Mono 12pt @ 100% DPI ~ 10x20 px.
-$Cols = 80; $Rows = 30
-$winW = ($Cols * 10) + 20
-$winH = ($Rows * 20) + 12
+# Cell metrics + dims baked from mios.toml [terminal] / [theme.font]
+# at launcher install time. Edit M:\usr\share\mios\mios.toml + re-run
+# Get-MiOS.ps1 to regenerate.
+$Cols = __MIOS_COLS__; $Rows = __MIOS_ROWS__
+$winW = ($Cols * __MIOS_CELL_W__) + __MIOS_CHROME_W__
+$winH = ($Rows * __MIOS_CELL_H__) + __MIOS_CHROME_H__
 
 $cur  = [System.Windows.Forms.Cursor]::Position
 $work = [System.Windows.Forms.Screen]::FromPoint($cur).WorkingArea
@@ -886,7 +1003,7 @@ if (-not $wtExe) {
     exit 1
 }
 
-$wtArgs = @('-w','-1','--pos',"$x,$y",'--size','80,30','--focus','nt','-p','MiOS')
+$wtArgs = @('-w','-1','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','nt','-p','MiOS')
 $spawnedAt = Get-Date
 Start-Process -FilePath $wtExe -ArgumentList $wtArgs
 
@@ -929,6 +1046,23 @@ if ($hwnd -ne [IntPtr]::Zero) {
     }
 }
 '@
+    # Bake mios.toml [terminal] / [theme.font] values into the launcher
+    # body. Single-quoted here-string above means $vars don't interpolate
+    # at definition time; we substitute placeholders here at install time
+    # so the launcher's geometry tracks the operator's mios.toml edits.
+    $_lnchCols    = Get-MiosTomlValue -Section 'terminal'   -Key 'cols'         -Default 80
+    $_lnchRows    = Get-MiosTomlValue -Section 'terminal'   -Key 'rows'         -Default 40
+    $_lnchCellW   = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px'    -Default 10
+    $_lnchCellH   = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px'    -Default 20
+    $_lnchChromeW = Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px'  -Default 20
+    $_lnchChromeH = Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px'  -Default 12
+    $launcherBody = $launcherBody `
+        -replace '__MIOS_COLS__',     [string]$_lnchCols `
+        -replace '__MIOS_ROWS__',     [string]$_lnchRows `
+        -replace '__MIOS_CELL_W__',   [string]$_lnchCellW `
+        -replace '__MIOS_CELL_H__',   [string]$_lnchCellH `
+        -replace '__MIOS_CHROME_W__', [string]$_lnchChromeW `
+        -replace '__MIOS_CHROME_H__', [string]$_lnchChromeH
     Set-Content -Path $launcherPath -Value $launcherBody -Encoding UTF8
     Write-Host "  [+] MiOS launcher staged: $launcherPath" -ForegroundColor DarkGray
 
@@ -1016,11 +1150,12 @@ namespace MiOS.NativeApp {
     }
     if ('MiOS.NativeApp.Aumid' -as [type]) {
         try {
-            [MiOS.NativeApp.Aumid]::Set($smLnk, 'MiOS.Workstation')
+            $_aumid = Get-MiosTomlValue -Section 'apps' -Key 'aumid' -Default 'MiOS.Workstation'
+            [MiOS.NativeApp.Aumid]::Set($smLnk, $_aumid)
             if ($desktopDir -and (Test-Path "$desktopDir\MiOS.lnk")) {
-                [MiOS.NativeApp.Aumid]::Set("$desktopDir\MiOS.lnk", 'MiOS.Workstation')
+                [MiOS.NativeApp.Aumid]::Set("$desktopDir\MiOS.lnk", $_aumid)
             }
-            Write-Host "  [+] AppUserModelID = MiOS.Workstation stamped on shortcuts." -ForegroundColor DarkGray
+            Write-Host "  [+] AppUserModelID = $_aumid stamped on shortcuts." -ForegroundColor DarkGray
         } catch {
             Write-Host "  [!] AppUserModelID stamp failed: $($_.Exception.Message)" -ForegroundColor Yellow
         }
@@ -1743,6 +1878,13 @@ function Install-MiOSPowerShellProfile {
     $ompBlobBase64    = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosOmpJson))
     $ffConfigBase64   = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosFastfetchConfig))
     $ffLogoBase64     = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosBrandingTxt))
+    # Lift terminal dims from mios.toml [terminal] (per
+    # feedback_mios_toml_html_global_dotfile -- mios.toml is THE
+    # global dotfile). Vendor defaults match the dashboard's 80-col
+    # frame + 40-row dashboard layout.
+    $_miosCols    = Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80
+    $_miosRows    = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 40
+    $_miosScroll  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
     $miosScriptBody = @"
 # MiOS PowerShell profile -- PSReadLine reload + fastfetch MOTD +
 # oh-my-posh init.
@@ -1765,20 +1907,21 @@ if (`$Global:MiosProfileLoaded) { return }
 `$Global:MiosProfileLoaded = `$true
 
 # ── Window resize + center (every MiOS pwsh) ────────────────────
-# Per feedback_mios_terminal_dimensions.md every MiOS-spawned
-# window opens at 80x30 and centered on the primary monitor.
-# Apply BEFORE any output paints so the operator never sees a
-# default-sized window briefly before the resize. Idempotent --
-# a second pass via the inner script (Pass-2 elevation) is a
-# no-op.
+# Dimensions sourced from mios.toml [terminal] (cols/rows/
+# scrollback_rows). Per feedback_mios_terminal_dimensions every
+# MiOS-spawned window opens at the configured size centered on
+# the active monitor. Apply BEFORE any output paints so the
+# operator never sees a default-sized window briefly before the
+# resize. Idempotent -- a second pass via the inner script
+# (Pass-2 elevation) is a no-op.
 try {
     `$_curW = [Console]::WindowWidth
-    if (`$_curW -gt 80) {
-        [Console]::SetWindowSize(80, 30)
-        [Console]::SetBufferSize(80, 9000)
+    if (`$_curW -gt $_miosCols) {
+        [Console]::SetWindowSize($_miosCols, $_miosRows)
+        [Console]::SetBufferSize($_miosCols, $_miosScroll)
     } else {
-        [Console]::SetBufferSize(80, 9000)
-        [Console]::SetWindowSize(80, 30)
+        [Console]::SetBufferSize($_miosCols, $_miosScroll)
+        [Console]::SetWindowSize($_miosCols, $_miosRows)
     }
 } catch {}
 try {
@@ -1978,12 +2121,22 @@ if (`$true) {
         } else {
             Write-Host (_Frame '  fastfetch not installed -- run mios-update to refresh.')
         }
-        # ── Command hints row ────────────────────────────────────
+        # ── Command hints rows ───────────────────────────────────
         # Globally surfaced for ALL MiOS deployments + instances --
         # the operator should never have to remember the verb names.
+        # One line per verb so the operator sees what each does
+        # without typing `mios help`.
         Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
-        `$cmdHint = 'mios-build  mios-update  mios-pull  mios-config  mios-dev  mios-help'
-        Write-Host (_Center `$cmdHint) -ForegroundColor DarkCyan
+        `$_hints = @(
+            '  mios build   -- open mios-config.html, save, then build the OCI image',
+            '  mios config  -- edit mios.toml in the HTML configurator (no build)',
+            '  mios dash    -- show this dashboard (framed banner + fastfetch info)',
+            '  mios dev     -- enter the MiOS-DEV podman machine',
+            '  mios pull    -- sync M:\ overlay to origin/main',
+            '  mios update  -- re-run the bootstrap (cache-busted)',
+            '  mios help    -- list every verb'
+        )
+        foreach (`$h in `$_hints) { Write-Host (_Frame `$h) -ForegroundColor DarkCyan }
 
         # Bottom frame.
         Write-Host (`$BL + (`$H * (`$WIDTH - 2)) + `$BR) -ForegroundColor Blue
@@ -2032,14 +2185,62 @@ if (`$true) {
 function mios-build {
     [CmdletBinding()]
     param([Parameter(ValueFromRemainingArguments)]`$Args)
-    # Fetch + run build-mios.ps1. The bootstrap auto-chains into the
-    # dev distro and runs mios-build-driver itself (in its finally
-    # block) -- no Stage 2 needed here. mios-build is just a thin
-    # convenience wrapper around the irm|iex.
+    # New flow (per operator: "mios build should queue the build, launch
+    # the html file in the local windows browser window, fetch the newly
+    # minted html/toml files to the overlay >> start the build with new
+    # key steps implemented"):
+    #
+    #   1. Open mios-config.html in the default Windows browser so the
+    #      operator can edit theming / functionality / package lists.
+    #   2. Wait for the operator to save + close the configurator (or
+    #      hit Enter to skip the edit pass).
+    #   3. mios-pull to sync M:\ overlay to origin/main + apply user edits.
+    #   4. Run build-mios.ps1 -BuildOnly so it skips the bootstrap phase
+    #      and goes straight into the OCI build inside MiOS-DEV.
+    #
+    # Bypass the configurator pass with: mios build -SkipConfig
+    # Bypass the pull pass        with: mios build -SkipPull
+    `$skipConfig = `$Args -contains '-SkipConfig'
+    `$skipPull   = `$Args -contains '-SkipPull'
+    `$forwardArgs = @(`$Args | Where-Object { `$_ -notin @('-SkipConfig','-SkipPull') })
+
+    # ── Step 1 + 2: configurator pass ──────────────────────────────
+    if (-not `$skipConfig) {
+        `$cfgHtml = `$null
+        foreach (`$c in @(
+            'M:\usr\share\mios\configurator\index.html',
+            'M:\MiOS\usr\share\mios\configurator\index.html',
+            'C:\MiOS\usr\share\mios\configurator\index.html'
+        )) { if (Test-Path -LiteralPath `$c) { `$cfgHtml = `$c; break } }
+        if (`$cfgHtml) {
+            Write-Host ''
+            Write-Host '  [1/3] Opening MiOS configurator in your browser...' -ForegroundColor Cyan
+            Write-Host ('         '+`$cfgHtml) -ForegroundColor DarkGray
+            Write-Host '         Edit values, click Save, then return here.' -ForegroundColor DarkGray
+            try { Start-Process `$cfgHtml | Out-Null } catch {}
+            Write-Host ''
+            Write-Host '  Press Enter when you''ve saved the configurator (or to skip the edit pass)...' -ForegroundColor Yellow -NoNewline
+            `$null = Read-Host
+        } else {
+            Write-Host '  [!] Configurator HTML not found on M:\ or C:\MiOS -- skipping edit pass.' -ForegroundColor Yellow
+            Write-Host '      Run `mios pull` first to seed the overlay.' -ForegroundColor DarkGray
+        }
+    }
+
+    # ── Step 3: sync overlay so the build sees the latest mios.toml ─
+    if (-not `$skipPull) {
+        Write-Host ''
+        Write-Host '  [2/3] Syncing M:\ overlay (mios.git + mios-bootstrap)...' -ForegroundColor Cyan
+        try { mios-pull } catch { Write-Host "  [!] mios-pull failed: `$(`$_.Exception.Message)" -ForegroundColor Yellow }
+    }
+
+    # ── Step 4: ignite the build ───────────────────────────────────
+    Write-Host ''
+    Write-Host '  [3/3] Running build pipeline (build-mios.ps1)...' -ForegroundColor Cyan
     `$env:MIOS_DASHBOARD_MODE = 'log'
     `$cb = [int][double]::Parse((Get-Date -UFormat %s))
     `$src = Invoke-RestMethod -Uri "`$Script:MiosBootstrapRaw/build-mios.ps1?cb=`$cb" -Headers @{ 'Cache-Control' = 'no-cache' }
-    & ([scriptblock]::Create(`$src)) @Args
+    & ([scriptblock]::Create(`$src)) @forwardArgs
 }
 
 function mios-update {
@@ -2347,6 +2548,11 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     $_cursorPre = try { [System.Windows.Forms.Cursor]::Position } catch { New-Object System.Drawing.Point 100,100 }
     $_curX = $_cursorPre.X
     $_curY = $_cursorPre.Y
+    # Lift terminal dims from mios.toml [terminal]. Vendor defaults
+    # (80x40 + 9000-row scrollback) match the dashboard's 80-col frame.
+    $_elevCols = Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80
+    $_elevRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 40
+    $_elevScr  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
     $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
     $_innerCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
@@ -2372,7 +2578,7 @@ try {
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
 '@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-    try { [Console]::SetWindowSize(80, 30); [Console]::SetBufferSize(80, 9000) } catch {}
+    try { [Console]::SetWindowSize($_elevCols, $_elevRows); [Console]::SetBufferSize($_elevCols, $_elevScr) } catch {}
     `$_h = [MEW.N]::GetConsoleWindow()
     `$_r = New-Object System.Drawing.Rectangle
     [MEW.N]::GetWindowRect(`$_h, [ref]`$_r) | Out-Null
@@ -2778,16 +2984,20 @@ Require-Cmd "git"    "Install Git from https://git-scm.com/download/win"
 Ensure-PodmanDesktop
 Write-Good "Prerequisites OK (git, podman)"
 
-# Initialize-DataDisk: shrink C:\ by EXACTLY 256 GB (262144 MB) and
-# create M:\ as NTFS labeled MIOS-DEV. Idempotent: if M:\ already
-# exists with the right label, returns silently. Per
-# feedback_mios_entry_m_drive_clone.md, M:\ is part of the Windows
-# entry contract and runs every irm|iex.
+# Initialize-DataDisk: shrink C:\ and create the MiOS data partition
+# at the configured drive letter / label / size. Defaults source from
+# mios.toml [bootstrap.host_storage]; vendor default = 262656 MB shrink
+# (= 256 GiB + 512 MB buffer) so Windows Explorer reports exactly
+# "256 GB" of Capacity (the bare 262144 MB shrink reports 255 GB after
+# NTFS reserves ~16 MB for boot sector + alignment + initial $MFT).
+# Idempotent: if M:\ already exists with the right label, returns
+# silently. Per feedback_mios_entry_m_drive_clone.md, M:\ is part of
+# the Windows entry contract and runs every irm|iex.
 function Initialize-DataDisk {
     param(
-        [int]$ShrinkMB     = 262144,   # exactly 256 GB, no auto-sizing
-        [string]$DriveLetter = 'M',
-        [string]$VolumeLabel = 'MIOS-DEV'
+        [int]$ShrinkMB     = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'shrink_mb'    -Default 262656),
+        [string]$DriveLetter = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'M'),
+        [string]$VolumeLabel = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'volume_label' -Default 'MIOS-DEV')
     )
     $existing = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
     if ($existing -and $existing.FileSystemLabel -eq $VolumeLabel) {
@@ -2799,7 +3009,8 @@ function Initialize-DataDisk {
         Write-Err "Either remove the volume manually or pass -DriveLetter <other> to Get-MiOS.ps1."
         exit 1
     }
-    Write-Info "Provisioning ${DriveLetter}:\ at exactly $ShrinkMB MB (256 GB) ..."
+    $_displayGb = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'display_size_gb' -Default 256
+    Write-Info "Provisioning ${DriveLetter}:\ at $ShrinkMB MB (target $_displayGb GB visible in Explorer) ..."
     $sysLetter = ([Environment]::GetEnvironmentVariable('SystemDrive')).TrimEnd(':')
     $cPart       = Get-Partition -DriveLetter $sysLetter
     $supported   = Get-PartitionSupportedSize -DriveLetter $sysLetter
@@ -2821,9 +3032,11 @@ function Initialize-DataDisk {
     Write-Info "  shrinking ${sysLetter}: $([math]::Round($cPart.Size/1GB,1)) GB -> $([math]::Round($newCSize/1GB,1)) GB ..."
     Resize-Partition -DriveLetter $sysLetter -Size $newCSize -ErrorAction Stop
     Write-Info "  creating $VolumeLabel partition (${ShrinkMB} MB) on disk $($disk.Number) ..."
+    $_fs    = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'filesystem'      -Default 'NTFS'
+    $_alloc = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'allocation_unit' -Default 4096
     $null = New-Partition -DiskNumber $disk.Number -Size $shrinkBytes -DriveLetter $DriveLetter -ErrorAction Stop
-    $null = Format-Volume -DriveLetter $DriveLetter -FileSystem NTFS -NewFileSystemLabel $VolumeLabel `
-        -AllocationUnitSize 4096 -Confirm:$false -Force
+    $null = Format-Volume -DriveLetter $DriveLetter -FileSystem $_fs -NewFileSystemLabel $VolumeLabel `
+        -AllocationUnitSize $_alloc -Confirm:$false -Force
     Write-Good "${DriveLetter}:\\ created (${ShrinkMB} MB NTFS, label=$VolumeLabel)"
 }
 
