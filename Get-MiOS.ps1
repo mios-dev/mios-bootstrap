@@ -1051,7 +1051,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # at definition time; we substitute placeholders here at install time
     # so the launcher's geometry tracks the operator's mios.toml edits.
     $_lnchCols    = Get-MiosTomlValue -Section 'terminal'   -Key 'cols'         -Default 80
-    $_lnchRows    = Get-MiosTomlValue -Section 'terminal'   -Key 'rows'         -Default 40
+    $_lnchRows    = Get-MiosTomlValue -Section 'terminal'   -Key 'rows'         -Default 30
     $_lnchCellW   = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px'    -Default 10
     $_lnchCellH   = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px'    -Default 20
     $_lnchChromeW = Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px'  -Default 20
@@ -1880,11 +1880,15 @@ function Install-MiOSPowerShellProfile {
     $ffLogoBase64     = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script:MiosBrandingTxt))
     # Lift terminal dims from mios.toml [terminal] (per
     # feedback_mios_toml_html_global_dotfile -- mios.toml is THE
-    # global dotfile). Vendor defaults match the dashboard's 80-col
-    # frame + 40-row dashboard layout.
+    # global dotfile). Vendor defaults: 80x30 (operator-defined MiOS
+    # default) with frame at cols-1 / rows-1 so the dashboard fits
+    # inside the borderless + scrollbar-less terminal without the
+    # right border colliding with the line-wrap boundary.
     $_miosCols    = Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80
-    $_miosRows    = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 40
+    $_miosRows    = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 30
     $_miosScroll  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
+    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default ($_miosCols - 1)
+    $_miosFrameH  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default ($_miosRows - 1)
     $miosScriptBody = @"
 # MiOS PowerShell profile -- PSReadLine reload + fastfetch MOTD +
 # oh-my-posh init.
@@ -2023,14 +2027,14 @@ if (`$true) {
         param([string]`$ConfigPath, [string]`$LogoPath)
         # Frame width: hardcoded to 78 so EVERY rendered frame visibly
         # leaves a 1-2 col margin on the right edge. Reading
-        # [Console]::WindowWidth here is unreliable -- when the elevated
-        # Pass-2 window's resize hasn't fully propagated yet (or the host
-        # is a pseudo-console that lies about width), consoleW returns the
-        # parent's >80 value, the frame renders at 80 chars, and on a
-        # narrower-than-buffer host it wraps. 78 always fits in 80-col
-        # windows and aligns visually with the launcher menu's inner
-        # content area.
-        `$WIDTH = 78
+        # Frame width sourced from mios.toml [terminal].frame_width
+        # (default cols-1, see Get-MiOS.ps1 install-time substitution).
+        # Per operator: "GLOBAL framing -1 width and height for fitting
+        # piping/framing within the borderless and scrollbar-less MiOS
+        # themed terminal window". cols-1 leaves 1 char of slack at the
+        # right edge so the box-drawing border doesn't touch the
+        # line-wrap boundary on hosts that lie about their width.
+        `$WIDTH = $_miosFrameW
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
 
@@ -2213,10 +2217,16 @@ function mios-build {
             'C:\MiOS\usr\share\mios\configurator\index.html'
         )) { if (Test-Path -LiteralPath `$c) { `$cfgHtml = `$c; break } }
         if (`$cfgHtml) {
+            # Capture mtime BEFORE opening so we can tell if the operator
+            # actually saved a new copy (the browser saves to Downloads
+            # because file:// URLs can't write back to source). Used by
+            # the promote step below.
+            `$cfgMtimeBefore = (Get-Item -LiteralPath `$cfgHtml).LastWriteTimeUtc
             Write-Host ''
-            Write-Host '  [1/3] Opening MiOS configurator in your browser...' -ForegroundColor Cyan
+            Write-Host '  [1/4] Opening MiOS configurator in your browser...' -ForegroundColor Cyan
             Write-Host ('         '+`$cfgHtml) -ForegroundColor DarkGray
-            Write-Host '         Edit values, click Save, then return here.' -ForegroundColor DarkGray
+            Write-Host '         Edit values, click Save -> the browser writes mios.toml' -ForegroundColor DarkGray
+            Write-Host '         to your Downloads folder (file:// URLs cannot write back).' -ForegroundColor DarkGray
             try { Start-Process `$cfgHtml | Out-Null } catch {}
             Write-Host ''
             Write-Host '  Press Enter when you''ve saved the configurator (or to skip the edit pass)...' -ForegroundColor Yellow -NoNewline
@@ -2225,18 +2235,82 @@ function mios-build {
             Write-Host '  [!] Configurator HTML not found on M:\ or C:\MiOS -- skipping edit pass.' -ForegroundColor Yellow
             Write-Host '      Run `mios pull` first to seed the overlay.' -ForegroundColor DarkGray
         }
+
+        # ── Step 2: promote downloaded mios.toml from Downloads ────
+        # The browser saves to %USERPROFILE%\Downloads (file:// URLs
+        # can't write back to source). Scan for any mios*.toml /
+        # *mios*.html newer than the in-place overlay copies and
+        # PROMOTE them to M:\etc\mios\ + M:\usr\share\mios\configurator\.
+        # Also archive the imported source so we don't double-promote
+        # on the next mios-build run.
+        Write-Host ''
+        Write-Host '  [2/4] Scanning Downloads for edited config files...' -ForegroundColor Cyan
+        `$dlDir = Join-Path `$env:USERPROFILE 'Downloads'
+        if (Test-Path -LiteralPath `$dlDir) {
+            `$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+            # mios.toml -> M:\etc\mios\mios.toml (+ /usr/share copy for
+            # the dev VM via /mnt/m/etc/mios)
+            `$tomlSrc = Get-ChildItem -LiteralPath `$dlDir -Filter 'mios*.toml' -File -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+            if (`$tomlSrc) {
+                `$tomlDst = 'M:\etc\mios\mios.toml'
+                `$tomlPar = Split-Path -Parent `$tomlDst
+                if (-not (Test-Path -LiteralPath `$tomlPar)) {
+                    New-Item -ItemType Directory -Path `$tomlPar -Force | Out-Null
+                }
+                Copy-Item -LiteralPath `$tomlSrc.FullName -Destination `$tomlDst -Force
+                Write-Host ('         [+] '+`$tomlSrc.Name+' -> '+`$tomlDst) -ForegroundColor Green
+                # Also copy to M:\usr\share\mios so the layered overlay
+                # picks it up even before mios-pull runs.
+                `$tomlDst2 = 'M:\usr\share\mios\mios.toml'
+                if (Test-Path -LiteralPath (Split-Path -Parent `$tomlDst2)) {
+                    Copy-Item -LiteralPath `$tomlSrc.FullName -Destination `$tomlDst2 -Force
+                    Write-Host ('         [+] '+`$tomlSrc.Name+' -> '+`$tomlDst2) -ForegroundColor Green
+                }
+                # Archive the source so a re-run of mios build doesn't
+                # re-promote the same file. Keep it (don't delete) so
+                # the operator can recover if something went wrong.
+                `$archive = Join-Path `$dlDir (`$tomlSrc.BaseName+'.imported-'+`$stamp+'.toml')
+                Move-Item -LiteralPath `$tomlSrc.FullName -Destination `$archive -Force
+            } else {
+                Write-Host '         [-] no mios*.toml in Downloads -- using existing overlay' -ForegroundColor DarkGray
+            }
+            # Also pick up an edited HTML configurator (rare; the
+            # configurator emits TOML by default but operators may save
+            # a hand-edited HTML).
+            `$htmlSrc = Get-ChildItem -LiteralPath `$dlDir -Filter '*mios*.html' -File -ErrorAction SilentlyContinue |
+                Where-Object { `$_.Name -notmatch '\.imported-' } |
+                Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+            if (`$htmlSrc) {
+                `$htmlDst = 'M:\usr\share\mios\configurator\index.html'
+                `$htmlPar = Split-Path -Parent `$htmlDst
+                if (-not (Test-Path -LiteralPath `$htmlPar)) {
+                    New-Item -ItemType Directory -Path `$htmlPar -Force | Out-Null
+                }
+                Copy-Item -LiteralPath `$htmlSrc.FullName -Destination `$htmlDst -Force
+                Write-Host ('         [+] '+`$htmlSrc.Name+' -> '+`$htmlDst) -ForegroundColor Green
+                `$archive = Join-Path `$dlDir (`$htmlSrc.BaseName+'.imported-'+`$stamp+'.html')
+                Move-Item -LiteralPath `$htmlSrc.FullName -Destination `$archive -Force
+            }
+        } else {
+            Write-Host '         [-] '`$dlDir' does not exist -- skipping promote' -ForegroundColor DarkGray
+        }
     }
 
     # ── Step 3: sync overlay so the build sees the latest mios.toml ─
+    # Note: this runs AFTER the Downloads-promote step so mios-pull
+    # sees the just-promoted files in M:\etc\mios. mios-pull's git
+    # reset --hard would otherwise blow away the operator's changes
+    # if they lived in the tracked tree.
     if (-not `$skipPull) {
         Write-Host ''
-        Write-Host '  [2/3] Syncing M:\ overlay (mios.git + mios-bootstrap)...' -ForegroundColor Cyan
+        Write-Host '  [3/4] Syncing M:\ overlay (mios.git + mios-bootstrap)...' -ForegroundColor Cyan
         try { mios-pull } catch { Write-Host "  [!] mios-pull failed: `$(`$_.Exception.Message)" -ForegroundColor Yellow }
     }
 
     # ── Step 4: ignite the build ───────────────────────────────────
     Write-Host ''
-    Write-Host '  [3/3] Running build pipeline (build-mios.ps1)...' -ForegroundColor Cyan
+    Write-Host '  [4/4] Running build pipeline (build-mios.ps1)...' -ForegroundColor Cyan
     `$env:MIOS_DASHBOARD_MODE = 'log'
     `$cb = [int][double]::Parse((Get-Date -UFormat %s))
     `$src = Invoke-RestMethod -Uri "`$Script:MiosBootstrapRaw/build-mios.ps1?cb=`$cb" -Headers @{ 'Cache-Control' = 'no-cache' }
@@ -2549,9 +2623,10 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     $_curX = $_cursorPre.X
     $_curY = $_cursorPre.Y
     # Lift terminal dims from mios.toml [terminal]. Vendor defaults
-    # (80x40 + 9000-row scrollback) match the dashboard's 80-col frame.
+    # (80x30 + 9000-row scrollback) match the operator-defined MiOS
+    # default. Frame width = cols-1 for borderless fit.
     $_elevCols = Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80
-    $_elevRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 40
+    $_elevRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 30
     $_elevScr  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
     $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
     $_innerCmd = @"
