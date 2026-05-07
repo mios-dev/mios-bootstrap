@@ -4981,15 +4981,19 @@ function Resolve-MiosDevDistro {
 function Show-MiosApp {
     Clear-Host
     $ver  = Read-MiosVersion
-    $bar  = '+' + ('=' * 78) + '+'
-    $thin = '+' + ('-' * 78) + '+'
-    Write-Host $bar -ForegroundColor DarkCyan
-    $title = '|  MiOS v' + $ver
-    Write-Host ($title + (' ' * (79 - $title.Length)) + '|') -ForegroundColor Cyan
-    $sub = '|  one launcher; mios.toml is the SSOT for every target'
-    Write-Host ($sub + (' ' * (79 - $sub.Length)) + '|') -ForegroundColor DarkGray
-    Write-Host $bar -ForegroundColor DarkCyan
-    Write-Host ''
+    # 78-char frame to match the MiOS profile dashboard + leave 1-2 col
+    # right margin in an 80-col window. Unicode box-drawing chars match
+    # the global Show-MiosDashboard styling.
+    $top  = [char]0x256D + ([string][char]0x2500) * 76 + [char]0x256E   # ╭──...──╮
+    $bot  = [char]0x2570 + ([string][char]0x2500) * 76 + [char]0x256F   # ╰──...──╯
+    $thin = [char]0x251C + ([string][char]0x2500) * 76 + [char]0x2524   # ├──...──┤
+    $V    = [char]0x2502                                                # │
+    Write-Host $top -ForegroundColor DarkCyan
+    $title = "$V  MiOS v" + $ver
+    Write-Host ($title + (' ' * (77 - $title.Length)) + $V) -ForegroundColor Cyan
+    $sub = "$V  one launcher; mios.toml is the SSOT for every target"
+    Write-Host ($sub + (' ' * (77 - $sub.Length)) + $V) -ForegroundColor DarkGray
+    Write-Host $thin -ForegroundColor DarkCyan
     $items = @(
         @{ Key = '1'; Name = 'Build MiOS';        Desc = 'build deployable OCI (podman build + deploy)' },
         @{ Key = '2'; Name = 'Enter Dev VM';      Desc = 'wsl into MiOS-DEV (root shell)'              },
@@ -5001,21 +5005,22 @@ function Show-MiosApp {
         @{ Key = 'q'; Name = 'Quit';              Desc = 'exit'                                         }
     )
     foreach ($it in $items) {
-        $line = '  [' + $it.Key + ']  ' + $it.Name.PadRight(22) + $it.Desc
-        if ($line.Length -gt 80) { $line = $line.Substring(0, 79) + [char]0x2026 }
+        $body = '  [' + $it.Key + ']  ' + $it.Name.PadRight(20) + $it.Desc
+        if ($body.Length -gt 74) { $body = $body.Substring(0, 73) + [char]0x2026 }
+        $line = "$V $body".PadRight(77) + $V
         $color = if ($it.Key -eq 'q') { 'DarkGray' } else { 'White' }
         Write-Host $line -ForegroundColor $color
     }
-    Write-Host ''
     Write-Host $thin -ForegroundColor DarkCyan
     $dev = Resolve-MiosDevDistro
-    Write-Host '  Dev distro : ' -NoNewline -ForegroundColor DarkGray
-    if ($dev) { Write-Host $dev -ForegroundColor Green } else { Write-Host 'not registered' -ForegroundColor DarkGray }
-    Write-Host '  Install    : ' -NoNewline -ForegroundColor DarkGray
-    Write-Host $Script:MiOSRoot -ForegroundColor White
-    Write-Host '  SSOT       : ' -NoNewline -ForegroundColor DarkGray
-    Write-Host '~/.config > /etc > /usr/share  (mios/mios.toml)' -ForegroundColor White
-    Write-Host $bar -ForegroundColor DarkCyan
+    $devTxt = if ($dev) { $dev } else { 'not registered' }
+    $devLine = "$V  Dev distro : $devTxt"
+    Write-Host ($devLine.PadRight(77) + $V) -ForegroundColor DarkGray
+    $instLine = "$V  Install    : $($Script:MiOSRoot)"
+    Write-Host ($instLine.PadRight(77) + $V) -ForegroundColor DarkGray
+    $ssotLine = "$V  SSOT       : ~/.config > /etc > /usr/share  (mios/mios.toml)"
+    Write-Host ($ssotLine.PadRight(77) + $V) -ForegroundColor DarkGray
+    Write-Host $bot -ForegroundColor DarkCyan
     Write-Host ''
 }
 
@@ -6072,6 +6077,38 @@ if ($activeDistro) {
         Log-Ok "MiOS build essentials layered onto $_wslDistroForTerm"
     } else {
         Log-Warn "Failed to layer MiOS build essentials (exit $($script:_essentialsRc)) -- driver will fail when it tries to use mkpasswd / openssl / bootc"
+    }
+
+    # Disable netavark's firewall management. WSL2's kernel doesn't ship
+    # the iptables/nf_tables netfilter modules that netavark expects, so
+    # even with the iptables BINARY present (whois package above) the
+    # build container's network setup fails with:
+    #   "setup network: netavark: Must provide a valid firewall backend"
+    # The build doesn't need iptables-managed isolation -- it just needs
+    # outbound network for package pulls. firewall_driver=none tells
+    # netavark to skip firewall rule installation; the bridge interface
+    # still works for outbound traffic via WSL2's normal NAT.
+    Set-Step "Configuring podman netavark for WSL2 (firewall_driver=none)..."
+    $netavarkConf = @'
+[network]
+firewall_driver = "none"
+'@
+    $confDropIn = "/etc/containers/containers.conf.d/mios-wsl2.conf"
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        # Use a here-doc piped through wsl so we don't have to escape
+        # the [section] brackets through bash -c.
+        $netavarkConf | & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "mkdir -p /etc/containers/containers.conf.d && cat > $confDropIn" 2>&1 |
+            ForEach-Object { Write-Log "netavark-conf: $_" }
+        $script:_netavarkRc = $LASTEXITCODE
+    }
+    if ($script:_netavarkRc -eq 0) {
+        Log-Ok "netavark configured for WSL2 (firewall_driver=none in $confDropIn)"
+    } else {
+        Log-Warn "Failed to write netavark drop-in (exit $($script:_netavarkRc)) -- podman build may fail at first network step"
     }
 
     # The overlay seed wrote /etc/wsl.conf [user] default=mios so future
