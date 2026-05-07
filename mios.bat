@@ -1,48 +1,35 @@
 @echo off
-:: mios.bat -- Win+R-friendly MiOS bootstrap launcher.
+:: mios.bat -- AIO entry. ONE window after UAC.
 ::
 :: Two ways to invoke this:
 ::
-:: 1. Download + double-click mios.bat
-::    Drop this file anywhere on disk and run it directly.
+::   1. Download + double-click mios.bat
+::   2. Win+R and paste the equivalent powershell one-liner:
+::        powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"
 ::
-:: 2. Win+R one-liner (no download needed):
-::      powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"
-::    Paste, hit Enter, that's it. (UAC prompt at the same point as
-::    mios.bat below, since the elevation logic lives in Get-MiOS.ps1.)
+:: Flow design (no intermediate flicker):
+::   * Already admin: run `pwsh -Command "irm|iex"` IN-PLACE in the
+::     current cmd window. No new window spawned, no UAC prompt. The
+::     bootstrap runs, the window stays open via `pause`.
+::   * Not admin: a HIDDEN-style powershell shim does Start-Process
+::     -Verb RunAs of pwsh DIRECTLY (skipping the elevated-cmd hop),
+::     so UAC pops once and lands the operator in ONE elevated pwsh
+::     window with the bootstrap already running. The original
+::     non-admin cmd exits immediately. The hidden shim doesn't paint
+::     a window between the click and UAC.
 ::
-:: Both paths fetch Get-MiOS.ps1 via irm|iex which:
-::   * SELF-ELEVATES (UAC prompt) -- needed to shrink C:\ + create M:\
-::   * provisions M:\ at exactly 256 GB (NTFS, label MIOS-DEV)
-::   * winget-installs Podman Desktop if not already present
-::   * provisions the podman-MiOS-DEV machine on M:\
-::   * installs WT MiOS profile + Geist + oh-my-posh + fastfetch
-::   * stages mios-build / mios-config / mios-dev / mios-help functions
-::   * registers MiOS as a native Windows app (Start Menu + Add/Remove)
-::     with a multi-size .ico matching the isometric MiOS ASCII art
-::   * auto-chains into MiOS-DEV and runs mios-build-driver
-::
-:: Self-elevation lives here in mios.bat (rather than in Get-MiOS.ps1)
-:: because once we're inside `irm|iex` the script is a string in pwsh
-:: memory -- there's no .ps1 file to relaunch with -Verb RunAs. Doing
-:: it in mios.bat means double-click handles UAC up front, then the
-:: elevated child fetches+iex's Get-MiOS.ps1 with admin already in hand.
+:: After UAC the elevated pwsh runs:
+::   irm Get-MiOS.ps1 | iex
+:: Get-MiOS.ps1 detects $isAdmin=true (we just elevated) and skips its
+:: own self-elevation block, so this is the ONLY UAC prompt and the
+:: ONLY new window the operator sees. Steps 1-7 + M:\ provisioning +
+:: Podman Desktop install + dev VM provision + native app + ICO + auto-
+:: chain into mios-build-driver all happen in this single window.
 
 setlocal
 set "MIOS_URL=https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1"
 
-:: Self-elevate. `net session` returns 0 only when we have admin. If not
-:: admin, relaunch this same .bat via Start-Process -Verb RunAs (which
-:: triggers the UAC consent dialog), then exit the non-admin instance.
-net session >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo [mios] requesting administrator rights ^(needed to provision M:\^) ...
-    powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ^
-        "Start-Process -FilePath '%~f0' -Verb RunAs"
-    exit /b
-)
-
-:: Prefer pwsh 7+ if available; fall back to Windows PowerShell 5.1.
+:: Resolve pwsh: prefer 7+ MSI install; fall back to Windows PowerShell 5.1.
 where /q pwsh.exe
 if %ERRORLEVEL%==0 (
     set "MIOS_PWSH=pwsh.exe"
@@ -50,11 +37,21 @@ if %ERRORLEVEL%==0 (
     set "MIOS_PWSH=powershell.exe"
 )
 
-%MIOS_PWSH% -NoLogo -ExecutionPolicy Bypass -Command "irm '%MIOS_URL%' | iex"
-endlocal
+net session >nul 2>&1
+if %ERRORLEVEL%==0 (
+    :: Already admin -- run IN-PLACE (no spawn, no new window).
+    %MIOS_PWSH% -NoLogo -ExecutionPolicy Bypass -Command "irm '%MIOS_URL%' | iex"
+    echo.
+    pause
+    exit /b
+)
 
-:: The elevated console is a fresh window spawned by Start-Process. If
-:: we let it close immediately the operator never sees the bootstrap
-:: result. Pause so they can read + press a key to dismiss.
-echo.
-pause
+:: Non-admin -- spawn ONE elevated pwsh window directly via UAC.
+:: -WindowStyle Hidden hides the launching powershell shim so the
+:: operator sees: their double-click, then UAC, then the bootstrap
+:: window. No intermediate cmd, no visible powershell flicker.
+:: -NoExit on the elevated pwsh keeps the bootstrap window open after
+:: the script finishes so the operator can read the result.
+powershell -NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command ^
+    "Start-Process '%MIOS_PWSH%' -Verb RunAs -ArgumentList @('-NoLogo','-NoExit','-ExecutionPolicy','Bypass','-Command','irm ''%MIOS_URL%'' | iex')"
+endlocal
