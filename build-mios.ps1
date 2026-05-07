@@ -59,31 +59,113 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = "SilentlyContinue"
 
-# ── Console resize: 80x30 BEFORE any sizing-dependent state is captured ──────
+# ── mios.toml layered-overlay reader (mirrors Get-MiOS.ps1's helper) ─────────
+# mios.toml is THE global dotfile (per feedback_mios_toml_html_global_dotfile).
+# Every tunable -- terminal dims, retry delays, dev VM image tag, distro
+# names -- sources from the layered overlay. We inline the helper instead
+# of dot-sourcing because build-mios.ps1 must work both in-tree (clone) and
+# under irm|iex relaunch where the path to Get-MiOS.ps1 isn't guaranteed.
+$script:_MiosTomlCache = @{}
+function Resolve-MiosTomlText {
+    if ($script:_MiosTomlCache['_text']) { return $script:_MiosTomlCache['_text'] }
+    foreach ($p in @(
+        (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
+        'M:\etc\mios\mios.toml',
+        'M:\usr\share\mios\mios.toml',
+        'C:\MiOS\usr\share\mios\mios.toml'
+    )) {
+        if ($p -and (Test-Path -LiteralPath $p)) {
+            try {
+                $script:_MiosTomlCache['_text']   = Get-Content -LiteralPath $p -Raw -ErrorAction Stop
+                $script:_MiosTomlCache['_source'] = $p
+                return $script:_MiosTomlCache['_text']
+            } catch {}
+        }
+    }
+    try {
+        $cb  = [int][double]::Parse((Get-Date -UFormat %s))
+        $url = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/mios.toml?cb=$cb"
+        $script:_MiosTomlCache['_text'] = Invoke-RestMethod -Uri $url `
+            -Headers @{ 'Cache-Control'='no-cache, no-store, max-age=0'; 'Pragma'='no-cache' } `
+            -ErrorAction Stop
+        return $script:_MiosTomlCache['_text']
+    } catch {
+        $script:_MiosTomlCache['_text'] = ''
+        return ''
+    }
+}
+function Get-MiosTomlValue {
+    param([Parameter(Mandatory)][string]$Section, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)]$Default)
+    $txt = Resolve-MiosTomlText
+    if (-not $txt) { return $Default }
+    $rxSec = '(?ms)^\[' + [regex]::Escape($Section) + '\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)'
+    $mSec  = [regex]::Match($txt, $rxSec)
+    if (-not $mSec.Success) { return $Default }
+    $rxKey = '(?m)^[ \t]*' + [regex]::Escape($Key) + '[ \t]*=[ \t]*(?<val>.+?)[ \t]*(?:#.*)?$'
+    $mKey  = [regex]::Match($mSec.Groups['body'].Value, $rxKey)
+    if (-not $mKey.Success) { return $Default }
+    $raw = $mKey.Groups['val'].Value.Trim()
+    if ($Default -is [int]) {
+        $n = 0; if ([int]::TryParse(($raw -replace '_',''), [ref]$n)) { return $n }
+        return $Default
+    }
+    if ($Default -is [bool]) {
+        if ($raw -match '^(?i)true$')  { return $true }
+        if ($raw -match '^(?i)false$') { return $false }
+        return $Default
+    }
+    if ($Default -is [array]) {
+        if ($raw -match '^\[(.*)\]$') {
+            $items = @($Matches[1] -split ',' | ForEach-Object {
+                $s = $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
+                if ($s) { $s }
+            })
+            if ($Default.Length -gt 0 -and $Default[0] -is [int]) {
+                $coerced = @()
+                foreach ($it in $items) {
+                    $n = 0
+                    if ([int]::TryParse($it, [ref]$n)) { $coerced += $n } else { return $Default }
+                }
+                return ,$coerced
+            }
+            return ,$items
+        }
+        return $Default
+    }
+    return $raw.Trim('"', "'")
+}
+
+# Resolve canonical terminal dims ONCE at script-load so every later
+# resize / wt --size / stty call uses the same values from mios.toml.
+$script:MiosCols   = Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80
+$script:MiosRows   = Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20
+$script:MiosScroll = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
+
+# ── Console resize: mios.toml [terminal] dims BEFORE any sizing-dependent state ─
 # $script:DW (~line 543) is computed from [Console]::WindowWidth at script-
 # load time and never re-read. If the parent window opened wider, the
 # dashboard frame draws at the wrong width and log lines bleed past it.
-# Resize NOW, before $DW is computed.
+# Resize NOW, before $DW is computed. Dims source from mios.toml [terminal]
+# (vendor default 80x20 portal feel).
 # Per feedback_mios_terminal_dimensions.md.
 #
 # The order matters: SetWindowSize requires buffer >= window. If the
-# current buffer is smaller than 80, SetWindowSize(80,30) fails. If
-# the current window is larger than 80, SetBufferSize(80,9000) fails
-# (buffer can't be smaller than current window). So we branch on the
-# current width.
+# current buffer is smaller than the target cols, SetWindowSize fails.
+# If the current window is larger than the target cols, SetBufferSize
+# fails (buffer can't be smaller than current window). So we branch.
 $_resizeBefore = try { "$([Console]::WindowWidth)x$([Console]::WindowHeight) buf=$([Console]::BufferWidth)x$([Console]::BufferHeight)" } catch { 'unknown' }
 $_resizeAfter  = 'unchanged'
 $_resizeErr    = $null
 try {
     $_curW = [Console]::WindowWidth
-    if ($_curW -gt 80) {
+    if ($_curW -gt $script:MiosCols) {
         # Shrink window first (buffer can't be < window), then buffer.
-        [Console]::SetWindowSize(80, 30)
-        [Console]::SetBufferSize(80, 9000)
+        [Console]::SetWindowSize($script:MiosCols, $script:MiosRows)
+        [Console]::SetBufferSize($script:MiosCols, $script:MiosScroll)
     } else {
         # Enlarge buffer first (window can't be > buffer), then window.
-        [Console]::SetBufferSize(80, 9000)
-        [Console]::SetWindowSize(80, 30)
+        [Console]::SetBufferSize($script:MiosCols, $script:MiosScroll)
+        [Console]::SetWindowSize($script:MiosCols, $script:MiosRows)
     }
     $_resizeAfter = "$([Console]::WindowWidth)x$([Console]::WindowHeight) buf=$([Console]::BufferWidth)x$([Console]::BufferHeight)"
 } catch {
@@ -551,10 +633,15 @@ function Invoke-DataDiskBootstrap {
         Log-Warn "Not running as admin -- skipping data disk provisioning (would need elevation to shrink C:)"
         return
     }
-    $shrinkMB    = if ($env:MIOS_DATA_DISK_MB)     { [int]$env:MIOS_DATA_DISK_MB }     else { 262144 }
-    $driveLetter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER }      else { 'M' }
+    # M:\ shrink amount sourced from mios.toml [bootstrap.host_storage].
+    # shrink_mb (vendor default 262656 = 256 GiB + 512 MB buffer so the
+    # NTFS volume rounds to "256 GB" in Explorer). MIOS_DATA_DISK_MB env
+    # still wins for ad-hoc test overrides.
+    $shrinkMB    = if ($env:MIOS_DATA_DISK_MB)     { [int]$env:MIOS_DATA_DISK_MB }     else { Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'shrink_mb' -Default 262656 }
+    $driveLetter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER }      else { Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'M' }
+    $_volLabel   = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'volume_label' -Default 'MIOS-DEV'
     try {
-        $dataRoot = Initialize-MiosDataDisk -ShrinkMB $shrinkMB -DriveLetter $driveLetter -VolumeLabel 'MIOS-DEV'
+        $dataRoot = Initialize-MiosDataDisk -ShrinkMB $shrinkMB -DriveLetter $driveLetter -VolumeLabel $_volLabel
         Set-PodmanMachineStorageOn -DataRoot $dataRoot
         # Clamp the VHDX max-size to fit the new partition.
         $newFreeGB = [math]::Floor((Get-Volume -DriveLetter $driveLetter).SizeRemaining / 1GB)
@@ -1461,7 +1548,7 @@ function Show-PostBootstrapMenu {
                 # at wt.exe spawn time. Single-line, single-quoted-on-bash-side, no escapes.
                 $driverPath = '/usr/libexec/mios/mios-build-driver'
                 $fallback   = 'https://raw.githubusercontent.com/mios-dev/mios/main/usr/libexec/mios/mios-build-driver'
-                $driverCmd  = "stty cols 80 rows 30 2>/dev/null; if [ -x '$driverPath' ]; then exec bash '$driverPath'; else echo '[handoff] $driverPath not in $devDistro yet -- fetching latest...'; t=`$(mktemp); if curl -fsSL '$fallback' -o `"`$t`"; then chmod +x `"`$t`"; exec bash `"`$t`"; else echo '[handoff] FATAL: could not fetch driver from $fallback'; exec bash; fi; fi"
+                $driverCmd  = "stty cols $($script:MiosCols) rows $($script:MiosRows) 2>/dev/null; if [ -x '$driverPath' ]; then exec bash '$driverPath'; else echo '[handoff] $driverPath not in $devDistro yet -- fetching latest...'; t=`$(mktemp); if curl -fsSL '$fallback' -o `"`$t`"; then chmod +x `"`$t`"; exec bash `"`$t`"; else echo '[handoff] FATAL: could not fetch driver from $fallback'; exec bash; fi; fi"
                 # wt.exe (Windows Terminal) is the canonical multi-tab host; if it's
                 # missing or the App Execution Alias is broken (per d6e8b66 / earlier
                 # in this session), fall back to a plain Start-Process wsl.exe in a
@@ -1487,18 +1574,21 @@ function Show-PostBootstrapMenu {
                     # the initial dimensions of a NEW wt window; `new-tab`
                     # inherits whatever the parent window already has, which
                     # is wrong for the build-pipeline tty.
-                    & $wt --size 80,30 --title "MiOS Build ($devDistro)" `
+                    & $wt --size "$($script:MiosCols),$($script:MiosRows)" --title "MiOS Build ($devDistro)" `
                         wsl.exe -d $devDistro --user mios --cd "~" -- bash -lc $driverCmd
                 } else {
                     Write-Host "  wt.exe not found -- launching wsl.exe via a sized conhost window." -ForegroundColor Yellow
                     # conhost-side resize: spawn a pwsh window that resizes
-                    # itself to 80x30 before exec'ing wsl.exe. The dashboard
-                    # frame then renders flush against the borders, matching
-                    # the wt.exe path's geometry.
+                    # itself to mios.toml [terminal] dims before exec'ing
+                    # wsl.exe. The dashboard frame then renders flush against
+                    # the borders, matching the wt.exe path's geometry.
+                    $_shCols = $script:MiosCols
+                    $_shRows = $script:MiosRows
+                    $_shScr  = $script:MiosScroll
                     $resizeShim = @"
 try {
-    [Console]::SetWindowSize(80,30)
-    [Console]::SetBufferSize(80,9000)
+    [Console]::SetWindowSize($_shCols,$_shRows)
+    [Console]::SetBufferSize($_shCols,$_shScr)
 } catch {}
 & wsl.exe -d '$devDistro' --user mios --cd '~' -- bash -lc @'
 $driverCmd
@@ -1996,9 +2086,9 @@ function Initialize-MiosDataDisk {
         as already-initialized and the function returns without shrinking again.
     #>
     param(
-        [int]$ShrinkMB     = 262144,
-        [string]$DriveLetter = 'M',
-        [string]$VolumeLabel = 'MIOS-DEV'
+        [int]$ShrinkMB     = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'shrink_mb' -Default 262656),
+        [string]$DriveLetter = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'M'),
+        [string]$VolumeLabel = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'volume_label' -Default 'MIOS-DEV')
     )
 
     Set-Step "Sizing MiOS data disk ($ShrinkMB MB on ${DriveLetter}:)..."
@@ -2331,8 +2421,17 @@ function New-BuilderDistro([hashtable]$HW) {
     # Default tag: 6.0 (per operator instruction). Override with
     # MIOS_MACHINE_TAG=<tag> or MIOS_MACHINE_IMAGE=<docker:// url> for a
     # specific ref; pre-stage runs in both cases.
-    $machineTag = if ($env:MIOS_MACHINE_TAG) { $env:MIOS_MACHINE_TAG } else { '6.0' }
-    $machineRepo = 'quay.io/podman/machine-os'
+    # Default machine image sourced from mios.toml [bootstrap.dev_vm].
+    # base_image (vendor default: quay.io/podman/machine-os:6.0). Env var
+    # MIOS_MACHINE_TAG / MIOS_MACHINE_IMAGE still wins for ad-hoc overrides.
+    $_tomlBase   = Get-MiosTomlValue -Section 'bootstrap.dev_vm' -Key 'base_image' -Default 'quay.io/podman/machine-os:6.0'
+    if ($_tomlBase -match '^(.+):([^:]+)$') {
+        $_tomlRepo = $Matches[1]; $_tomlTag = $Matches[2]
+    } else {
+        $_tomlRepo = $_tomlBase;  $_tomlTag = '6.0'
+    }
+    $machineTag = if ($env:MIOS_MACHINE_TAG) { $env:MIOS_MACHINE_TAG } else { $_tomlTag }
+    $machineRepo = $_tomlRepo
     if ($MachineImage -match '^docker://(.+)$') {
         $ref = $matches[1]
         if ($ref -match '^(.+):([^:]+)$') {
@@ -2353,7 +2452,10 @@ function New-BuilderDistro([hashtable]$HW) {
         # successful prior fetch makes subsequent retries instant.
         $MachineImage = $null
         $lastErr      = $null
-        $delays       = @(0, 5, 15, 30)  # 4 tries: 0s, 5s, 15s, 30s
+        # Retry schedule from mios.toml [network.retry].delays_seconds
+        # (vendor default: 0s, 5s, 15s, 30s). Operator can lengthen for
+        # known-flaky upstreams via the configurator HTML.
+        $delays       = @(Get-MiosTomlValue -Section 'network.retry' -Key 'delays_seconds' -Default @(0, 5, 15, 30))
         for ($i = 0; $i -lt $delays.Count; $i++) {
             if ($delays[$i] -gt 0) {
                 Set-Step "Retry $i/$($delays.Count - 1) for $machineRepo`:$machineTag in $($delays[$i])s..."
@@ -5668,10 +5770,10 @@ if ($script:DashboardMode -eq 'interactive') {
 # The earlier resize (~line 70) is the LOAD-TIME resize that fixes the $DW
 # computation. This second resize is defensive: if some other code in the
 # load path between line 70 and here changed the window size, this restores
-# it. Idempotent.
+# it. Idempotent. Dims source from mios.toml [terminal] (script:Mios* vars).
 try {
-    [Console]::SetWindowSize(80, 30)
-    [Console]::SetBufferSize(80, 9000)
+    [Console]::SetWindowSize($script:MiosCols, $script:MiosRows)
+    [Console]::SetBufferSize($script:MiosCols, $script:MiosScroll)
 } catch {}
 
 # Force-recompute $DW now that the window is definitely 80 wide. If the
