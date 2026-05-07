@@ -92,6 +92,35 @@ $ErrorActionPreference = "Stop"
 # land fresh on the next canonical-one-liner paste -- the only run that
 # pays the stale-cache cost is the very first one after this prefix is
 # itself deployed (the cached version pre-dates the prefix).
+# ── Resize + center the OUTER WinR pwsh window before anything paints ──────
+# At irm|iex entry the operator's WinR-spawned pwsh defaults to 120x30
+# (or whatever their conhost default is). Resize to 80x40 (the
+# [terminal.install] default) and center on the cursor's active monitor
+# so the readme/acknowledgements + cache-bust banner are centered and
+# fit without wrap. Done BEFORE any Write-Host so the operator never
+# sees a bigger-than-final window briefly.
+try {
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    Add-Type -Namespace MiOSWinR -Name N -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+'@ -ErrorAction SilentlyContinue
+    try { [MiOSWinR.N]::SetProcessDPIAware() | Out-Null } catch {}
+    # Resize cell buffer first then window (window can't be > buffer).
+    try { [Console]::SetBufferSize(80, 9000) } catch {}
+    try { [Console]::SetWindowSize(80, 40)   } catch {}
+    # Center on cursor's active monitor (Geist Mono 12pt cell metrics:
+    # 10x20 px; chrome 20x12 px -> 80x40 -> 820 x 812 px outer).
+    $_winWPx = (80 * 10) + 20
+    $_winHPx = (40 * 20) + 12
+    $_cur    = [System.Windows.Forms.Cursor]::Position
+    $_work   = [System.Windows.Forms.Screen]::FromPoint($_cur).WorkingArea
+    $_x      = $_work.X + [int](([math]::Max(0, $_work.Width  - $_winWPx)) / 2)
+    $_y      = $_work.Y + [int](([math]::Max(0, $_work.Height - $_winHPx)) / 2)
+    [MiOSWinR.N]::MoveWindow([MiOSWinR.N]::GetConsoleWindow(), $_x, $_y, $_winWPx, $_winHPx, $true) | Out-Null
+} catch {}
+
 # ── Cleanup of stale legacy profile body BEFORE anything else ────────────────
 # Earlier failed runs may have left a corrupted, mojibake'd profile.ps1 at
 # the legacy fallback path %USERPROFILE%\MiOS-bootstrap\powershell\. The
@@ -2813,21 +2842,21 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     $_cursorPre = try { [System.Windows.Forms.Cursor]::Position } catch { New-Object System.Drawing.Point 100,100 }
     $_curX = $_cursorPre.X
     $_curY = $_cursorPre.Y
-    # Lift terminal dims + cell metrics from mios.toml. Vendor defaults
-    # match the 80x20 portal-feel MiOS terminal. Compute target pixel
-    # dims HERE (in outer scope) so the values bake as literal integers
-    # into the rendered inner cmd -- the inner pwsh process has no
-    # access to outer-scope variables (it's a fresh pwsh.exe spawn via
-    # Start-Process), so anything we want it to "know" must be
-    # interpolated at template-build time.
-    $_elevCols = Get-MiosTomlValue -Section 'terminal'   -Key 'cols'            -Default 80
-    $_elevRows = Get-MiosTomlValue -Section 'terminal'   -Key 'rows'            -Default 20
-    $_elevScr  = Get-MiosTomlValue -Section 'terminal'   -Key 'scrollback_rows' -Default 9000
-    $_cellW    = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px'       -Default 10
-    $_cellH    = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px'       -Default 20
-    $_chromeW  = Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px'     -Default 20
-    $_chromeH  = Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px'     -Default 12
-    # Pixel target -- 80x20 cells * 10x20 px + 20x12 chrome = 820x412 px.
+    # Bootstrap window dims (the elevated conhost that runs Pass-1 +
+    # Pass-2 + readme/acknowledgements). Pulled from mios.toml
+    # [terminal.install] -- vendor default 80x40. The post-install
+    # MiOS app spawn uses [terminal] (80x20, portal feel).
+    # Compute target pixel dims HERE so they bake as literal integers
+    # into the rendered inner cmd -- the spawned pwsh has no access
+    # to outer-scope variables.
+    $_elevCols = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols'            -Default 80
+    $_elevRows = Get-MiosTomlValue -Section 'terminal.install' -Key 'rows'            -Default 40
+    $_elevScr  = Get-MiosTomlValue -Section 'terminal'         -Key 'scrollback_rows' -Default 9000
+    $_cellW    = Get-MiosTomlValue -Section 'theme.font'       -Key 'cell_w_px'       -Default 10
+    $_cellH    = Get-MiosTomlValue -Section 'theme.font'       -Key 'cell_h_px'       -Default 20
+    $_chromeW  = Get-MiosTomlValue -Section 'theme.font'       -Key 'chrome_w_px'     -Default 20
+    $_chromeH  = Get-MiosTomlValue -Section 'theme.font'       -Key 'chrome_h_px'     -Default 12
+    # Pixel target -- 80x40 cells * 10x20 px + 20x12 chrome = 820x812 px.
     $_winWPx   = ($_elevCols * $_cellW) + $_chromeW
     $_winHPx   = ($_elevRows * $_cellH) + $_chromeH
     $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
