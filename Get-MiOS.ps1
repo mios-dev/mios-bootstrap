@@ -840,44 +840,28 @@ function Install-MiOSTerminalProfile {
     if ([string]::IsNullOrWhiteSpace($_themeAccent) -or ($_themeAccent -notmatch '^#[0-9A-Fa-f]{3,8}$')) {
         $_themeAccent = '#1A407F'
     }
+    # MINIMAL chrome only -- per operator's trace, the WT MiOS app
+    # rendered the oh-my-posh prompt (so commandline + profile body
+    # work) but DID NOT apply chrome (no acrylic, no MiOS scheme).
+    # That means WT silently rejected one of the chrome keys and
+    # fell back to defaults for the rest. Stripping back to the
+    # bare minimum proven-working set; will re-add carefully once
+    # this verifies rendering with full theming.
     $commonProfileProps = [ordered]@{
-        # ── Color scheme ─────────────────────────────────────────────
         colorScheme              = (Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
-        # ── Font ─────────────────────────────────────────────────────
         font                     = [ordered]@{
             face   = $_themeFontFace
             size   = $_themeFontSize
             weight = $_themeFontWeight
         }
-        # ── Cursor ───────────────────────────────────────────────────
         cursorShape              = $_themeCursor
         antialiasingMode         = 'cleartype'
-        intenseTextStyle         = 'all'      # bold + bright for strong-color text
-        # ── Acrylic + transparency (from mios.toml [theme]) ─────────
         useAcrylic               = $_themeAcrylic
         opacity                  = $_themeOpacity
         systemBackdrop           = $_themeBackdrop
-        # ── Layout / chrome ─────────────────────────────────────────
         padding                  = $_themePadding
         suppressApplicationTitle = $_themeSuppress
-        # Hide the scrollbar entirely so all 80 cells are usable and
-        # the dashboard frame fits flush.
         scrollbarState           = $_themeScrollbar
-        # ── Behavior ─────────────────────────────────────────────────
-        snapOnInput              = $true      # auto-scroll to bottom on key press
-        altGrAliasing            = $true      # honor AltGr for non-US layouts
-        closeOnExit              = 'graceful' # auto-close window when shell exits cleanly
-        bellStyle                = 'none'     # no audible bell -- visual is via prompt
-        tabTitle                 = 'MiOS'     # static tab title (suppressApplicationTitle keeps this)
-        tabColor                 = $_themeAccent  # operator-blue tint on the tab
-        # Animations: global default in WT root (false = on). We don't
-        # write the global to avoid polluting the operator's other
-        # profiles, so animations stay live for MiOS.
-        # Retro CRT effect: omitted here -- WT default is false.
-        # Earlier 'experimental.retroTerminalEffect' = $false used a
-        # dotted JSON key that PS hashtable serialization handles
-        # inconsistently across PS versions; safer to leave the WT
-        # default alone.
         hidden                   = $false
     }
 
@@ -1134,7 +1118,14 @@ if (-not $wtExe) {
     exit 1
 }
 
-$wtArgs = @('-w','-1','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','nt','-p','MiOS')
+# `-w MiOS` (NOT -1) names the window so it matches the post-bootstrap
+# spawn. Without the named window, clicking the MiOS shortcut produces
+# a DIFFERENT window than the one that opens at end-of-bootstrap, AND
+# the Win+Space global summon binding (which targets window name=MiOS)
+# can't toggle it. Both paths now produce the SAME WT MiOS window.
+# Also no `nt` subcommand -- empty subcommand line uses the profile's
+# bound commandline (Windows pwsh + MiOS PS profile body).
+$wtArgs = @('-w','MiOS','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p','MiOS')
 $spawnedAt = Get-Date
 Start-Process -FilePath $wtExe -ArgumentList $wtArgs
 
