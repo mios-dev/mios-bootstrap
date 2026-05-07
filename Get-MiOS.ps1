@@ -1047,7 +1047,7 @@ $Script:MiosFastfetchConfig = @'
   "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
   "logo": { "type": "none" },
   "display": {
-    "separator": "  ",
+    "separator": ": ",
     "color": {
       "keys": "#F35C15",
       "title": "#E7DFD3",
@@ -1056,16 +1056,16 @@ $Script:MiosFastfetchConfig = @'
   },
   "modules": [
     "title",
-    { "type": "os",       "key": "OS"       },
-    { "type": "host",     "key": "Host"     },
-    { "type": "uptime",   "key": "Uptime"   },
-    { "type": "shell",    "key": "Shell"    },
-    { "type": "cpu",      "key": "CPU"      },
-    { "type": "gpu",      "key": "GPU",       "format": "{name}" },
-    { "type": "memory",   "key": "Memory"   },
-    { "type": "disk",     "key": "Disk C:",   "folders": "C:\\" },
-    { "type": "disk",     "key": "Disk M:",   "folders": "M:\\" },
-    { "type": "datetime", "key": "Time"     }
+    { "type": "os",       "key": "OS"     },
+    { "type": "host",     "key": "Host"   },
+    { "type": "uptime",   "key": "Up"     },
+    { "type": "shell",    "key": "Shell"  },
+    { "type": "cpu",      "key": "CPU"    },
+    { "type": "gpu",      "key": "GPU",     "format": "{name}" },
+    { "type": "memory",   "key": "Mem"    },
+    { "type": "disk",     "key": "C:",      "folders": "C:\\", "format": "{size-used} / {size-total}" },
+    { "type": "disk",     "key": "M:",      "folders": "M:\\", "format": "{size-used} / {size-total}" },
+    { "type": "datetime", "key": "Time"   }
   ]
 }
 '@
@@ -1626,9 +1626,9 @@ if (`$true) {
                     `$nxt = if ((`$i + 1) -lt `$ffOut.Count) { [string]`$ffOut[`$i+1] } else { `$null }
                     `$nxtVis = if (`$nxt) { (_Strip `$nxt).TrimEnd() } else { '' }
                     if (`$curVis.Length -le `$halfW -and `$nxt -and -not [string]::IsNullOrWhiteSpace(`$nxtVis) -and `$nxtVis.Length -le `$halfW) {
-                        # Pair them.
-                        `$padL = ' ' * (`$halfW - `$curVis.Length)
-                        `$combined = `$cur + `$padL + ' │ ' + `$nxt
+                        # Pair them with a thin column separator.
+                        `$padL = ' ' * [math]::Max(1, `$halfW - `$curVis.Length)
+                        `$combined = `$cur + `$padL + `$nxt
                         Write-Host (_Frame `$combined)
                         `$i += 2
                     } else {
