@@ -1117,9 +1117,31 @@ function End-Phase([int]$i, [switch]$Fail, [switch]$Warn) {
         $color = if ($Fail) { 'Red' } elseif ($Warn) { 'Yellow' } else { 'Green' }
         $mark  = if ($Fail) { 'XX' } elseif ($Warn) { '!!' } else { 'OK' }
         Write-Host "[$ts] [$mark] Phase $i ($spanStr)  $($script:PhaseNames[$i])" -ForegroundColor $color
+        # Inline progress bar after every phase transition. Operator
+        # sees how far into the build they are without having to count.
+        Show-MiosProgressBar
     } else {
         Show-Dashboard
     }
+}
+
+function Show-MiosProgressBar {
+    # Linear log-mode progress bar. Counts COMPLETED phases (PhStat
+    # entries >= 2 i.e. OK/FAIL/WARN). Renders a 50-cell bar with
+    # operator-blue filled + dim unfilled cells, plus N/Total +
+    # percentage. Fits within the 80-col MiOS terminal.
+    if (-not $script:PhStat) { return }
+    $done = [int]($script:PhStat | Where-Object { $_ -ge 2 } | Measure-Object).Count
+    $total = [int]$script:TotalPhases
+    if ($total -le 0) { return }
+    $pct = [int](($done / $total) * 100)
+    $barW = 50
+    $filled = [int](($done / $total) * $barW)
+    if ($filled -lt 0) { $filled = 0 }
+    if ($filled -gt $barW) { $filled = $barW }
+    $bar = ("█" * $filled) + ("░" * ($barW - $filled))
+    $text = "  [$bar] $done/$total ($pct%)"
+    Write-Host $text -ForegroundColor Cyan
 }
 
 # Throttle Set-Step prints in log mode -- the build pipeline calls
@@ -1153,9 +1175,9 @@ function Set-Step([string]$T) {
     }
 }
 
-function Log-Ok([string]$T)   { Write-Log "ok   $T";          Set-Step $T }
-function Log-Warn([string]$T) { Write-Log "warn $T" "WARN";   Set-Step "WARN: $T" }
-function Log-Fail([string]$T) { Write-Log "fail $T" "ERROR";  Set-Step "FAIL: $T" }
+function Log-Ok([string]$T)   { Write-Log $T;          Set-Step $T }
+function Log-Warn([string]$T) { Write-Log $T "WARN";  Set-Step "WARN: $T" }
+function Log-Fail([string]$T) { Write-Log $T "ERROR"; Set-Step "FAIL: $T" }
 
 # ── Utility helpers ───────────────────────────────────────────────────────────
 function ConvertTo-WslPath([string]$P) {
@@ -5217,12 +5239,28 @@ $script:DashboardMode = if ($env:MIOS_DASHBOARD_MODE -eq 'log') {
 Clear-Host
 $bTop = "╭" + ("─" * ($script:DW - 2)) + "╮"
 $bBot = "╰" + ("─" * ($script:DW - 2)) + "╯"
-$pad = [math]::Max(0, $script:DW - 4 - "MiOS $MiosVersion  --  Unified Windows Installer".Length)
-Write-Host $bTop                                                                       -ForegroundColor Cyan
-Write-Host ("│ 'MiOS' $MiosVersion  --  Unified Windows Installer" + (" " * $pad) + " │") -ForegroundColor Cyan
-Write-Host ("│ Immutable Fedora AI Workstation" + (" " * ($script:DW - 34)) + " │") -ForegroundColor Cyan
-Write-Host ("│ WSL2 + Podman  │  Offline Build Pipeline" + (" " * ($script:DW - 43)) + " │") -ForegroundColor Cyan
-Write-Host $bBot                                                                       -ForegroundColor Cyan
+
+# Box-row helper -- guarantees every banner row is exactly $DW visible
+# chars wide, regardless of content length, so the right border lines
+# up with the top/bottom corners. Previous hand-rolled padding used
+# the wrong length for the inner string (counted "MiOS $version ..."
+# instead of "'MiOS' $version ..." -- the apostrophes added 2 chars
+# the pad math missed, so the title row was 2 cols wider than the
+# top frame -- the operator's "framing is broken" symptom).
+function _BoxRow {
+    param([string]$Inner)
+    $maxInner = $script:DW - 4
+    if ($Inner.Length -gt $maxInner) {
+        $Inner = $Inner.Substring(0, $maxInner)
+    }
+    "│ " + $Inner.PadRight($maxInner) + " │"
+}
+
+Write-Host $bTop -ForegroundColor Cyan
+Write-Host (_BoxRow "'MiOS' $MiosVersion  --  Unified Windows Installer") -ForegroundColor Cyan
+Write-Host (_BoxRow "Immutable Fedora AI Workstation")                   -ForegroundColor Cyan
+Write-Host (_BoxRow "WSL2 + Podman  │  Offline Build Pipeline")          -ForegroundColor Cyan
+Write-Host $bBot -ForegroundColor Cyan
 Write-Host ""
 
 if ($script:DashboardMode -eq 'log') {
