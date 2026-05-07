@@ -2336,11 +2336,28 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     Write-Host '  [*] MiOS bootstrap requires admin (M:\ partition + Podman + dev VM).' -ForegroundColor Cyan
     Write-Host '  [*] Triggering UAC -- accept to continue. The install will then run' -ForegroundColor Cyan
     Write-Host '      in the elevated window, single prompt only.' -ForegroundColor DarkGray
+    # Capture cursor position BEFORE the UAC prompt, while the operator's
+    # attention is still on whichever monitor they pasted from. By the
+    # time the inner script runs (after UAC accept), Cursor.Position is
+    # at the UAC "Yes" button location -- typically the primary monitor,
+    # NOT necessarily where the operator was working. Embed the captured
+    # X,Y as constants in the inner cmd so Screen.FromPoint() resolves
+    # to the active-display before-elevation, not after.
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    $_cursorPre = try { [System.Windows.Forms.Cursor]::Position } catch { New-Object System.Drawing.Point 100,100 }
+    $_curX = $_cursorPre.X
+    $_curY = $_cursorPre.Y
     $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
     $_innerCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
 `$env:MIOS_AGREEMENT_ACK='accepted'
 `$env:MIOS_CACHE_BUSTED='1'
+# Pre-UAC cursor location (captured by the launching pwsh BEFORE Start-
+# Process -Verb RunAs); use these constants instead of querying
+# Cursor.Position now (which would read at the UAC Yes-button click
+# location, defeating the active-display intent).
+`$_curXPre = $_curX
+`$_curYPre = $_curY
 try {
     Add-Type -Namespace MEW -Name N -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
@@ -2352,14 +2369,17 @@ try {
     `$_h = [MEW.N]::GetConsoleWindow()
     `$_r = New-Object System.Drawing.Rectangle
     [MEW.N]::GetWindowRect(`$_h, [ref]`$_r) | Out-Null
-    `$_w = `$_r.Width  - `$_r.X
-    `$_y = `$_r.Height - `$_r.Y
-    # Center on the ACTIVE display (cursor), GLOBALLY -- per operator.
-    `$_c = [System.Windows.Forms.Cursor]::Position
-    `$_s = [System.Windows.Forms.Screen]::FromPoint(`$_c).WorkingArea
-    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_w)) / 2)
-    `$_yy = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_y)) / 2)
-    [MEW.N]::MoveWindow(`$_h, `$_x, `$_yy, `$_w, `$_y, `$true) | Out-Null
+    # GetWindowRect fills Rectangle as RECT (left/top/right/bottom). To
+    # get true width/height: right-left and bottom-top.
+    `$_winW = `$_r.Width  - `$_r.X
+    `$_winH = `$_r.Height - `$_r.Y
+    # Resolve which monitor the OPERATOR was on at the moment of paste.
+    `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
+    `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
+    # Center within that monitor's working area (taskbar-aware).
+    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_winW)) / 2)
+    `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_winH)) / 2)
+    [MEW.N]::MoveWindow(`$_h, `$_x, `$_y, `$_winW, `$_winH, `$true) | Out-Null
 } catch {}
 try {
     `$src = Invoke-RestMethod -Uri '$_rawUrl' -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } -ErrorAction Stop
