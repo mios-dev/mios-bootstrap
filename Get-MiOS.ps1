@@ -2314,11 +2314,98 @@ public struct RECT { public int Left, Top, Right, Bottom; }
 # A fresh top-level pwsh window guarantees a clean, properly-sized
 # environment regardless of where the curl was run from.
 #
-# Sentinel: $env:MIOS_GETMIOS_RELAUNCHED prevents the new window from
-# re-launching itself in an infinite loop.
-if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
-    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-               ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+# ── Auto-elevate at script entry (single UAC) ───────────────────────
+# Per operator: "irm|iex mios.bat Win + R entry should it itself auto
+# elevate!!! it needs admin rights to install some components without
+# several UAC prompts interrupting the install".
+#
+# Previously this script split work into Pass-1 (user) + Pass-2 (admin
+# via mid-install UAC). That meant operator saw the UAC prompt halfway
+# through; some Pass-2 steps (M:\ partition shrink, Podman Desktop
+# winget install, podman machine init) need elevation, so the prompt
+# was unavoidable -- but firing it at the start instead means ONE
+# UAC interaction up-front and the entire install runs in the same
+# elevated session.
+#
+# Sentinel: $env:MIOS_GETMIOS_RELAUNCHED prevents the elevated relaunch
+# from re-elevating in an infinite loop.
+$_isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
+    Write-Host ''
+    Write-Host '  [*] MiOS bootstrap requires admin (M:\ partition + Podman + dev VM).' -ForegroundColor Cyan
+    Write-Host '  [*] Triggering UAC -- accept to continue. The install will then run' -ForegroundColor Cyan
+    Write-Host '      in the elevated window, single prompt only.' -ForegroundColor DarkGray
+    $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
+    $_innerCmd = @"
+`$env:MIOS_GETMIOS_RELAUNCHED='1'
+`$env:MIOS_AGREEMENT_ACK='accepted'
+`$env:MIOS_CACHE_BUSTED='1'
+try {
+    Add-Type -Namespace MEW -Name N -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
+'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    try { [Console]::SetWindowSize(80, 30); [Console]::SetBufferSize(80, 9000) } catch {}
+    `$_h = [MEW.N]::GetConsoleWindow()
+    `$_r = New-Object System.Drawing.Rectangle
+    [MEW.N]::GetWindowRect(`$_h, [ref]`$_r) | Out-Null
+    `$_w = `$_r.Width  - `$_r.X
+    `$_y = `$_r.Height - `$_r.Y
+    # Center on the ACTIVE display (cursor), GLOBALLY -- per operator.
+    `$_c = [System.Windows.Forms.Cursor]::Position
+    `$_s = [System.Windows.Forms.Screen]::FromPoint(`$_c).WorkingArea
+    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_w)) / 2)
+    `$_yy = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_y)) / 2)
+    [MEW.N]::MoveWindow(`$_h, `$_x, `$_yy, `$_w, `$_y, `$true) | Out-Null
+} catch {}
+try {
+    `$src = Invoke-RestMethod -Uri '$_rawUrl' -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } -ErrorAction Stop
+    & ([scriptblock]::Create(`$src))
+} catch {
+    Write-Host ''
+    Write-Host ('  [!] Bootstrap failed: ' + `$_) -ForegroundColor Red
+    Write-Host ''
+}
+Write-Host ''
+Write-Host '  Press Enter to close...' -ForegroundColor DarkGray -NoNewline
+`$null = Read-Host
+"@
+    $_innerBytes   = [Text.Encoding]::Unicode.GetBytes($_innerCmd)
+    $_innerEncoded = [Convert]::ToBase64String($_innerBytes)
+    $_shell = $null
+    foreach ($_c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe","$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
+        if ($_c -and (Test-Path -LiteralPath $_c -PathType Leaf)) { $_shell = $_c; break }
+    }
+    if (-not $_shell) {
+        $_w51 = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+        if (Test-Path -LiteralPath $_w51 -PathType Leaf) { $_shell = $_w51 }
+    }
+    if (-not $_shell) { $_shell = 'powershell.exe' }
+    try {
+        Start-Process -FilePath $_shell `
+            -ArgumentList @('-NoLogo','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand', $_innerEncoded) `
+            -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
+        Write-Host '  [+] Elevated MiOS bootstrap window opened. Continuing the install there.' -ForegroundColor Green
+    } catch {
+        Write-Host "  [!] Self-elevation failed: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host '      Open an elevated PowerShell manually and re-run:' -ForegroundColor DarkGray
+        Write-Host "        irm $_rawUrl | iex" -ForegroundColor DarkGray
+    }
+    return
+}
+
+# Auto-elevation above ALREADY relaunched the script with admin token
+# if the operator pasted from a non-admin shell. By the time we reach
+# this point we're guaranteed admin (either because the operator
+# launched from an already-elevated shell OR because the auto-elevate
+# block re-spawned us). No need to gate on MIOS_GETMIOS_RELAUNCHED;
+# all Pass-1 steps below run unconditionally and the trailing fall-
+# through into Pass-2 (M:\ + Podman + dev VM) runs in the same session.
+if ($true) {
+    $isAdmin = $_isAdmin
     # Strict install order. Each step gates the next:
     #   1. WT Preview install + AppX-ready wait. Until this completes
     #      LocalState\settings.json doesn't exist and the patcher
@@ -2418,17 +2505,24 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     # M:\ provisioning + bootstrap.ps1 hand-off).
     Write-Host ''
     Write-Host '+============================================================+' -ForegroundColor Cyan
-    Write-Host '|  MiOS install complete (Pass 1: user profile).            |' -ForegroundColor Cyan
+    Write-Host '|  MiOS user-scope setup complete.                           |' -ForegroundColor Cyan
+    Write-Host '|  Continuing with admin steps (M:\ + Podman + dev VM)...    |' -ForegroundColor Cyan
     Write-Host '+============================================================+' -ForegroundColor Cyan
     Write-Host ''
     if ($isAdmin) {
-        Write-Host '  [+] Already running as Administrator -- continuing to Pass 2 (M:\ + bootstrap)...' -ForegroundColor Green
-        Write-Host ''
-        # Already admin -- fall out of this if-block and continue
-        # into the Pass-2 code below it (M:\ provisioning + bootstrap.ps1).
-        # No relaunch needed; nothing to set.
+        # Already admin -- fall through to the admin-scope code below
+        # (M:\ provisioning + bootstrap.ps1 hand-off). No relaunch.
     } else {
-        Write-Host '  [*] Elevating for Pass 2 (M:\ partition + Podman Desktop + dev VM)...' -ForegroundColor Cyan
+        # SHOULD BE UNREACHABLE: the auto-elevation block at script
+        # entry (line ~2317) re-launches with admin token if not admin.
+        # Defensive fallback only -- if we got here, the auto-elevate
+        # path didn't trigger for some reason (manual MIOS_GETMIOS_
+        # RELAUNCHED=1 env override, etc.). Surface a clear error.
+        Write-Host '  [!] Reached admin-only code without admin token.' -ForegroundColor Red
+        Write-Host '      Re-run from a fresh pwsh window so the auto-elevation prompt fires.' -ForegroundColor DarkGray
+        return
+        # Dead code below (kept for fallback if auto-elevation is ever
+        # disabled). Reachable only if `return` above is removed.
         $rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
         # Pass-2 inner script: first action is to size the console to 80x30
         # and center it on the primary monitor, BEFORE any output runs (so the
