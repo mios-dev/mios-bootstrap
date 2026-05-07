@@ -856,9 +856,9 @@ function Show-Dashboard {
     $elapsed   = [datetime]::Now - $script:ScriptStart
     $elStr     = fmtSpan $elapsed
     $statusStr = if ($phFail -gt 0) { "FAILED" } `
-                 elseif ($script:CurPhase -ge 0 -and $script:PhStat[$script:CurPhase] -eq 1) { "RUNNING" } `
+                 elseif ($script:CurPhase -ge 0 -and $script:CurPhase -lt $script:PhStat.Count -and $script:PhStat[$script:CurPhase] -eq 1) { "RUNNING" } `
                  else { "IDLE" }
-    $curName   = if ($script:CurPhase -ge 0) { [string]$script:PhaseNames[$script:CurPhase] } else { "Initializing" }
+    $curName   = if ($script:CurPhase -ge 0 -and $script:CurPhase -lt $script:PhaseNames.Count) { [string]$script:PhaseNames[$script:CurPhase] } else { "Initializing" }
 
     # Spinner -- 500ms tick; visible on slow/remote consoles, animates even when
     # build output is silent.
@@ -937,7 +937,14 @@ function Show-Dashboard {
     # are intentionally gone -- the bar's "N/M" suffix is THE counter.
     # Current operation + spinner share one row above the bar so the
     # operator sees what's running without a second phase-counter line.
-    $phTag = switch ([int]$script:PhStat[[math]::Max(0,$script:CurPhase)]) {
+    # Bounds-clamp $script:CurPhase against PhStat.Count -- defensive
+    # against any code path that sets CurPhase past the end of the array
+    # (e.g. Start-Phase 9 in a mode where TotalPhases=6 -- the BootstrapOnly
+    # collapsed layout). Without this clamp, [Console]::Write fires a
+    # "Index was outside the bounds of the array" that gets caught by
+    # MAIN's try/catch and surfaces as the dashboard's FATAL banner.
+    $phIdx  = [math]::Min([math]::Max(0, $script:CurPhase), $script:PhStat.Count - 1)
+    $phTag = switch ([int]$script:PhStat[$phIdx]) {
         1 { "[>>]" } 2 { "[OK]" } 3 { "[XX]" } 4 { "[!!]" } default { "[ ]" }
     }
     # Now-line: phase name + live operation stream + spinner. No
@@ -4770,7 +4777,7 @@ $endMark
     # whichever monitor the cursor is on, runs `wt.exe -p MiOS --focus`
     # at that position, then re-centers via Win32 SetWindowPos using
     # the WT window's actual outer rect. Result: every double-click
-    # lands a borderless, screen-centered MiOS terminal — even on
+    # lands a borderless, screen-centered MiOS terminal -- even on
     # multi-monitor + scaled-DPI hosts.
     $hubResizePrelude = "try { `$H=Get-Host; `$H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 80,30) } catch {}"
     $miosLauncher = Join-Path $MiosBinDir 'mios-launch.ps1'
@@ -4853,8 +4860,11 @@ if ($hwnd -ne [IntPtr]::Zero) {
         if ($rw -gt 0 -and $rh -gt 0) {
             $cx = [int]($work.X + ($work.Width  - $rw) / 2)
             $cy = [int]($work.Y + ($work.Height - $rh) / 2)
-            # SWP_NOSIZE=0x1 + SWP_NOZORDER=0x4 + SWP_SHOWWINDOW=0x40 = 0x45
-            [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, 0, 0, 0x45)
+            # Pin always-on-top: HWND_TOPMOST = -1, SWP_SHOWWINDOW = 0x40.
+            $topmost = [IntPtr]::new(-1)
+            [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, $topmost, $cx, $cy, $rw, $rh, 0x40)
+            # Belt-and-braces re-position with no-zorder.
+            [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, $rw, $rh, 0x44)
         }
     }
 }
@@ -5740,7 +5750,7 @@ exit 1
     # (mios-launch.ps1) so every double-click lands a borderless 80x30
     # acrylic window screen-centered, regardless of last-window position
     # WT might have remembered. -WindowStyle Hidden keeps the wrapper
-    # pwsh invisible — only the WT window appears.
+    # pwsh invisible -- only the WT window appears.
     $launcherArgs    = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$miosLauncher`""
     $launcherArgsDev = "$launcherArgs -Profile MiOS-DEV"
     @(
@@ -5825,7 +5835,7 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
     $errMsg = "$_"
     Write-Log "FATAL: $errMsg" "ERROR"
     $script:CurStep = "FATAL: $($errMsg.Substring(0,[math]::Min($errMsg.Length,120)))"
-    if ($script:CurPhase -ge 0 -and $script:PhStat[$script:CurPhase] -eq 1) {
+    if ($script:CurPhase -ge 0 -and $script:CurPhase -lt $script:PhStat.Count -and $script:PhStat[$script:CurPhase] -eq 1) {
         try { End-Phase $script:CurPhase -Fail } catch {}
     }
     Show-Dashboard

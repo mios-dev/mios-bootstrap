@@ -254,7 +254,7 @@ Invoke-MiOSAgreementGate | Out-Null
 # All three helpers are idempotent: safe to call on every run.
 # ───────────────────────────────────────────────────────────────────────
 
-# Hokusai + operator-neutrals palette — kept in sync with
+# Hokusai + operator-neutrals palette -- kept in sync with
 # C:\MiOS\usr\share\mios\mios.toml [colors] section. Single hash so the
 # scheme JSON and the MOTD/dashboard share the same exact tokens.
 $Script:MiosPalette = @{
@@ -315,6 +315,59 @@ function Test-MiOSFontInstalled {
     return $false
 }
 
+# Idempotent winget install for Windows Terminal Preview ("dev line").
+# WT Preview tracks the active development branch, so MiOS gets the
+# newest acrylic/systemBackdrop/launchMode behavior the moment Microsoft
+# ships it. Stable WT (Microsoft.WindowsTerminal) is fine too; we only
+# upgrade an operator who has neither installed.
+#
+# Source: winget pulls from msstore by default; Preview lives at
+#   id = Microsoft.WindowsTerminal.Preview
+# We pass --silent so no UI surfaces and --accept-{package,source}-
+# agreements so Server SKUs (which display the agreement EULA on first
+# winget call) don't hang the bootstrap.
+function Install-MiOSWindowsTerminal {
+    $hasStable  = $false
+    $hasPreview = $false
+    try {
+        $stableProbe  = & winget list --id Microsoft.WindowsTerminal         --exact 2>$null
+        $previewProbe = & winget list --id Microsoft.WindowsTerminal.Preview --exact 2>$null
+        if ($LASTEXITCODE -eq 0 -and ($stableProbe  -join "`n") -match 'Microsoft\.WindowsTerminal\b')         { $hasStable  = $true }
+        if ($LASTEXITCODE -eq 0 -and ($previewProbe -join "`n") -match 'Microsoft\.WindowsTerminal\.Preview') { $hasPreview = $true }
+    } catch {}
+    # Fallback probe: if winget isn't available, check filesystem.
+    if (-not ($hasStable -or $hasPreview)) {
+        $stableDir  = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminal_*' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $previewDir = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($stableDir)  { $hasStable  = $true }
+        if ($previewDir) { $hasPreview = $true }
+    }
+    if ($hasPreview) {
+        Write-Host "  [+] Windows Terminal Preview already installed." -ForegroundColor DarkGray
+        return $true
+    }
+    if ($hasStable) {
+        Write-Host "  [+] Windows Terminal (stable) already installed -- MiOS settings will apply there." -ForegroundColor DarkGray
+        return $true
+    }
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "  [!] winget not available; cannot auto-install Windows Terminal Preview." -ForegroundColor Yellow
+        Write-Host "      Install manually from: https://aka.ms/terminal-preview" -ForegroundColor DarkGray
+        return $false
+    }
+    Write-Host "  [*] Installing Windows Terminal Preview via winget..." -ForegroundColor Cyan
+    try {
+        & winget install --id Microsoft.WindowsTerminal.Preview --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [+] Windows Terminal Preview installed." -ForegroundColor Green
+            return $true
+        }
+    } catch {
+        Write-Host "  [!] winget install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    return $false
+}
+
 function Install-MiOSGeistFont {
     if (Test-MiOSFontInstalled) {
         Write-Host "  [+] GeistMono Nerd Font already installed (HKCU/HKLM)." -ForegroundColor DarkGray
@@ -370,7 +423,7 @@ function Install-MiOSGeistFont {
         return $true
     } catch {
         Write-Host "  [!] Geist Mono Nerd Font install failed: $($_.Exception.Message)" -ForegroundColor Yellow
-        Write-Host "      WT will fall back to Cascadia Mono — glyphs in oh-my-posh will be missing." -ForegroundColor DarkGray
+        Write-Host "      WT will fall back to Cascadia Mono -- glyphs in oh-my-posh will be missing." -ForegroundColor DarkGray
         return $false
     } finally {
         if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue }
@@ -390,7 +443,7 @@ function Get-MiOSTerminalSettingsPath {
     foreach ($p in $candidates) {
         if (Test-Path -LiteralPath $p) { return $p }
         # The packaged dirs may exist with no settings.json yet on a fresh
-        # WT install — return the path so we can write the file.
+        # WT install -- return the path so we can write the file.
         $parent = Split-Path -Parent $p
         if (Test-Path -LiteralPath $parent) {
             return $p
@@ -400,13 +453,13 @@ function Get-MiOSTerminalSettingsPath {
 }
 
 # Borderless / no-titlebar / focus-mode launchMode is configured in the
-# settings file (root-level "launchMode": "focus") — passing --focus on
+# settings file (root-level "launchMode": "focus") -- passing --focus on
 # the wt.exe command line ALONE only hides tabs but keeps the title bar
 # unless launchMode is also set in JSON. We set both for belt-and-braces.
 function Install-MiOSTerminalProfile {
     $settingsPath = Get-MiOSTerminalSettingsPath
     if (-not $settingsPath) {
-        Write-Host "  [!] Windows Terminal not installed — no settings.json target." -ForegroundColor Yellow
+        Write-Host "  [!] Windows Terminal not installed -- no settings.json target." -ForegroundColor Yellow
         return $null
     }
     Write-Host "  [*] Patching Windows Terminal settings: $settingsPath" -ForegroundColor Cyan
@@ -441,7 +494,7 @@ function Install-MiOSTerminalProfile {
         brightWhite         = $palette.ansi_15_brwhite
     }
 
-    # Profile commandline: pwsh -NoLogo with no command — pinned to the
+    # Profile commandline: pwsh -NoLogo with no command -- pinned to the
     # MiOS profile so any wt.exe -p MiOS-Bootstrap launch (manual or
     # programmatic) lands in a Geist-rendered, MiOS-schemed shell whose
     # $PROFILE is loaded (oh-my-posh init runs from there).
@@ -454,7 +507,7 @@ function Install-MiOSTerminalProfile {
     }
     $profileCmdline = '"' + $defaultPwsh + '" -NoLogo'
 
-    # Per-profile shared settings — apply to BOTH "MiOS" and "MiOS-DEV"
+    # Per-profile shared settings -- apply to BOTH "MiOS" and "MiOS-DEV"
     # so they look/feel identical. NONE of these touch global theme; the
     # operator's other WT profiles are unaffected.
     #
@@ -501,7 +554,7 @@ function Install-MiOSTerminalProfile {
     }
     foreach ($k in $commonProfileProps.Keys) { $miosDevProfile[$k] = $commonProfileProps[$k] }
 
-    # Read existing settings.json — preserve EVERY existing global
+    # Read existing settings.json -- preserve EVERY existing global
     # (launchMode, defaultProfile, theme, keybindings, etc.). We touch
     # only schemes[] and profiles.list[] entries that are ours.
     # WT writes JSONC; ConvertFrom-Json on PS5.1 chokes on it, so strip
@@ -511,14 +564,15 @@ function Install-MiOSTerminalProfile {
         try { $raw = Get-Content -LiteralPath $settingsPath -Raw -ErrorAction Stop } catch { $raw = '' }
     }
     if (-not $raw -or -not $raw.Trim()) {
-        # First-run / empty settings.json — start from a minimal skeleton.
+        # First-run / empty settings.json -- start from a minimal skeleton.
         $raw = '{ "profiles": { "list": [] }, "schemes": [] }'
     }
     # Strip // line comments and /* */ block comments so older PS can parse.
     $stripped = [regex]::Replace($raw, '(?ms)/\*.*?\*/', '')
     $stripped = [regex]::Replace($stripped, '(?m)^\s*//.*$', '')
-    # Strip trailing commas before } or ].
-    $stripped = [regex]::Replace($stripped, ',(\s*[}\]])', '$1')
+    # Strip trailing commas before close-brace or close-bracket so older
+    # ConvertFrom-Json (PS 5.1) accepts the JSONC.
+    $stripped = [regex]::Replace($stripped, ',(\s*[\x7D\x5D])', '$1')
 
     try {
         $wtJson = $stripped | ConvertFrom-Json -ErrorAction Stop
@@ -529,27 +583,68 @@ function Install-MiOSTerminalProfile {
         $wtJson = ConvertFrom-Json '{ "profiles": { "list": [] }, "schemes": [] }'
     }
 
-    # NO ROOT-LEVEL CHANGES. The previous draft set launchMode/showTabs
-    # InTitlebar/initialCols/initialRows/centerOnLaunch/etc. as GLOBALS,
-    # which polluted every WT profile the operator had configured. That
-    # was wrong — the borderless / 80x30 / centered behavior is achieved
-    # for the MiOS bootstrap window via wt.exe COMMAND-LINE flags
-    # (--focus --pos --size) at launch, scoped strictly to that one
-    # window. Other WT windows the operator opens via their own profiles
-    # are untouched.
+    # ── Global WT theme: MiOS everywhere ──────────────────────────────
+    # Per operator: the Windows Terminal install IS a MiOS install.
+    # Set every global so every WT window opens borderless, frameless,
+    # centered, 80x30, MiOS-themed. profiles.defaults makes ALL profiles
+    # (the operator's pre-existing PowerShell, CMD, Azure, etc.)
+    # inherit MiOS appearance unless they explicitly override.
+    $wtJson | Add-Member -NotePropertyName launchMode                  -NotePropertyValue 'focus' -Force
+    $wtJson | Add-Member -NotePropertyName showTabsInTitlebar          -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName alwaysShowTabs              -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName showTerminalTitleInTitlebar -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName useAcrylicInTabRow          -NotePropertyValue $true   -Force
+    $wtJson | Add-Member -NotePropertyName initialCols                 -NotePropertyValue 80      -Force
+    $wtJson | Add-Member -NotePropertyName initialRows                 -NotePropertyValue 30      -Force
+    $wtJson | Add-Member -NotePropertyName centerOnLaunch              -NotePropertyValue $true   -Force
+    $wtJson | Add-Member -NotePropertyName alwaysOnTop                 -NotePropertyValue $true   -Force
+    $wtJson | Add-Member -NotePropertyName disableAnimations           -NotePropertyValue $false  -Force
+    $wtJson | Add-Member -NotePropertyName theme                       -NotePropertyValue 'dark'  -Force
+    # Make the MiOS profile the default profile (Ctrl-Shift-T, double-
+    # click on WT shortcut, taskbar pin → all open MiOS).
+    $wtJson | Add-Member -NotePropertyName defaultProfile              -NotePropertyValue $miosGuid -Force
+
+    # Ensure profiles container exists before defaults / list manipulation.
+    # NOTE: PS 5.1's parser chokes on [PSCustomObject]@{...} in a paren-
+    # group inside a pipeline (`-NotePropertyValue ([PSCustomObject]@{...})`),
+    # so we hoist each cast to a local variable.
+    if (-not $wtJson.profiles) {
+        $emptyProfilesObj = [PSCustomObject]@{ list = @() }
+        $wtJson | Add-Member -NotePropertyName profiles -NotePropertyValue $emptyProfilesObj -Force
+    }
+
+    # profiles.defaults inheritance: every profile gets MiOS look unless
+    # it explicitly overrides. The operator's pre-existing PowerShell /
+    # CMD / Azure / WSL profiles all become MiOS-themed automatically.
+    $defaultsBlock = [ordered]@{
+        colorScheme              = 'MiOS'
+        font                     = [ordered]@{
+            face   = 'GeistMono Nerd Font Mono'
+            size   = 12
+            weight = 'normal'
+        }
+        cursorShape              = 'bar'
+        antialiasingMode         = 'cleartype'
+        useAcrylic               = $true
+        useMica                  = $false
+        systemBackdrop           = 'acrylic'
+        opacity                  = 50
+        padding                  = '0'
+        suppressApplicationTitle = $true
+    }
+    $defaultsObj = [PSCustomObject]$defaultsBlock
+    $wtJson.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue $defaultsObj -Force
 
     # Schemes: upsert MiOS.
     if (-not $wtJson.schemes) {
         $wtJson | Add-Member -NotePropertyName schemes -NotePropertyValue @() -Force
     }
+    $miosSchemeObj = [PSCustomObject]$miosScheme
     $existingSchemes = @($wtJson.schemes | Where-Object { $_.name -ne 'MiOS' })
-    $existingSchemes += [PSCustomObject]$miosScheme
+    $existingSchemes += $miosSchemeObj
     $wtJson.schemes = $existingSchemes
 
-    # Profiles.list: upsert MiOS-Bootstrap.
-    if (-not $wtJson.profiles) {
-        $wtJson | Add-Member -NotePropertyName profiles -NotePropertyValue ([PSCustomObject]@{ list = @() }) -Force
-    }
+    # Profiles.list ensure-exists.
     if (-not $wtJson.profiles.list) {
         $wtJson.profiles | Add-Member -NotePropertyName list -NotePropertyValue @() -Force
     }
@@ -562,8 +657,10 @@ function Install-MiOSTerminalProfile {
         $_.name -ne 'MiOS-DEV' -and
         $_.name -ne 'MiOS-Bootstrap'
     })
-    $existingList += [PSCustomObject]$miosProfile
-    $existingList += [PSCustomObject]$miosDevProfile
+    $miosProfileObj    = [PSCustomObject]$miosProfile
+    $miosDevProfileObj = [PSCustomObject]$miosDevProfile
+    $existingList += $miosProfileObj
+    $existingList += $miosDevProfileObj
     $wtJson.profiles.list = $existingList
 
     # Write back.
@@ -643,14 +740,14 @@ $endMark
 # at 100% DPI on a typical Win11 build.
 #
 # Robustness layers:
-#   1. SetProcessDPIAware() — without this, on 125%/150% scaled displays
+#   1. SetProcessDPIAware() -- without this, on 125%/150% scaled displays
 #      Screen.WorkingArea returns LOGICAL pixels and our --pos math is
 #      off by the scale factor (window lands top-left).
-#   2. Cursor-monitor detection — PrimaryScreen always sends the window
+#   2. Cursor-monitor detection -- PrimaryScreen always sends the window
 #      to display #1 even when the operator is on display #2. Use
 #      Screen.FromPoint(Cursor.Position) so the window opens on whichever
 #      monitor the operator is actively using.
-#   3. Post-launch correction — wt.exe sometimes ignores --pos in focus
+#   3. Post-launch correction -- wt.exe sometimes ignores --pos in focus
 #      mode (1.18+ regression). Move-MiOSWindowToCenter (called from the
 #      relaunch path after Start-Process) finds the WT hwnd and moves it
 #      to the true center. This is the belt-AND-braces guarantee that
@@ -730,8 +827,15 @@ public struct RECT { public int Left, Top, Right, Bottom; }
 
     $x = [int]($ScreenInfo.ScreenLeft + ($ScreenInfo.ScreenWidth  - $w) / 2)
     $y = [int]($ScreenInfo.ScreenTop  + ($ScreenInfo.ScreenHeight - $h) / 2)
-    # SWP_NOSIZE=0x1, SWP_NOZORDER=0x4, SWP_SHOWWINDOW=0x40
-    [void][MiOS.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $x, $y, 0, 0, 0x44)
+    # HWND_TOPMOST = -1 (sticks the window above all non-topmost windows).
+    # SWP_SHOWWINDOW = 0x40 (force visible). SWP_NOACTIVATE = 0x10 if we
+    # don't want to steal focus -- but we DO want focus on the bootstrap
+    # window so the operator sees it. So flags = SWP_SHOWWINDOW (0x40).
+    $hwndTopmost = [IntPtr]::new(-1)
+    [void][MiOS.Native.Win]::SetWindowPos($hwnd, $hwndTopmost, $x, $y, $w, $h, 0x40)
+    # Belt-and-braces: re-issue with no-zorder so the move sticks even
+    # if the topmost flag was clamped by group-policy.
+    [void][MiOS.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero,   $x, $y, $w, $h, 0x44)
     return $true
 }
 
@@ -748,6 +852,7 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
                ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     Write-Host "  [*] Provisioning MiOS terminal profile (Geist Mono NF + Hokusai scheme)..." -ForegroundColor Cyan
+    Install-MiOSWindowsTerminal     | Out-Null
     Install-MiOSGeistFont           | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
     Install-MiOSTerminalProfile     | Out-Null
@@ -811,7 +916,7 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
 # dot-source the AllHosts profile so the MiOS oh-my-posh init block runs
 # and the operator's prompt after the bootstrap finishes is rendered in
 # the Hokusai palette + Geist Mono NF glyphs. Silent if the profile or
-# oh-my-posh isn't installed yet — the block is idempotent on every run.
+# oh-my-posh isn't installed yet -- the block is idempotent on every run.
 if (`$PROFILE.CurrentUserAllHosts -and (Test-Path `$PROFILE.CurrentUserAllHosts)) {
     try { . `$PROFILE.CurrentUserAllHosts } catch {}
 }
@@ -1013,7 +1118,7 @@ try {
         # then SetWindowPos to true screen center based on actual outer
         # window dims. Without this the operator can be left with an
         # off-screen window that's only closeable via 'exit' typed
-        # blind — defeating the whole point of focus mode.
+        # blind -- defeating the whole point of focus mode.
         try { Move-MiOSWindowToCenter -ScreenInfo $miosWindowInfo | Out-Null } catch {}
     }
     if (-not $elevated) {
@@ -1028,7 +1133,7 @@ try {
     return
 }
 
-# 2. Resize host window to 80x30 — the canonical TTY0 / text-mode-3+
+# 2. Resize host window to 80x30 -- the canonical TTY0 / text-mode-3+
 # dimension and the MiOS dashboard's global size. 80 cols × 30 rows
 # yields a 4:3 pixel aspect with standard 1:2 monospace cells, fits
 # the dashboard frame's 80-col strict-clamp, and matches the post-
