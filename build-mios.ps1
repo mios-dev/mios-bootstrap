@@ -4763,7 +4763,103 @@ $endMark
         $lnk.Description      = $Description
         $lnk.WindowStyle      = 1
         $lnk.Save()
+        # Brand the shortcut with an AppUserModelID so Windows treats it
+        # as a distinct first-class app -- not a generic "PowerShell
+        # shortcut". This makes (a) Pin-to-Start group all MiOS launches
+        # under the same tile, (b) the taskbar group spawned wt.exe
+        # windows under the MiOS app, and (c) Start search surface MiOS
+        # as its own entry instead of collapsing under "Windows
+        # PowerShell".
+        try { Set-MiosShortcutAppUserModelID -LnkPath $LnkPath -AppId 'MiOS.Workstation' } catch { Log-Warn "AppUserModelID set failed: $($_.Exception.Message)" }
         return $LnkPath
+    }
+
+    # Install the C# IPropertyStore helper once per session so each
+    # New-MiosShortcut call doesn't re-Add-Type. PS 5.1 + 7 compatible.
+    if (-not ('MiOS.Native.Aumid' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace MiOS.Native {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROPERTYKEY {
+        public Guid fmtid;
+        public uint pid;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROPVARIANT {
+        public ushort vt;
+        public ushort wReserved1;
+        public ushort wReserved2;
+        public ushort wReserved3;
+        public IntPtr p;
+        public IntPtr p2;
+    }
+    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPropertyStore {
+        [PreserveSig] int GetCount(out uint cProps);
+        [PreserveSig] int GetAt(uint iProp, out PROPERTYKEY pkey);
+        [PreserveSig] int GetValue(ref PROPERTYKEY key, out PROPVARIANT pv);
+        [PreserveSig] int SetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
+        [PreserveSig] int Commit();
+    }
+    public static class Aumid {
+        [DllImport("shell32.dll", CharSet=CharSet.Unicode, PreserveSig=false)]
+        public static extern void SHGetPropertyStoreFromParsingName(
+            string pszPath, IntPtr pbc, int flags, ref Guid riid, out IPropertyStore ppv);
+        [DllImport("ole32.dll", PreserveSig=false)]
+        public static extern void PropVariantClear(ref PROPVARIANT pvar);
+        public static void SetAppUserModelID(string lnkPath, string appId) {
+            Guid ipsGuid = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99");
+            IPropertyStore ps;
+            SHGetPropertyStoreFromParsingName(lnkPath, IntPtr.Zero, 2, ref ipsGuid, out ps);
+            try {
+                PROPERTYKEY pk = new PROPERTYKEY {
+                    fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),
+                    pid = 5
+                };
+                IntPtr strPtr = Marshal.StringToCoTaskMemUni(appId);
+                PROPVARIANT pv = new PROPVARIANT { vt = 31, p = strPtr };
+                try {
+                    ps.SetValue(ref pk, ref pv);
+                    ps.Commit();
+                } finally {
+                    PropVariantClear(ref pv);
+                }
+            } finally {
+                Marshal.FinalReleaseComObject(ps);
+            }
+        }
+    }
+}
+'@ -Language CSharp -ErrorAction SilentlyContinue
+    }
+
+    function Set-MiosShortcutAppUserModelID {
+        param([string]$LnkPath, [string]$AppId)
+        if (-not (Test-Path -LiteralPath $LnkPath)) { return }
+        if (-not ('MiOS.Native.Aumid' -as [type])) { return }
+        [MiOS.Native.Aumid]::SetAppUserModelID($LnkPath, $AppId)
+    }
+
+    # Try programmatic Pin to Start. Works on Windows 10; no-op on
+    # Windows 11 (Microsoft removed the "Pin to Start" verb in 21H2+).
+    # Operators on Win11 see a hint to right-click -> Pin manually.
+    function Invoke-MiosPinToStart {
+        param([string]$LnkPath)
+        if (-not (Test-Path -LiteralPath $LnkPath)) { return $false }
+        try {
+            $shellApp = New-Object -ComObject Shell.Application
+            $folderObj = $shellApp.Namespace((Split-Path $LnkPath -Parent))
+            $itemObj = $folderObj.ParseName((Split-Path $LnkPath -Leaf))
+            $pinVerb = $itemObj.Verbs() | Where-Object { $_.Name -replace '&', '' -match '^(Pin to Start|Pin to taskbar)$' } | Select-Object -First 1
+            if ($pinVerb) {
+                $pinVerb.DoIt()
+                return $true
+            }
+        } catch {}
+        return $false
     }
 
     # ── ONE shortcut: MiOS (the hub) ─────────────────────────────────
@@ -4914,12 +5010,30 @@ public static extern System.IntPtr SetWindowLongPtr(System.IntPtr hWnd, int nInd
     $hubDesc = 'MiOS -- Immutable Fedora AI workstation. One launcher; all verbs accessible from the menu inside.'
     $smLnk   = Join-Path $StartMenuDir 'MiOS.lnk'
     New-MiosShortcut -LnkPath $smLnk -TargetExe $hubTarget -ArgsString $hubArgs -IconFile $icoPath -Description $hubDesc | Out-Null
-    Log-Ok "Start Menu: $smLnk"
+    Log-Ok "Start Menu: $smLnk (AppUserModelID = MiOS.Workstation)"
 
     if (Test-Path $desktopDir) {
         $deskLnk = Join-Path $desktopDir 'MiOS.lnk'
         New-MiosShortcut -LnkPath $deskLnk -TargetExe $hubTarget -ArgsString $hubArgs -IconFile $icoPath -Description $hubDesc | Out-Null
         Log-Ok "Desktop: $deskLnk"
+    }
+
+    # Programmatic Pin to Start. On Windows 10 this works -- the MiOS
+    # tile lands in the operator's Start menu pinned area. On Windows
+    # 11 (21H2+) Microsoft removed the "Pin to Start" verb and there's
+    # no supported programmatic replacement; the no-op falls through
+    # and we log a hint so the operator knows to right-click → Pin
+    # to Start themselves.
+    if (Invoke-MiosPinToStart -LnkPath $smLnk) {
+        Log-Ok "MiOS pinned to Start menu (Windows 10 verb path)"
+    } else {
+        # Determine whether we're on Win11 to tailor the hint.
+        $os = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption
+        if ($os -match 'Windows 11') {
+            Log-Warn "Windows 11 removed programmatic Pin-to-Start. Right-click MiOS in Start search → Pin to Start to add the tile manually."
+        } else {
+            Log-Warn "Pin-to-Start verb unavailable. Right-click '$smLnk' → Pin to Start to add the tile."
+        }
     }
 
     # Garbage-collect any stale per-verb shortcuts left over from
