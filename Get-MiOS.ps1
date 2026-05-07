@@ -2756,45 +2756,38 @@ try {
     # `$Host.UI.RawUI` console handle and makes `$RawUI.CursorPosition
     # = @{X=0;Y=0}` throw "The handle is invalid" -- exactly the crash
     # the operator hit in commit 1e3484f).
-    `$_logBase = if (Test-Path 'M:\MiOS') {
-        New-Item -ItemType Directory -Path 'M:\MiOS\logs' -Force -ErrorAction SilentlyContinue | Out-Null
-        'M:\MiOS\logs'
-    } else { `$env:TEMP }
-    `$_logPath = Join-Path `$_logBase ('getmios-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
-    Write-Host ('  [*] Logging to: ' + `$_logPath) -ForegroundColor DarkGray
-    # Wrap the fetched script with: codepage + Start-Transcript prelude.
-    # Start-Transcript captures Write-Host into the log file while
-    # leaving `$Host.UI.RawUI intact for in-script cursor manipulation
-    # (Tee-Object would destroy the console handle and crash any
-    # `$RawUI.CursorPosition assignment, which is exactly the crash
-    # commit 1e3484f hit -- "The handle is invalid").
-    `$_logPathLit = `$_logPath -replace "'", "''"
-    # Backtick-escape `$null / `$false IN THE OUTER TEMPLATE -- the
-    # OUTER pwsh interpolates `$variable` regardless of whether the
-    # inner string is single- or double-quoted (single quotes inside
-    # @"..."@ are just literal char). Without the backtick, `$null`
-    # gets stripped to empty BEFORE the rendered script ever lands
-    # on disk, producing `*>  } catch {}` -- the operator's
-    # "Missing file specification after redirection operator" crash.
-    `$_preludeLines = @(
-        'try { & chcp.com 65001 *> `$null } catch {}',
-        'try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}',
-        'try { [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new(`$false) } catch {}',
-        'try { `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}',
-        ("try { Start-Transcript -Path '" + `$_logPathLit + "' -Force -ErrorAction Stop *> ```$null } catch {}")
-    )
-    `$_prelude  = (`$_preludeLines -join "``n") + "``n"
-    `$_postlude = "``ntry { Stop-Transcript *> ```$null } catch {}``n"
+    # NO PRELUDE PREPEND. Get-MiOS.ps1 has a `param()` block at the
+    # top of the file -- PowerShell requires param() to be the FIRST
+    # statement in a script (after comments / using statements). My
+    # prior commits prepended chcp/Start-Transcript lines which
+    # pushed param() to line 6+, causing PowerShell to parse the
+    # block's arguments as standalone assignments:
+    #     "[string]\$RepoUrl = 'https://github.com/mios-dev/...'"
+    #     -> "The assignment expression is not valid"
+    # The codepage + Console encoding are ALREADY set in the inner
+    # cmd (chcp 65001 etc. above); the child pwsh inherits the
+    # conhost codepage from this elevated parent, so Unicode glyphs
+    # render correctly without an inline prelude.
+    # Logging during Pass-1 is sacrificed for now -- build-mios.ps1's
+    # own logging at M:\MiOS\logs\mios-install-*.log covers Pass-2+
+    # which is where 90% of the install time lives. Operator sees
+    # all Pass-1 output live in the elevated host (Read-Host pause
+    # at the end keeps it visible).
     `$tmpScript = Join-Path `$env:TEMP ('mios-getmios-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
-    [IO.File]::WriteAllText(`$tmpScript, (`$_prelude + `$src + `$_postlude), [System.Text.UTF8Encoding]::new(`$false))
+    [IO.File]::WriteAllText(`$tmpScript, `$src, [System.Text.UTF8Encoding]::new(`$false))
+    # -NoProfile prevents the elevated child pwsh from auto-loading
+    # any stale `$PROFILE.CurrentUserAllHosts redirector that points
+    # at a corrupted profile body from a prior failed run. Pass-1
+    # below will overwrite the profile with a properly-BOMed UTF-8
+    # version regardless.
     & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript
     `$_rc = `$LASTEXITCODE
     Remove-Item -LiteralPath `$tmpScript -Force -ErrorAction SilentlyContinue
     if (`$_rc -ne 0) {
         Write-Host ''
         Write-Host ('  [!] Bootstrap exited with code ' + `$_rc) -ForegroundColor Red
-        Write-Host ('      Log: ' + `$_logPath) -ForegroundColor DarkGray
-        Write-Host '      build-mios.ps1''s own log lands at M:\MiOS\logs\mios-install-*.log on success.' -ForegroundColor DarkGray
+        Write-Host '      Output above is the failure detail (Pass-1 has no separate log).' -ForegroundColor DarkGray
+        Write-Host '      build-mios.ps1''s own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.' -ForegroundColor DarkGray
         Write-Host ''
     } else {
         # Bootstrap completed -- per operator: "mios.bat DOES EVERYTHING--
@@ -2842,7 +2835,7 @@ Write-Host '  Press Enter to close this elevated bootstrap window...' -Foregroun
     if (-not $_shell) { $_shell = 'powershell.exe' }
     try {
         Start-Process -FilePath $_shell `
-            -ArgumentList @('-NoLogo','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand', $_innerEncoded) `
+            -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand', $_innerEncoded) `
             -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
         Write-Host '  [+] Elevated MiOS bootstrap window opened. Continuing the install there.' -ForegroundColor Green
     } catch {
