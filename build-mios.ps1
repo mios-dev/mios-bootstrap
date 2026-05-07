@@ -6021,13 +6021,31 @@ if ($activeDistro) {
     # NB: on Fedora 44 the `mkpasswd` binary moved out of `whois` into
     # its own `mkpasswd` package -- include both so the build essentials
     # set is correct on every Fedora vintage the dev VM might run.
+    #
+    # MUST wrap in EAP=Continue + PSNativeCommandUseErrorActionPreference=$false:
+    # dnf emits "Failed to set locale, defaulting to C.UTF-8" to stderr
+    # (a harmless warning when LANG isn't set in the WSL distro), and
+    # also "Transaction failed:" lines for non-critical post-scriptlet
+    # errors (e.g. whois symlink-creation, which doesn't actually break
+    # the install). Under PS 7.4+ defaults (EAP=Stop +
+    # PSNativeCommandUseErrorActionPreference=$true), either of those
+    # throws straight to the outer FATAL handler. The actual install
+    # success is checked via $LASTEXITCODE below.
     $miosEssentials = 'mkpasswd whois openssl python3-passlib bootc git'
-    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dnf install -y --quiet $miosEssentials" 2>&1 |
-        ForEach-Object { Write-Log "mios-essentials: $_" }
-    if ($LASTEXITCODE -eq 0) {
+    $essentialsRc = -1
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dnf install -y --quiet $miosEssentials" 2>&1 |
+            ForEach-Object { Write-Log "mios-essentials: $_" }
+        $script:_essentialsRc = $LASTEXITCODE
+    }
+    if ($script:_essentialsRc -eq 0) {
         Log-Ok "MiOS build essentials layered onto $_wslDistroForTerm"
     } else {
-        Log-Warn "Failed to layer MiOS build essentials (exit $LASTEXITCODE) -- driver will fail when it tries to use mkpasswd / openssl / bootc"
+        Log-Warn "Failed to layer MiOS build essentials (exit $($script:_essentialsRc)) -- driver will fail when it tries to use mkpasswd / openssl / bootc"
     }
 
     # The overlay seed wrote /etc/wsl.conf [user] default=mios so future
