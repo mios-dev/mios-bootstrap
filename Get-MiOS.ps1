@@ -529,10 +529,15 @@ function Install-MiOSTerminalProfile {
         brightWhite         = $palette.ansi_15_brwhite
     }
 
-    # Profile commandline: pwsh -NoLogo with no command -- pinned to the
-    # MiOS profile so any wt.exe -p MiOS-Bootstrap launch (manual or
-    # programmatic) lands in a Geist-rendered, MiOS-schemed shell whose
-    # $PROFILE is loaded (oh-my-posh init runs from there).
+    # Profile commandline: pwsh -NoLogo -NoExit -Command ". 'M:\...'".
+    # Explicitly dot-sources the canonical M:\ profile script AFTER
+    # $PROFILE has loaded -- so even if the operator has a broken
+    # oh-my-posh init in their $PROFILE that runs after our markers,
+    # OUR regex-patched init runs LAST and wins. This is what makes
+    # the MiOS terminal's prompt deterministic regardless of the
+    # operator's existing PowerShell profile state. Without this
+    # explicit re-init, the MiOS terminal could inherit a broken
+    # PSReadLine binding state from the operator's pre-existing init.
     $defaultPwsh = "$env:ProgramFiles\PowerShell\7\pwsh.exe"
     if (-not (Test-Path -LiteralPath $defaultPwsh)) {
         $defaultPwsh = "$env:ProgramW6432\PowerShell\7\pwsh.exe"
@@ -540,7 +545,11 @@ function Install-MiOSTerminalProfile {
     if (-not (Test-Path -LiteralPath $defaultPwsh)) {
         $defaultPwsh = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
     }
-    $profileCmdline = '"' + $defaultPwsh + '" -NoLogo'
+    $miosProfilePath = if (Test-Path 'M:\') { 'M:\MiOS\powershell\profile.ps1' }
+                      else { Join-Path $env:USERPROFILE 'MiOS-bootstrap\powershell\profile.ps1' }
+    # Single-quoted PS string with `''` for embedded literal quotes.
+    # ConvertTo-Json will JSON-encode the outer double-quotes correctly.
+    $profileCmdline = '"' + $defaultPwsh + '" -NoLogo -NoExit -Command "if (Test-Path ''' + $miosProfilePath + ''') { . ''' + $miosProfilePath + ''' }"'
 
     # Per-profile shared settings -- apply to BOTH "MiOS" and "MiOS-DEV"
     # so they look/feel identical. Belt-AND-braces acrylic settings:
@@ -1452,12 +1461,21 @@ function Install-MiOSPowerShellProfile {
 # MiOS PowerShell profile -- PSReadLine reload + fastfetch MOTD +
 # oh-my-posh init.
 # Source of truth: this file lives on M:\ and is dot-sourced from
-# `$PROFILE.CurrentUserAllHosts. Edit here, restart pwsh, updates.
+# `$PROFILE.CurrentUserAllHosts AND from the WT MiOS profile's
+# explicit -Command preamble (so it ALWAYS runs in MiOS terminals,
+# even when the operator's $PROFILE has its own broken oh-my-posh
+# init that would otherwise override ours).
 # Self-heals every artifact (mios.omp.json, fastfetch config.jsonc,
 # mios.txt ASCII logo) from embedded base64 blobs if the canonical
 # disk copy is missing.
 
-if (`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') {
+# NO TERMINAL-TYPE GATE. Always run the PSReadLine reload + oh-my-
+# posh init. The WT_SESSION gate on the previous version was
+# silently skipping the init when WT didn't set the env var early
+# enough -- producing the "theme works in normal terminal but not
+# MiOS Terminal" symptom. fastfetch is gated separately below
+# since its ASCII rendering only makes sense in a real terminal.
+if (`$true) {
 
     # ── PSReadLine reload ─────────────────────────────────────────
     # PowerShell 7.x ships with an in-box PSReadLine that's too old
@@ -1508,7 +1526,9 @@ if (`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') {
     }
 
     # ── Fastfetch MOTD on session start ───────────────────────────
-    if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
+    # Gated on WT_SESSION since the ASCII logo only renders properly
+    # in WT (conhost / VS Code embedded shell mangles the alignment).
+    if ((`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') -and (Get-Command fastfetch -ErrorAction SilentlyContinue)) {
         # Self-heal logo + config.
         `$miosLogo   = _MiosSelfHeal 'fastfetch' 'mios.txt'      '$ffLogoBase64'
         `$miosFFCfg  = _MiosSelfHeal 'fastfetch' 'config.jsonc'  '$ffConfigBase64'
