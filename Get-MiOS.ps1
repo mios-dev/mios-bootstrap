@@ -522,8 +522,11 @@ function Install-MiOSTerminalProfile {
     # non-focus tabs that the operator opens later.
     # Root-level globals.
     # launchMode=focus      : no titlebar, no tab row, no min/max buttons.
-    # disableAnimations=true: prevents acrylic's blur recompute animation
-    #                        from re-painting the dashboard mid-render.
+    # disableAnimations=false: keep WT's tab-fade / pane-resize / acrylic-
+    #                        blur recompute animations live. The dashboard
+    #                        is in-place repainted by Show-Dashboard with
+    #                        a strict-clamped width, so animations layered
+    #                        over it don't drift the frame.
     # showTabsInTitlebar/   : keep the chrome dead even outside focus mode
     #   alwaysShowTabs=false  so a stray tab-open doesn't surface a titlebar.
     # initialCols/Rows=80/30: TTY0/text-mode-3+ canonical dimensions, 4:3
@@ -540,7 +543,7 @@ function Install-MiOSTerminalProfile {
     $wtJson | Add-Member -NotePropertyName initialCols                 -NotePropertyValue 80      -Force
     $wtJson | Add-Member -NotePropertyName initialRows                 -NotePropertyValue 30      -Force
     $wtJson | Add-Member -NotePropertyName centerOnLaunch              -NotePropertyValue $true   -Force
-    $wtJson | Add-Member -NotePropertyName disableAnimations           -NotePropertyValue $true   -Force
+    $wtJson | Add-Member -NotePropertyName disableAnimations           -NotePropertyValue $false  -Force
 
     # Schemes: upsert MiOS.
     if (-not $wtJson.schemes) {
