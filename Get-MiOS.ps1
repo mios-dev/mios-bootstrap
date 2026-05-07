@@ -1051,7 +1051,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # at definition time; we substitute placeholders here at install time
     # so the launcher's geometry tracks the operator's mios.toml edits.
     $_lnchCols    = Get-MiosTomlValue -Section 'terminal'   -Key 'cols'         -Default 80
-    $_lnchRows    = Get-MiosTomlValue -Section 'terminal'   -Key 'rows'         -Default 30
+    $_lnchRows    = Get-MiosTomlValue -Section 'terminal'   -Key 'rows'         -Default 20
     $_lnchCellW   = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px'    -Default 10
     $_lnchCellH   = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px'    -Default 20
     $_lnchChromeW = Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px'  -Default 20
@@ -1885,7 +1885,7 @@ function Install-MiOSPowerShellProfile {
     # inside the borderless + scrollbar-less terminal without the
     # right border colliding with the line-wrap boundary.
     $_miosCols    = Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80
-    $_miosRows    = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 30
+    $_miosRows    = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 20
     $_miosScroll  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
     $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default ($_miosCols - 1)
     $_miosFrameH  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default ($_miosRows - 1)
@@ -2059,16 +2059,45 @@ if (`$true) {
             "`$V `$lpad`$Line`$rpad `$V"
         }
 
+        # Total budget: frame_height rows total. Layout:
+        #   1 top frame
+        #   logo block       (compact: 0-1 row -- title only;
+        #                     full:    N-row ASCII when budget allows)
+        #   1 divider
+        #   fastfetch block  (paired -- two modules per row)
+        #   1 divider
+        #   hints block      (compact: 1 line; full: 1-line-per-verb)
+        #   1 bottom frame
+        # Per operator: dashboard MUST fit in 80x20 (= frame_height 19).
+        # Compact mode kicks in when frame_height < 25.
+        `$_compact = $_miosFrameH -lt 25
+        # Reserve rows for top + divider + divider + hints + bottom.
+        # Compact hints = 1 row; full hints = 7 rows.
+        `$_hintsRows  = if (`$_compact) { 1 } else { 7 }
+        `$_overhead   = 1 + 1 + 1 + `$_hintsRows + 1   # top + 2 dividers + hints + bottom
+        # Logo + fastfetch share whatever's left.
+        `$_contentBudget = [math]::Max(2, $_miosFrameH - `$_overhead)
+        # In compact mode skip the multi-line ASCII logo entirely; in
+        # full mode allocate up to half the content budget to the logo.
+        `$_logoBudget = if (`$_compact) { 1 } else { [math]::Min(11, [math]::Floor(`$_contentBudget / 2)) }
+        `$_ffBudget   = `$_contentBudget - `$_logoBudget
+
         # Top frame.
         Write-Host (`$TL + (`$H * (`$WIDTH - 2)) + `$TR) -ForegroundColor Blue
-        # Centered ASCII logo (operator-blue). Center the BLOCK (not
-        # each line individually) -- the logo's internal alignment
-        # depends on each line's leading whitespace, so per-line
-        # centering would skew the 3D blocks. Find the longest line,
-        # compute one left-padding, apply to every line, right-pad
-        # each line to the longest length so the right border is flush.
-        if (Test-Path -LiteralPath `$LogoPath) {
+        if (`$_compact) {
+            # 1-line title band: "MiOS  --  Immutable Fedora AI Workstation"
+            `$title = 'MiOS  --  Immutable Fedora AI Workstation'
+            Write-Host (_Center `$title) -ForegroundColor Blue
+        }
+        elseif (Test-Path -LiteralPath `$LogoPath) {
+            # Centered ASCII logo (operator-blue). Center the BLOCK (not
+            # each line individually) -- the logo's internal alignment
+            # depends on each line's leading whitespace.
             `$logoLines = @(Get-Content -LiteralPath `$LogoPath) | Where-Object { `$_ -ne `$null }
+            # Cap to logo budget so we don't overflow on small frame_height.
+            if (`$logoLines.Count -gt `$_logoBudget) {
+                `$logoLines = `$logoLines[0..([math]::Max(0, `$_logoBudget - 1))]
+            }
             `$maxLen = 0
             foreach (`$ll in `$logoLines) {
                 `$len = (_Strip `$ll).Length
@@ -2084,16 +2113,13 @@ if (`$true) {
         # Divider.
         Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
         # Framed fastfetch (no logo -- we drew it above). Side-by-side
-        # pairing: when two consecutive lines BOTH fit in half the
-        # interior width (<= 36 visible chars each), emit them as a
-        # single row with a "│" column-separator. Saves vertical rows
-        # so all 10 modules + the prompt fit in 80x30.
+        # pairing: two consecutive lines that both fit in half the
+        # interior width get emitted as a single row, saving vertical
+        # rows. Cap rendered rows at `$_ffBudget so the dashboard fits
+        # the configured frame_height even with a verbose fastfetch.
         if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
             try {
                 `$ffOut = @(& fastfetch -c `$ConfigPath --logo none 2>&1 | Out-String -Stream | Where-Object { `$_ -ne `$null })
-                # Drop blank lines + key-only lines (e.g. "GPU:" with no
-                # value -- Hyper-V Basic Render Driver / virtual display
-                # adapters that fastfetch detects but can't name).
                 `$ffOut = @(`$ffOut | Where-Object {
                     `$cleaned = (_Strip `$_).Trim()
                     if (-not `$cleaned) { return `$false }
@@ -2102,14 +2128,14 @@ if (`$true) {
                 })
                 `$halfW = [int][math]::Floor((`$INNER - 3) / 2)
                 `$i = 0
-                while (`$i -lt `$ffOut.Count) {
+                `$rowsPrinted = 0
+                while (`$i -lt `$ffOut.Count -and `$rowsPrinted -lt `$_ffBudget) {
                     `$cur = [string]`$ffOut[`$i]
                     `$curVis = (_Strip `$cur).TrimEnd()
                     if ([string]::IsNullOrWhiteSpace(`$curVis)) { `$i++; continue }
                     `$nxt = if ((`$i + 1) -lt `$ffOut.Count) { [string]`$ffOut[`$i+1] } else { `$null }
                     `$nxtVis = if (`$nxt) { (_Strip `$nxt).TrimEnd() } else { '' }
                     if (`$curVis.Length -le `$halfW -and `$nxt -and -not [string]::IsNullOrWhiteSpace(`$nxtVis) -and `$nxtVis.Length -le `$halfW) {
-                        # Pair them with a thin column separator.
                         `$padL = ' ' * [math]::Max(1, `$halfW - `$curVis.Length)
                         `$combined = `$cur + `$padL + `$nxt
                         Write-Host (_Frame `$combined)
@@ -2118,6 +2144,7 @@ if (`$true) {
                         Write-Host (_Frame `$cur)
                         `$i += 1
                     }
+                    `$rowsPrinted++
                 }
             } catch {
                 Write-Host (_Frame "  fastfetch failed: `$(`$_.Exception.Message)")
@@ -2126,21 +2153,24 @@ if (`$true) {
             Write-Host (_Frame '  fastfetch not installed -- run mios-update to refresh.')
         }
         # ── Command hints rows ───────────────────────────────────
-        # Globally surfaced for ALL MiOS deployments + instances --
-        # the operator should never have to remember the verb names.
-        # One line per verb so the operator sees what each does
-        # without typing `mios help`.
         Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
-        `$_hints = @(
-            '  mios build   -- open mios-config.html, save, then build the OCI image',
-            '  mios config  -- edit mios.toml in the HTML configurator (no build)',
-            '  mios dash    -- show this dashboard (framed banner + fastfetch info)',
-            '  mios dev     -- enter the MiOS-DEV podman machine',
-            '  mios pull    -- sync M:\ overlay to origin/main',
-            '  mios update  -- re-run the bootstrap (cache-busted)',
-            '  mios help    -- list every verb'
-        )
-        foreach (`$h in `$_hints) { Write-Host (_Frame `$h) -ForegroundColor DarkCyan }
+        if (`$_compact) {
+            # Single-line band: verbs only, descriptions implicit
+            # (operator types `mios help` for full text).
+            `$_hint1 = 'build  config  dash  dev  pull  update  help'
+            Write-Host (_Center `$_hint1) -ForegroundColor DarkCyan
+        } else {
+            `$_hints = @(
+                '  mios build   -- open mios-config.html, save, then build the OCI image',
+                '  mios config  -- edit mios.toml in the HTML configurator (no build)',
+                '  mios dash    -- show this dashboard (framed banner + fastfetch info)',
+                '  mios dev     -- enter the MiOS-DEV podman machine',
+                '  mios pull    -- sync M:\ overlay to origin/main',
+                '  mios update  -- re-run the bootstrap (cache-busted)',
+                '  mios help    -- list every verb'
+            )
+            foreach (`$h in `$_hints) { Write-Host (_Frame `$h) -ForegroundColor DarkCyan }
+        }
 
         # Bottom frame.
         Write-Host (`$BL + (`$H * (`$WIDTH - 2)) + `$BR) -ForegroundColor Blue
@@ -2626,7 +2656,7 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     # (80x30 + 9000-row scrollback) match the operator-defined MiOS
     # default. Frame width = cols-1 for borderless fit.
     $_elevCols = Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80
-    $_elevRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 30
+    $_elevRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 20
     $_elevScr  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
     $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
     $_innerCmd = @"
