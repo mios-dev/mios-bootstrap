@@ -27,7 +27,12 @@
 :: chain into mios-build-driver all happen in this single window.
 
 setlocal
-set "MIOS_URL=https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1"
+:: Cache-bust the irm: raw.githubusercontent.com is fronted by Fastly with
+:: a 5-minute max-age, so back-to-back runs after a push will land on the
+:: stale copy. Append ?cb=<unix-time> so every invocation hits a unique URL
+:: and always pulls origin-fresh.
+for /f %%i in ('powershell -NoProfile -Command "[int][double]::Parse((Get-Date -UFormat %%s))"') do set "MIOS_CB=%%i"
+set "MIOS_URL=https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=%MIOS_CB%"
 
 :: Resolve pwsh: prefer 7+ MSI install; fall back to Windows PowerShell 5.1.
 where /q pwsh.exe
