@@ -620,6 +620,11 @@ function Install-MiOSTerminalProfile {
         systemBackdrop           = 'acrylic'
         padding                  = '0'
         suppressApplicationTitle = $true
+        # Hide the scrollbar entirely -- WT's scrollbar consumes a
+        # full column even when there's nothing to scroll, leaving
+        # the framed dashboard visibly off-center. With this set,
+        # all 80 cells are usable and the frame fits flush.
+        scrollbarState           = 'hidden'
         hidden                   = $false
     }
 
@@ -1575,13 +1580,12 @@ if (`$true) {
     # properly in WT (conhost / VS Code embedded shell mangles it).
     function Show-MiosDashboard {
         param([string]`$ConfigPath, [string]`$LogoPath)
-        # Frame width = 79 cells: exactly one less than the canonical
-        # 80-cell MiOS terminal. 80 wraps (cursor advances past the
-        # right edge); 78 leaves a visible right-margin. 79 is the
-        # sweet spot -- frame's right edge sits one cell before the
-        # window's right edge.
+        # Frame width: with scrollbarState=hidden in the MiOS profile,
+        # all 80 cells are usable -- the frame fits flush with the
+        # window edges. Still backs off 1 char as a safety margin
+        # against fractional cell rendering of the box-drawing glyphs.
         `$consoleW = try { [Console]::WindowWidth } catch { 80 }
-        `$WIDTH = [math]::Min(79, [math]::Max(40, `$consoleW - 1))
+        `$WIDTH = [math]::Min(80, [math]::Max(40, `$consoleW - 1))
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
 
