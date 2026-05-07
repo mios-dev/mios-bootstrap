@@ -155,7 +155,7 @@ $MiosScope = if ($script:IsAdmin) { "AllUsers" } else { "CurrentUser" }
 
 # ── Paths & constants ─────────────────────────────────────────────────────────
 $MiosVersion      = "v0.2.4"
-$MiosRepoUrl      = "https://github.com/mios-dev/mios.git"
+$MiosRepoUrl      = "https://github.com/mios-dev/MiOS.git"   # repo renamed mios.git -> MiOS.git; old URL still redirects but git's smart-HTTP fetch refuses 301s without followRedirects
 $MiosBootstrapUrl = "https://github.com/mios-dev/mios-bootstrap.git"
 # Podman machine name -- canonical "MiOS-DEV" (was MiOS-BUILDER pre-v0.2.3).
 # Backed by WSL distro `podman-MiOS-DEV` once `podman machine init` runs.
