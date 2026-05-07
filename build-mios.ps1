@@ -6431,7 +6431,9 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
     # (the actual OCI build). Operator's terminal stays open in the
     # distro shell after the driver finishes; if they want the
     # bootstrap log they read $LogFile directly.
+    Write-Log "auto-chain gate: ExitCode=$ExitCode Unattended=$Unattended MIOS_NO_AUTO_CHAIN='$($env:MIOS_NO_AUTO_CHAIN)'"
     if ($ExitCode -eq 0 -and -not $Unattended -and -not $env:MIOS_NO_AUTO_CHAIN) {
+        Write-Log "auto-chain: gate open; resolving dev distro"
         $devDistro = $null
         try {
             $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" |
@@ -6441,6 +6443,7 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
                 if ($wslList -contains $c) { $devDistro = $c; break }
             }
         } catch {}
+        Write-Log "auto-chain: resolved dev distro = '$devDistro'"
         if ($devDistro) {
             $resolvedUser = 'root'
             try {
@@ -6448,6 +6451,7 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
                 if ($passwd -match '(?m)^mios:') { $resolvedUser = 'mios' }
                 elseif ($passwd -match '(?m)^core:') { $resolvedUser = 'core' }
             } catch {}
+            Write-Log "auto-chain: resolved user = '$resolvedUser'"
             Write-Host "  -> Launching $devDistro (--user $resolvedUser) to run mios-build-driver..." -ForegroundColor Cyan
             Write-Host "     Output streams below; the OCI build runs inside MiOS-DEV." -ForegroundColor DarkGray
             Write-Host ""
@@ -6466,7 +6470,9 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
             # default machine-os config has automount on; this is a
             # belt-and-braces check.
             $localDriver = Join-Path $script:MiosRepoDir 'usr\libexec\mios\mios-build-driver'
+            Write-Log "auto-chain: localDriver = '$localDriver' exists=$(Test-Path -LiteralPath $localDriver)"
             if (-not (Test-Path -LiteralPath $localDriver)) {
+                Write-Log "auto-chain: ABORT -- mios-build-driver not found" "WARN"
                 Write-Host "  [!] mios-build-driver not found at $localDriver" -ForegroundColor Yellow
                 Write-Host "      Re-run the bootstrap; Phase 2 should have cloned mios.git to M:\." -ForegroundColor DarkGray
             } else {
@@ -6477,20 +6483,28 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
                     & wsl.exe -d $devDistro --user root -- test -r $wslDriver 2>$null
                     if ($LASTEXITCODE -eq 0) { $automountOk = $true }
                 } catch {}
+                Write-Log "auto-chain: wslDriver = '$wslDriver' automountOk=$automountOk"
                 if (-not $automountOk) {
+                    Write-Log "auto-chain: ABORT -- /mnt/m/ not readable inside $devDistro" "WARN"
                     Write-Host "  [!] /mnt/m/ not readable inside $devDistro (automount disabled?)" -ForegroundColor Yellow
                     Write-Host "      Manually run inside $devDistro :  bash $wslDriver" -ForegroundColor DarkGray
                 } else {
                     # Exec the driver. As root, no sudo needed (avoids
                     # PAM/sudoers edge cases inside rootful machine-os).
+                    Write-Log "auto-chain: EXEC bash $wslDriver inside $devDistro as $resolvedUser"
                     if ($resolvedUser -eq 'root') {
                         & wsl.exe -d $devDistro --user root -- bash -lc "exec bash $wslDriver"
                     } else {
                         & wsl.exe -d $devDistro --user $resolvedUser -- bash -lc "exec sudo bash $wslDriver"
                     }
+                    Write-Log "auto-chain: driver exited with code $LASTEXITCODE"
                 }
             }
+        } else {
+            Write-Log "auto-chain: ABORT -- no dev distro found in WSL list" "WARN"
         }
+    } else {
+        Write-Log "auto-chain: SKIPPED (gate closed)"
     }
     # Stop the background heartbeat runspace cleanly before exit. There is
     # no transcript to close (the unified log is written directly via

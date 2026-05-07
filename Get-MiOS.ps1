@@ -1374,6 +1374,13 @@ function Install-MiOSTerminalExtras {
         }
     }
 
+    # NOTE: when invoked via the trampoline below, this script's stdout is
+    # captured by the parent (Windows PowerShell 5.1) and CLIXML-serialized
+    # because pwsh 7 sends Write-Host through the PSHost information stream.
+    # Use [Console]::WriteLine instead -- raw stdout bypasses the PSHost
+    # serializer entirely, so the parent sees plain text. Cost: no color in
+    # the trampolined branch (acceptable -- the in-process branch still
+    # uses Write-Host with color).
     $modulesScript = @'
 $ErrorActionPreference = 'Continue'
 try { Import-Module PackageManagement -ErrorAction SilentlyContinue -Force } catch {}
@@ -1390,14 +1397,14 @@ $psModules = @('Terminal-Icons', 'posh-git', 'CompletionPredictor', 'Microsoft.W
 foreach ($mod in $psModules) {
     $have = Get-Module -ListAvailable -Name $mod -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($have) {
-        Write-Host "  [+] PS module already present: $mod $($have.Version)" -ForegroundColor DarkGray
+        [Console]::WriteLine("  [+] PS module already present: $mod $($have.Version)")
         continue
     }
     try {
         Install-Module -Name $mod -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
-        Write-Host "  [+] Installed PS module: $mod" -ForegroundColor Green
+        [Console]::WriteLine("  [+] Installed PS module: $mod")
     } catch {
-        Write-Host "  [!] $mod install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        [Console]::WriteLine("  [!] $mod install failed: $($_.Exception.Message)")
     }
 }
 '@
