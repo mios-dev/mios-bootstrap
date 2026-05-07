@@ -1459,27 +1459,55 @@ foreach ($mod in $psModules) {
         Write-Host "  [!] winget not available; skipping CLI extras." -ForegroundColor Yellow
         return
     }
-    # SSOT: package list comes from mios.git's
-    # /usr/share/mios/mios.toml [packages.windows] pkgs = [...].
+    # SSOT: package list comes from the layered mios.toml chain.
     # Per operator "ALL Global packages SOURCE FROM THE TOML/HTML
-    # FILE!!!" -- the bootstrap reads from the toml at install time
-    # rather than hardcoding the list here. M:\ doesn't exist in
-    # Pass 1 yet (Pass 2 provisions it), so fetch the toml directly
-    # from origin via cache-busted irm.
+    # FILE!!!" + "now how does changing the html change the toml
+    # thats read by multiple scripts and components".
     #
-    # Fallback hardcoded list ONLY if the fetch fails (network blip /
-    # toml parse error). Fallback is intentionally minimal -- just
-    # the runtime/toolchain that Pass 2 absolutely needs to proceed;
-    # the operator can re-run after their network is back to pick
-    # up the full set from the toml.
+    # Layered resolution order (highest → lowest precedence):
+    #   1. M:\etc\mios\mios.toml          -- HOST overlay (where the
+    #                                        Epiphany configurator
+    #                                        saves; visible to BOTH
+    #                                        Windows AND MiOS-DEV via
+    #                                        /mnt/m/etc/mios/mios.toml)
+    #   2. M:\usr\share\mios\mios.toml    -- VENDOR copy on M:\ if
+    #                                        Phase 2 already cloned it
+    #   3. raw.githubusercontent.com mios.git origin/main  -- COLD
+    #                                        first-run path (no M:\
+    #                                        yet)
+    #
+    # Each layer is checked; the first that yields a non-empty
+    # [packages.windows] pkgs = [...] wins. This makes Pass 1 see
+    # user edits made via the HTML configurator the moment they're
+    # saved, the same way the Linux side sees them via /etc/mios/.
     $wingetTools = @()
     $tomlFetchOk = $false
+    $tomlSource  = ''
+    $tomlText    = $null
+    foreach ($cand in @(
+        @{ Path='M:\etc\mios\mios.toml';       Source='M:\etc\mios (host overlay)' },
+        @{ Path='M:\usr\share\mios\mios.toml'; Source='M:\usr\share\mios (vendor on M:)' }
+    )) {
+        if (Test-Path -LiteralPath $cand.Path) {
+            try {
+                $tomlText   = Get-Content -LiteralPath $cand.Path -Raw -ErrorAction Stop
+                $tomlSource = $cand.Source
+                break
+            } catch {}
+        }
+    }
+    if (-not $tomlText) {
+        try {
+            $cb       = [int][double]::Parse((Get-Date -UFormat %s))
+            $tomlUrl  = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/mios.toml?cb=$cb"
+            $tomlText = Invoke-RestMethod -Uri $tomlUrl `
+                -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } `
+                -ErrorAction Stop
+            $tomlSource = 'origin/main (cold first-run)'
+        } catch {}
+    }
     try {
-        $cb       = [int][double]::Parse((Get-Date -UFormat %s))
-        $tomlUrl  = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/mios.toml?cb=$cb"
-        $tomlText = Invoke-RestMethod -Uri $tomlUrl `
-            -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } `
-            -ErrorAction Stop
+        if (-not $tomlText) { throw 'no toml source resolved' }
         # Regex-extract `[packages.windows] ... pkgs = [ ... ]`. Multiline
         # DOTALL across the TOML section. Stop at the next `[section]`
         # header so we don't accidentally swallow [packages.dev_vm_essentials]
@@ -1509,7 +1537,7 @@ foreach ($mod in $psModules) {
             'Microsoft.VCRedist.2015+.x64'
         )
     } else {
-        Write-Host "  [+] Sourced $($wingetTools.Count) winget packages from mios.toml [packages.windows]" -ForegroundColor DarkGray
+        Write-Host "  [+] Sourced $($wingetTools.Count) winget packages from $tomlSource [packages.windows]" -ForegroundColor DarkGray
     }
     foreach ($pkg in $wingetTools) {
         try {

@@ -6106,22 +6106,28 @@ if ($activeDistro) {
     # PSNativeCommandUseErrorActionPreference=$true), either of those
     # throws straight to the outer FATAL handler. The actual install
     # success is checked via $LASTEXITCODE below.
-    # SSOT: dev VM essentials list comes from mios.toml
-    # [packages.dev_vm_essentials] pkgs = [...]. Per operator
-    # "ALL Global packages SOURCE FROM THE TOML/HTML FILE!!!" --
-    # the bootstrap reads from M:\usr\share\mios\mios.toml at
-    # install time rather than hardcoding the list here. Phase 2
-    # already overlaid mios.git onto M:\ so the toml is present.
-    # Fallback to a minimal hardcoded set if parsing fails.
-    $devVmTomlPath = Join-Path $script:MiosRepoDir 'usr\share\mios\mios.toml'
-    if (-not (Test-Path -LiteralPath $devVmTomlPath)) {
-        # mios-bootstrap layout: try the C:\MiOS overlay path too.
-        $devVmTomlPath = Join-Path 'M:\' 'usr\share\mios\mios.toml'
-    }
-    $miosEssentials = ''
-    if (Test-Path -LiteralPath $devVmTomlPath) {
+    # SSOT: dev VM essentials list comes from the layered mios.toml
+    # chain. Per operator: Epiphany configurator HTML edits flow
+    # through to every consumer.
+    #
+    # Layered resolution (highest → lowest precedence):
+    #   1. M:\etc\mios\mios.toml          -- HOST overlay (Epiphany
+    #                                        configurator's save target;
+    #                                        visible from Windows AND
+    #                                        from MiOS-DEV via /mnt/m/)
+    #   2. M:\usr\share\mios\mios.toml    -- VENDOR copy from mios.git
+    # First layer with a non-empty [packages.dev_vm_essentials] wins.
+    $devVmTomlCands = @(
+        'M:\etc\mios\mios.toml',
+        (Join-Path $script:MiosRepoDir 'usr\share\mios\mios.toml'),
+        'M:\usr\share\mios\mios.toml'
+    )
+    $miosEssentials  = ''
+    $essentialsSource = ''
+    foreach ($p in $devVmTomlCands) {
+        if (-not (Test-Path -LiteralPath $p)) { continue }
         try {
-            $tomlText = Get-Content -LiteralPath $devVmTomlPath -Raw -ErrorAction Stop
+            $tomlText = Get-Content -LiteralPath $p -Raw -ErrorAction Stop
             $rx = '(?ms)^\[packages\.dev_vm_essentials\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
             $m  = [regex]::Match($tomlText, $rx)
             if ($m.Success) {
@@ -6133,12 +6139,14 @@ if ($activeDistro) {
                     }
                 )
                 if ($pkgs.Count -gt 0) {
-                    $miosEssentials = ($pkgs -join ' ')
-                    Log-Ok "Sourced $($pkgs.Count) dev-VM essentials from mios.toml [packages.dev_vm_essentials]"
+                    $miosEssentials  = ($pkgs -join ' ')
+                    $essentialsSource = $p
+                    Log-Ok "Sourced $($pkgs.Count) dev-VM essentials from $p [packages.dev_vm_essentials]"
+                    break
                 }
             }
         } catch {
-            Log-Warn "Failed to parse mios.toml for [packages.dev_vm_essentials]: $($_.Exception.Message)"
+            Log-Warn "Failed to parse $p for [packages.dev_vm_essentials]: $($_.Exception.Message)"
         }
     }
     if (-not $miosEssentials) {
