@@ -2900,6 +2900,7 @@ try {
     & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript
     `$_rc = `$LASTEXITCODE
     Remove-Item -LiteralPath `$tmpScript -Force -ErrorAction SilentlyContinue
+    `$_launchMiosOnClose = `$false
     if (`$_rc -ne 0) {
         Write-Host ''
         Write-Host ('  [!] Bootstrap exited with code ' + `$_rc) -ForegroundColor Red
@@ -2907,101 +2908,14 @@ try {
         Write-Host '      build-mios.ps1''s own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.' -ForegroundColor DarkGray
         Write-Host ''
     } else {
-        # Bootstrap completed. Per operator: "drops to the dash with
-        # everything installed and functional and has hints for all
-        # the core 'mios *' invocations". The MiOS app opens to the
-        # framed dashboard + hint band -- the operator types `mios
-        # build` (or other verbs) themselves. No auto-run.
+        # Bootstrap succeeded -- defer the MiOS app spawn until the
+        # operator CLOSES this window. Per operator: "the actual
+        # process of closing the bootstrap powershell window after
+        # installation is what should procure and spawn the MiOS
+        # app's window".
+        `$_launchMiosOnClose = `$true
         Write-Host ''
-        Write-Host '  [+] Launching MiOS app (dashboard + hints; type a verb to start)...' -ForegroundColor Green
-        try {
-            # Resolve wt.exe (prefer Stable appx install location for
-            # deterministic profile binding; fall back to PATH alias).
-            `$_wtExe = `$null
-            try {
-                `$_pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
-                if (`$_pkg -and `$_pkg.InstallLocation) {
-                    `$_cand = Join-Path `$_pkg.InstallLocation 'wt.exe'
-                    if (Test-Path -LiteralPath `$_cand) { `$_wtExe = `$_cand }
-                }
-            } catch {}
-            if (-not `$_wtExe) {
-                `$_wtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source
-            }
-            if (-not `$_wtExe) { throw 'wt.exe not found -- WT install verification failed' }
-            # Centered position on the cursor's active monitor (cursor
-            # was preserved from pre-UAC capture). $_winWPx / $_winHPx
-            # are baked literals (820 x 412 for 80x20 cells).
-            `$_pt2 = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
-            `$_s2  = [System.Windows.Forms.Screen]::FromPoint(`$_pt2).WorkingArea
-            `$_x2  = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_winWPx)) / 2)
-            `$_y2  = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_winHPx)) / 2)
-            # wt.exe with -p MiOS hosting plain pwsh (no -Command):
-            # the MiOS profile loads the PS profile body which renders
-            # the framed dashboard + hint band ("build  config  dash
-            # dev  pull  update  help"). Operator types `mios build`
-            # to start the pipeline.
-            # Do NOT append 'pwsh' as the command -- doing so overrides
-            # the MiOS profile's bound commandline (mios.ps1 / mios.exe
-            # via Install-MiosLauncher). Without that override, the
-            # profile launches its native command which loads the
-            # framed dashboard + fastfetch + hint band. With 'pwsh'
-            # appended, we just got bare PS 7.6.1 banner + cwd
-            # System32 (the elevated default), no dashboard.
-            `$_wtArgs = @(
-                '--pos', "`$(`$_x2),`$(`$_y2)",
-                '--size', "$_elevCols,$_elevRows",
-                '--focus',
-                '-p', 'MiOS'
-            )
-            `$_spawnedAt = Get-Date
-            Start-Process -FilePath `$_wtExe -ArgumentList `$_wtArgs -ErrorAction Stop
-            # POST-SPAWN CORRECTION: wt.exe --pos is unreliable in
-            # --focus mode (Microsoft regression in 1.18+). The window
-            # opens on the wrong monitor or at (0,0). Win32 SetWindowPos
-            # the moment its hwnd surfaces -- this is the only way to
-            # GUARANTEE the active-monitor centering the operator paid
-            # for with the pre-UAC cursor capture.
-            Add-Type -Namespace MEW -Name W -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle r);
-[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
-'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
-            `$_deadline = (Get-Date).AddMilliseconds(8000)
-            `$_wtHwnd = [IntPtr]::Zero
-            while ((Get-Date) -lt `$_deadline) {
-                `$_proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
-                          Where-Object { `$_.StartTime -ge `$_spawnedAt.AddSeconds(-1) } |
-                          Sort-Object StartTime -Descending | Select-Object -First 1
-                if (`$_proc -and `$_proc.MainWindowHandle -ne [IntPtr]::Zero -and [MEW.W]::IsWindowVisible(`$_proc.MainWindowHandle)) {
-                    `$_wtHwnd = `$_proc.MainWindowHandle
-                    break
-                }
-                Start-Sleep -Milliseconds 150
-            }
-            if (`$_wtHwnd -ne [IntPtr]::Zero) {
-                # Re-center 3x with 350ms gaps -- WT animates from its
-                # last-known position to its current rect on first paint;
-                # one SetWindowPos loses the race. Three spaced moves stick.
-                for (`$_i = 0; `$_i -lt 3; `$_i++) {
-                    `$_rWt = New-Object System.Drawing.Rectangle
-                    if ([MEW.W]::GetWindowRect(`$_wtHwnd, [ref]`$_rWt)) {
-                        `$_rwW = `$_rWt.Width  - `$_rWt.X
-                        `$_rwH = `$_rWt.Height - `$_rWt.Y
-                        if (`$_rwW -gt 0 -and `$_rwH -gt 0) {
-                            `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - `$_rwW)) / 2)
-                            `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - `$_rwH)) / 2)
-                            [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, `$_rwW, `$_rwH, 0x04)
-                        }
-                    }
-                    Start-Sleep -Milliseconds 350
-                }
-            }
-            Write-Host '       wt.exe -p MiOS opened, centered on active monitor; type `mios build` inside.' -ForegroundColor DarkGray
-        } catch {
-            Write-Host ('  [!] MiOS app launch failed: ' + `$_.Exception.Message) -ForegroundColor Yellow
-            Write-Host '      Manual launch: Start Menu -> MiOS, or `wt -p MiOS` from any pwsh.' -ForegroundColor DarkGray
-        }
+        Write-Host '  [+] Bootstrap complete. Press Enter to close THIS window and launch the MiOS app.' -ForegroundColor Green
     }
 } catch {
     Write-Host ''
@@ -3009,8 +2923,78 @@ try {
     Write-Host ''
 }
 Write-Host ''
-Write-Host '  Press Enter to close this elevated bootstrap window...' -ForegroundColor DarkGray -NoNewline
+if (`$_launchMiosOnClose) {
+    Write-Host '  Press Enter to close this bootstrap window and launch the MiOS app...' -ForegroundColor Yellow -NoNewline
+} else {
+    Write-Host '  Press Enter to close this elevated bootstrap window...' -ForegroundColor DarkGray -NoNewline
+}
 `$null = Read-Host
+
+# ── ON CLOSE: spawn the MiOS app ─────────────────────────────────
+# This block fires AFTER the operator presses Enter (the close
+# action). Per operator: the close is what should procure and
+# spawn the MiOS app's window. The spawn happens HERE, then the
+# bootstrap conhost exits naturally.
+if (`$_launchMiosOnClose) {
+    try {
+        # Resolve wt.exe (prefer Stable appx install location).
+        `$_wtExe = `$null
+        try {
+            `$_pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
+            if (`$_pkg -and `$_pkg.InstallLocation) {
+                `$_cand = Join-Path `$_pkg.InstallLocation 'wt.exe'
+                if (Test-Path -LiteralPath `$_cand) { `$_wtExe = `$_cand }
+            }
+        } catch {}
+        if (-not `$_wtExe) { `$_wtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
+        if (-not `$_wtExe) { throw 'wt.exe not found' }
+        # Centered position on cursor's active monitor (pre-UAC capture).
+        `$_pt2 = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
+        `$_s2  = [System.Windows.Forms.Screen]::FromPoint(`$_pt2).WorkingArea
+        `$_wtArgs = @(
+            '--pos', ("`$(`$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_winWPx)) / 2)),`$(`$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_winHPx)) / 2))"),
+            '--size', "$_elevCols,$_elevRows",
+            '--focus',
+            '-p', 'MiOS'
+        )
+        `$_spawnedAt = Get-Date
+        Start-Process -FilePath `$_wtExe -ArgumentList `$_wtArgs -ErrorAction Stop
+        # Post-spawn SetWindowPos correction (wt.exe --pos unreliable
+        # in --focus mode).
+        Add-Type -Namespace MEW -Name W -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle r);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
+'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
+        `$_deadline = (Get-Date).AddMilliseconds(8000)
+        `$_wtHwnd = [IntPtr]::Zero
+        while ((Get-Date) -lt `$_deadline) {
+            `$_proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
+                      Where-Object { `$_.StartTime -ge `$_spawnedAt.AddSeconds(-1) } |
+                      Sort-Object StartTime -Descending | Select-Object -First 1
+            if (`$_proc -and `$_proc.MainWindowHandle -ne [IntPtr]::Zero -and [MEW.W]::IsWindowVisible(`$_proc.MainWindowHandle)) {
+                `$_wtHwnd = `$_proc.MainWindowHandle
+                break
+            }
+            Start-Sleep -Milliseconds 150
+        }
+        if (`$_wtHwnd -ne [IntPtr]::Zero) {
+            for (`$_i = 0; `$_i -lt 3; `$_i++) {
+                `$_rWt = New-Object System.Drawing.Rectangle
+                if ([MEW.W]::GetWindowRect(`$_wtHwnd, [ref]`$_rWt)) {
+                    `$_rwW = `$_rWt.Width  - `$_rWt.X
+                    `$_rwH = `$_rWt.Height - `$_rWt.Y
+                    if (`$_rwW -gt 0 -and `$_rwH -gt 0) {
+                        `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - `$_rwW)) / 2)
+                        `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - `$_rwH)) / 2)
+                        [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, `$_rwW, `$_rwH, 0x04)
+                    }
+                }
+                Start-Sleep -Milliseconds 350
+            }
+        }
+    } catch {}
+}
 "@
     $_innerBytes   = [Text.Encoding]::Unicode.GetBytes($_innerCmd)
     $_innerEncoded = [Convert]::ToBase64String($_innerBytes)
