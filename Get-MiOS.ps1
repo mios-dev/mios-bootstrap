@@ -1642,6 +1642,15 @@ if (`$true) {
         if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
             try {
                 `$ffOut = @(& fastfetch -c `$ConfigPath --logo none 2>&1 | Out-String -Stream | Where-Object { `$_ -ne `$null })
+                # Drop blank lines + key-only lines (e.g. "GPU:" with no
+                # value -- Hyper-V Basic Render Driver / virtual display
+                # adapters that fastfetch detects but can't name).
+                `$ffOut = @(`$ffOut | Where-Object {
+                    `$cleaned = (_Strip `$_).Trim()
+                    if (-not `$cleaned) { return `$false }
+                    if (`$cleaned -match '^[^:]+:\s*`$') { return `$false }
+                    `$true
+                })
                 `$halfW = [int][math]::Floor((`$INNER - 3) / 2)
                 `$i = 0
                 while (`$i -lt `$ffOut.Count) {
