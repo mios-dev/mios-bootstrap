@@ -1261,6 +1261,35 @@ $Script:MiosOmpJson = @'
 }
 '@
 
+function Update-MiOSOhMyPosh {
+    # winget install/upgrade oh-my-posh to latest. Operator-reported
+    # "Get-PSReadLineKeyHandler Spacebar / Enter / Ctrl+c" positional
+    # parameter errors come from oh-my-posh's init script emitting the
+    # legacy positional syntax that no PSReadLine version accepts.
+    # Latest oh-my-posh emits -Chord <key> -- the correct named-parameter
+    # syntax. So bumping oh-my-posh fixes the init errors at the source.
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "  [!] winget not available; cannot install oh-my-posh." -ForegroundColor Yellow
+        return $false
+    }
+    Write-Host "  [*] Installing/upgrading oh-my-posh via winget..." -ForegroundColor Cyan
+    try {
+        if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
+            & winget upgrade --id JanDeDobbeleer.OhMyPosh --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+        } else {
+            & winget install --id JanDeDobbeleer.OhMyPosh --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+        }
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [+] oh-my-posh installed/upgraded." -ForegroundColor Green
+            return $true
+        }
+        Write-Host "  [!] winget exit code $LASTEXITCODE -- oh-my-posh may not be latest." -ForegroundColor Yellow
+    } catch {
+        Write-Host "  [!] oh-my-posh install/upgrade failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    return $false
+}
+
 function Update-MiOSPSReadLine {
     # oh-my-posh's init pwsh emits Get-PSReadLineKeyHandler calls that
     # use named parameters (Get-PSReadLineKeyHandler -Chord Spacebar).
@@ -1493,11 +1522,23 @@ if (`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') {
     }
 
     # ── oh-my-posh init ───────────────────────────────────────────
+    # Capture the init script output, then regex-patch the broken
+    # positional Get-PSReadLineKeyHandler calls. Older oh-my-posh
+    # versions emit `Get-PSReadLineKeyHandler Spacebar` etc. -- which
+    # NO PSReadLine version accepts (the cmdlet's parameter binder
+    # has no positional [string]). Latest oh-my-posh emits -Chord
+    # <key>. We inject -Chord even when running latest, since it's
+    # idempotent (latest already has it). This makes oh-my-posh's
+    # PSReadLine integration work regardless of installed version.
     if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
-        if (`$miosOmp -and (Test-Path -LiteralPath `$miosOmp)) {
-            oh-my-posh init pwsh --config `$miosOmp | Invoke-Expression
+        `$ompInit = if (`$miosOmp -and (Test-Path -LiteralPath `$miosOmp)) {
+            (oh-my-posh init pwsh --config `$miosOmp) -join "``n"
         } else {
-            oh-my-posh init pwsh | Invoke-Expression
+            (oh-my-posh init pwsh) -join "``n"
+        }
+        if (`$ompInit) {
+            `$ompInit = [regex]::Replace(`$ompInit, 'Get-PSReadLineKeyHandler\s+(?!-)([A-Za-z][\w+]*)', 'Get-PSReadLineKeyHandler -Chord ''`$1''')
+            try { Invoke-Expression `$ompInit } catch {}
         }
     }
 }
@@ -1800,7 +1841,8 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     Install-MiOSGeistFont           | Out-Null
     Write-Host "  [*] Step 4/6: Installing fastfetch + staging MiOS-themed config..." -ForegroundColor Cyan
     Install-MiOSFastfetch           | Out-Null
-    Write-Host "  [*] Step 5/6: PSReadLine bump + mios.omp.json + oh-my-posh init wiring..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 5/6: oh-my-posh + PSReadLine + mios.omp.json + profile wiring..." -ForegroundColor Cyan
+    Update-MiOSOhMyPosh             | Out-Null
     Update-MiOSPSReadLine           | Out-Null
     Install-MiOSOhMyPoshTheme       | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
