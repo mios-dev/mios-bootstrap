@@ -2827,41 +2827,31 @@ try {
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
 '@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-    # Cell-metric -> pixel-size calc (Geist Mono 12pt @ 100% DPI):
-    #   cell_w_px=10, cell_h_px=20, chrome_w_px=20 (DWM frame + scrollbar
-    #   margin), chrome_h_px=12 (DWM frame top+bottom).
-    # 80x20 cells -> 80*10+20=820 wide, 20*20+12=412 tall.
-    # 80x30 cells -> 820 wide, 612 tall.
-    # MUST resize the WINDOW (pixel rect) -- previously the code just
-    # reused the existing pixel size from GetWindowRect, which gave the
-    # operator's default 80x40 conhost (~820 x 832 px) and ignored the
-    # 80x20 cell config. Result: window stayed huge with empty rows
-    # below the dashboard.
-    `$_cellW   = 10
-    `$_cellH   = 20
-    `$_chromeW = 20
-    `$_chromeH = 12
-    `$_winW = (`$_elevCols * `$_cellW) + `$_chromeW
-    `$_winH = (`$_elevRows * `$_cellH) + `$_chromeH
-    # Resize the cell buffer FIRST so the conhost expects 80x20 cells.
-    try { [Console]::SetBufferSize(`$_elevCols, `$_elevScr) } catch {}
-    try { [Console]::SetWindowSize(`$_elevCols, `$_elevRows) } catch {}
+    # Pixel target size -- BAKED from outer scope as literal integers
+    # via @"..."@ interpolation (no backticks on $_winWPx / $_winHPx /
+    # $_elevCols / $_elevRows / $_elevScr). The inner pwsh process
+    # cannot see outer-scope variables (it's a fresh pwsh.exe spawn);
+    # everything we want it to know must be substituted at template-
+    # build time. Earlier broken edits used backticks on $_elevCols
+    # which produced LITERAL `\$_elevCols` in the rendered script,
+    # which evaluated to $null inner-side, multiplied by cell dims
+    # to zero, and gave a 20x12 (basically 1x1 visible) window.
+    # Resize the cell buffer FIRST so conhost expects target cells.
+    try { [Console]::SetBufferSize($_elevCols, $_elevScr) } catch {}
+    try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
     `$_h = [MEW.N]::GetConsoleWindow()
     # Resolve which monitor the OPERATOR was on at the moment of paste.
     `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
     `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
-    # Center within that monitor's working area (taskbar-aware) using
-    # the COMPUTED target pixel size, not whatever GetWindowRect
-    # currently returns. MoveWindow with explicit w/h forces the
-    # actual resize (DWM honors SetWindowPos for pixel dims).
-    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_winW)) / 2)
-    `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_winH)) / 2)
-    [MEW.N]::MoveWindow(`$_h, `$_x, `$_y, `$_winW, `$_winH, `$true) | Out-Null
+    # Center within active monitor's working area using the COMPUTED
+    # target pixel size (literal integers baked from outer scope).
+    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - $_winWPx)) / 2)
+    `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - $_winHPx)) / 2)
+    [MEW.N]::MoveWindow(`$_h, `$_x, `$_y, $_winWPx, $_winHPx, `$true) | Out-Null
     # Brief settle, then re-resize cell buffer in case conhost re-
-    # negotiated its size after MoveWindow (some Windows builds shrink
-    # the buffer when the window pixel size shrinks).
+    # negotiated its size after MoveWindow.
     Start-Sleep -Milliseconds 100
-    try { [Console]::SetWindowSize(`$_elevCols, `$_elevRows) } catch {}
+    try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
 } catch {}
 Write-Host ''
 Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
@@ -2929,9 +2919,12 @@ try {
             Write-Host ''
             Write-Host '  [+] Launching MiOS app window (WT MiOS profile)...' -ForegroundColor Green
             try {
-                Start-Process -FilePath 'pwsh.exe' `
-                    -ArgumentList @('-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File', `$_launcher) `
-                    -ErrorAction Stop
+                # Single-line invocation -- line-continuation backticks
+                # don't survive the @"..."@ outer template render reliably
+                # (the operator hit "-ArgumentList not recognized as a
+                # cmdlet" because the backtick-EOL got eaten and pwsh
+                # parsed each line as its own command).
+                Start-Process -FilePath 'pwsh.exe' -ArgumentList @('-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File', `$_launcher) -ErrorAction Stop
             } catch {
                 Write-Host ('  [!] MiOS app launch failed: ' + `$_.Exception.Message) -ForegroundColor Yellow
                 Write-Host ('      Launch manually: pwsh -File ' + `$_launcher) -ForegroundColor DarkGray

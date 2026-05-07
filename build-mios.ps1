@@ -6583,6 +6583,13 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
     # re-runs this script with -BuildOnly).
     if ($BootstrapOnly) {
         Log-Ok "-BootstrapOnly mode: dev VM provisioned, Windows install complete."
+        # Hard gate the script-level auto-chain at line ~6915. The
+        # `return` below exits this function but the script-level
+        # epilogue still fires the auto-chain unless we set the env
+        # sentinel here. Per feedback_mios_bootstrap_stops_at_dev_ready:
+        # bootstrap MUST stop at the hint banner; build is operator-
+        # triggered via `mios build`.
+        $env:MIOS_NO_AUTO_CHAIN = '1'
         # ── Operator-facing end-of-Pass-2 summary ────────────────────
         # The bootstrap STOPS here. The operator decides when to fire
         # the build pipeline by typing `mios build` (or clicking the
@@ -6886,20 +6893,27 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
     $totalTime = fmtSpan ([datetime]::Now - $script:ScriptStart)
     Write-Host ""
     if ($ExitCode -eq 0) {
-        # Plain-text summary (no box drawing). The previous boxed
-        # success summary was racing with Install-MiosLauncher's tail
-        # log lines and producing fragmented output. Plain Write-Host
-        # lines can't be partially overwritten by stragglers.
-        Write-Host "  MiOS bootstrap complete." -ForegroundColor Green
-        Write-Host "    Total time:   $totalTime"   -ForegroundColor DarkGray
-        Write-Host "    Dev distro:   $BuilderDistro" -ForegroundColor DarkGray
-        Write-Host "    Logs:         $MiosLogDir" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "  Next steps (run in any MiOS terminal):" -ForegroundColor Cyan
-        Write-Host "    mios-build    full OCI image build inside MiOS-DEV" -ForegroundColor White
-        Write-Host "    mios-config   open mios.toml configurator"          -ForegroundColor White
-        Write-Host "    mios-dev      enter the dev distro shell"           -ForegroundColor White
-        Write-Host "    mios-help     full command list"                    -ForegroundColor White
+        # In BootstrapOnly mode, the hint banner at line ~6584 already
+        # printed the "Windows-side install complete" + verb hints.
+        # Skip the second summary here -- printing it AGAIN duplicates
+        # the operator-facing post-bootstrap UX. Per
+        # feedback_mios_bootstrap_stops_at_dev_ready.
+        if (-not $BootstrapOnly) {
+            # Plain-text summary (no box drawing). The previous boxed
+            # success summary was racing with Install-MiosLauncher's tail
+            # log lines and producing fragmented output. Plain Write-Host
+            # lines can't be partially overwritten by stragglers.
+            Write-Host "  MiOS bootstrap complete." -ForegroundColor Green
+            Write-Host "    Total time:   $totalTime"   -ForegroundColor DarkGray
+            Write-Host "    Dev distro:   $BuilderDistro" -ForegroundColor DarkGray
+            Write-Host "    Logs:         $MiosLogDir" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "  Next steps (run in any MiOS terminal):" -ForegroundColor Cyan
+            Write-Host "    mios-build    full OCI image build inside MiOS-DEV" -ForegroundColor White
+            Write-Host "    mios-config   open mios.toml configurator"          -ForegroundColor White
+            Write-Host "    mios-dev      enter the dev distro shell"           -ForegroundColor White
+            Write-Host "    mios-help     full command list"                    -ForegroundColor White
+        }
     } else {
         Write-Host "  MiOS bootstrap FAILED (exit $ExitCode)" -ForegroundColor Red
         Write-Host "    Errors: $($script:ErrCount)" -ForegroundColor Yellow
