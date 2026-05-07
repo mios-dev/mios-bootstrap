@@ -1131,9 +1131,15 @@ function Set-Step([string]$T) {
     $script:CurStep = $T
     Write-Log "step: $T"
     if ($script:DashboardMode -eq 'log') {
+        # Skip the console echo for WARN:/FAIL: messages -- Write-Log
+        # already mirrors those to console in WARN/ERROR mode (see
+        # the WARN/ERROR branch in Write-Log). Without this skip the
+        # operator saw EVERY warning twice: once from Write-Log's
+        # `[HH:MM:SS.fff][WARN] warn ...` line, then again from this
+        # function's `  [HH:MM:SS]  WARN: ...` indented form.
+        if ($T -match '^(WARN|FAIL):') { return }
         $now = [datetime]::Now
         $clean = ($T -replace '\s+', ' ').Trim()
-        if ($clean.Length -gt 90) { $clean = $clean.Substring(0, 87) + '...' }
         $secsSince = ($now - $script:LastStepLogTime).TotalSeconds
         $isFirst   = ($script:LastStepLogTime -eq [datetime]::MinValue)
         if ($isFirst -or $secsSince -ge 2 -or $clean -ne $script:LastStepLogText) {
@@ -2687,13 +2693,42 @@ function Invoke-MiosQuadletOverlay {
         Log-Warn "mios.git overlay missing at $miosRoot (no Containerfile) -- Quadlet overlay skipped"
         return
     }
+    # Probe wsl.exe with a hard timeout. Rootful machine-os distros
+    # are NOT wsl.exe-accessible, and `wsl.exe --exec` on them hangs
+    # indefinitely instead of erroring -- which made the build freeze
+    # at "Overlaying MiOS Quadlets + systemd units" with no progress.
+    # 8-second timeout per candidate; if both time out, the overlay
+    # is deferred (matches the rootful-machine-os documented behavior).
+    function _ProbeWslAlive {
+        param([string]$Distro, [int]$TimeoutMs = 8000)
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName  = 'wsl.exe'
+        $psi.Arguments = "-d $Distro --exec bash -c `"echo ok`""
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError  = $true
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow  = $true
+        try {
+            $proc = [System.Diagnostics.Process]::Start($psi)
+        } catch { return $false }
+        if (-not $proc.WaitForExit($TimeoutMs)) {
+            try { $proc.Kill() } catch {}
+            return $false
+        }
+        $stdout = $proc.StandardOutput.ReadToEnd().Trim()
+        return ($stdout -eq 'ok')
+    }
     $wslDistro = "podman-$DevDistro"
     $sshOk = $false
     foreach ($candidate in @($wslDistro, $DevDistro)) {
-        $probe = (& wsl.exe -d $candidate --exec bash -c "echo ok" 2>$null) -join ""
-        if ($probe.Trim() -eq "ok") { $wslDistro = $candidate; $sshOk = $true; break }
+        if (_ProbeWslAlive -Distro $candidate -TimeoutMs 8000) {
+            $wslDistro = $candidate; $sshOk = $true; break
+        }
     }
-    if (-not $sshOk) { Log-Warn "Cannot wsl.exe into $DevDistro -- Quadlet overlay deferred"; return }
+    if (-not $sshOk) {
+        Log-Warn "Cannot wsl.exe into $DevDistro within 8s (rootful machine-os is not wsl.exe-accessible by design) -- Quadlet overlay deferred"
+        return
+    }
 
     # Convert C:\path\to\mios -> /mnt/c/path/to/mios for the WSL side.
     # Trim trailing backslash so M:\ -> /mnt/m (no trailing slash, which
