@@ -964,38 +964,13 @@ function Install-MiOSTerminalProfile {
     $existingList += $miosDevProfileObj
     $wtJson.profiles.list = [object[]]$existingList
 
-    # ── Global summon keybinding (Win+Space toggles MiOS app) ─────
-    # Per operator: "MiOS app should be invokable via a chord/keycombo
-    # like winkey + Spacebar to open and close the window at will".
-    # WT's globalSummon action targets a NAMED window, toggling its
-    # visibility on the bound chord. We spawn the MiOS app with
-    # `-w MiOS` so the window has the matching name.
-    $_summonKeys = Get-MiosTomlValue -Section 'theme.terminal' -Key 'summon_keys'        -Default 'win+space'
-    $_summonName = Get-MiosTomlValue -Section 'theme.terminal' -Key 'summon_window_name' -Default 'MiOS'
-    if (-not $wtJson.actions) {
-        $wtJson | Add-Member -NotePropertyName actions -NotePropertyValue @() -Force
-    }
-    $miosSummonAction = [PSCustomObject]@{
-        command = [PSCustomObject]@{
-            action           = 'globalSummon'
-            name             = $_summonName
-            monitor          = 'toMouse'        # summon onto the cursor's active monitor
-            toggleVisibility = $true            # press again to dismiss
-            dropdownDuration = 0                # no slide animation -- snap on/off
-        }
-        keys = $_summonKeys
-    }
-    # Strip any prior MiOS summon binding (matches by keys OR by
-    # globalSummon-name=MiOS), then append fresh.
-    $existingActions = @($wtJson.actions | Where-Object {
-        -not (
-            ($_.keys -eq $_summonKeys) -or
-            ($_.command -and $_.command.action -eq 'globalSummon' -and $_.command.name -eq $_summonName)
-        )
-    })
-    $existingActions += $miosSummonAction
-    $wtJson.actions = [object[]]$existingActions
-    Write-Host "  [+] Global summon binding: $_summonKeys -> toggle MiOS window" -ForegroundColor DarkGray
+    # NOTE: globalSummon keybinding (Win+Space) NOT written. Adding
+    # it appears to trip WT's settings-file validator silently --
+    # the prompt rendered (so commandline + scheme reference were
+    # fine) but acrylic / scheme resolution didn't apply, suggesting
+    # WT bailed mid-load. Will re-add via a separate post-MVP commit
+    # after minimum chrome is verified rendering. Operator can still
+    # add it manually via mios-config.html or by editing settings.json.
 
     # Write back, then VERIFY by re-reading and parsing. ConvertTo-Json
     # has a long history of unwrapping single-element arrays to bare
