@@ -4851,7 +4851,14 @@ function Resolve-MiosDevDistro {
     $devPath = Join-Path $MiosBinDir 'mios-dev.ps1'
     Set-Content -Path $devPath -Value @"
 $devResolveBlock
-wsl.exe -d (Resolve-MiosDevDistro) @args
+# Bare invocation -> root login shell at ~root. Args pass through verbatim
+# so callers can still do `mios-dev --user user -- some-cmd` etc.
+`$distro = Resolve-MiosDevDistro
+if (`$args.Count -eq 0) {
+    wsl.exe -d `$distro --user root --cd '~' -- bash -l
+} else {
+    wsl.exe -d `$distro @args
+}
 "@ -Encoding UTF8
 
     $pullPath = Join-Path $MiosBinDir 'mios-pull.ps1'
@@ -4927,27 +4934,28 @@ function Resolve-MiosDevDistro {
 function Show-MiosApp {
     Clear-Host
     $ver  = Read-MiosVersion
-    $bar  = '+' + ('=' * 86) + '+'
-    $thin = '+' + ('-' * 86) + '+'
+    $bar  = '+' + ('=' * 78) + '+'
+    $thin = '+' + ('-' * 78) + '+'
     Write-Host $bar -ForegroundColor DarkCyan
     $title = '|  MiOS v' + $ver
-    Write-Host ($title + (' ' * (87 - $title.Length)) + '|') -ForegroundColor Cyan
-    Write-Host ('|  one launcher; mios.toml is the SSOT for every deployment target' + (' ' * 21) + '|') -ForegroundColor DarkGray
+    Write-Host ($title + (' ' * (79 - $title.Length)) + '|') -ForegroundColor Cyan
+    $sub = '|  one launcher; mios.toml is the SSOT for every target'
+    Write-Host ($sub + (' ' * (79 - $sub.Length)) + '|') -ForegroundColor DarkGray
     Write-Host $bar -ForegroundColor DarkCyan
     Write-Host ''
     $items = @(
-        @{ Key = '1'; Name = 'Build MiOS';        Desc = 'build the deployable OCI image (Phase 6+: podman build + deploy)' },
-        @{ Key = '2'; Name = 'Enter Dev VM';      Desc = 'wsl into the MiOS-DEV WSL2 distro (root shell)'                  },
-        @{ Key = '3'; Name = 'Update Overlay';    Desc = 'pull mios.git + bootstrap onto / inside MiOS-DEV (mios-pull)'    },
-        @{ Key = '4'; Name = 'Dashboard';         Desc = 'show the live MiOS system view (services, git tree, fastfetch)'  },
-        @{ Key = '5'; Name = 'Configurator';      Desc = 'edit mios.toml in the GUI (Epiphany via WSLg)'                    },
-        @{ Key = '6'; Name = 'Re-run Bootstrap';  Desc = 'rerun the localhost setup (preflight + dev VM provision)'         },
-        @{ Key = '7'; Name = 'Open Install Root'; Desc = 'open ' + $Script:MiOSRoot + ' in Explorer'                        },
-        @{ Key = 'q'; Name = 'Quit';              Desc = 'exit'                                                             }
+        @{ Key = '1'; Name = 'Build MiOS';        Desc = 'build deployable OCI (podman build + deploy)' },
+        @{ Key = '2'; Name = 'Enter Dev VM';      Desc = 'wsl into MiOS-DEV (root shell)'              },
+        @{ Key = '3'; Name = 'Update Overlay';    Desc = 'mios-pull onto / inside MiOS-DEV'            },
+        @{ Key = '4'; Name = 'Dashboard';         Desc = 'live system view (services, fastfetch)'      },
+        @{ Key = '5'; Name = 'Configurator';      Desc = 'edit mios.toml (Epiphany via WSLg)'          },
+        @{ Key = '6'; Name = 'Re-run Bootstrap';  Desc = 'rerun localhost setup + dev VM provision'    },
+        @{ Key = '7'; Name = 'Open Install Root'; Desc = 'open ' + $Script:MiOSRoot + ' in Explorer'    },
+        @{ Key = 'q'; Name = 'Quit';              Desc = 'exit'                                         }
     )
     foreach ($it in $items) {
         $line = '  [' + $it.Key + ']  ' + $it.Name.PadRight(22) + $it.Desc
-        if ($line.Length -gt 88) { $line = $line.Substring(0, 87) + [char]0x2026 }
+        if ($line.Length -gt 80) { $line = $line.Substring(0, 79) + [char]0x2026 }
         $color = if ($it.Key -eq 'q') { 'DarkGray' } else { 'White' }
         Write-Host $line -ForegroundColor $color
     }
@@ -4959,7 +4967,7 @@ function Show-MiosApp {
     Write-Host '  Install    : ' -NoNewline -ForegroundColor DarkGray
     Write-Host $Script:MiOSRoot -ForegroundColor White
     Write-Host '  SSOT       : ' -NoNewline -ForegroundColor DarkGray
-    Write-Host '~/.config/mios/mios.toml > /etc/mios/mios.toml > /usr/share/mios/mios.toml' -ForegroundColor White
+    Write-Host '~/.config > /etc > /usr/share  (mios/mios.toml)' -ForegroundColor White
     Write-Host $bar -ForegroundColor DarkCyan
     Write-Host ''
 }
