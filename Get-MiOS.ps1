@@ -760,26 +760,43 @@ function Install-MiOSTerminalProfile {
     # it's not a documented WT key (mica is selected via
     # systemBackdrop="mica"), and shipping unknown keys can cause WT's
     # schema validator to reject the profile and fall back to defaults.
+    # GLOBAL MiOS terminal defaults sourced from mios.toml [theme] +
+    # [theme.font]. Per operator (multiple reaffirmations): acrylic ON,
+    # 50% transparency, frame-less, border-less, scroll-bar-less. The
+    # WT profile patcher reads from mios.toml so editing those keys in
+    # the configurator HTML re-skins every MiOS terminal on the next
+    # bootstrap run -- single edit surface, applied to BOTH WT profiles
+    # (MiOS + MiOS-DEV) below.
+    $_themeFontFace    = Get-MiosTomlValue -Section 'theme.font' -Key 'family'             -Default 'GeistMono Nerd Font Mono'
+    $_themeFontSize    = Get-MiosTomlValue -Section 'theme.font' -Key 'size'               -Default 12
+    $_themeFontWeight  = Get-MiosTomlValue -Section 'theme.font' -Key 'weight'             -Default 'normal'
+    $_themeAcrylic     = Get-MiosTomlValue -Section 'theme'      -Key 'acrylic'            -Default $true
+    $_themeOpacity     = Get-MiosTomlValue -Section 'theme'      -Key 'opacity'            -Default 50
+    $_themeBackdrop    = Get-MiosTomlValue -Section 'theme'      -Key 'system_backdrop'    -Default 'acrylic'
+    $_themeCursor      = Get-MiosTomlValue -Section 'theme'      -Key 'cursor_shape'       -Default 'bar'
+    $_themeScrollbar   = Get-MiosTomlValue -Section 'theme'      -Key 'scrollbar_state'    -Default 'hidden'
+    $_themePadding     = Get-MiosTomlValue -Section 'theme'      -Key 'padding'            -Default '0'
+    $_themeSuppress    = Get-MiosTomlValue -Section 'theme'      -Key 'suppress_app_title' -Default $true
     $commonProfileProps = [ordered]@{
-        colorScheme              = 'MiOS'
+        colorScheme              = (Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
         font                     = [ordered]@{
-            face   = 'GeistMono Nerd Font Mono'
-            size   = 12
-            weight = 'normal'
+            face   = $_themeFontFace
+            size   = $_themeFontSize
+            weight = $_themeFontWeight
         }
-        cursorShape              = 'bar'
+        cursorShape              = $_themeCursor
         antialiasingMode         = 'cleartype'
-        # Acrylic 50% transparency -- MiOS spec.
-        useAcrylic               = $true
-        opacity                  = 50
-        systemBackdrop           = 'acrylic'
-        padding                  = '0'
-        suppressApplicationTitle = $true
+        # Acrylic + transparency from mios.toml [theme].
+        useAcrylic               = $_themeAcrylic
+        opacity                  = $_themeOpacity
+        systemBackdrop           = $_themeBackdrop
+        padding                  = $_themePadding
+        suppressApplicationTitle = $_themeSuppress
         # Hide the scrollbar entirely -- WT's scrollbar consumes a
         # full column even when there's nothing to scroll, leaving
         # the framed dashboard visibly off-center. With this set,
         # all 80 cells are usable and the frame fits flush.
-        scrollbarState           = 'hidden'
+        scrollbarState           = $_themeScrollbar
         hidden                   = $false
     }
 
