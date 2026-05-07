@@ -1319,6 +1319,56 @@ $Script:MiosOmpJson = @'
 }
 '@
 
+function Install-MiOSTerminalExtras {
+    # Open-source terminal-completion + UX enhancers. PowerShell
+    # modules come from PSGallery (Install-Module); CLI tools come
+    # from winget. Net effect: every MiOS shell session gets:
+    #
+    #   * Terminal-Icons          -- file/folder icons in `ls` output
+    #   * posh-git                -- git tab-completion + branch info
+    #   * CompletionPredictor     -- AI-style predictive completion
+    #   * WinGet.CommandNotFound  -- "did you mean: winget install X?"
+    #                                when an unknown command is typed
+    #   * sharkdp.bat             -- syntax-highlighted `cat` replacement
+    #   * junegunn.fzf            -- fuzzy finder (Ctrl-T, Ctrl-R)
+    #   * GitHub.cli              -- `gh` CLI for github operations
+    #
+    # All idempotent: probes existing install before re-installing.
+    $psModules = @('Terminal-Icons', 'posh-git', 'CompletionPredictor', 'Microsoft.WinGet.CommandNotFound')
+    foreach ($mod in $psModules) {
+        $have = Get-Module -ListAvailable -Name $mod -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($have) {
+            Write-Host "  [+] PS module already present: $mod $($have.Version)" -ForegroundColor DarkGray
+            continue
+        }
+        try {
+            try { Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch {}
+            Install-Module -Name $mod -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
+            Write-Host "  [+] Installed PS module: $mod" -ForegroundColor Green
+        } catch {
+            Write-Host "  [!] $mod install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "  [!] winget not available; skipping CLI extras." -ForegroundColor Yellow
+        return
+    }
+    $wingetTools = @('sharkdp.bat', 'junegunn.fzf', 'GitHub.cli')
+    foreach ($pkg in $wingetTools) {
+        try {
+            $probe = & winget list --id $pkg --exact 2>$null
+            if ($LASTEXITCODE -eq 0 -and (($probe -join "`n") -match [regex]::Escape($pkg))) {
+                Write-Host "  [+] winget package already present: $pkg" -ForegroundColor DarkGray
+                continue
+            }
+            & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  [+] Installed winget package: $pkg" -ForegroundColor Green
+            }
+        } catch {}
+    }
+}
+
 function Update-MiOSOhMyPosh {
     # winget install/upgrade oh-my-posh to latest. Operator-reported
     # "Get-PSReadLineKeyHandler Spacebar / Enter / Ctrl+c" positional
@@ -1526,6 +1576,18 @@ if (`$Global:MiosProfileLoaded) { return }
 # since its ASCII rendering only makes sense in a real terminal.
 if (`$true) {
 
+    # ── Import terminal completion modules ────────────────────────
+    # Silent best-effort: each module is imported if installed,
+    # skipped if not. Operator gets icon-aware ls (Terminal-Icons),
+    # git tab-completion (posh-git), AI-style prediction
+    # (CompletionPredictor), and command-not-found suggestions
+    # (Microsoft.WinGet.CommandNotFound).
+    foreach (`$mod in @('Terminal-Icons','posh-git','CompletionPredictor','Microsoft.WinGet.CommandNotFound')) {
+        if (Get-Module -ListAvailable -Name `$mod -ErrorAction SilentlyContinue) {
+            try { Import-Module `$mod -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+
     # ── PSReadLine reload ─────────────────────────────────────────
     # PowerShell 7.x ships with an in-box PSReadLine that's too old
     # for oh-my-posh init's Get-PSReadLineKeyHandler -Chord syntax.
@@ -1676,6 +1738,13 @@ if (`$true) {
         } else {
             Write-Host (_Frame '  fastfetch not installed -- run mios-update to refresh.')
         }
+        # ── Command hints row ────────────────────────────────────
+        # Globally surfaced for ALL MiOS deployments + instances --
+        # the operator should never have to remember the verb names.
+        Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
+        `$cmdHint = 'mios-build  mios-update  mios-pull  mios-config  mios-dev  mios-help'
+        Write-Host (_Center `$cmdHint) -ForegroundColor DarkCyan
+
         # Bottom frame.
         Write-Host (`$BL + (`$H * (`$WIDTH - 2)) + `$BR) -ForegroundColor Blue
     }
@@ -2015,12 +2084,14 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     Install-MiOSGeistFont           | Out-Null
     Write-Host "  [*] Step 4/6: Installing fastfetch + staging MiOS-themed config..." -ForegroundColor Cyan
     Install-MiOSFastfetch           | Out-Null
-    Write-Host "  [*] Step 5/6: oh-my-posh + PSReadLine + mios.omp.json + profile wiring..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 5/7: oh-my-posh + PSReadLine + mios.omp.json + profile wiring..." -ForegroundColor Cyan
     Update-MiOSOhMyPosh             | Out-Null
     Update-MiOSPSReadLine           | Out-Null
     Install-MiOSOhMyPoshTheme       | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
-    Write-Host "  [*] Step 6/6: Registering MiOS as a native Windows app..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 6/7: Installing terminal completion / UX modules..." -ForegroundColor Cyan
+    Install-MiOSTerminalExtras      | Out-Null
+    Write-Host "  [*] Step 7/7: Registering MiOS as a native Windows app..." -ForegroundColor Cyan
     Install-MiOSNativeApp           | Out-Null
 
     # Reload the user profile in the CURRENT irm|iex pwsh session so
