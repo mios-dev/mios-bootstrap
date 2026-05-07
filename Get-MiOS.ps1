@@ -809,25 +809,33 @@ function Install-MiOSTerminalProfile {
     # the configurator HTML re-skins every MiOS terminal on the next
     # bootstrap run -- single edit surface, applied to BOTH WT profiles
     # (MiOS + MiOS-DEV) below.
+    # ── Defensive toml-value resolution ──────────────────────────
+    # If ANY of these returns an empty / invalid value, WT's schema
+    # validator rejects the entire profile and the operator gets bare
+    # default chrome (no acrylic, no MiOS scheme, no font). The earlier
+    # tabColor "" failure proved this is fragile -- so we validate
+    # EVERY toml-resolved string before stamping it into the profile.
     $_themeFontFace    = Get-MiosTomlValue -Section 'theme.font' -Key 'family'             -Default 'GeistMono Nerd Font Mono'
+    if ([string]::IsNullOrWhiteSpace($_themeFontFace)) { $_themeFontFace = 'GeistMono Nerd Font Mono' }
     $_themeFontSize    = Get-MiosTomlValue -Section 'theme.font' -Key 'size'               -Default 12
+    if (-not ($_themeFontSize -is [int]) -or $_themeFontSize -lt 6 -or $_themeFontSize -gt 72) { $_themeFontSize = 12 }
     $_themeFontWeight  = Get-MiosTomlValue -Section 'theme.font' -Key 'weight'             -Default 'normal'
+    if ($_themeFontWeight -notin @('normal','thin','extra-light','light','semi-light','medium','semi-bold','bold','extra-bold','black','extra-black')) { $_themeFontWeight = 'normal' }
     $_themeAcrylic     = Get-MiosTomlValue -Section 'theme'      -Key 'acrylic'            -Default $true
+    if ($_themeAcrylic -isnot [bool]) { $_themeAcrylic = $true }
     $_themeOpacity     = Get-MiosTomlValue -Section 'theme'      -Key 'opacity'            -Default 50
+    if (-not ($_themeOpacity -is [int]) -or $_themeOpacity -lt 0 -or $_themeOpacity -gt 100) { $_themeOpacity = 50 }
     $_themeBackdrop    = Get-MiosTomlValue -Section 'theme'      -Key 'system_backdrop'    -Default 'acrylic'
-    # filledBox = full-cell block, mimics Linux terminal default cursor
-    # (gnome-terminal / xterm / konsole all default to a steady block).
-    # WT inherits the blink rate from Windows global keyboard settings.
+    if ($_themeBackdrop -notin @('acrylic','mica','tab','default','disable')) { $_themeBackdrop = 'acrylic' }
+    # filledBox = full-cell block, Linux terminal default.
     $_themeCursor      = Get-MiosTomlValue -Section 'theme'      -Key 'cursor_shape'       -Default 'filledBox'
+    if ($_themeCursor -notin @('bar','vintage','underscore','filledBox','emptyBox','doubleUnderscore')) { $_themeCursor = 'filledBox' }
     $_themeScrollbar   = Get-MiosTomlValue -Section 'theme'      -Key 'scrollbar_state'    -Default 'hidden'
+    if ($_themeScrollbar -notin @('visible','hidden','always')) { $_themeScrollbar = 'hidden' }
     $_themePadding     = Get-MiosTomlValue -Section 'theme'      -Key 'padding'            -Default '0'
+    if ([string]::IsNullOrWhiteSpace($_themePadding)) { $_themePadding = '0' }
     $_themeSuppress    = Get-MiosTomlValue -Section 'theme'      -Key 'suppress_app_title' -Default $true
-    # Operator's color accent for the MiOS profile's tab tint (matches
-    # mios.toml [colors].accent = #1A407F operator-blue). VALIDATE
-    # the resolved value is a hex color before using -- WT's settings.
-    # json schema rejects empty strings here ("Have: '' Expected:
-    # color (#rrggbb, #rgb)"), which kills the WHOLE MiOS profile and
-    # falls back to default WT chrome (no acrylic, no scheme, etc.).
+    if ($_themeSuppress -isnot [bool]) { $_themeSuppress = $true }
     $_themeAccent = Get-MiosTomlValue -Section 'colors' -Key 'accent' -Default '#1A407F'
     if ([string]::IsNullOrWhiteSpace($_themeAccent) -or ($_themeAccent -notmatch '^#[0-9A-Fa-f]{3,8}$')) {
         $_themeAccent = '#1A407F'
@@ -862,11 +870,14 @@ function Install-MiOSTerminalProfile {
         bellStyle                = 'none'     # no audible bell -- visual is via prompt
         tabTitle                 = 'MiOS'     # static tab title (suppressApplicationTitle keeps this)
         tabColor                 = $_themeAccent  # operator-blue tint on the tab
-        # ── Experimental: animations stay ON, retro CRT effect OFF ─
-        # (animations are global in WT root, not per-profile -- we
-        #  don't set disableAnimations here; default false = animations on,
-        #  preserving tab-fade / acrylic-recompute / pane-resize tweens.)
-        'experimental.retroTerminalEffect' = $false
+        # Animations: global default in WT root (false = on). We don't
+        # write the global to avoid polluting the operator's other
+        # profiles, so animations stay live for MiOS.
+        # Retro CRT effect: omitted here -- WT default is false.
+        # Earlier 'experimental.retroTerminalEffect' = $false used a
+        # dotted JSON key that PS hashtable serialization handles
+        # inconsistently across PS versions; safer to leave the WT
+        # default alone.
         hidden                   = $false
     }
 
@@ -968,6 +979,39 @@ function Install-MiOSTerminalProfile {
     $existingList += $miosProfileObj
     $existingList += $miosDevProfileObj
     $wtJson.profiles.list = [object[]]$existingList
+
+    # ── Global summon keybinding (Win+Space toggles MiOS app) ─────
+    # Per operator: "MiOS app should be invokable via a chord/keycombo
+    # like winkey + Spacebar to open and close the window at will".
+    # WT's globalSummon action targets a NAMED window, toggling its
+    # visibility on the bound chord. We spawn the MiOS app with
+    # `-w MiOS` so the window has the matching name.
+    $_summonKeys = Get-MiosTomlValue -Section 'theme.terminal' -Key 'summon_keys'        -Default 'win+space'
+    $_summonName = Get-MiosTomlValue -Section 'theme.terminal' -Key 'summon_window_name' -Default 'MiOS'
+    if (-not $wtJson.actions) {
+        $wtJson | Add-Member -NotePropertyName actions -NotePropertyValue @() -Force
+    }
+    $miosSummonAction = [PSCustomObject]@{
+        command = [PSCustomObject]@{
+            action           = 'globalSummon'
+            name             = $_summonName
+            monitor          = 'toMouse'        # summon onto the cursor's active monitor
+            toggleVisibility = $true            # press again to dismiss
+            dropdownDuration = 0                # no slide animation -- snap on/off
+        }
+        keys = $_summonKeys
+    }
+    # Strip any prior MiOS summon binding (matches by keys OR by
+    # globalSummon-name=MiOS), then append fresh.
+    $existingActions = @($wtJson.actions | Where-Object {
+        -not (
+            ($_.keys -eq $_summonKeys) -or
+            ($_.command -and $_.command.action -eq 'globalSummon' -and $_.command.name -eq $_summonName)
+        )
+    })
+    $existingActions += $miosSummonAction
+    $wtJson.actions = [object[]]$existingActions
+    Write-Host "  [+] Global summon binding: $_summonKeys -> toggle MiOS window" -ForegroundColor DarkGray
 
     # Write back, then VERIFY by re-reading and parsing. ConvertTo-Json
     # has a long history of unwrapping single-element arrays to bare
@@ -2979,7 +3023,12 @@ if (`$_launchMiosOnClose) {
         # Centered position on cursor's active monitor (pre-UAC capture).
         `$_pt2 = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
         `$_s2  = [System.Windows.Forms.Screen]::FromPoint(`$_pt2).WorkingArea
+        # `-w MiOS` names the window "MiOS" so the global summon
+        # binding (Win+Space) can target it via globalSummon name=MiOS.
+        # Without a named window, the toggle binding has nothing to
+        # show/hide.
         `$_wtArgs = @(
+            '-w', 'MiOS',
             '--pos', ("`$(`$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_winWPx)) / 2)),`$(`$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_winHPx)) / 2))"),
             '--size', "$_elevCols,$_elevRows",
             '--focus',
