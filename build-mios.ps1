@@ -1126,15 +1126,12 @@ function End-Phase([int]$i, [switch]$Fail, [switch]$Warn) {
 }
 
 function Show-MiosProgressBar {
-    # Progress bar. Two modes:
-    #   default        -- inline: prints a row of bar + counters that
-    #                     scrolls with the log.
-    #   -Pin           -- pinned: ANSI cursor save / goto last visible
-    #                     row / clear / write bar / cursor restore.
-    #                     Uses [Console]::SetCursorPosition with
-    #                     belt-and-braces try/catch so non-WT hosts
-    #                     fall through to the inline form.
-    param([switch]$Pin)
+    # Inline progress bar. Counts COMPLETED phases (PhStat entries
+    # >= 2 i.e. OK/FAIL/WARN). 50-cell bar, operator-blue filled,
+    # dim unfilled. Called from End-Phase only (NOT from Set-Step --
+    # per-step ANSI-pinning fights PowerShell's normal output flow
+    # and produces interleaved garbage; one bar per phase boundary
+    # is the right cadence).
     if (-not $script:PhStat) { return }
     $done = [int]($script:PhStat | Where-Object { $_ -ge 2 } | Measure-Object).Count
     $total = [int]$script:TotalPhases
@@ -1145,31 +1142,7 @@ function Show-MiosProgressBar {
     if ($filled -lt 0) { $filled = 0 }
     if ($filled -gt $barW) { $filled = $barW }
     $bar = ("█" * $filled) + ("░" * ($barW - $filled))
-    $text = "  [$bar] $done/$total ($pct%)"
-
-    if ($Pin) {
-        try {
-            $bH = [Console]::WindowHeight
-            $bW = [Console]::WindowWidth
-            $bufH = [Console]::BufferHeight
-            $cursorTop = [Console]::CursorTop
-            $cursorLeft = [Console]::CursorLeft
-            $bottomRow = [math]::Min($bufH - 1, $cursorTop + ($bH - ($cursorTop - [Console]::WindowTop) - 1))
-            # Use ANSI escapes -- save cursor, position at bottom row
-            # col 0, clear-to-end-of-line, write bar, restore cursor.
-            # WT supports these natively; conhost fallback uses \e[ codes
-            # too but with less reliable cursor save/restore.
-            $esc = [char]27
-            $padded = $text.PadRight($bW - 1)
-            if ($padded.Length -gt $bW - 1) { $padded = $padded.Substring(0, $bW - 1) }
-            [Console]::Out.Write("${esc}7${esc}[${bottomRow};1H${esc}[2K$padded${esc}8")
-            [Console]::Out.Flush()
-            return
-        } catch {
-            # Fall through to inline below.
-        }
-    }
-    Write-Host $text -ForegroundColor Cyan
+    Write-Host "  [$bar] $done/$total ($pct%)" -ForegroundColor Cyan
 }
 
 # Throttle Set-Step prints in log mode -- the build pipeline calls
@@ -1201,7 +1174,7 @@ function Set-Step([string]$T) {
     if ($script:DashboardMode -eq 'log') {
         # Skip console echo for WARN:/FAIL: -- Write-Log already
         # mirrored those.
-        if ($T -match '^(WARN|FAIL):') { Show-MiosProgressBar -Pin; return }
+        if ($T -match '^(WARN|FAIL):') { return }
         $now = [datetime]::Now
         $clean = ($T -replace '\s+', ' ').Trim()
         $secsSince = ($now - $script:LastStepLogTime).TotalSeconds
@@ -1217,7 +1190,6 @@ function Set-Step([string]$T) {
             $script:LastStepLogTime = $now
             $script:LastStepLogText = $clean
         }
-        Show-MiosProgressBar -Pin
     } else {
         Show-Dashboard
     }
