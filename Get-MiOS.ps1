@@ -874,6 +874,33 @@ public struct RECT { public int Left, Top, Right, Bottom; }
     }
     if ($hwnd -eq [IntPtr]::Zero) { return $false }
 
+    # Native borderless: strip the DWM frame styles. wt.exe --focus
+    # hides the tab row + titlebar but leaves the window's WS_CAPTION /
+    # WS_THICKFRAME / WS_BORDER bits set, so DWM still draws a 1-2px
+    # acrylic-edge frame around the cell grid. SetWindowLongPtrW with
+    # the OR'd-out style is the only way to get TRULY frameless.
+    try {
+        Add-Type -Namespace 'MiOS.Native' -Name 'Style' -MemberDefinition @"
+[System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint="GetWindowLongPtrW", SetLastError=true)]
+public static extern System.IntPtr GetWindowLongPtr(System.IntPtr hWnd, int nIndex);
+[System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint="SetWindowLongPtrW", SetLastError=true)]
+public static extern System.IntPtr SetWindowLongPtr(System.IntPtr hWnd, int nIndex, System.IntPtr dwNewLong);
+"@ -ErrorAction SilentlyContinue
+    } catch {}
+    # GWL_STYLE = -16. Strip WS_CAPTION (0x00C00000), WS_THICKFRAME
+    # (0x00040000), WS_BORDER (0x00800000), WS_DLGFRAME (0x00400000).
+    # Keep WS_VISIBLE / WS_CHILD bits intact (mask preserves anything
+    # outside our strip list). 0x00CC0000 covers caption + thickframe +
+    # dlgframe; 0x00800000 is border; combined mask 0x00CC0000|0x00800000
+    # = 0x00CC0000 (border is part of caption mask) -- we strip 0x00CE0000.
+    $GWL_STYLE = -16
+    $stripMask = 0x00CE0000
+    try {
+        $cur = [MiOS.Native.Style]::GetWindowLongPtr($hwnd, $GWL_STYLE)
+        $newStyle = [IntPtr]::new([int64]$cur -band -bnot $stripMask)
+        [void][MiOS.Native.Style]::SetWindowLongPtr($hwnd, $GWL_STYLE, $newStyle)
+    } catch {}
+
     $rect = New-Object MiOS.Native.Win+RECT
     if (-not [MiOS.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) { return $false }
     $w = $rect.Right - $rect.Left
@@ -882,15 +909,12 @@ public struct RECT { public int Left, Top, Right, Bottom; }
 
     $x = [int]($ScreenInfo.ScreenLeft + ($ScreenInfo.ScreenWidth  - $w) / 2)
     $y = [int]($ScreenInfo.ScreenTop  + ($ScreenInfo.ScreenHeight - $h) / 2)
-    # HWND_TOPMOST = -1 (sticks the window above all non-topmost windows).
-    # SWP_SHOWWINDOW = 0x40 (force visible). SWP_NOACTIVATE = 0x10 if we
-    # don't want to steal focus -- but we DO want focus on the bootstrap
-    # window so the operator sees it. So flags = SWP_SHOWWINDOW (0x40).
+    # HWND_TOPMOST = -1, SWP_FRAMECHANGED = 0x20 (forces DWM to re-draw
+    # the window without the styles we just stripped), SWP_SHOWWINDOW
+    # = 0x40. Combined = 0x60.
     $hwndTopmost = [IntPtr]::new(-1)
-    [void][MiOS.Native.Win]::SetWindowPos($hwnd, $hwndTopmost, $x, $y, $w, $h, 0x40)
-    # Belt-and-braces: re-issue with no-zorder so the move sticks even
-    # if the topmost flag was clamped by group-policy.
-    [void][MiOS.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero,   $x, $y, $w, $h, 0x44)
+    [void][MiOS.Native.Win]::SetWindowPos($hwnd, $hwndTopmost, $x, $y, $w, $h, 0x60)
+    [void][MiOS.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $x, $y, $w, $h, 0x24)
     return $true
 }
 
@@ -906,11 +930,32 @@ public struct RECT { public int Left, Top, Right, Bottom; }
 if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
                ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    Write-Host "  [*] Provisioning MiOS terminal profile (Geist Mono NF + Hokusai scheme)..." -ForegroundColor Cyan
-    Install-MiOSWindowsTerminal     | Out-Null
-    Install-MiOSGeistFont           | Out-Null
-    Install-MiOSPowerShellProfile   | Out-Null
+    # Strict install order. Each step gates the next:
+    #   1. WT Preview install + AppX-ready wait. Until this completes
+    #      LocalState\settings.json doesn't exist and the patcher
+    #      silently no-ops -- which is exactly what the operator
+    #      caught us doing in earlier revisions.
+    #   2. settings.json patch IMMEDIATELY after install, while the
+    #      LocalState dir is freshly materialized. This is what makes
+    #      MiOS the default theme on the very first WT launch.
+    #   3. Geist Mono NF font install. Settings.json already references
+    #      this face name; if the font isn't on disk yet WT will
+    #      silently fall back to Cascadia, but the ANSI scheme + acrylic
+    #      still apply -- so font order doesn't break anything else.
+    #   4. PowerShell profile (oh-my-posh init line). Lowest priority;
+    #      cosmetic, only matters once the operator hits a prompt.
+    Write-Host "  [*] Step 1/4: Installing Windows Terminal Preview (winget dev channel)..." -ForegroundColor Cyan
+    if (-not (Install-MiOSWindowsTerminal)) {
+        Write-Host "  [!] WT Preview install failed -- bootstrap cannot continue without a themed WT to launch into." -ForegroundColor Red
+        Write-Host "      Install manually and re-run: winget install Microsoft.WindowsTerminal.Preview" -ForegroundColor DarkGray
+        exit 1
+    }
+    Write-Host "  [*] Step 2/4: Patching WT Preview settings.json with MiOS theme..." -ForegroundColor Cyan
     Install-MiOSTerminalProfile     | Out-Null
+    Write-Host "  [*] Step 3/4: Installing GeistMono Nerd Font (per-user, HKCU)..." -ForegroundColor Cyan
+    Install-MiOSGeistFont           | Out-Null
+    Write-Host "  [*] Step 4/4: Wiring oh-my-posh init into PowerShell profile..." -ForegroundColor Cyan
+    Install-MiOSPowerShellProfile   | Out-Null
     $miosWindowInfo = Get-MiOSCenteredWindowPosition -Cols 80 -Rows 30
     $miosWindowPos  = $miosWindowInfo.Pos
 
