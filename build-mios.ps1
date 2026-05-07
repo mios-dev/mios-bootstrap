@@ -2021,19 +2021,90 @@ function Get-PasswordHash([string]$Plain) {
 }
 
 function Get-Hardware {
-    $ramGB = try { [math]::Round((Get-CimInstance Win32_PhysicalMemory|Measure-Object Capacity -Sum).Sum/1GB) } catch { 16 }
+    # Detect host capability: full CPU / RAM / disk / GPU surface.
+    # Then apply mios.toml [bootstrap.dev_vm.host_reserve] to compute
+    # the dev-VM allocation. The dev VM IS the builder (memory:
+    # feedback_mios_dev_is_the_builder), so we err maximalist — give
+    # it every resource the host can spare while keeping Windows
+    # responsive.
+    #
+    # Override sources (highest precedence first):
+    #   1. $env:MIOS_DEV_VM_{CPUS,MEMORY_MB,DISK_GB} — explicit pin
+    #      from mios.toml [bootstrap.dev_vm].* if not set to "max"
+    #   2. $env:MIOS_DEV_VM_*_RESERVE_* — host reserve policy from
+    #      mios.toml [bootstrap.dev_vm.host_reserve]
+    #   3. Hardcoded fallbacks below
+    $hostRamGB = try { [math]::Round((Get-CimInstance Win32_PhysicalMemory|Measure-Object Capacity -Sum).Sum/1GB) } catch { 16 }
     # OS-reported RAM (bytes) -- this is what podman validates against; may be less than nominal GB count
-    $osTotalRamMB = try { [math]::Floor((Get-CimInstance Win32_ComputerSystem -EA Stop).TotalPhysicalMemory / 1MB) } catch { $ramGB * 1024 }
-    $cpus  = [Environment]::ProcessorCount
-    $gpu   = try { Get-CimInstance Win32_VideoController | Where-Object { $_.Name -notmatch "Microsoft Basic" } | Select-Object -First 1 } catch { $null }
+    $osTotalRamMB = try { [math]::Floor((Get-CimInstance Win32_ComputerSystem -EA Stop).TotalPhysicalMemory / 1MB) } catch { $hostRamGB * 1024 }
+    $hostCpus = [Environment]::ProcessorCount
+
+    # GPU surface: enumerate every non-Microsoft-Basic display adapter.
+    # The dev VM (WSL2) automatically gets host-GPU access via /dev/dxg
+    # (WSLg) for compute; this enumeration drives base-image selection
+    # and is reflected in the dispatched manifest.
+    $allGpus = try {
+        Get-CimInstance Win32_VideoController -EA Stop |
+            Where-Object { $_.Name -notmatch "Microsoft Basic|Microsoft Hyper-V Video|Remote Display" }
+    } catch { @() }
+    $gpu       = $allGpus | Select-Object -First 1
     $gpuName   = if ($gpu) { $gpu.Name } else { "Unknown" }
-    $hasNvidia = $gpuName -match "NVIDIA|GeForce|Quadro|RTX|GTX|Tesla"
+    $gpuNames  = ($allGpus | ForEach-Object { $_.Name }) -join ', '
+    $hasNvidia = $gpuNames -match "NVIDIA|GeForce|Quadro|RTX|GTX|Tesla"
+    $hasAmd    = $gpuNames -match "AMD|Radeon|RX |R[5-9] |Vega|Navi"
+    $hasIntel  = $gpuNames -match "Intel|Iris|UHD Graphics|HD Graphics"
     $baseImage = if ($hasNvidia) { "ghcr.io/ublue-os/ucore-hci:stable-nvidia" } else { "ghcr.io/ublue-os/ucore-hci:stable" }
-    $aiModel   = if ($ramGB -ge 32) { "qwen2.5-coder:14b" } elseif ($ramGB -ge 12) { "qwen2.5-coder:7b" } else { "phi4-mini:3.8b-q4_K_M" }
-    $diskFreeGB    = try { [math]::Floor((Get-PSDrive C -EA Stop).Free/1GB) } catch { 200 }
-    $builderDiskGB = [math]::Max(80, $diskFreeGB - 20)
-    return @{ RamGB=$ramGB; OsTotalRamMB=$osTotalRamMB; Cpus=$cpus; GpuName=$gpuName; HasNvidia=$hasNvidia
-              BaseImage=$baseImage; AiModel=$aiModel; DiskGB=$builderDiskGB }
+    $aiModel   = if ($hostRamGB -ge 32) { "qwen2.5-coder:14b" } elseif ($hostRamGB -ge 12) { "qwen2.5-coder:7b" } else { "phi4-mini:3.8b-q4_K_M" }
+
+    # Free space on the data disk (M:\ if provisioned, else C:\). The
+    # dev VM's VHDX lives on M:\ when Initialize-MiosDataDisk has run.
+    $diskLetter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER } else { 'M' }
+    $diskFreeGB = try { [math]::Floor((Get-PSDrive $diskLetter -EA Stop).Free/1GB) } catch {
+        try { [math]::Floor((Get-PSDrive C -EA Stop).Free/1GB) } catch { 200 }
+    }
+
+    # Read host_reserve policy from env (synthesized from
+    # mios.toml by tools/lib/userenv.sh); fall back to sane defaults.
+    $cpuReservePct = if ($env:MIOS_DEV_VM_CPU_RESERVE_PCT)    { [int]$env:MIOS_DEV_VM_CPU_RESERVE_PCT }    else { 15 }
+    $cpuReserveMin = if ($env:MIOS_DEV_VM_CPU_RESERVE_MIN)    { [int]$env:MIOS_DEV_VM_CPU_RESERVE_MIN }    else { 2 }
+    $memReservePct = if ($env:MIOS_DEV_VM_MEMORY_RESERVE_PCT) { [int]$env:MIOS_DEV_VM_MEMORY_RESERVE_PCT } else { 15 }
+    $memReserveGB  = if ($env:MIOS_DEV_VM_MEMORY_RESERVE_GB)  { [int]$env:MIOS_DEV_VM_MEMORY_RESERVE_GB }  else { 4 }
+    $diskReserveGB = if ($env:MIOS_DEV_VM_DISK_RESERVE_GB)    { [int]$env:MIOS_DEV_VM_DISK_RESERVE_GB }    else { 32 }
+
+    # Compute maximalist dev-VM allocation = host - reserve.
+    $reservedCpus = [math]::Max($cpuReserveMin, [math]::Floor($hostCpus * $cpuReservePct / 100))
+    $devCpus = [math]::Max(1, $hostCpus - $reservedCpus)
+    $reservedRamGB = [math]::Max($memReserveGB, [math]::Floor($hostRamGB * $memReservePct / 100))
+    $devRamGB = [math]::Max(4, $hostRamGB - $reservedRamGB)
+    $devDiskGB = [math]::Max(80, $diskFreeGB - $diskReserveGB)
+
+    # Apply explicit pin overrides from mios.toml [bootstrap.dev_vm].*
+    # (set to "max" or empty/unset to use the computed maximalist value).
+    if ($env:MIOS_DEV_VM_CPUS      -and $env:MIOS_DEV_VM_CPUS      -notmatch '^(max|0|)$') { $devCpus   = [int]$env:MIOS_DEV_VM_CPUS      }
+    if ($env:MIOS_DEV_VM_MEMORY_MB -and $env:MIOS_DEV_VM_MEMORY_MB -notmatch '^(max|0|)$') { $devRamGB  = [math]::Max(4, [math]::Floor([int]$env:MIOS_DEV_VM_MEMORY_MB / 1024)) }
+    if ($env:MIOS_DEV_VM_DISK_GB   -and $env:MIOS_DEV_VM_DISK_GB   -notmatch '^(max|0|)$') { $devDiskGB = [int]$env:MIOS_DEV_VM_DISK_GB   }
+
+    Write-Log "Get-Hardware: host=${hostCpus}c/${hostRamGB}GB/${diskFreeGB}GB  reserve=${reservedCpus}c/${reservedRamGB}GB/${diskReserveGB}GB  dev-vm=${devCpus}c/${devRamGB}GB/${devDiskGB}GB  gpu=[$gpuNames]"
+
+    return @{
+        # Host-detected (informational)
+        HostRamGB    = $hostRamGB
+        HostCpus     = $hostCpus
+        OsTotalRamMB = $osTotalRamMB
+        AllGpus      = $allGpus
+        GpuNames     = $gpuNames
+        GpuName      = $gpuName
+        HasNvidia    = $hasNvidia
+        HasAmd       = $hasAmd
+        HasIntel     = $hasIntel
+        # Dispatched dev-VM allocation (maximalist - host_reserve)
+        Cpus         = $devCpus
+        RamGB        = $devRamGB
+        DiskGB       = $devDiskGB
+        # Image / model selection
+        BaseImage    = $baseImage
+        AiModel      = $aiModel
+    }
 }
 
 function Find-ActiveDistro {
@@ -2406,9 +2477,13 @@ function New-BuilderDistro([hashtable]$HW) {
         $env:XDG_DATA_HOME = $miosPodmanRoot
         Log-Ok "podman-machine state redirected to M:\podman (XDG_DATA_HOME)"
     }
-    # Cap at the OS-reported physical RAM (what podman validates) minus 512 MB safety margin.
-    # Nominal $HW.RamGB rounds up from actual hardware, causing podman to reject the request.
-    $ramMB = [math]::Max(4096, [math]::Min($HW.OsTotalRamMB - 512, $HW.RamGB * 1024 - 512))
+    # $HW.RamGB is already the maximalist-minus-host-reserve allocation
+    # computed by Get-Hardware (per mios.toml [bootstrap.dev_vm.host_reserve]).
+    # Multiply to MB and clamp once more against the OS-reported total
+    # (what podman validates; nominal Win32_PhysicalMemory rounds up and
+    # would otherwise cause podman to reject the request) minus a 512 MB
+    # safety margin. Floor of 4096 MB so the dev VM is always usable.
+    $ramMB = [math]::Max(4096, [math]::Min($HW.OsTotalRamMB - 512, $HW.RamGB * 1024))
 
     # Data disk + podman storage redirection happened earlier in
     # Invoke-DataDiskBootstrap (between Phase 1 and Phase 2). By the
