@@ -327,27 +327,26 @@ function Test-MiOSFontInstalled {
 # agreements so Server SKUs (which display the agreement EULA on first
 # winget call) don't hang the bootstrap.
 function Install-MiOSWindowsTerminal {
-    $hasStable  = $false
+    # Operator's invariant: MiOS owns ONLY the Windows Terminal Preview
+    # (dev channel) install. The stable WT install -- if present -- is
+    # left strictly alone, because the operator may use it for non-MiOS
+    # work and doesn't want their stable settings.json overwritten with
+    # MiOS globals/defaults. So we ALWAYS ensure Preview is installed
+    # (even when Stable is already there) and ALWAYS target Preview's
+    # settings.json -- not Stable's, not the unpackaged location.
     $hasPreview = $false
     try {
-        $stableProbe  = & winget list --id Microsoft.WindowsTerminal         --exact 2>$null
         $previewProbe = & winget list --id Microsoft.WindowsTerminal.Preview --exact 2>$null
-        if ($LASTEXITCODE -eq 0 -and ($stableProbe  -join "`n") -match 'Microsoft\.WindowsTerminal\b')         { $hasStable  = $true }
-        if ($LASTEXITCODE -eq 0 -and ($previewProbe -join "`n") -match 'Microsoft\.WindowsTerminal\.Preview') { $hasPreview = $true }
+        if ($LASTEXITCODE -eq 0 -and ($previewProbe -join "`n") -match 'Microsoft\.WindowsTerminal\.Preview') {
+            $hasPreview = $true
+        }
     } catch {}
-    # Fallback probe: if winget isn't available, check filesystem.
-    if (-not ($hasStable -or $hasPreview)) {
-        $stableDir  = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminal_*' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $hasPreview) {
         $previewDir = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($stableDir)  { $hasStable  = $true }
         if ($previewDir) { $hasPreview = $true }
     }
     if ($hasPreview) {
-        Write-Host "  [+] Windows Terminal Preview already installed." -ForegroundColor DarkGray
-        return $true
-    }
-    if ($hasStable) {
-        Write-Host "  [+] Windows Terminal (stable) already installed -- MiOS settings will apply there." -ForegroundColor DarkGray
+        Write-Host "  [+] Windows Terminal Preview already installed (MiOS targets ONLY this install)." -ForegroundColor DarkGray
         return $true
     }
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
@@ -355,11 +354,18 @@ function Install-MiOSWindowsTerminal {
         Write-Host "      Install manually from: https://aka.ms/terminal-preview" -ForegroundColor DarkGray
         return $false
     }
-    Write-Host "  [*] Installing Windows Terminal Preview via winget..." -ForegroundColor Cyan
+    Write-Host "  [*] Installing Windows Terminal Preview via winget (dev channel)..." -ForegroundColor Cyan
     try {
         & winget install --id Microsoft.WindowsTerminal.Preview --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  [+] Windows Terminal Preview installed." -ForegroundColor Green
+            # Wait briefly for AppX deployment to materialize the
+            # LocalState dir before Install-MiOSTerminalProfile probes.
+            $previewLocal = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState'
+            for ($i = 0; $i -lt 20; $i++) {
+                if (Test-Path $previewLocal) { break }
+                Start-Sleep -Milliseconds 250
+            }
             return $true
         }
     } catch {
@@ -430,25 +436,19 @@ function Install-MiOSGeistFont {
     }
 }
 
-# Resolve the WT settings.json path. Tries stable -> preview -> the
-# unpackaged-MSIX (scoop / portable) location. Returns $null if WT isn't
-# installed at all (we then fall back to a sized conhost window in the
-# launcher).
+# Resolve the WT Preview settings.json path. WE ONLY TOUCH PREVIEW. The
+# stable WT install (if any) is left untouched -- the operator may use
+# it for non-MiOS work and doesn't want our globals overwriting theirs.
+# Returns $null if Preview isn't installed (caller should run
+# Install-MiOSWindowsTerminal first).
 function Get-MiOSTerminalSettingsPath {
-    $candidates = @(
-        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
-        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'),
-        (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows Terminal\settings.json')
-    )
-    foreach ($p in $candidates) {
-        if (Test-Path -LiteralPath $p) { return $p }
-        # The packaged dirs may exist with no settings.json yet on a fresh
-        # WT install -- return the path so we can write the file.
-        $parent = Split-Path -Parent $p
-        if (Test-Path -LiteralPath $parent) {
-            return $p
-        }
-    }
+    $previewSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'
+    $previewLocal    = Split-Path -Parent $previewSettings
+    if (Test-Path -LiteralPath $previewSettings) { return $previewSettings }
+    # LocalState dir exists but settings.json hasn't been written yet
+    # (fresh AppX deployment -- WT writes settings on first launch). We
+    # return the path so the caller can write a fresh file there.
+    if (Test-Path -LiteralPath $previewLocal) { return $previewSettings }
     return $null
 }
 
@@ -700,16 +700,29 @@ $marker
 # Auto-generated by Get-MiOS.ps1 / build-mios.ps1. Replaced between the
 # markers on every bootstrap. Initializes oh-my-posh with the MiOS theme
 # (Hokusai palette) when the binary is on PATH; silent no-op otherwise.
+# Probes every place the canonical mios.omp.json could land:
+#   M:\MiOS\themes\mios.omp.json        deployed install (data-disk root)
+#   M:\usr\share\mios\oh-my-posh\...    mios.git overlay at M:\ root
+#   C:\MiOS\themes\mios.omp.json        deployed install (admin / no data disk)
+#   C:\MiOS\usr\share\mios\oh-my-posh\..    legacy admin install
+#   `$env:USERPROFILE\MiOS-bootstrap\...    rare local checkout
+# `$env:MIOS_OMP_JSON overrides everything for ad-hoc testing.
 if (`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') {
-    `$miosOmp = Join-Path 'C:\MiOS' 'usr\share\mios\oh-my-posh\mios.omp.json'
-    if (-not (Test-Path `$miosOmp)) {
-        # Fallback: bootstrap repo path (used during the initial run
-        # before C:\MiOS is staged).
-        `$bootRepoOmp = Join-Path 'M:\MiOS\repo\mios-bootstrap' 'usr\share\mios\oh-my-posh\mios.omp.json'
-        if (Test-Path `$bootRepoOmp) { `$miosOmp = `$bootRepoOmp }
+    `$miosOmp = `$null
+    `$candidates = @()
+    if (`$env:MIOS_OMP_JSON) { `$candidates += `$env:MIOS_OMP_JSON }
+    `$candidates += @(
+        'M:\MiOS\themes\mios.omp.json',
+        'M:\usr\share\mios\oh-my-posh\mios.omp.json',
+        'C:\MiOS\themes\mios.omp.json',
+        'C:\MiOS\usr\share\mios\oh-my-posh\mios.omp.json',
+        (Join-Path `$env:USERPROFILE 'MiOS-bootstrap\usr\share\mios\oh-my-posh\mios.omp.json')
+    )
+    foreach (`$c in `$candidates) {
+        if (`$c -and (Test-Path -LiteralPath `$c)) { `$miosOmp = `$c; break }
     }
     if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
-        if (Test-Path `$miosOmp) {
+        if (`$miosOmp) {
             oh-my-posh init pwsh --config `$miosOmp | Invoke-Expression
         } else {
             oh-my-posh init pwsh | Invoke-Expression
@@ -1043,7 +1056,16 @@ try {
     #      Program Files\WindowsApps\Microsoft.WindowsTerminal_*\wt.exe
     #      (skips the alias stub entirely).
     #   3. Plain Start-Process pwsh -Verb RunAs (conhost). Always works.
-    $wtExe = Get-Command wt.exe -ErrorAction SilentlyContinue
+    # Resolve wt.exe to the WT PREVIEW install specifically. The App
+    # Execution Alias might still point to Stable WT if both are
+    # installed — we want our launches to land in Preview where the
+    # MiOS settings live.
+    $wtPreviewExe = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -First 1 |
+        ForEach-Object { Join-Path $_.FullName 'wt.exe' } |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+    $wtExeCmd = Get-Command wt.exe -ErrorAction SilentlyContinue
+    $wtExe = if ($wtPreviewExe) { [PSCustomObject]@{ Source = $wtPreviewExe } } else { $wtExeCmd }
     $elevated = $false
     if ($wtExe) {
         # Global args (before `nt`) configure the WT WINDOW; tab args
@@ -1064,13 +1086,14 @@ try {
             $shell
         ) + $shellArgs
         try {
-            Start-Process wt.exe -ArgumentList $wtArgs -Verb RunAs -ErrorAction Stop
+            $wtTarget = if ($wtPreviewExe) { $wtPreviewExe } else { 'wt.exe' }
+            Start-Process $wtTarget -ArgumentList $wtArgs -Verb RunAs -ErrorAction Stop
             $elevated = $true
         } catch {
-            Write-Host "  [!] wt.exe (App Execution Alias) elevation failed: $($_.Exception.Message)" -ForegroundColor Yellow
-            # Try the real UWP-installed wt.exe directly, bypassing the alias stub.
+            Write-Host "  [!] wt.exe elevation failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            # Last-ditch: stable WT's UWP path (only if Preview wasn't found).
             $realWt = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Filter 'wt.exe' -Recurse -ErrorAction SilentlyContinue |
-                      Where-Object { $_.FullName -match 'Microsoft\.WindowsTerminal_' } |
+                      Where-Object { $_.FullName -match 'Microsoft\.WindowsTerminal' } |
                       Select-Object -First 1 -ExpandProperty FullName
             if ($realWt) {
                 Write-Host "  [*] Retrying via real UWP path: $realWt" -ForegroundColor Cyan

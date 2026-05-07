@@ -4816,14 +4816,22 @@ $y      = [int]($work.Y + ($work.Height - $winH) / 2)
 if ($x -lt $work.X) { $x = $work.X }
 if ($y -lt $work.Y) { $y = $work.Y }
 
-$wt = Get-Command wt.exe -ErrorAction SilentlyContinue
-if (-not $wt) {
-    [System.Windows.Forms.MessageBox]::Show("Windows Terminal (wt.exe) is not installed. Install it from the Microsoft Store and re-launch MiOS.", "MiOS", 'OK', 'Error') | Out-Null
+# Resolve wt.exe to WT Preview specifically (the dev-channel install
+# MiOS owns). Only fall back to the App Execution Alias if Preview
+# isn't on disk -- that way we never accidentally launch into Stable
+# WT, which doesn't have MiOS settings.json applied.
+$wtPreview = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue |
+    Sort-Object Name -Descending | Select-Object -First 1 |
+    ForEach-Object { Join-Path $_.FullName 'wt.exe' } |
+    Where-Object { Test-Path $_ } | Select-Object -First 1
+$wtExe = if ($wtPreview) { $wtPreview } else { (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
+if (-not $wtExe) {
+    [System.Windows.Forms.MessageBox]::Show("Windows Terminal Preview (wt.exe) is not installed. Run 'irm | iex' Get-MiOS.ps1 to install it.", "MiOS", 'OK', 'Error') | Out-Null
     exit 1
 }
 
 $wtArgs = @('-w','-1','--pos',"$x,$y",'--size','80,30','--focus','nt','-p',$Profile)
-Start-Process -FilePath $wt.Source -ArgumentList $wtArgs
+Start-Process -FilePath $wtExe -ArgumentList $wtArgs
 
 # Post-launch re-center: WT in focus mode often ignores --pos. Wait
 # briefly for the WT hwnd to surface, then SetWindowPos to the true
