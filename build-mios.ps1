@@ -5448,9 +5448,50 @@ if ($hwnd -ne [IntPtr]::Zero) {
         }
     }
 
-    # Garbage-collect any stale per-verb shortcuts left over from
-    # earlier launcher revisions. Idempotent: if absent, skip.
-    foreach ($legacy in @('Build MiOS.lnk','MiOS Dev VM.lnk','MiOS Update.lnk','MiOS Dashboard.lnk','MiOS Configurator.lnk','MiOS Rebuild.lnk','MiOS Build.lnk','MiOS Setup.lnk','MiOS Terminal.lnk','MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','Uninstall MiOS.lnk')) {
+    # ── Per-verb native-app shortcuts ────────────────────────────────
+    # Per operator: every MiOS verb appears as its own native Windows
+    # app so MiOS-DEV / Dashboard / Configurator / Build are findable
+    # in Start search and pinnable to taskbar/Start individually --
+    # not just as items inside the hub menu. Each shortcut targets the
+    # corresponding bin/mios-*.ps1 script with its dedicated icon.
+    # The main MiOS.lnk above stays as the unified hub.
+    $verbShortcuts = @(
+        @{ Name = 'MiOS-DEV';          Bin = 'mios-dev.ps1';    Icon = 'mios-dev.ico';    Desc = 'Enter the MiOS-DEV WSL2 distro (root shell)' },
+        @{ Name = 'MiOS Build';        Bin = 'mios-update.ps1'; Icon = 'mios-build.ico';  Desc = 'Build the deployable MiOS OCI image (podman build + deploy)' },
+        @{ Name = 'MiOS Dashboard';    Bin = 'mios-dash.ps1';   Icon = 'mios-dash.ico';   Desc = 'Live MiOS system view (services, fastfetch, git tree)' },
+        @{ Name = 'MiOS Configurator'; Bin = 'mios-config.ps1'; Icon = 'mios-config.ico'; Desc = 'Edit mios.toml in the GUI (Epiphany via WSLg)' },
+        @{ Name = 'MiOS Update';       Bin = 'mios-update.ps1'; Icon = 'mios-update.ico'; Desc = 'Re-run the MiOS bootstrap (refresh terminal + dev VM)' },
+        @{ Name = 'MiOS Pull';         Bin = 'mios-pull.ps1';   Icon = 'mios-pull.ico';   Desc = 'Sync M:\\ overlay to origin/main (mios-pull)' }
+    )
+    foreach ($v in $verbShortcuts) {
+        $vBin   = Join-Path $MiosBinDir $v.Bin
+        $vIcon  = Join-Path $MiosIconsDir $v.Icon
+        $vLnk   = Join-Path $StartMenuDir ("{0}.lnk" -f $v.Name)
+        $vArgs  = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
+        # Build verb runs with -BuildOnly so it triggers the OCI build,
+        # not the full bootstrap re-run.
+        if ($v.Name -eq 'MiOS Build') {
+            $vArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`" -BuildOnly"
+        }
+        # Verbs that don't drop into a shell (Configurator launches
+        # Epiphany, Pull is one-shot) close after running -- use pwsh
+        # without -NoExit. MiOS-DEV intentionally lands in the WSL
+        # shell and stays there. Dashboard / Update / Build keep their
+        # output visible via -NoExit.
+        if ($v.Name -in @('MiOS-DEV')) {
+            # mios-dev.ps1 wraps wsl.exe; the WSL session itself keeps
+            # the window alive, no -NoExit needed.
+            $vArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
+        } elseif ($v.Name -in @('MiOS Build','MiOS Dashboard','MiOS Update')) {
+            $vArgs = "-NoProfile -NoExit -ExecutionPolicy Bypass -File `"$vBin`"" + $(if ($v.Name -eq 'MiOS Build') { ' -BuildOnly' } else { '' })
+        }
+        New-MiosShortcut -LnkPath $vLnk -TargetExe $pwshExe -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
+        Log-Ok ("Per-verb Start Menu shortcut: {0} -> {1}" -f $v.Name, $v.Bin)
+    }
+
+    # Garbage-collect any stale shortcuts from earlier revisions whose
+    # names don't match the current verb set. Idempotent: if absent, skip.
+    foreach ($legacy in @('Build MiOS.lnk','MiOS Dev VM.lnk','MiOS Rebuild.lnk','MiOS Setup.lnk','MiOS Terminal.lnk','MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','Uninstall MiOS.lnk')) {
         $stale = Join-Path $StartMenuDir $legacy
         if (Test-Path $stale) {
             try { Remove-Item $stale -Force -ErrorAction SilentlyContinue; Log-Ok "Removed legacy shortcut: $legacy" } catch {}
