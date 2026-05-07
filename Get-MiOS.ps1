@@ -1063,7 +1063,8 @@ $Script:MiosFastfetchConfig = @'
     { "type": "cpu",      "key": "CPU"      },
     { "type": "gpu",      "key": "GPU",       "format": "{name}" },
     { "type": "memory",   "key": "Memory"   },
-    { "type": "disk",     "key": "Disk",      "folders": "C:" },
+    { "type": "disk",     "key": "Disk C:",   "folders": "C:" },
+    { "type": "disk",     "key": "Disk M:",   "folders": "M:" },
     { "type": "datetime", "key": "Time"     }
   ]
 }
@@ -1599,13 +1600,32 @@ if (`$true) {
         }
         # Divider.
         Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
-        # Framed fastfetch (no logo -- we drew it above).
+        # Framed fastfetch (no logo -- we drew it above). Side-by-side
+        # pairing: when two consecutive lines BOTH fit in half the
+        # interior width (<= 36 visible chars each), emit them as a
+        # single row with a "│" column-separator. Saves vertical rows
+        # so all 10 modules + the prompt fit in 80x30.
         if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
             try {
-                `$ffOut = & fastfetch -c `$ConfigPath --logo none 2>&1 | Out-String -Stream
-                foreach (`$ln in `$ffOut) {
-                    if (`$null -eq `$ln) { continue }
-                    Write-Host (_Frame `$ln)
+                `$ffOut = @(& fastfetch -c `$ConfigPath --logo none 2>&1 | Out-String -Stream | Where-Object { `$_ -ne `$null })
+                `$halfW = [int][math]::Floor((`$INNER - 3) / 2)
+                `$i = 0
+                while (`$i -lt `$ffOut.Count) {
+                    `$cur = [string]`$ffOut[`$i]
+                    `$curVis = (_Strip `$cur).TrimEnd()
+                    if ([string]::IsNullOrWhiteSpace(`$curVis)) { `$i++; continue }
+                    `$nxt = if ((`$i + 1) -lt `$ffOut.Count) { [string]`$ffOut[`$i+1] } else { `$null }
+                    `$nxtVis = if (`$nxt) { (_Strip `$nxt).TrimEnd() } else { '' }
+                    if (`$curVis.Length -le `$halfW -and `$nxt -and -not [string]::IsNullOrWhiteSpace(`$nxtVis) -and `$nxtVis.Length -le `$halfW) {
+                        # Pair them.
+                        `$padL = ' ' * (`$halfW - `$curVis.Length)
+                        `$combined = `$cur + `$padL + ' │ ' + `$nxt
+                        Write-Host (_Frame `$combined)
+                        `$i += 2
+                    } else {
+                        Write-Host (_Frame `$cur)
+                        `$i += 1
+                    }
                 }
             } catch {
                 Write-Host (_Frame "  fastfetch failed: `$(`$_.Exception.Message)")
