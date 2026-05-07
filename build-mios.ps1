@@ -5987,22 +5987,24 @@ if ($activeDistro) {
     # re-runs this script with -BuildOnly).
     if ($BootstrapOnly) {
         Log-Ok "-BootstrapOnly mode: dev VM provisioned, Windows install complete."
-        # Flush + 500ms drain barrier so EVERY async log write from
-        # Install-MiosLauncher / Set-Step lands BEFORE the menu starts.
+        # No interactive menu. The operator already has every verb wired
+        # as PowerShell functions in their MiOS terminal profile:
+        #   mios-build    full OCI image + deployables build
+        #   mios-config   open mios.toml configurator
+        #   mios-pull     refresh M:\ from origin/main
+        #   mios-dev      enter the dev distro
+        #   mios-help     list all commands
+        # An interactive menu HERE just fights with the parallel
+        # build-mios.ps1 instance that mios-build spawns in a new wt
+        # tab + Install-MiosLauncher's still-flushing log lines, and
+        # produces the rendering issues the operator caught us on
+        # repeatedly. Exit cleanly with a one-line summary instead.
         try { [Console]::Out.Flush() } catch {}
-        try { [Console]::Error.Flush() } catch {}
-        Start-Sleep -Milliseconds 500
-        # Clear the screen so the menu renders on a clean canvas. The
-        # operator's full transcript is in the log file
-        # ($MiosLogDir\mios-install-*.log); the on-screen scrollback
-        # from the bootstrap is lost but the menu is GUARANTEED clean.
-        # Three previous fix attempts (flush, sleep, full-width pad) all
-        # had log-line tails leak into menu rows -- some interaction
-        # between PowerShell's output buffering, WT's cell rendering,
-        # and Set-Step's throttled prints that I can't fully tame.
-        # Clear-Host sidesteps the entire race.
-        try { Clear-Host } catch {}
-        Show-PostBootstrapMenu
+        Write-Host ""
+        Write-Host "  MiOS bootstrap complete." -ForegroundColor Green
+        Write-Host "  Dev distro: $script:BuilderDistro (enter via mios-dev)" -ForegroundColor DarkGray
+        Write-Host "  Run mios-help in any MiOS terminal for the available commands." -ForegroundColor DarkGray
+        Write-Host ""
         return
     }
 
