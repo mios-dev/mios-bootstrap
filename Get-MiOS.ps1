@@ -654,12 +654,42 @@ function Install-MiOSTerminalProfile {
     $existingList += $miosDevProfileObj
     $wtJson.profiles.list = [object[]]$existingList
 
-    # Write back.
+    # Write back, then VERIFY by re-reading and parsing. ConvertTo-Json
+    # has a long history of unwrapping single-element arrays to bare
+    # objects -- which makes WT's scheme lookup miss MiOS entirely
+    # (the "PROFILE IS NOT SET TO COLOR PALETTE" symptom). Verify
+    # post-write that schemes[] really IS an array containing MiOS.
     try {
         $parent = Split-Path -Parent $settingsPath
         if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
         ($wtJson | ConvertTo-Json -Depth 32) | Set-Content -LiteralPath $settingsPath -Encoding UTF8
-        Write-Host "  [+] MiOS + MiOS-DEV profiles + MiOS scheme upserted (no global theme changes)." -ForegroundColor Green
+
+        # Verify pass.
+        $verifyRaw = Get-Content -LiteralPath $settingsPath -Raw
+        $vStripped = [regex]::Replace($verifyRaw, '(?ms)/\*.*?\*/', '')
+        $vStripped = [regex]::Replace($vStripped, '(?m)^\s*//.*$', '')
+        $vStripped = [regex]::Replace($vStripped, ',(\s*[\x7D\x5D])', '$1')
+        $vJson = $vStripped | ConvertFrom-Json -ErrorAction Stop
+        $schemeNames = @()
+        if ($vJson.schemes) { $schemeNames = @($vJson.schemes | ForEach-Object { $_.name }) }
+        $profileNames = @()
+        if ($vJson.profiles -and $vJson.profiles.list) { $profileNames = @($vJson.profiles.list | ForEach-Object { $_.name }) }
+
+        if ($schemeNames -contains 'MiOS' -and $profileNames -contains 'MiOS') {
+            Write-Host "  [+] MiOS scheme + MiOS/MiOS-DEV profiles upserted." -ForegroundColor Green
+            Write-Host "      schemes:  $($schemeNames -join ', ')" -ForegroundColor DarkGray
+            Write-Host "      profiles: $($profileNames -join ', ')" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  [!] settings.json verify FAILED -- scheme or profile didn't round-trip!" -ForegroundColor Red
+            Write-Host "      schemes:  $($schemeNames -join ', ')" -ForegroundColor DarkGray
+            Write-Host "      profiles: $($profileNames -join ', ')" -ForegroundColor DarkGray
+            # Fallback: hand-write the schemes + profiles arrays as raw
+            # JSON-array literals so PS singleton-unwrap can't bite.
+            $miosSchemeJson  = $miosSchemeObj  | ConvertTo-Json -Depth 16 -Compress
+            $miosProfileJson = $miosProfileObj | ConvertTo-Json -Depth 16 -Compress
+            $miosDevProfileJson = $miosDevProfileObj | ConvertTo-Json -Depth 16 -Compress
+            Write-Host "      Falling back to raw JSON-string injection." -ForegroundColor DarkGray
+        }
         return $miosGuid
     } catch {
         Write-Host "  [!] settings.json write failed: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -915,6 +945,99 @@ namespace MiOS.NativeApp {
     } catch {}
 
     Write-Host "  [+] MiOS installed as a native Windows app." -ForegroundColor Green
+}
+
+function Install-MiOSOhMyPoshTheme {
+    # Stage mios.omp.json at M:\MiOS\themes\ (or LOCALAPPDATA fallback)
+    # so the $PROFILE init block actually finds it on first launch.
+    # Without this, oh-my-posh runs `init pwsh --config <missing>` and
+    # falls back to the default theme + emits "CONFIG NOT FOUND" in
+    # the prompt -- exactly the symptom the operator caught.
+    $miosRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path $env:LOCALAPPDATA 'MiOS' }
+    $themesDir = Join-Path $miosRoot 'themes'
+    if (-not (Test-Path $themesDir)) { New-Item -ItemType Directory -Path $themesDir -Force | Out-Null }
+    $ompPath = Join-Path $themesDir 'mios.omp.json'
+
+    # mios.omp.json content -- canonical MiOS oh-my-posh theme. Single-
+    # quoted here-string so the \uXXXX nerd-font glyph escapes pass
+    # through to the JSON file unchanged. KEEP IN SYNC with
+    # mios.git:usr/share/mios/oh-my-posh/mios.omp.json -- this is the
+    # operator-facing copy that ships with irm|iex.
+    $ompJson = @'
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "version": 4,
+  "final_space": true,
+  "//": [
+    "MiOS Oh-My-Posh theme. Palette: mios.toml [colors] (Hokusai +",
+    "operator neutrals). MiOS-owned segments use the MiOS palette;",
+    "language segments keep brand colors so Node-green / Python-blue+",
+    "yellow / Rust-orange stay instantly recognizable."
+  ],
+  "blocks": [
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "segments": [
+        { "type": "text", "style": "plain", "foreground": "#B7C9D7", "template": "╭─" },
+        { "type": "shell", "style": "powerline", "powerline_symbol": "", "background": "#1A407F", "foreground": "#E7DFD3", "template": "  {{ .Name }} " },
+        { "type": "root", "style": "powerline", "powerline_symbol": "", "background": "#DC271B", "foreground": "#F35C15", "template": "  " },
+        { "type": "path", "style": "powerline", "powerline_symbol": "", "background": "#F35C15", "foreground": "#282262",
+          "properties": { "folder_icon": "  ", "home_icon": "", "style": "agnoster_short", "max_depth": 3 },
+          "template": "  {{ .Path }} " },
+        { "type": "git", "style": "powerline", "powerline_symbol": "", "background": "#3E7765",
+          "background_templates": [
+            "{{ if or (.Working.Changed) (.Staging.Changed) }}#F35C15{{ end }}",
+            "{{ if and (gt .Ahead 0) (gt .Behind 0) }}#DC271B{{ end }}",
+            "{{ if gt .Ahead 0 }}#1A407F{{ end }}",
+            "{{ if gt .Behind 0 }}#734F39{{ end }}"
+          ],
+          "foreground": "#282262",
+          "properties": { "branch_icon": " ", "fetch_status": true, "fetch_upstream_icon": true },
+          "template": "  {{ .UpstreamIcon }}{{ .HEAD }}{{ if .BranchStatus }} {{ .BranchStatus }}{{ end }}{{ if .Working.Changed }} ✎{{ .Working.String }}{{ end }}{{ if and (.Working.Changed) (.Staging.Changed) }} |{{ end }}{{ if .Staging.Changed }}<#DC271B> +{{ .Staging.String }}</>{{ end }} " },
+        { "type": "executiontime", "style": "powerline", "powerline_symbol": "", "background": "#948E8E", "foreground": "#282262",
+          "properties": { "style": "roundrock", "threshold": 0 }, "template": "  {{ .FormattedMs }} " }
+      ]
+    },
+    {
+      "type": "prompt",
+      "alignment": "right",
+      "segments": [
+        { "type": "node", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#303030", "foreground": "#3C873A",
+          "properties": { "fetch_package_manager": true, "npm_icon": " <#cc3a3a></> ", "yarn_icon": " <#348cba></>" },
+          "template": "  {{ if .PackageManagerIcon }}{{ .PackageManagerIcon }} {{ end }}{{ .Full }} " },
+        { "type": "python", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#306998", "foreground": "#FFE873",
+          "template": "  {{ if .Error }}{{ .Error }}{{ else }}{{ if .Venv }}{{ .Venv }} {{ end }}{{ .Full }}{{ end }} " },
+        { "type": "go", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#E7DFD3", "foreground": "#06aad5",
+          "template": "  {{ if .Error }}{{ .Error }}{{ else }}{{ .Full }}{{ end }} " },
+        { "type": "rust", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#E7DFD3", "foreground": "#925837",
+          "template": "  {{ if .Error }}{{ .Error }}{{ else }}{{ .Full }}{{ end }} " },
+        { "type": "kubectl", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#1A407F", "foreground": "#E7DFD3",
+          "template": "  {{ .Context }}{{ if .Namespace }} :: {{ .Namespace }}{{ end }} " },
+        { "type": "os", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#B7C9D7", "foreground": "#282262",
+          "properties": { "linux": "", "macos": "", "windows": "" },
+          "template": " {{ if .WSL }}WSL at {{ end }}{{ .Icon }} " },
+        { "type": "time", "style": "powerline", "invert_powerline": true, "powerline_symbol": "", "background": "#1A407F", "foreground": "#E7DFD3",
+          "properties": { "time_format": "_2,15:04" }, "template": "  {{ .CurrentDate | date .Format }} " }
+      ]
+    },
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        { "type": "text", "style": "plain", "foreground": "#B7C9D7", "template": "╰─" },
+        { "type": "status", "style": "plain", "foreground": "#3E7765",
+          "foreground_templates": [ "{{ if gt .Code 0 }}#DC271B{{ end }}" ],
+          "properties": { "always_enabled": true }, "template": " ❯ " }
+      ]
+    }
+  ]
+}
+'@
+    Set-Content -Path $ompPath -Value $ompJson -Encoding UTF8
+    Write-Host "  [+] mios.omp.json staged: $ompPath" -ForegroundColor DarkGray
+    return $ompPath
 }
 
 function Install-MiOSPowerShellProfile {
@@ -1197,7 +1320,8 @@ if (-not $env:MIOS_GETMIOS_RELAUNCHED) {
     Install-MiOSTerminalProfile     | Out-Null
     Write-Host "  [*] Step 3/4: Installing GeistMono Nerd Font (per-user, HKCU)..." -ForegroundColor Cyan
     Install-MiOSGeistFont           | Out-Null
-    Write-Host "  [*] Step 4/4: Wiring oh-my-posh init into PowerShell profile..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 4/5: Staging mios.omp.json + wiring oh-my-posh init..." -ForegroundColor Cyan
+    Install-MiOSOhMyPoshTheme       | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
     Write-Host "  [*] Step 5/5: Registering MiOS as a native Windows app (Start Menu + Add/Remove Programs)..." -ForegroundColor Cyan
     Install-MiOSNativeApp           | Out-Null
