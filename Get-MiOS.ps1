@@ -1164,6 +1164,47 @@ if ($hwnd -ne [IntPtr]::Zero) {
         Write-Host "  [+] Desktop: $deskLnk" -ForegroundColor DarkGray
     }
 
+    # ── Per-verb shortcuts (MiOS-DEV / MiOS Build / MiOS Dashboard / etc.) ──
+    # Per the canonical e2e contract: native-app surface is the MiOS hub +
+    # per-verb shortcuts. Each verb opens a fresh MiOS WT app window (via
+    # mios-launch.ps1) and runs `mios <verb>` inside it. Both Start Menu
+    # AND Desktop get the shortcuts so the operator can pick whichever
+    # surface they prefer (and pin manually -- Win11 disabled programmatic
+    # pinning to Start, so we drop the .lnk and the operator right-clicks
+    # → "Pin to Start" / "Pin to Taskbar").
+    $miosVerbs = @(
+        @{ File='MiOS-DEV.lnk';          Verb='dev';    Desc='Enter the MiOS-DEV podman machine (wsl into the dev VM)' },
+        @{ File='MiOS Build.lnk';        Verb='build';  Desc='Build MiOS: open mios-config.html, save, then build the OCI image inside MiOS-DEV' },
+        @{ File='MiOS Dashboard.lnk';    Verb='dash';   Desc='Show the MiOS dashboard (framed banner + fastfetch info + verb hints)' },
+        @{ File='MiOS Configurator.lnk'; Verb='config'; Desc='Edit mios.toml in the HTML configurator (no build)' },
+        @{ File='MiOS Update.lnk';       Verb='update'; Desc='Re-run the bootstrap (cache-busted) -- pulls latest from origin' },
+        @{ File='MiOS Pull.lnk';         Verb='pull';   Desc='Sync M:\ overlay to origin/main (lightweight, no rebuild)' },
+        @{ File='MiOS Help.lnk';         Verb='help';   Desc='List every MiOS verb' }
+    )
+    $writeVerbLnk = {
+        param([string]$Path, [string]$Verb, [string]$Desc)
+        $sc = $shell.CreateShortcut($Path)
+        $sc.TargetPath       = $pwshExe
+        # Spawn the launcher (themed WT MiOS window) then run `mios <verb>`
+        # inside it. Single -Command keeps the .lnk argument quoting clean.
+        $sc.Arguments        = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& '$launcherPath'; Start-Sleep -Milliseconds 800; & wt.exe -w 0 nt -p MiOS pwsh -NoExit -Command 'mios $Verb'`""
+        $sc.WorkingDirectory = $miosRoot
+        $sc.Description      = $Desc
+        $sc.WindowStyle      = 7
+        if ($iconPath) { $sc.IconLocation = "$iconPath,0" }
+        $sc.Save()
+    }
+    foreach ($v in $miosVerbs) {
+        $smPath = Join-Path $startMenuDir $v.File
+        & $writeVerbLnk $smPath $v.Verb $v.Desc
+        if ($desktopDir -and (Test-Path $desktopDir)) {
+            $dskPath = Join-Path $desktopDir $v.File
+            & $writeVerbLnk $dskPath $v.Verb $v.Desc
+        }
+    }
+    Write-Host "  [+] Per-verb shortcuts: $($miosVerbs.Count) Start Menu + $($miosVerbs.Count) Desktop entries staged." -ForegroundColor DarkGray
+    Write-Host "      Right-click any of them in Start to Pin to Start / Pin to Taskbar (Win11 dropped programmatic pinning)." -ForegroundColor DarkGray
+
     # AppUserModelID on both shortcuts so taskbar/Start group correctly.
     if (-not ('MiOS.NativeApp.Aumid' -as [type])) {
         Add-Type -TypeDefinition @'
@@ -1204,11 +1245,24 @@ namespace MiOS.NativeApp {
     if ('MiOS.NativeApp.Aumid' -as [type]) {
         try {
             $_aumid = Get-MiosTomlValue -Section 'apps' -Key 'aumid' -Default 'MiOS.Workstation'
-            [MiOS.NativeApp.Aumid]::Set($smLnk, $_aumid)
+            # Stamp AumID on the hub shortcut + every per-verb shortcut.
+            # All MiOS app windows then group under one taskbar / Start
+            # tile (so pinning the hub also covers the verbs).
+            $_allShortcuts = @($smLnk)
             if ($desktopDir -and (Test-Path "$desktopDir\MiOS.lnk")) {
-                [MiOS.NativeApp.Aumid]::Set("$desktopDir\MiOS.lnk", $_aumid)
+                $_allShortcuts += "$desktopDir\MiOS.lnk"
             }
-            Write-Host "  [+] AppUserModelID = $_aumid stamped on shortcuts." -ForegroundColor DarkGray
+            foreach ($v in $miosVerbs) {
+                $_smv = Join-Path $startMenuDir $v.File
+                if (Test-Path -LiteralPath $_smv) { $_allShortcuts += $_smv }
+                if ($desktopDir -and (Test-Path -LiteralPath (Join-Path $desktopDir $v.File))) {
+                    $_allShortcuts += (Join-Path $desktopDir $v.File)
+                }
+            }
+            foreach ($lnk in $_allShortcuts) {
+                try { [MiOS.NativeApp.Aumid]::Set($lnk, $_aumid) } catch {}
+            }
+            Write-Host "  [+] AppUserModelID = $_aumid stamped on $($_allShortcuts.Count) shortcuts (hub + per-verb)." -ForegroundColor DarkGray
         } catch {
             Write-Host "  [!] AppUserModelID stamp failed: $($_.Exception.Message)" -ForegroundColor Yellow
         }
