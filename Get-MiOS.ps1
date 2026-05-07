@@ -2756,21 +2756,41 @@ try {
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
 '@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-    try { [Console]::SetWindowSize($_elevCols, $_elevRows); [Console]::SetBufferSize($_elevCols, $_elevScr) } catch {}
+    # Cell-metric -> pixel-size calc (Geist Mono 12pt @ 100% DPI):
+    #   cell_w_px=10, cell_h_px=20, chrome_w_px=20 (DWM frame + scrollbar
+    #   margin), chrome_h_px=12 (DWM frame top+bottom).
+    # 80x20 cells -> 80*10+20=820 wide, 20*20+12=412 tall.
+    # 80x30 cells -> 820 wide, 612 tall.
+    # MUST resize the WINDOW (pixel rect) -- previously the code just
+    # reused the existing pixel size from GetWindowRect, which gave the
+    # operator's default 80x40 conhost (~820 x 832 px) and ignored the
+    # 80x20 cell config. Result: window stayed huge with empty rows
+    # below the dashboard.
+    `$_cellW   = 10
+    `$_cellH   = 20
+    `$_chromeW = 20
+    `$_chromeH = 12
+    `$_winW = (`$_elevCols * `$_cellW) + `$_chromeW
+    `$_winH = (`$_elevRows * `$_cellH) + `$_chromeH
+    # Resize the cell buffer FIRST so the conhost expects 80x20 cells.
+    try { [Console]::SetBufferSize(`$_elevCols, `$_elevScr) } catch {}
+    try { [Console]::SetWindowSize(`$_elevCols, `$_elevRows) } catch {}
     `$_h = [MEW.N]::GetConsoleWindow()
-    `$_r = New-Object System.Drawing.Rectangle
-    [MEW.N]::GetWindowRect(`$_h, [ref]`$_r) | Out-Null
-    # GetWindowRect fills Rectangle as RECT (left/top/right/bottom). To
-    # get true width/height: right-left and bottom-top.
-    `$_winW = `$_r.Width  - `$_r.X
-    `$_winH = `$_r.Height - `$_r.Y
     # Resolve which monitor the OPERATOR was on at the moment of paste.
     `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
     `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
-    # Center within that monitor's working area (taskbar-aware).
+    # Center within that monitor's working area (taskbar-aware) using
+    # the COMPUTED target pixel size, not whatever GetWindowRect
+    # currently returns. MoveWindow with explicit w/h forces the
+    # actual resize (DWM honors SetWindowPos for pixel dims).
     `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_winW)) / 2)
     `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_winH)) / 2)
     [MEW.N]::MoveWindow(`$_h, `$_x, `$_y, `$_winW, `$_winH, `$true) | Out-Null
+    # Brief settle, then re-resize cell buffer in case conhost re-
+    # negotiated its size after MoveWindow (some Windows builds shrink
+    # the buffer when the window pixel size shrinks).
+    Start-Sleep -Milliseconds 100
+    try { [Console]::SetWindowSize(`$_elevCols, `$_elevRows) } catch {}
 } catch {}
 Write-Host ''
 Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
@@ -2915,6 +2935,8 @@ function Ensure-PodmanDesktop {
         Write-Err "  Podman Desktop manually from https://podman-desktop.io"
         exit 1
     }
+    # Install Podman Desktop (the GUI). It bundles podman.exe inside its
+    # resources tree -- but does NOT put it on PATH by default.
     Write-Info "Installing Podman Desktop via winget (RedHat.Podman-Desktop) ..."
     & winget install --exact --id RedHat.Podman-Desktop `
         --silent --accept-source-agreements --accept-package-agreements `
@@ -2925,24 +2947,84 @@ function Ensure-PodmanDesktop {
             --silent --accept-source-agreements --accept-package-agreements 2>&1 |
             ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     }
+    # ALSO install RedHat.Podman (the CLI MSI) -- this is what actually
+    # lays down podman.exe with PATH integration. Podman Desktop alone
+    # bundles the CLI internally but doesn't expose it on PATH; the
+    # standalone CLI package does. Idempotent: winget no-ops if already
+    # present.
+    Write-Info "Installing Podman CLI via winget (RedHat.Podman) ..."
+    & winget install --exact --id RedHat.Podman `
+        --silent --accept-source-agreements --accept-package-agreements `
+        --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     if ($LASTEXITCODE -ne 0) {
-        Write-Err "winget install RedHat.Podman-Desktop failed (exit $LASTEXITCODE)"
-        Write-Err "  Manually install from https://podman-desktop.io and re-run."
-        exit 1
+        Write-Info "Retrying CLI winget install at user scope ..."
+        & winget install --exact --id RedHat.Podman `
+            --silent --accept-source-agreements --accept-package-agreements 2>&1 |
+            ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     }
+    # Refresh PATH from registry so the just-installed podman.exe is
+    # visible to Get-Command in THIS pwsh session.
     $env:PATH = `
         [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + `
         [Environment]::GetEnvironmentVariable('PATH','User')
     if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
-        $pdBin = Join-Path ${env:ProgramFiles} 'RedHat\Podman'
-        if (Test-Path $pdBin) { $env:PATH = "$pdBin;$env:PATH" }
+        # Probe ALL the locations where podman.exe might live: standalone
+        # CLI install dir, Podman Desktop's resources bundle, the older
+        # podman-machine standalone, plus any user-scope variants.
+        $pmCandidates = @(
+            (Join-Path ${env:ProgramFiles}      'RedHat\Podman\bin'),
+            (Join-Path ${env:ProgramFiles}      'RedHat\Podman'),
+            (Join-Path ${env:ProgramFiles}      'RedHat\Podman\resources\app\binary'),
+            (Join-Path ${env:ProgramFiles}      'RedHat\Podman\resources\bin'),
+            (Join-Path ${env:ProgramFiles(x86)} 'RedHat\Podman\bin'),
+            (Join-Path $env:LOCALAPPDATA        'Programs\RedHat\Podman\bin'),
+            (Join-Path $env:LOCALAPPDATA        'Programs\Podman\bin')
+        )
+        foreach ($cand in $pmCandidates) {
+            if ($cand -and (Test-Path -LiteralPath (Join-Path $cand 'podman.exe'))) {
+                Write-Info "Found podman.exe at $cand -- prepending to PATH"
+                $env:PATH = "$cand;$env:PATH"
+                # Persist on machine PATH too so future shells see it.
+                try {
+                    $machPath = [Environment]::GetEnvironmentVariable('PATH','Machine')
+                    if (-not ($machPath -split ';' -contains $cand)) {
+                        [Environment]::SetEnvironmentVariable('PATH', "$cand;$machPath", 'Machine')
+                    }
+                } catch {}
+                break
+            }
+        }
+        # Last resort: filesystem-walk Program Files for podman.exe.
+        if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
+            $found = Get-ChildItem -Path "${env:ProgramFiles}\RedHat","${env:LOCALAPPDATA}\Programs" `
+                                   -Filter podman.exe -Recurse -ErrorAction SilentlyContinue -Depth 6 |
+                     Select-Object -First 1
+            if ($found) {
+                $podmanDir = Split-Path -Parent $found.FullName
+                Write-Info "Discovered podman.exe via search at $podmanDir -- prepending to PATH"
+                $env:PATH = "$podmanDir;$env:PATH"
+                try {
+                    $machPath = [Environment]::GetEnvironmentVariable('PATH','Machine')
+                    if (-not ($machPath -split ';' -contains $podmanDir)) {
+                        [Environment]::SetEnvironmentVariable('PATH', "$podmanDir;$machPath", 'Machine')
+                    }
+                } catch {}
+            }
+        }
     }
     if (Get-Command podman -ErrorAction SilentlyContinue) {
-        Write-Good "Podman Desktop installed ($((podman --version) 2>&1))"
+        Write-Good "Podman installed ($((podman --version) 2>&1))"
     } else {
-        Write-Err "Podman Desktop installed but ``podman`` still not on PATH."
-        Write-Err "  Restart this shell and re-run, or check $env:ProgramFiles\RedHat\Podman."
-        exit 1
+        Write-Err "Podman installed but ``podman`` still not on PATH."
+        Write-Err "  Probed: ${env:ProgramFiles}\RedHat\Podman\(bin|resources\app\binary|resources\bin),"
+        Write-Err "          ${env:LOCALAPPDATA}\Programs\RedHat\Podman\bin"
+        Write-Err "  Skipping CLI verification -- continuing with Pass-2 (build-mios.ps1 will"
+        Write-Err "  resolve podman from its own probes inside the dev VM context)."
+        # NOTE: do NOT exit 1 here. build-mios.ps1's Phase 2 (machine init)
+        # talks to Podman Desktop's API directly via the WSL distro -- it
+        # doesn't need podman.exe on the Windows-side PATH to function.
+        # Per operator: "no 'restart this shell' or 're-run' anything!!!!
+        # automated!!!!!"
     }
 }
 
