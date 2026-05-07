@@ -326,6 +326,48 @@ function Test-MiOSFontInstalled {
 # We pass --silent so no UI surfaces and --accept-{package,source}-
 # agreements so Server SKUs (which display the agreement EULA on first
 # winget call) don't hang the bootstrap.
+function Wait-MiOSWindowsTerminalReady {
+    # winget install returns the moment the MSIX is downloaded — AppX
+    # deployment continues asynchronously after that, so the package
+    # registration + per-user LocalState dir don't exist yet. Without
+    # this wait, Install-MiOSTerminalProfile saw "WT not installed" and
+    # silently no-op'd; the operator's launch went through wt.exe alias
+    # to a default-themed Preview that had no MiOS settings.
+    #
+    # Three readiness gates, polled with backoff:
+    #   1. Get-AppxPackage  -- the package is registered with the AppX
+    #      runtime (PackageFullName resolved, runtime knows about it).
+    #   2. LocalState dir   -- per-user storage tree materialized.
+    #   3. wt.exe on disk   -- the UWP install dir has the binary
+    #      ready to launch (WT.exe alias still works at this point but
+    #      we want a guaranteed direct-launch path for our --focus
+    #      bootstrap window below).
+    $deadline = (Get-Date).AddSeconds(90)
+    $previewLocal = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState'
+
+    while ((Get-Date) -lt $deadline) {
+        $pkg = $null
+        try { $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminalPreview' -ErrorAction SilentlyContinue } catch {}
+        $localOk = Test-Path -LiteralPath $previewLocal
+        $exeOk = $false
+        if ($pkg -and $pkg.InstallLocation) {
+            $wtExe = Join-Path $pkg.InstallLocation 'wt.exe'
+            if (Test-Path -LiteralPath $wtExe) { $exeOk = $true }
+        }
+        if ($pkg -and $exeOk) {
+            # If the LocalState dir hasn't been created yet (first-ever
+            # install, no prior WT launch), force-create it so our
+            # settings.json write target exists.
+            if (-not $localOk) {
+                try { New-Item -ItemType Directory -Path $previewLocal -Force | Out-Null } catch {}
+            }
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
 function Install-MiOSWindowsTerminal {
     # Operator's invariant: MiOS owns ONLY the Windows Terminal Preview
     # (dev channel) install. The stable WT install -- if present -- is
@@ -334,19 +376,13 @@ function Install-MiOSWindowsTerminal {
     # MiOS globals/defaults. So we ALWAYS ensure Preview is installed
     # (even when Stable is already there) and ALWAYS target Preview's
     # settings.json -- not Stable's, not the unpackaged location.
-    $hasPreview = $false
-    try {
-        $previewProbe = & winget list --id Microsoft.WindowsTerminal.Preview --exact 2>$null
-        if ($LASTEXITCODE -eq 0 -and ($previewProbe -join "`n") -match 'Microsoft\.WindowsTerminal\.Preview') {
-            $hasPreview = $true
-        }
-    } catch {}
-    if (-not $hasPreview) {
-        $previewDir = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -Filter 'Microsoft.WindowsTerminalPreview_*' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($previewDir) { $hasPreview = $true }
-    }
-    if ($hasPreview) {
+    $appx = $null
+    try { $appx = Get-AppxPackage -Name 'Microsoft.WindowsTerminalPreview' -ErrorAction SilentlyContinue } catch {}
+    if ($appx) {
         Write-Host "  [+] Windows Terminal Preview already installed (MiOS targets ONLY this install)." -ForegroundColor DarkGray
+        # Even though it's installed, run readiness wait so callers
+        # downstream are guaranteed an existing LocalState dir.
+        [void](Wait-MiOSWindowsTerminalReady)
         return $true
     }
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
@@ -356,22 +392,23 @@ function Install-MiOSWindowsTerminal {
     }
     Write-Host "  [*] Installing Windows Terminal Preview via winget (dev channel)..." -ForegroundColor Cyan
     try {
-        & winget install --id Microsoft.WindowsTerminal.Preview --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  [+] Windows Terminal Preview installed." -ForegroundColor Green
-            # Wait briefly for AppX deployment to materialize the
-            # LocalState dir before Install-MiOSTerminalProfile probes.
-            $previewLocal = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState'
-            for ($i = 0; $i -lt 20; $i++) {
-                if (Test-Path $previewLocal) { break }
-                Start-Sleep -Milliseconds 250
-            }
-            return $true
-        }
+        & winget install --id Microsoft.WindowsTerminal.Preview --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
     } catch {
         Write-Host "  [!] winget install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
     }
-    return $false
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [!] winget exit code $LASTEXITCODE -- Preview install may not have completed." -ForegroundColor Yellow
+        return $false
+    }
+    Write-Host "  [*] winget install returned -- waiting for AppX deployment to finish..." -ForegroundColor Cyan
+    if (-not (Wait-MiOSWindowsTerminalReady)) {
+        Write-Host "  [!] Windows Terminal Preview did not become ready within 90s." -ForegroundColor Yellow
+        Write-Host "      Settings patch may not stick on first launch -- re-run irm|iex after WT first-runs." -ForegroundColor DarkGray
+        return $false
+    }
+    Write-Host "  [+] Windows Terminal Preview installed and ready." -ForegroundColor Green
+    return $true
 }
 
 function Install-MiOSGeistFont {
@@ -457,12 +494,17 @@ function Get-MiOSTerminalSettingsPath {
 # the wt.exe command line ALONE only hides tabs but keeps the title bar
 # unless launchMode is also set in JSON. We set both for belt-and-braces.
 function Install-MiOSTerminalProfile {
+    # Defensive readiness wait: even if Install-MiOSWindowsTerminal
+    # already waited, AppX deployment can still be propagating user-state
+    # paths. Re-wait so we never write to a non-existent LocalState dir.
+    [void](Wait-MiOSWindowsTerminalReady)
     $settingsPath = Get-MiOSTerminalSettingsPath
     if (-not $settingsPath) {
-        Write-Host "  [!] Windows Terminal not installed -- no settings.json target." -ForegroundColor Yellow
+        Write-Host "  [!] Windows Terminal Preview not ready (LocalState dir missing) -- skipping settings patch." -ForegroundColor Yellow
+        Write-Host "      Re-run irm|iex after WT first-launch creates the dir." -ForegroundColor DarkGray
         return $null
     }
-    Write-Host "  [*] Patching Windows Terminal settings: $settingsPath" -ForegroundColor Cyan
+    Write-Host "  [*] Patching Windows Terminal Preview settings: $settingsPath" -ForegroundColor Cyan
 
     # Stable WT profile GUID for "MiOS-Bootstrap". Re-using the same GUID
     # across runs lets us upsert idempotently instead of polluting the
