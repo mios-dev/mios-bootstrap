@@ -1575,15 +1575,16 @@ if (`$true) {
     # properly in WT (conhost / VS Code embedded shell mangles it).
     function Show-MiosDashboard {
         param([string]`$ConfigPath, [string]`$LogoPath)
-        # Adaptive frame width: cap at 80 cols (the canonical MiOS
-        # terminal size) but back off 1 char from the live console
-        # width so the right-edge ╮/╯ never wraps to the next line.
-        # WT counts the scrollbar as a column even when --focus mode
-        # hides it, so an exact-80-char line in an "80-col" window
-        # actually wraps -- the operator catches this as "frame is
-        # 1 character too wide".
+        # Adaptive frame width: cap at 78 cols and back off 2 from
+        # the live console width so the right-edge ╮/╯ never wraps.
+        # WT counts the scrollbar AND its cell-rounding margin as
+        # columns even when --focus mode hides them, so a "WindowWidth"
+        # of 80 may have only 78 truly safe cells. Two chars of
+        # slack on each row guarantees the frame fits in any WT
+        # config (focus mode, scrollbar visible, fractional cell
+        # rendering with non-monospace-perfect Nerd Font glyphs).
         `$consoleW = try { [Console]::WindowWidth } catch { 80 }
-        `$WIDTH = [math]::Min(80, [math]::Max(40, `$consoleW - 1))
+        `$WIDTH = [math]::Min(78, [math]::Max(40, `$consoleW - 2))
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
 
