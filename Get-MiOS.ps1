@@ -265,9 +265,15 @@ function Get-MiosTomlValue {
                     $n = 0
                     if ([int]::TryParse($it, [ref]$n)) { $coerced += $n } else { return $Default }
                 }
-                return ,$coerced
+                # Return without unary-comma wrapper -- callers collect via
+                # @(Get-MiosTomlValue ...) which collects the pipeline-
+                # unrolled int sequence into a fresh array. With the
+                # unary-comma wrapper, @() got @(@(0,5,15,30)) -- a 1-
+                # element array containing the int array -- and
+                # $delays[0] = @(0,5,15,30) blew up Start-Sleep -Seconds.
+                return $coerced
             }
-            return ,$items
+            return $items
         }
         return $Default
     }
@@ -2769,12 +2775,23 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     $_cursorPre = try { [System.Windows.Forms.Cursor]::Position } catch { New-Object System.Drawing.Point 100,100 }
     $_curX = $_cursorPre.X
     $_curY = $_cursorPre.Y
-    # Lift terminal dims from mios.toml [terminal]. Vendor defaults
-    # (80x30 + 9000-row scrollback) match the operator-defined MiOS
-    # default. Frame width = cols-1 for borderless fit.
-    $_elevCols = Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80
-    $_elevRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 20
-    $_elevScr  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
+    # Lift terminal dims + cell metrics from mios.toml. Vendor defaults
+    # match the 80x20 portal-feel MiOS terminal. Compute target pixel
+    # dims HERE (in outer scope) so the values bake as literal integers
+    # into the rendered inner cmd -- the inner pwsh process has no
+    # access to outer-scope variables (it's a fresh pwsh.exe spawn via
+    # Start-Process), so anything we want it to "know" must be
+    # interpolated at template-build time.
+    $_elevCols = Get-MiosTomlValue -Section 'terminal'   -Key 'cols'            -Default 80
+    $_elevRows = Get-MiosTomlValue -Section 'terminal'   -Key 'rows'            -Default 20
+    $_elevScr  = Get-MiosTomlValue -Section 'terminal'   -Key 'scrollback_rows' -Default 9000
+    $_cellW    = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px'       -Default 10
+    $_cellH    = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px'       -Default 20
+    $_chromeW  = Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px'     -Default 20
+    $_chromeH  = Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px'     -Default 12
+    # Pixel target -- 80x20 cells * 10x20 px + 20x12 chrome = 820x412 px.
+    $_winWPx   = ($_elevCols * $_cellW) + $_chromeW
+    $_winHPx   = ($_elevRows * $_cellH) + $_chromeH
     $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
     $_innerCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'

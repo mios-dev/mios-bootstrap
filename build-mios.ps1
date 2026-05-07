@@ -126,9 +126,15 @@ function Get-MiosTomlValue {
                     $n = 0
                     if ([int]::TryParse($it, [ref]$n)) { $coerced += $n } else { return $Default }
                 }
-                return ,$coerced
+                # Return without unary-comma -- callers do `@(Get-Mios...)`
+                # which collects pipeline-unrolled ints into an array.
+                # With `,$coerced` the result was @(@(0,5,15,30)) -- a
+                # 1-element array, so $delays[0] was the array itself,
+                # crashing Start-Sleep -Seconds with "cannot convert
+                # System.Object[] to System.Double".
+                return $coerced
             }
-            return ,$items
+            return $items
         }
         return $Default
     }
