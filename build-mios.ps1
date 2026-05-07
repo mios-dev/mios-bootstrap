@@ -4967,38 +4967,30 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if ($hwnd -ne [IntPtr]::Zero) {
-    # Native borderless via SetWindowLongPtrW. Strip WS_CAPTION
-    # (0x00C00000) + WS_THICKFRAME (0x00040000) + WS_DLGFRAME
-    # (0x00400000) + WS_BORDER (0x00800000) = 0x00CE0000 mask.
-    try {
-        Add-Type -Namespace "MiOSLaunch.Native" -Name "Style" -MemberDefinition @"
-[System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint="GetWindowLongPtrW", SetLastError=true)]
-public static extern System.IntPtr GetWindowLongPtr(System.IntPtr hWnd, int nIndex);
-[System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint="SetWindowLongPtrW", SetLastError=true)]
-public static extern System.IntPtr SetWindowLongPtr(System.IntPtr hWnd, int nIndex, System.IntPtr dwNewLong);
-"@
-    } catch {}
-    $GWL_STYLE = -16
-    $stripMask = 0x00CE0000
-    try {
-        $cur = [MiOSLaunch.Native.Style]::GetWindowLongPtr($hwnd, $GWL_STYLE)
-        $newStyle = [IntPtr]::new([int64]$cur -band -bnot $stripMask)
-        [void][MiOSLaunch.Native.Style]::SetWindowLongPtr($hwnd, $GWL_STYLE, $newStyle)
-    } catch {}
+    # NO frame-style strip -- DWM acrylic compositor needs WS_THICKFRAME
+    # / WS_CAPTION to allocate the per-window swap chain that backs the
+    # blur surface. Stripping them was killing acrylic. WT's --focus +
+    # padding=0 + suppressApplicationTitle deliver the closest-to-
+    # frameless WT can do while keeping acrylic alive.
 
-    $rect = New-Object MiOSLaunch.Native.Win+RECT
-    if ([MiOSLaunch.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) {
-        $rw = $rect.Right - $rect.Left
-        $rh = $rect.Bottom - $rect.Top
-        if ($rw -gt 0 -and $rh -gt 0) {
-            $cx = [int]($work.X + ($work.Width  - $rw) / 2)
-            $cy = [int]($work.Y + ($work.Height - $rh) / 2)
-            # Pin always-on-top + force frame redraw after style strip.
-            # HWND_TOPMOST = -1, SWP_SHOWWINDOW = 0x40, SWP_FRAMECHANGED = 0x20.
-            $topmost = [IntPtr]::new(-1)
-            [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, $topmost, $cx, $cy, $rw, $rh, 0x60)
-            [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, $rw, $rh, 0x24)
+    # Retry-loop center: WT in focus mode often re-positions itself
+    # to its remembered location AFTER our first SetWindowPos. Three
+    # spaced-out moves stick where one doesn't.
+    $topmost = [IntPtr]::new(-1)
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        $rect = New-Object MiOSLaunch.Native.Win+RECT
+        if ([MiOSLaunch.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) {
+            $rw = $rect.Right - $rect.Left
+            $rh = $rect.Bottom - $rect.Top
+            if ($rw -gt 0 -and $rh -gt 0) {
+                $cx = [int]($work.X + ($work.Width  - $rw) / 2)
+                $cy = [int]($work.Y + ($work.Height - $rh) / 2)
+                # HWND_TOPMOST + SWP_SHOWWINDOW = 0x40.
+                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, $topmost, $cx, $cy, $rw, $rh, 0x40)
+                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, $rw, $rh, 0x04)
+            }
         }
+        Start-Sleep -Milliseconds 350
     }
 }
 '@
