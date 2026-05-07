@@ -2510,9 +2510,44 @@ Write-Host '  Press Enter to close...' -ForegroundColor DarkGray -NoNewline
         # The once-per-session guard ($Global:MiosProfileLoaded) keeps
         # the profile from rendering twice when WT also fires it.
         $shellArgs = @('-NoLogo','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand', $innerEncoded)
+
+        # Per operator: "irm|iex mios.bat entry should already have the
+        # MiOS app installed with it's dashboard, theme, color palette
+        # and EVERYTHING already setup--so it should actually open the
+        # MiOS themed terminal window for the installation and build
+        # processes!!".
+        # Pass 1 above already installed the WT MiOS profile (acrylic +
+        # MiOS scheme + GeistMono Nerd Font + scrollbar hidden + mios.ps1
+        # commandline). Launch Pass-2 elevated INSIDE that profile via
+        # `wt.exe new-window --profile MiOS pwsh ...` so the operator
+        # gets the full MiOS terminal experience -- not a bare conhost
+        # window. The MiOS profile body still auto-loads via $PROFILE
+        # redirector inside the spawned pwsh, so oh-my-posh + dashboard
+        # render automatically.
+        $wtCmd = Get-Command wt.exe -ErrorAction SilentlyContinue
         try {
-            Start-Process -FilePath $shell -ArgumentList $shellArgs -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
-            Write-Host '  [+] Elevated bootstrap window opened. Continuing the install there.' -ForegroundColor Green
+            if ($wtCmd) {
+                # WT supports -Verb RunAs at the wt.exe level (the
+                # entire WT session runs elevated; the MiOS profile
+                # opens in that session).
+                $wtArgs = @(
+                    'new-window',
+                    '--profile', 'MiOS',
+                    $shell, '-NoLogo', '-ExecutionPolicy', 'Bypass',
+                    '-NoExit', '-EncodedCommand', $innerEncoded
+                )
+                Start-Process -FilePath $wtCmd.Source -ArgumentList $wtArgs `
+                    -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
+                Write-Host '  [+] Elevated MiOS terminal opened (WT --profile MiOS). Continuing the install there.' -ForegroundColor Green
+            } else {
+                # No wt.exe -- fall back to bare pwsh elevation. The
+                # operator's default terminal host (conhost or WT) will
+                # decide; either way the MiOS profile body still loads
+                # in-process so oh-my-posh + dashboard appear.
+                Start-Process -FilePath $shell -ArgumentList $shellArgs `
+                    -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
+                Write-Host '  [+] Elevated bootstrap window opened. Continuing the install there.' -ForegroundColor Green
+            }
         } catch {
             Write-Host "  [!] Self-elevation failed: $($_.Exception.Message)" -ForegroundColor Red
             Write-Host '      Open an elevated PowerShell manually and re-run:' -ForegroundColor DarkGray
