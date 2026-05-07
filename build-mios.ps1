@@ -674,7 +674,7 @@ function Write-Log {
 }
 
 # ── Dashboard state ───────────────────────────────────────────────────────────
-$script:DW         = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 1), 79))
+$script:DW         = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 2), 78))
 # Per the self-replication architecture, the Windows side (BootstrapOnly,
 # the default for irm | iex entry) does ONLY:
 #   ack -> hardware/env probe -> minimal mios-bootstrap clone ->
@@ -1126,10 +1126,15 @@ function End-Phase([int]$i, [switch]$Fail, [switch]$Warn) {
 }
 
 function Show-MiosProgressBar {
-    # Linear log-mode progress bar. Counts COMPLETED phases (PhStat
-    # entries >= 2 i.e. OK/FAIL/WARN). Renders a 50-cell bar with
-    # operator-blue filled + dim unfilled cells, plus N/Total +
-    # percentage. Fits within the 80-col MiOS terminal.
+    # Progress bar. Two modes:
+    #   default        -- inline: prints a row of bar + counters that
+    #                     scrolls with the log.
+    #   -Pin           -- pinned: ANSI cursor save / goto last visible
+    #                     row / clear / write bar / cursor restore.
+    #                     Uses [Console]::SetCursorPosition with
+    #                     belt-and-braces try/catch so non-WT hosts
+    #                     fall through to the inline form.
+    param([switch]$Pin)
     if (-not $script:PhStat) { return }
     $done = [int]($script:PhStat | Where-Object { $_ -ge 2 } | Measure-Object).Count
     $total = [int]$script:TotalPhases
@@ -1141,6 +1146,29 @@ function Show-MiosProgressBar {
     if ($filled -gt $barW) { $filled = $barW }
     $bar = ("█" * $filled) + ("░" * ($barW - $filled))
     $text = "  [$bar] $done/$total ($pct%)"
+
+    if ($Pin) {
+        try {
+            $bH = [Console]::WindowHeight
+            $bW = [Console]::WindowWidth
+            $bufH = [Console]::BufferHeight
+            $cursorTop = [Console]::CursorTop
+            $cursorLeft = [Console]::CursorLeft
+            $bottomRow = [math]::Min($bufH - 1, $cursorTop + ($bH - ($cursorTop - [Console]::WindowTop) - 1))
+            # Use ANSI escapes -- save cursor, position at bottom row
+            # col 0, clear-to-end-of-line, write bar, restore cursor.
+            # WT supports these natively; conhost fallback uses \e[ codes
+            # too but with less reliable cursor save/restore.
+            $esc = [char]27
+            $padded = $text.PadRight($bW - 1)
+            if ($padded.Length -gt $bW - 1) { $padded = $padded.Substring(0, $bW - 1) }
+            [Console]::Out.Write("${esc}7${esc}[${bottomRow};1H${esc}[2K$padded${esc}8")
+            [Console]::Out.Flush()
+            return
+        } catch {
+            # Fall through to inline below.
+        }
+    }
     Write-Host $text -ForegroundColor Cyan
 }
 
@@ -1149,27 +1177,47 @@ function Show-MiosProgressBar {
 # Print at most once per 2 seconds OR on a substantially-changed step.
 $script:LastStepLogTime = [datetime]::MinValue
 $script:LastStepLogText = ""
+function _TruncToWidth {
+    # Shorten a string to fit within $maxW visible chars. Long Windows
+    # paths like "C:\Users\Administrator\AppData\Local\MiOS\repo\..."
+    # get middle-elided to keep both ends visible:
+    #   "C:\...\MiOS\repo\subdir\file.ext"
+    # Falls back to simple tail truncation with "…" for non-paths.
+    param([string]$S, [int]$MaxW = 78)
+    if ($S.Length -le $MaxW) { return $S }
+    # Path-aware: middle-elide if the string contains backslashes.
+    if ($S -match '\\' -and $S.Length -gt 30) {
+        $left  = $S.Substring(0, [int]($MaxW * 0.4))
+        $right = $S.Substring($S.Length - [int]($MaxW * 0.5))
+        $cand  = "$left…$right"
+        if ($cand.Length -le $MaxW) { return $cand }
+    }
+    return $S.Substring(0, $MaxW - 1) + '…'
+}
+
 function Set-Step([string]$T) {
     $script:CurStep = $T
     Write-Log "step: $T"
     if ($script:DashboardMode -eq 'log') {
-        # Skip the console echo for WARN:/FAIL: messages -- Write-Log
-        # already mirrors those to console in WARN/ERROR mode (see
-        # the WARN/ERROR branch in Write-Log). Without this skip the
-        # operator saw EVERY warning twice: once from Write-Log's
-        # `[HH:MM:SS.fff][WARN] warn ...` line, then again from this
-        # function's `  [HH:MM:SS]  WARN: ...` indented form.
-        if ($T -match '^(WARN|FAIL):') { return }
+        # Skip console echo for WARN:/FAIL: -- Write-Log already
+        # mirrored those.
+        if ($T -match '^(WARN|FAIL):') { Show-MiosProgressBar -Pin; return }
         $now = [datetime]::Now
         $clean = ($T -replace '\s+', ' ').Trim()
         $secsSince = ($now - $script:LastStepLogTime).TotalSeconds
         $isFirst   = ($script:LastStepLogTime -eq [datetime]::MinValue)
         if ($isFirst -or $secsSince -ge 2 -or $clean -ne $script:LastStepLogText) {
             $ts = $now.ToString("HH:mm:ss")
+            # Truncate long paths so the line fits in the 80-col window
+            # without wrapping. "  [HH:MM:SS]  " prefix is 14 chars,
+            # leaving 66 chars for content in a 80-col terminal.
+            $maxContent = $script:DW - 14
+            $clean = _TruncToWidth -S $clean -MaxW $maxContent
             Write-Host "  [$ts]  $clean" -ForegroundColor DarkGray
             $script:LastStepLogTime = $now
             $script:LastStepLogText = $clean
         }
+        Show-MiosProgressBar -Pin
     } else {
         Show-Dashboard
     }
@@ -5329,7 +5377,7 @@ try {
 # load-time resize failed but THIS one succeeded, the original $DW (set
 # from a wider parent terminal) would still drive the dashboard at the
 # wrong width. Re-reading WindowWidth here closes that gap.
-$script:DW = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 1), 79))
+$script:DW = [math]::Max(66, [math]::Min(([Console]::WindowWidth - 2), 78))
 
 Show-Dashboard   # draw initial (all phases pending)
 
