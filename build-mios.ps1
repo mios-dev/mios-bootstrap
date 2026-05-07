@@ -6106,14 +6106,45 @@ if ($activeDistro) {
     # PSNativeCommandUseErrorActionPreference=$true), either of those
     # throws straight to the outer FATAL handler. The actual install
     # success is checked via $LASTEXITCODE below.
-    # Layered tooling: build essentials (mkpasswd / openssl / passlib / bootc /
-    # git / iptables / nftables) PLUS the MiOS terminal experience tooling
-    # (fastfetch for the dashboard, oh-my-posh for the themed prompt,
-    # bash-completion for tab-complete, ncurses + util-linux for general
-    # interactive shell ergonomics). Per operator: every MiOS terminal
-    # window must look like MiOS the moment it opens, even before the
-    # bootc switch at end-of-build delivers the full image.
-    $miosEssentials = 'mkpasswd whois openssl python3-passlib bootc git iptables nftables fastfetch oh-my-posh bash-completion'
+    # SSOT: dev VM essentials list comes from mios.toml
+    # [packages.dev_vm_essentials] pkgs = [...]. Per operator
+    # "ALL Global packages SOURCE FROM THE TOML/HTML FILE!!!" --
+    # the bootstrap reads from M:\usr\share\mios\mios.toml at
+    # install time rather than hardcoding the list here. Phase 2
+    # already overlaid mios.git onto M:\ so the toml is present.
+    # Fallback to a minimal hardcoded set if parsing fails.
+    $devVmTomlPath = Join-Path $script:MiosRepoDir 'usr\share\mios\mios.toml'
+    if (-not (Test-Path -LiteralPath $devVmTomlPath)) {
+        # mios-bootstrap layout: try the C:\MiOS overlay path too.
+        $devVmTomlPath = Join-Path 'M:\' 'usr\share\mios\mios.toml'
+    }
+    $miosEssentials = ''
+    if (Test-Path -LiteralPath $devVmTomlPath) {
+        try {
+            $tomlText = Get-Content -LiteralPath $devVmTomlPath -Raw -ErrorAction Stop
+            $rx = '(?ms)^\[packages\.dev_vm_essentials\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
+            $m  = [regex]::Match($tomlText, $rx)
+            if ($m.Success) {
+                $pkgs = @(
+                    $m.Groups['list'].Value -split ',' |
+                    ForEach-Object {
+                        $s = ($_ -replace '#.*$', '').Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
+                        if ($s) { $s }
+                    }
+                )
+                if ($pkgs.Count -gt 0) {
+                    $miosEssentials = ($pkgs -join ' ')
+                    Log-Ok "Sourced $($pkgs.Count) dev-VM essentials from mios.toml [packages.dev_vm_essentials]"
+                }
+            }
+        } catch {
+            Log-Warn "Failed to parse mios.toml for [packages.dev_vm_essentials]: $($_.Exception.Message)"
+        }
+    }
+    if (-not $miosEssentials) {
+        $miosEssentials = 'mkpasswd whois openssl python3-passlib bootc git iptables nftables fastfetch oh-my-posh bash-completion'
+        Log-Warn "Using fallback dev-VM essentials list (mios.toml [packages.dev_vm_essentials] not found / unparseable)"
+    }
     $essentialsRc = -1
     & {
         $ErrorActionPreference = 'Continue'

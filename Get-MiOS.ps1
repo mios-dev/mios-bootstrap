@@ -1459,31 +1459,58 @@ foreach ($mod in $psModules) {
         Write-Host "  [!] winget not available; skipping CLI extras." -ForegroundColor Yellow
         return
     }
-    # Per operator: install EVERYTHING a fresh Windows host needs to run
-    # MiOS-DEV end-to-end. Critical runtime/toolchain that Pass 2 +
-    # podman + WSL2 + build-mios.ps1 depend on PLUS the MiOS terminal
-    # CLI surface that mirrors the deployed Linux side. No bloat (no
-    # browser / editor / utility GUIs -- those don't belong in the
-    # bootstrap, the operator brings their own).
-    $wingetTools = @(
-        # ── Critical runtime / toolchain ─────────────────────────────────────
-        'Git.Git',                   # git clone + fetch + reset (Pass 2 needs)
-        'Microsoft.PowerShell',      # pwsh 7 (trampoline + Pass-2 host)
-        'Microsoft.WSL',             # Windows Subsystem for Linux 2
-        'Microsoft.WindowsTerminal', # WT (also Step 1; idempotent)
-        '7zip.7zip',                 # archive support (.7z, .tar.zst, .xz)
-        'Microsoft.VCRedist.2015+.x64', # VC++ runtime
-
-        # ── MiOS terminal CLI surface ────────────────────────────────────────
-        'sharkdp.bat',               # syntax-highlighted cat
-        'sharkdp.fd',                # fast find
-        'BurntSushi.ripgrep.MSVC',   # rg
-        'junegunn.fzf',              # fuzzy finder
-        'jqlang.jq',                 # JSON query
-        'GitHub.cli',                # gh
-        'aristocratos.btop4win',     # btop (Windows port)
-        'fastfetch-cli.fastfetch'    # fastfetch (also Step 4/6; idempotent)
-    )
+    # SSOT: package list comes from mios.git's
+    # /usr/share/mios/mios.toml [packages.windows] pkgs = [...].
+    # Per operator "ALL Global packages SOURCE FROM THE TOML/HTML
+    # FILE!!!" -- the bootstrap reads from the toml at install time
+    # rather than hardcoding the list here. M:\ doesn't exist in
+    # Pass 1 yet (Pass 2 provisions it), so fetch the toml directly
+    # from origin via cache-busted irm.
+    #
+    # Fallback hardcoded list ONLY if the fetch fails (network blip /
+    # toml parse error). Fallback is intentionally minimal -- just
+    # the runtime/toolchain that Pass 2 absolutely needs to proceed;
+    # the operator can re-run after their network is back to pick
+    # up the full set from the toml.
+    $wingetTools = @()
+    $tomlFetchOk = $false
+    try {
+        $cb       = [int][double]::Parse((Get-Date -UFormat %s))
+        $tomlUrl  = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/mios.toml?cb=$cb"
+        $tomlText = Invoke-RestMethod -Uri $tomlUrl `
+            -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } `
+            -ErrorAction Stop
+        # Regex-extract `[packages.windows] ... pkgs = [ ... ]`. Multiline
+        # DOTALL across the TOML section. Stop at the next `[section]`
+        # header so we don't accidentally swallow [packages.dev_vm_essentials]
+        # right below.
+        $rx = '(?ms)^\[packages\.windows\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
+        $m  = [regex]::Match($tomlText, $rx)
+        if ($m.Success) {
+            $list = $m.Groups['list'].Value
+            $wingetTools = @(
+                $list -split ',' |
+                ForEach-Object {
+                    # Strip TOML inline comments + surrounding quotes + whitespace.
+                    $s = ($_ -replace '#.*$', '').Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
+                    if ($s) { $s }
+                }
+            )
+            if ($wingetTools.Count -gt 0) { $tomlFetchOk = $true }
+        }
+    } catch {
+        Write-Host "  [!] Failed to fetch [packages.windows] from mios.toml: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "      Falling back to a minimal hardcoded set; re-run after fixing the network for the full SSOT list." -ForegroundColor DarkGray
+    }
+    if (-not $tomlFetchOk) {
+        $wingetTools = @(
+            'Git.Git', 'Microsoft.PowerShell', 'Microsoft.WSL',
+            'Microsoft.WindowsTerminal', '7zip.7zip',
+            'Microsoft.VCRedist.2015+.x64'
+        )
+    } else {
+        Write-Host "  [+] Sourced $($wingetTools.Count) winget packages from mios.toml [packages.windows]" -ForegroundColor DarkGray
+    }
     foreach ($pkg in $wingetTools) {
         try {
             $probe = & winget list --id $pkg --exact 2>$null
