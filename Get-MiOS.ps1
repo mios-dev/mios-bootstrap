@@ -943,9 +943,18 @@ function Install-MiOSTerminalProfile {
     }
     $miosProfilePath = if (Test-Path 'M:\') { 'M:\MiOS\powershell\profile.ps1' }
                       else { Join-Path $env:USERPROFILE 'MiOS-bootstrap\powershell\profile.ps1' }
+    # -NoProfile is CRITICAL: skip the operator's $PROFILE chain
+    # entirely so any pre-existing oh-my-posh init / PSReadLine
+    # configuration / aliases the operator already has DON'T run AFTER
+    # our M:\ profile and override it. Operator-reported symptom: their
+    # pre-existing themed PS 7 prompt rendered in MiOS terminal because
+    # their $PROFILE re-initialized oh-my-posh AFTER our marker block.
+    # With -NoProfile, ONLY the M:\ profile runs (via -Command dot-
+    # source), so the MiOS terminal is operator-isolated and 100%
+    # deterministic.
     # Single-quoted PS string with `''` for embedded literal quotes.
     # ConvertTo-Json will JSON-encode the outer double-quotes correctly.
-    $profileCmdline = '"' + $defaultPwsh + '" -NoLogo -NoExit -Command "if (Test-Path ''' + $miosProfilePath + ''') { . ''' + $miosProfilePath + ''' }"'
+    $profileCmdline = '"' + $defaultPwsh + '" -NoLogo -NoExit -NoProfile -Command "if (Test-Path ''' + $miosProfilePath + ''') { . ''' + $miosProfilePath + ''' }"'
 
     # Per-profile shared settings -- apply to BOTH "MiOS" and "MiOS-DEV"
     # so they look/feel identical. Belt-AND-braces acrylic settings:
@@ -2512,10 +2521,19 @@ if (`$true) {
         Write-Host (`$BL + (`$H * (`$WIDTH - 2)) + `$BR) -ForegroundColor Blue
     }
 
-    if ((`$env:WT_SESSION -or `$env:TERM_PROGRAM -eq 'mios') -and (Get-Command fastfetch -ErrorAction SilentlyContinue)) {
+    # Dashboard auto-render. Drop the WT_SESSION gate -- with -NoProfile
+    # in the MiOS WT profile commandline the operator's $PROFILE is
+    # skipped entirely, so the only path into THIS script body IS the
+    # MiOS terminal launch. Render whenever the host can paint AND the
+    # operator hasn't opted out via $env:MIOS_SKIP_MOTD. fastfetch
+    # availability is probed inside Show-MiosDashboard -- if missing,
+    # the framed banner + verb-hints still render with a "fastfetch not
+    # installed" placeholder row, so the operator sees the MiOS banner
+    # even on a half-bootstrapped host.
+    if (`$Host.UI.RawUI -and (-not `$env:MIOS_SKIP_MOTD)) {
         `$miosLogo   = _MiosSelfHeal 'fastfetch' 'mios.txt'      '$ffLogoBase64'
         `$miosFFCfg  = _MiosSelfHeal 'fastfetch' 'config.jsonc'  '$ffConfigBase64'
-        if (`$miosLogo -and `$miosFFCfg -and `$Host.UI.RawUI -and (-not `$env:MIOS_SKIP_MOTD)) {
+        if (`$miosLogo -and `$miosFFCfg) {
             try { Show-MiosDashboard -ConfigPath `$miosFFCfg -LogoPath `$miosLogo } catch {}
         }
     }

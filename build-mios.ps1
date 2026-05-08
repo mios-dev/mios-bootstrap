@@ -4625,16 +4625,30 @@ function Install-MiosWindowsTools {
         try {
             $probe = & winget list --id $pkg --exact 2>$null
             if ($LASTEXITCODE -eq 0 -and (($probe -join "`n") -match [regex]::Escape($pkg))) {
+                Log-Ok ("winget already-present: {0}" -f $pkg)
                 $skipped++
                 continue
             }
-            & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+            Log-Ok ("winget installing: {0}..." -f $pkg)
+            # NOT silenced -- visible output so failures are diagnosable.
+            & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget --scope user 2>&1 |
+                ForEach-Object { Write-Log ("winget[{0}]: {1}" -f $pkg, $_) }
             if ($LASTEXITCODE -eq 0) {
-                Log-Ok "winget install: $pkg"
+                Log-Ok "winget install: $pkg [OK]"
                 $installed++
             } else {
-                Log-Warn ("winget install: {0} (exit {1})" -f $pkg, $LASTEXITCODE)
-                $failed++
+                # Retry without --scope user (machine scope -- some packages
+                # like Microsoft.PowerShell don't accept user scope).
+                Log-Warn ("winget install: {0} user-scope exit {1} -- retrying without --scope" -f $pkg, $LASTEXITCODE)
+                & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 |
+                    ForEach-Object { Write-Log ("winget[{0}-retry]: {1}" -f $pkg, $_) }
+                if ($LASTEXITCODE -eq 0) {
+                    Log-Ok "winget install (retry): $pkg [OK]"
+                    $installed++
+                } else {
+                    Log-Warn ("winget install: {0} FAILED (exit {1})" -f $pkg, $LASTEXITCODE)
+                    $failed++
+                }
             }
         } catch {
             Log-Warn ("winget install: {0} -- {1}" -f $pkg, $_.Exception.Message)
@@ -4643,18 +4657,70 @@ function Install-MiosWindowsTools {
     }
     Log-Ok ("[packages.windows] winget summary: {0} installed / {1} already-present / {2} failed" -f $installed, $skipped, $failed)
 
-    # Refresh $env:PATH from registry so this session sees newly-
-    # installed binaries (winget updates User PATH on install but the
-    # current pwsh inherited the parent env). Without this, the next
-    # function's `Get-Command fastfetch` returns null even though
-    # fastfetch IS on disk.
+    # Aggressive PATH augmentation. winget install --scope user lands
+    # binaries under %LOCALAPPDATA%\Microsoft\WinGet\Packages\<id>_*\
+    # and updates User PATH -- but only on NEXT shell launch. Probe
+    # those install dirs NOW + add them to both this-session $env:PATH
+    # AND persist the additions to User PATH so next-launch shells
+    # (the WT MiOS profile) inherit them.
+    $wingetRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+    $extraPaths = @()
+    if (Test-Path $wingetRoot) {
+        # Walk every package install dir; if it contains an .exe at the
+        # top level, that's the binary path winget added.
+        Get-ChildItem -Path $wingetRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $dir = $_.FullName
+            $exes = Get-ChildItem -Path $dir -Filter '*.exe' -File -ErrorAction SilentlyContinue
+            if ($exes) { $extraPaths += $dir }
+            # Also walk one level deep -- some packages nest the binary
+            # under a versioned subdir (fastfetch-cli.fastfetch_*\fastfetch-windows-amd64\fastfetch.exe).
+            Get-ChildItem -Path $dir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                $sub = $_.FullName
+                $exesSub = Get-ChildItem -Path $sub -Filter '*.exe' -File -ErrorAction SilentlyContinue
+                if ($exesSub) { $extraPaths += $sub }
+            }
+        }
+    }
+    # MiOS app bin directory (oh-my-posh.exe, etc. that build-mios.ps1 stages itself).
+    if (Test-Path $MiosBinDir) { $extraPaths += $MiosBinDir }
+    $extraPaths = $extraPaths | Sort-Object -Unique
+
+    # Refresh + augment $env:PATH for the current session.
     try {
         $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
         $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
-        $env:PATH = (@($_machPath, $_userPath) | Where-Object { $_ }) -join ';'
-        Log-Ok '$env:PATH refreshed -- newly-installed binaries reachable for the rest of this session'
+        $combined  = (@($_machPath, $_userPath) + $extraPaths | Where-Object { $_ }) -join ';'
+        $env:PATH  = $combined
+        Log-Ok ('$env:PATH refreshed (+{0} winget package dirs)' -f $extraPaths.Count)
     } catch {
         Log-Warn "PATH refresh failed: $($_.Exception.Message)"
+    }
+
+    # Persist the extra dirs to User PATH so future shell launches (the
+    # WT MiOS profile spawn) see fastfetch / btop / etc. without
+    # depending on this session.
+    if ($extraPaths.Count -gt 0) {
+        try {
+            $userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
+            $userParts = if ($userPath) { $userPath -split ';' } else { @() }
+            $newParts  = @($userParts) + ($extraPaths | Where-Object { $_ -and ($userParts -notcontains $_) })
+            $newUserPath = ($newParts | Where-Object { $_ }) -join ';'
+            if ($newUserPath -ne $userPath) {
+                [System.Environment]::SetEnvironmentVariable('PATH', $newUserPath, 'User')
+                Log-Ok ('User PATH persisted (+{0} new dirs)' -f ($newParts.Count - $userParts.Count))
+            }
+        } catch {
+            Log-Warn "User PATH persist failed: $($_.Exception.Message)"
+        }
+    }
+
+    # Final verification -- which targeted binaries are actually on PATH now?
+    foreach ($probe in @('fastfetch','btop','rg','fzf','jq','gh','bat','fd','pwsh','oh-my-posh')) {
+        if (Get-Command $probe -ErrorAction SilentlyContinue) {
+            Log-Ok ("verify: '{0}' is on PATH" -f $probe)
+        } else {
+            Log-Warn ("verify: '{0}' NOT on PATH (winget install may have failed; check above)" -f $probe)
+        }
     }
 }
 
