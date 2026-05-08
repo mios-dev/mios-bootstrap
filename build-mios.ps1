@@ -143,9 +143,22 @@ function Get-MiosTomlValue {
 
 # Resolve canonical terminal dims ONCE at script-load so every later
 # resize / wt --size / stty call uses the same values from mios.toml.
-$script:MiosCols   = Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80
-$script:MiosRows   = Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20
-$script:MiosScroll = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
+#
+# IMPORTANT: build-mios.ps1 runs DURING the bootstrap install. Use
+# [terminal.install] dims (vendor default 80x40 -- enough rows for
+# the dashboard + install logs to fit visibly without auto-scroll
+# eating the banner). [terminal] dims (80x20) are reserved for the
+# POST-INSTALL MiOS app spawn -- using them here would shrink the
+# install conhost mid-flight, which the operator reports as "windows
+# still shrink to 80x20 and are also off-center". The post-install
+# wt --size spawn uses script:MiosAppCols / script:MiosAppRows.
+$script:MiosCols    = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols'            -Default 80
+$script:MiosRows    = Get-MiosTomlValue -Section 'terminal.install' -Key 'rows'            -Default 40
+$script:MiosScroll  = Get-MiosTomlValue -Section 'terminal'         -Key 'scrollback_rows' -Default 9000
+# MiOS-APP dims (80x20 portal feel) -- used by the post-install wt
+# launch only, NEVER by the install conhost.
+$script:MiosAppCols = Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80
+$script:MiosAppRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20
 
 # ── Console resize: mios.toml [terminal] dims BEFORE any sizing-dependent state ─
 # $script:DW (~line 543) is computed from [Console]::WindowWidth at script-
@@ -180,6 +193,43 @@ try {
 # Log to a deferred-flush variable; written to the unified log once the log
 # file path is known (Write-Log isn't defined this early in load).
 $script:_PendingResizeLog = "console resize: before=$_resizeBefore after=$_resizeAfter err=$_resizeErr"
+
+# Re-center the conhost on the operator's active monitor AFTER the
+# resize. Operator-reported regression: "windows don't self center
+# when refreshed or re-launched still" + "installation windows still
+# shrink to 80x20 and are also off-center". The Pass-2 inner cmd
+# centered the window when it opened, but build-mios.ps1's load-time
+# resize above can change the window dimensions (e.g. growing rows
+# from 20 to 40 when [terminal.install] is the wider value), and any
+# size change leaves the existing top-left corner unchanged -- the
+# bottom edge expands downward, off-center. Snapshot the new pixel
+# rect after the size change and MoveWindow to center it.
+try {
+    if (-not ('MiosBuildLoad.W' -as [type])) {
+        Add-Type -Namespace MiosBuildLoad -Name W -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
+'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
+    }
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 100   # let conhost settle the new size
+    $_lh = [MiosBuildLoad.W]::GetConsoleWindow()
+    if ($_lh -ne [IntPtr]::Zero) {
+        $_lr = New-Object System.Drawing.Rectangle
+        [void][MiosBuildLoad.W]::GetWindowRect($_lh, [ref]$_lr)
+        $_lw = $_lr.Width  - $_lr.X
+        $_lh2 = $_lr.Height - $_lr.Y
+        $_lcur = [System.Windows.Forms.Cursor]::Position
+        $_ls   = [System.Windows.Forms.Screen]::FromPoint($_lcur).WorkingArea
+        $_lx = $_ls.X + [int](([math]::Max(0, $_ls.Width  - $_lw )) / 2)
+        $_ly = $_ls.Y + [int](([math]::Max(0, $_ls.Height - $_lh2)) / 2)
+        [void][MiosBuildLoad.W]::MoveWindow($_lh, $_lx, $_ly, $_lw, $_lh2, $true)
+        $script:_PendingResizeLog += " centered=$_lx,$_ly@${_lw}x${_lh2}"
+    }
+} catch {
+    $script:_PendingResizeLog += " center-err=$($_.Exception.Message)"
+}
 
 # ── Self-replication enforcement: Windows ALWAYS halts at Phase 5 ────────────
 # Per the self-replication architecture, the Windows side has STRICT scope:
@@ -6731,6 +6781,23 @@ if ($activeDistro) {
         } finally { Pop-Location }
     } else {
         Set-Step "Initializing mios.git as the $MiosRepoDir working tree"
+        # Pre-emptively whitelist M:\ as a safe.directory for git on
+        # Windows. Git 2.35+ rejects operations in repos owned by a
+        # different SID with: "fatal: detected dubious ownership in
+        # repository at 'M:\'". Admin-spawned pwsh runs under
+        # NT AUTHORITY\SYSTEM (or the elevated token's primary SID)
+        # while M:\ was created by the operator's user SID. Without
+        # this allowlist, every git operation in M:\ fails with
+        # exit 128 and the operator-reported "git fetch from
+        # https://github.com/mios-dev/MiOS.git failed (exit 128)
+        # at M:\". Use --global so the setting persists across the
+        # entire bootstrap (Phase 3+ may also git-operate at M:\).
+        # `*` allowlist is acceptable here -- this is a single-user
+        # workstation install on a freshly-shrunk partition; the
+        # operator already accepted the agreement that authorizes
+        # the bootstrap to mutate the system.
+        & git config --global --add safe.directory '*' 2>&1 | ForEach-Object { Write-Log "git-safe-dir: $_" }
+        & git config --global --add safe.directory $MiosRepoDir 2>&1 | ForEach-Object { Write-Log "git-safe-dir: $_" }
         Push-Location $MiosRepoDir
         try {
             $null = Invoke-NativeQuiet { git init -q }
@@ -6753,9 +6820,16 @@ if ($activeDistro) {
             # MiOS-DEV.
             $null = Invoke-NativeQuiet { git config --unset core.worktree }
             $null = Invoke-NativeQuiet { git remote add origin $MiosRepoUrl }
-            $fetchExit = Invoke-NativeQuiet { git fetch --depth=1 origin main }
+            # Capture stderr from git fetch so a failure surfaces with
+            # actual diagnostic text -- previous Invoke-NativeQuiet
+            # swallowed every line via `2>&1 | Out-Null`, leaving the
+            # operator with a bare "exit 128" and no clue what failed.
+            $fetchOut = & git fetch --depth=1 origin main 2>&1
+            $fetchExit = $LASTEXITCODE
+            $fetchOut | ForEach-Object { Write-Log "git-fetch: $_" }
             if ($fetchExit -ne 0) {
-                throw "mios.git: git fetch from $MiosRepoUrl failed (exit $fetchExit) at $MiosRepoDir"
+                $tail = ($fetchOut | Select-Object -Last 5) -join ' / '
+                throw "mios.git: git fetch from $MiosRepoUrl failed (exit $fetchExit) at $MiosRepoDir`n        last: $tail"
             }
             $null = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
             $null = Invoke-NativeQuiet { git branch -f main FETCH_HEAD }
