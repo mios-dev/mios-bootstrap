@@ -2909,6 +2909,17 @@ function Install-MiOSPowerShellProfile {
 if (`$Global:MiosProfileLoaded) { return }
 `$Global:MiosProfileLoaded = `$true
 
+# ── UTF-8 codepage + Console encoding ──────────────────────────────
+# Operator-reported regression: powerline glyphs (U+E0B4 etc.) rendered
+# as 'î' mojibake -- WT was decoding the UTF-8 bytes as cp1252 because
+# this profile body wasn't setting chcp 65001 / Console.OutputEncoding.
+# Setting both ensures every glyph oh-my-posh emits to stdout renders
+# as the correct PUA cap, not the cp1252-mangled multi-char sequence.
+try { & chcp.com 65001 *> `$null } catch {}
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
+try { [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new(`$false) } catch {}
+try { `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
+
 # ── Window resize + center (every MiOS pwsh) ────────────────────
 # Dimensions sourced from mios.toml [terminal] (cols/rows/
 # scrollback_rows). Per feedback_mios_terminal_dimensions every
