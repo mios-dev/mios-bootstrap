@@ -642,10 +642,23 @@ try {
 } catch {}
 Write-Host ''
 Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
-Write-Host ('      Cache-busted Get-MiOS.ps1 fetch: ' + '$_rawUrl') -ForegroundColor DarkGray
+# Build the cache-busted URL HERE inside the inner cmd, NOT via outer-
+# scope interpolation. Operator-reported regression: when the inner cmd
+# was rendered with `-Uri '$_rawUrl'` and `$_rawUrl` interpolated to empty
+# for any reason (encoding issue / heredoc quirk / nested-template bug),
+# the rendered file became `Invoke-RestMethod -Uri '' -Headers ...` which
+# sent PowerShell into its mandatory-parameter prompt loop:
+#     cmdlet Invoke-RestMethod at command pipeline position 1
+#     Supply values for the following parameters:
+#     Uri:
+# Computing the URL inside the inner cmd removes the outer-scope dep
+# entirely and makes the rendered file self-sufficient.
+`$_cb     = [int][double]::Parse((Get-Date -UFormat %s))
+`$_rawUri = 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=' + `$_cb
+Write-Host ('      Cache-busted Get-MiOS.ps1 fetch: ' + `$_rawUri) -ForegroundColor DarkGray
 Write-Host ''
 try {
-    `$src = Invoke-RestMethod -Uri '$_rawUrl' -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } -ErrorAction Stop
+    `$src = Invoke-RestMethod -Uri `$_rawUri -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } -ErrorAction Stop
     # Write to a temp .ps1 and run as a CHILD pwsh process so any
     # 'exit N' calls inside Get-MiOS.ps1 terminate the child, NOT our
     # hosting elevation window. Without this, any preflight 'exit 1'
