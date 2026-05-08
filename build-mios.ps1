@@ -214,48 +214,64 @@ try {
 # file path is known (Write-Log isn't defined this early in load).
 $script:_PendingResizeLog = "console resize: before=$_resizeBefore after=$_resizeAfter err=$_resizeErr"
 
-# Re-center the conhost on the operator's active monitor AFTER the
-# resize. Operator-reported regression: "windows don't self center
-# when refreshed or re-launched still" + "installation windows still
-# shrink to 80x20 and are also off-center". The Pass-2 inner cmd
-# centered the window when it opened, but build-mios.ps1's load-time
-# resize above can change the window dimensions (e.g. growing rows
-# from 20 to 40 when [terminal.install] is the wider value), and any
-# size change leaves the existing top-left corner unchanged -- the
-# bottom edge expands downward, off-center. Snapshot the new pixel
-# rect after the size change and MoveWindow to center it.
+# Re-center the bootstrap window on the operator's active monitor.
+# Operator-reported regression: "all windows aren't recentering still!"
+#
+# The earlier MoveWindow approach via [Console]::GetConsoleWindow only
+# worked for the legacy conhost. On Windows 11 where WT is the default
+# terminal app, GetConsoleWindow returns the OpenConsole pseudo-host
+# HWND, NOT the WT WindowsTerminal.exe HWND that owns the visible
+# window -- so MoveWindow on the pseudo-host moved nothing the operator
+# could see. The fix below tries TWO strategies:
+#
+#   1. SetProcessDpiAwarenessContext to per-monitor v2 so the coordinate
+#      space matches the screen's DPI (was failing on high-DPI multi-
+#      monitor setups: Screen.WorkingArea returned logical px while
+#      MoveWindow expected physical px under the legacy
+#      DPI_AWARENESS_CONTEXT_UNAWARE).
+#   2. Walk up to the topmost ancestor of GetConsoleWindow(): conhost ->
+#      pseudo-host -> WT main window. SetWindowPos on the topmost
+#      ancestor moves the WT window itself when running inside WT, and
+#      moves the conhost when running standalone. SWP_NOZORDER keeps z-
+#      order, SWP_NOACTIVATE prevents focus theft.
 try {
     if (-not ('MiosBuildLoad.W' -as [type])) {
         Add-Type -Namespace MiosBuildLoad -Name W -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndAfter, int X, int Y, int cx, int cy, uint uFlags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern System.IntPtr GetAncestor(System.IntPtr hWnd, uint flags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr value);
 '@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
     }
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4 (handle-pseudo)
+    try { [void][MiosBuildLoad.W]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) } catch {}
     Start-Sleep -Milliseconds 100   # let conhost settle the new size
-    $_lh = [MiosBuildLoad.W]::GetConsoleWindow()
+    $_consoleHwnd = [MiosBuildLoad.W]::GetConsoleWindow()
+    # GA_ROOT = 2 -- walk to the topmost ancestor (WT window when
+    # hosted, conhost otherwise).
+    $_lh = if ($_consoleHwnd -ne [IntPtr]::Zero) {
+        $_root = [MiosBuildLoad.W]::GetAncestor($_consoleHwnd, 2)
+        if ($_root -ne [IntPtr]::Zero) { $_root } else { $_consoleHwnd }
+    } else { [IntPtr]::Zero }
     if ($_lh -ne [IntPtr]::Zero) {
         $_lr = New-Object System.Drawing.Rectangle
         [void][MiosBuildLoad.W]::GetWindowRect($_lh, [ref]$_lr)
-        $_lw = $_lr.Width  - $_lr.X
+        $_lw  = $_lr.Width  - $_lr.X
         $_lh2 = $_lr.Height - $_lr.Y
-        # Center on the conhost's CURRENT monitor (where the window
-        # already sits), NOT on Cursor.Position. Operator-reported
-        # regression: "acknowledgement and install windows wander from
-        # center still". Using cursor position made every successive
-        # re-center jump to whichever monitor the operator's mouse was
-        # on at that instant -- so the install window appeared to
-        # wander between monitors mid-flow. Anchoring to the conhost's
-        # OWN monitor pins it stable: Pass-2 placed the window on the
-        # operator's active display at Pass-2-launch time; build-mios's
-        # re-center keeps it there regardless of subsequent mouse moves.
+        # Anchor to the window's CURRENT monitor (stable across mouse
+        # drift). FromPoint uses physical px on per-monitor v2.
         $_lcenter = New-Object System.Drawing.Point ($_lr.X + [int]($_lw / 2)), ($_lr.Y + [int]($_lh2 / 2))
         $_ls   = [System.Windows.Forms.Screen]::FromPoint($_lcenter).WorkingArea
         $_lx = $_ls.X + [int](([math]::Max(0, $_ls.Width  - $_lw )) / 2)
         $_ly = $_ls.Y + [int](([math]::Max(0, $_ls.Height - $_lh2)) / 2)
-        [void][MiosBuildLoad.W]::MoveWindow($_lh, $_lx, $_ly, $_lw, $_lh2, $true)
-        $script:_PendingResizeLog += " centered=$_lx,$_ly@${_lw}x${_lh2}"
+        # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14
+        [void][MiosBuildLoad.W]::SetWindowPos($_lh, [IntPtr]::Zero, $_lx, $_ly, $_lw, $_lh2, 0x14)
+        $script:_PendingResizeLog += " centered=$_lx,$_ly@${_lw}x${_lh2} hwnd=$([int64]$_lh)"
+    } else {
+        $script:_PendingResizeLog += " center-skip=no-hwnd"
     }
 } catch {
     $script:_PendingResizeLog += " center-err=$($_.Exception.Message)"

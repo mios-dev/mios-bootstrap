@@ -558,10 +558,16 @@ function Invoke-MiOSAgreementGate {
 [System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndAfter, int X, int Y, int cx, int cy, uint uFlags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern System.IntPtr GetAncestor(System.IntPtr hWnd, uint flags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr value);
 '@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
         } catch {}
     }
     try { Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue } catch {}
+    # Per-monitor v2 DPI awareness so SetWindowPos coords match Screen.
+    # WorkingArea on multi-monitor + high-DPI setups.
+    try { [void][MiOSGate.W]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) } catch {}
     # Capture the operator's active monitor + the FROZEN target pixel
     # rect ONCE at gate entry. Reading current dims via GetWindowRect on
     # every page lets conhost's tiny per-render renegotiations drift the
@@ -574,22 +580,33 @@ function Invoke-MiOSAgreementGate {
     $_gateTargetY  = $null
     $_gateTargetW  = $null
     $_gateTargetH  = $null
+    # Resolve the topmost-ancestor HWND of the conhost: WT main window
+    # when WT is the default terminal app (Windows 11 22H2+), conhost
+    # itself otherwise. Stored once so every per-page _Center call
+    # targets the same window. Operator-reported regression: "all
+    # windows aren't recentering still!" was caused by GetConsoleWindow
+    # returning the OpenConsole pseudo-host HWND (NOT WT's) -- moving
+    # the pseudo-host had no visible effect because WT owns the actual
+    # window.
+    $_gateTargetHwnd = [IntPtr]::Zero
     try {
         # Let conhost settle after the 80x40 SetWindowSize above.
         Start-Sleep -Milliseconds 100
         if ('MiOSGate.W' -as [type]) {
-            $_gh = [MiOSGate.W]::GetConsoleWindow()
-            if ($_gh -ne [IntPtr]::Zero) {
+            $_consoleHwnd = [MiOSGate.W]::GetConsoleWindow()
+            # GA_ROOT = 2 -- topmost ancestor.
+            $_gateTargetHwnd = if ($_consoleHwnd -ne [IntPtr]::Zero) {
+                $_root = [MiOSGate.W]::GetAncestor($_consoleHwnd, 2)
+                if ($_root -ne [IntPtr]::Zero) { $_root } else { $_consoleHwnd }
+            } else { [IntPtr]::Zero }
+            if ($_gateTargetHwnd -ne [IntPtr]::Zero) {
                 $_gr = New-Object System.Drawing.Rectangle
-                [void][MiOSGate.W]::GetWindowRect($_gh, [ref]$_gr)
+                [void][MiOSGate.W]::GetWindowRect($_gateTargetHwnd, [ref]$_gr)
                 $_gateTargetW = $_gr.Width  - $_gr.X
                 $_gateTargetH = $_gr.Height - $_gr.Y
-                # Anchor to the conhost's OWN monitor (where Pass-2 placed
-                # it), NOT Cursor.Position. Operator-reported regression:
-                # "acknowledgement and install windows wander from center".
-                # Cursor-based monitor selection drifts to whichever
-                # display the mouse is on -- which on multi-monitor setups
-                # makes successive page re-centers jump between displays.
+                # Anchor to the window's OWN monitor (where Pass-2 placed
+                # it), NOT Cursor.Position. Cursor drift between mouse
+                # moves was making multi-monitor recenters jump displays.
                 $_gateCenter = New-Object System.Drawing.Point ($_gr.X + [int]($_gateTargetW / 2)), ($_gr.Y + [int]($_gateTargetH / 2))
                 $_gateScreen = [System.Windows.Forms.Screen]::FromPoint($_gateCenter).WorkingArea
                 $_gateTargetX = $_gateScreen.X + [int](([math]::Max(0, $_gateScreen.Width  - $_gateTargetW)) / 2)
@@ -599,11 +616,10 @@ function Invoke-MiOSAgreementGate {
     } catch {}
     function _Center-MiOSGateConsole {
         if (-not ('MiOSGate.W' -as [type])) { return }
-        if ($null -eq $_gateTargetX) { return }
+        if ($null -eq $_gateTargetX -or $_gateTargetHwnd -eq [IntPtr]::Zero) { return }
         try {
-            $h = [MiOSGate.W]::GetConsoleWindow()
-            if ($h -eq [IntPtr]::Zero) { return }
-            [void][MiOSGate.W]::MoveWindow($h, $_gateTargetX, $_gateTargetY, $_gateTargetW, $_gateTargetH, $true)
+            # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14
+            [void][MiOSGate.W]::SetWindowPos($_gateTargetHwnd, [IntPtr]::Zero, $_gateTargetX, $_gateTargetY, $_gateTargetW, $_gateTargetH, 0x14)
         } catch {}
     }
 
@@ -802,8 +818,18 @@ try {
 [System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndAfter, int X, int Y, int cx, int cy, uint uFlags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern System.IntPtr GetAncestor(System.IntPtr hWnd, uint flags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr value);
 '@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    # DPI per-monitor v2 so Screen.WorkingArea + SetWindowPos agree on
+    # the coordinate space (was off-by-DPI on multi-monitor setups
+    # where the operator-reported regression "all windows aren't
+    # recentering still" surfaced -- MoveWindow placed the window at
+    # logical-px coords interpreted as physical-px, missing the target
+    # monitor entirely on high-DPI secondary displays).
+    try { [void][MEW.N]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) } catch {}
     # Pixel target size -- BAKED from outer scope as literal integers
     # via @"..."@ interpolation (no backticks on $_winWPx / $_winHPx /
     # $_elevCols / $_elevRows / $_elevScr). The inner pwsh process
@@ -835,17 +861,31 @@ try {
     # those for centering keeps the window correctly cell-sized while
     # still putting it on the operator's active display.
     Start-Sleep -Milliseconds 100
-    `$_h = [MEW.N]::GetConsoleWindow()
-    `$_rect = New-Object System.Drawing.Rectangle
-    [void][MEW.N]::GetWindowRect(`$_h, [ref]`$_rect)
-    `$_actualW = `$_rect.Width  - `$_rect.X
-    `$_actualH = `$_rect.Height - `$_rect.Y
-    # Resolve which monitor the OPERATOR was on at the moment of paste.
-    `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
-    `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
-    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_actualW)) / 2)
-    `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_actualH)) / 2)
-    [MEW.N]::MoveWindow(`$_h, `$_x, `$_y, `$_actualW, `$_actualH, `$true) | Out-Null
+    # Walk to the TOPMOST ancestor of the conhost handle. When WT is
+    # the default terminal app (Windows 11 default since 22H2), Get-
+    # ConsoleWindow returns the OpenConsole pseudo-host HWND, NOT the
+    # WindowsTerminal.exe HWND that owns the visible window. GA_ROOT
+    # (=2) walks up to the WT main window, so SetWindowPos there
+    # actually moves what the operator sees. On legacy conhost the
+    # ancestor walk is a no-op and we move the conhost directly.
+    `$_consoleHwnd = [MEW.N]::GetConsoleWindow()
+    `$_h = if (`$_consoleHwnd -ne [IntPtr]::Zero) {
+        `$_root = [MEW.N]::GetAncestor(`$_consoleHwnd, 2)
+        if (`$_root -ne [IntPtr]::Zero) { `$_root } else { `$_consoleHwnd }
+    } else { [IntPtr]::Zero }
+    if (`$_h -ne [IntPtr]::Zero) {
+        `$_rect = New-Object System.Drawing.Rectangle
+        [void][MEW.N]::GetWindowRect(`$_h, [ref]`$_rect)
+        `$_actualW = `$_rect.Width  - `$_rect.X
+        `$_actualH = `$_rect.Height - `$_rect.Y
+        # Resolve which monitor the OPERATOR was on at the moment of paste.
+        `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
+        `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
+        `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_actualW)) / 2)
+        `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_actualH)) / 2)
+        # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14
+        [void][MEW.N]::SetWindowPos(`$_h, [IntPtr]::Zero, `$_x, `$_y, `$_actualW, `$_actualH, 0x14)
+    }
 } catch {}
 Write-Host ''
 Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
