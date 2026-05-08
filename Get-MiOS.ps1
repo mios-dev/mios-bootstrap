@@ -3115,23 +3115,53 @@ if (`$true) {
             Write-Host (_Frame '  fastfetch not installed -- run mios-update to refresh.')
         }
         # ── Command hints rows ───────────────────────────────────
+        # Verb list resolves through mios.toml [verbs] at RUNTIME (SSOT).
+        # The dashboard re-reads on every render so an operator edit via
+        # mios.html flows mios.toml -> dashboard immediately. No hard-
+        # coding here. Vendor fallback only if every TOML candidate is
+        # missing (cold first-run before M:\ overlay is staged).
+        `$_verbDefs = @(
+            @{ name='build';  desc='open mios.html, save, then build the OCI image' },
+            @{ name='config'; desc='edit mios.toml in the HTML configurator (no build)' },
+            @{ name='dash';   desc='show this dashboard (framed banner + fastfetch info)' },
+            @{ name='dev';    desc='enter the MiOS-DEV podman machine' },
+            @{ name='pull';   desc='sync M:\ overlay to origin/main' },
+            @{ name='update'; desc='re-run the bootstrap (cache-busted)' },
+            @{ name='help';   desc='list every verb' }
+        )
+        try {
+            `$_tomlCands = @(
+                (Join-Path `$env:USERPROFILE '.config\mios\mios.toml'),
+                'M:\etc\mios\mios.toml',
+                'M:\usr\share\mios\mios.toml',
+                'C:\MiOS\usr\share\mios\mios.toml'
+            )
+            foreach (`$_tc in `$_tomlCands) {
+                if (`$_tc -and (Test-Path -LiteralPath `$_tc)) {
+                    `$_tt = Get-Content -LiteralPath `$_tc -Raw -ErrorAction SilentlyContinue
+                    if (-not `$_tt) { continue }
+                    `$_vb = [regex]::Match(`$_tt, '(?ms)^\[verbs\]\s*\r?\n(.*?)(?=^\[|\z)')
+                    if (`$_vb.Success) {
+                        `$_parsed = @()
+                        foreach (`$_ln in (`$_vb.Groups[1].Value -split "``n")) {
+                            `$_pm = [regex]::Match(`$_ln, '^\s*([a-z][a-z0-9_-]*)\s*=\s*\{[^}]*description\s*=\s*"([^"]+)"')
+                            if (`$_pm.Success) { `$_parsed += @{ name=`$_pm.Groups[1].Value; desc=`$_pm.Groups[2].Value } }
+                        }
+                        if (`$_parsed.Count -gt 0) { `$_verbDefs = `$_parsed; break }
+                    }
+                }
+            }
+        } catch {}
         Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
         if (`$_compact) {
-            # Single-line band: verbs only, descriptions implicit
-            # (operator types `mios help` for full text).
-            `$_hint1 = 'build  config  dash  dev  pull  update  help'
+            `$_hint1 = ((`$_verbDefs | ForEach-Object { `$_.name }) -join '  ')
             Write-Host (_Center `$_hint1) -ForegroundColor DarkCyan
         } else {
-            `$_hints = @(
-                '  mios build   -- open mios-config.html, save, then build the OCI image',
-                '  mios config  -- edit mios.toml in the HTML configurator (no build)',
-                '  mios dash    -- show this dashboard (framed banner + fastfetch info)',
-                '  mios dev     -- enter the MiOS-DEV podman machine',
-                '  mios pull    -- sync M:\ overlay to origin/main',
-                '  mios update  -- re-run the bootstrap (cache-busted)',
-                '  mios help    -- list every verb'
-            )
-            foreach (`$h in `$_hints) { Write-Host (_Frame `$h) -ForegroundColor DarkCyan }
+            `$_maxName = ((`$_verbDefs | ForEach-Object { `$_.name.Length }) | Measure-Object -Maximum).Maximum
+            foreach (`$_v in `$_verbDefs) {
+                `$_pad = ' ' * (`$_maxName - `$_v.name.Length + 2)
+                Write-Host (_Frame ('  mios ' + `$_v.name + `$_pad + '-- ' + `$_v.desc)) -ForegroundColor DarkCyan
+            }
         }
 
         # Bottom frame.

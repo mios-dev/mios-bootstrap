@@ -301,15 +301,21 @@ try {
 
 $MiosScope = if ($script:IsAdmin) { "AllUsers" } else { "CurrentUser" }
 
-# ── Paths & constants ─────────────────────────────────────────────────────────
-$MiosVersion      = "v0.2.4"
-$MiosRepoUrl      = "https://github.com/mios-dev/MiOS.git"   # repo renamed mios.git -> MiOS.git; old URL still redirects but git's smart-HTTP fetch refuses 301s without followRedirects
-$MiosBootstrapUrl = "https://github.com/mios-dev/mios-bootstrap.git"
-# Podman machine name -- canonical "MiOS-DEV" (was MiOS-BUILDER pre-v0.2.3).
-# Backed by WSL distro `podman-MiOS-DEV` once `podman machine init` runs.
-# Both names are recognized at install-time so existing MiOS-BUILDER
-# distros are accepted (and not destroyed) until the next podman machine rm.
-$DevDistro        = "MiOS-DEV"
+# ── Paths & constants -- ALL sourced from mios.toml SSOT ─────────────────────
+# Per operator: "toml is the SSOT for code too!!! no hardcoding ANYWHERE!!!".
+# Every value below resolves through Get-MiosTomlValue with a vendor-default
+# fallback. The configurator HTML (mios.html) exposes each key as an editable
+# field; an operator edit there flows mios.toml -> these values -> the entire
+# install pipeline.
+$_v             = Get-MiosTomlValue -Section 'meta'      -Key 'mios_version'    -Default '0.2.4'
+$MiosVersion    = if ($_v -match '^v') { $_v } else { "v$_v" }
+$MiosRepoUrl    = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_repo'       -Default 'https://github.com/mios-dev/MiOS.git'
+$MiosBootstrapUrl = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_repo' -Default 'https://github.com/mios-dev/mios-bootstrap.git'
+# Podman machine name. Backed by WSL distro `podman-MiOS-DEV` once `podman
+# machine init` runs. Locked per memory feedback_mios_distro_name_locked.md
+# (renaming breaks podman's distro discovery), so the TOML key carries
+# vendor default 'MiOS-DEV' and operators rarely override.
+$DevDistro      = Get-MiosTomlValue -Section 'bootstrap' -Key 'dev_distro'     -Default 'MiOS-DEV'
 $BuilderDistro    = $DevDistro
 $LegacyDevName    = "MiOS-BUILDER"
 $MiosWslDistro    = "MiOS"
@@ -7475,13 +7481,41 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
         Write-Host '      [+] MiOS PowerShell profile (oh-my-posh, dashboard, mios <verb>)' -ForegroundColor Green
         Write-Host ''
         Write-Host '    What''s next? Type any of these in the MiOS terminal:' -ForegroundColor White
-        Write-Host '      mios build   -- open mios-config.html, save, then build the OCI image' -ForegroundColor Cyan
-        Write-Host '      mios config  -- edit mios.toml in the HTML configurator (no build)' -ForegroundColor Cyan
-        Write-Host '      mios dash    -- show the MiOS dashboard (framed banner + fastfetch)' -ForegroundColor Cyan
-        Write-Host '      mios dev     -- enter the MiOS-DEV podman machine' -ForegroundColor Cyan
-        Write-Host '      mios pull    -- sync M:\ overlay to origin/main' -ForegroundColor Cyan
-        Write-Host '      mios update  -- re-run the bootstrap (cache-busted)' -ForegroundColor Cyan
-        Write-Host '      mios help    -- list every verb' -ForegroundColor Cyan
+        # Verb list resolves through mios.toml [verbs] (SSOT). Operator
+        # edits mios.html -> mios.toml -> this banner regenerates on the
+        # next install. No hardcoded verb names. Per operator: "toml is
+        # the SSOT for code too!!! no hardcoding ANYWHERE!!!"
+        $_verbHints = @(
+            @{ name = 'build';  desc = 'open mios.html, save, then build the OCI image' },
+            @{ name = 'config'; desc = 'edit mios.toml in the HTML configurator (no build)' },
+            @{ name = 'dash';   desc = 'show the MiOS dashboard (framed banner + fastfetch)' },
+            @{ name = 'dev';    desc = 'enter the MiOS-DEV podman machine' },
+            @{ name = 'pull';   desc = 'sync M:\ overlay to origin/main' },
+            @{ name = 'update'; desc = 're-run the bootstrap (cache-busted)' },
+            @{ name = 'help';   desc = 'list every verb' }
+        )
+        $_tomlText = $null
+        foreach ($_cand in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $MiosBootstrapShadow 'mios.toml'))) {
+            if (Test-Path -LiteralPath $_cand) { try { $_tomlText = Get-Content -LiteralPath $_cand -Raw -ErrorAction Stop; break } catch {} }
+        }
+        if ($_tomlText) {
+            $_verbsBlock = [regex]::Match($_tomlText, '(?ms)^\[verbs\]\s*\r?\n(.*?)(?=^\[|\z)')
+            if ($_verbsBlock.Success) {
+                $_resolved = @()
+                foreach ($_ln in ($_verbsBlock.Groups[1].Value -split "`n")) {
+                    $_m = [regex]::Match($_ln, '^\s*([a-z][a-z0-9_-]*)\s*=\s*\{[^}]*description\s*=\s*"([^"]+)"')
+                    if ($_m.Success) {
+                        $_resolved += @{ name = $_m.Groups[1].Value; desc = $_m.Groups[2].Value }
+                    }
+                }
+                if ($_resolved.Count -gt 0) { $_verbHints = $_resolved }
+            }
+        }
+        $_maxName = ($_verbHints | ForEach-Object { $_.name.Length } | Measure-Object -Maximum).Maximum
+        foreach ($_v in $_verbHints) {
+            $_pad = ' ' * ($_maxName - $_v.name.Length + 2)
+            Write-Host ("      mios {0}{1}-- {2}" -f $_v.name, $_pad, $_v.desc) -ForegroundColor Cyan
+        }
         Write-Host ''
         Write-Host '    The MiOS hub shortcut is in your Start Menu / Desktop / Win+Search.' -ForegroundColor DarkGray
         Write-Host ''
