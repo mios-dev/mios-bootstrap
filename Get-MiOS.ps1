@@ -500,31 +500,38 @@ Invoke-MiOSAgreementGate | Out-Null
 # All three helpers are idempotent: safe to call on every run.
 # ───────────────────────────────────────────────────────────────────────
 
-# Hokusai + operator-neutrals palette -- kept in sync with
-# C:\MiOS\usr\share\mios\mios.toml [colors] section. Single hash so the
-# scheme JSON and the MOTD/dashboard share the same exact tokens.
-$Script:MiosPalette = @{
-    bg                  = '#282262'
-    fg                  = '#E7DFD3'
-    accent              = '#1A407F'
-    cursor              = '#F35C15'
-    ansi_0_black        = '#282262'
-    ansi_1_red          = '#DC271B'
-    ansi_2_green        = '#3E7765'
-    ansi_3_yellow       = '#F35C15'
-    ansi_4_blue         = '#1A407F'
-    ansi_5_magenta      = '#734F39'
-    ansi_6_cyan         = '#B7C9D7'
-    ansi_7_white        = '#E7DFD3'
-    ansi_8_brblack      = '#948E8E'
-    ansi_9_brred        = '#FF6B5C'
-    ansi_10_brgreen     = '#5FAA8E'
-    ansi_11_bryellow    = '#FF8540'
-    ansi_12_brblue      = '#3D6BA8'
-    ansi_13_brmagenta   = '#9D7660'
-    ansi_14_brcyan      = '#E0E0E0'
-    ansi_15_brwhite     = '#FFFFFF'
+# Hokusai + operator-neutrals palette -- ALL values source from
+# mios.toml [colors] (vendor < host < user three-layer overlay) via
+# Get-MiosTomlValue. mios.toml is THE singular SSOT for the palette;
+# the literals below are FALLBACKS used only when the layered TOML
+# can't be read (early bootstrap before M:\ exists, or a corrupted
+# overlay). An operator edit in mios.html flows through to this
+# palette without touching any PS1.
+function Get-MiosPalette {
+    @{
+        bg                = (Get-MiosTomlValue -Section 'colors' -Key 'bg'                       -Default '#282262')
+        fg                = (Get-MiosTomlValue -Section 'colors' -Key 'fg'                       -Default '#E7DFD3')
+        accent            = (Get-MiosTomlValue -Section 'colors' -Key 'accent'                   -Default '#1A407F')
+        cursor            = (Get-MiosTomlValue -Section 'colors' -Key 'cursor'                   -Default '#F35C15')
+        ansi_0_black      = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_0_black'             -Default '#282262')
+        ansi_1_red        = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_1_red'               -Default '#DC271B')
+        ansi_2_green      = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_2_green'             -Default '#3E7765')
+        ansi_3_yellow     = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_3_yellow'            -Default '#F35C15')
+        ansi_4_blue       = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_4_blue'              -Default '#1A407F')
+        ansi_5_magenta    = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_5_magenta'           -Default '#734F39')
+        ansi_6_cyan       = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_6_cyan'              -Default '#B7C9D7')
+        ansi_7_white      = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_7_white'             -Default '#E7DFD3')
+        ansi_8_brblack    = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_8_bright_black'      -Default '#948E8E')
+        ansi_9_brred      = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_9_bright_red'        -Default '#FF6B5C')
+        ansi_10_brgreen   = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_10_bright_green'     -Default '#5FAA8E')
+        ansi_11_bryellow  = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_11_bright_yellow'    -Default '#FF8540')
+        ansi_12_brblue    = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_12_bright_blue'      -Default '#3D6BA8')
+        ansi_13_brmagenta = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_13_bright_magenta'   -Default '#9D7660')
+        ansi_14_brcyan    = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_14_bright_cyan'      -Default '#E0E0E0')
+        ansi_15_brwhite   = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_15_bright_white'     -Default '#FFFFFF')
+    }
 }
+$Script:MiosPalette = Get-MiosPalette
 
 # Per-user font-install registry key: the modern non-admin path. Win10
 # 1809+ honors HKCU font registrations for the running user; no
