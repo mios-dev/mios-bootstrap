@@ -1612,7 +1612,7 @@ $driverCmd
                 if (Get-Command Open-Configurator -EA SilentlyContinue) {
                     Open-Configurator -RepoDir $MiosRepoDir
                 } else {
-                    $cfgHtml = Join-Path $MiosRepoDir 'usr/share/mios/configurator/index.html'
+                    $cfgHtml = Join-Path $MiosRepoDir 'usr/share/mios/configurator/mios.html'
                     if (Test-Path $cfgHtml) { Start-Process $cfgHtml }
                     else { Write-Host "  configurator HTML not found at $cfgHtml" -ForegroundColor Yellow }
                 }
@@ -1760,7 +1760,7 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
 }
 
 function Open-Configurator([string]$RepoDir) {
-    # Open /usr/share/mios/configurator/index.html for the operator to
+    # Open /usr/share/mios/configurator/mios.html for the operator to
     # edit the unified mios.toml. Canonical path: launch Epiphany IN
     # MiOS-DEV via WSLg so the configurator runs inside the same
     # environment that built it. The window appears on the Windows
@@ -1781,9 +1781,9 @@ function Open-Configurator([string]$RepoDir) {
     if ($resp -notmatch '^(y|yes|true|1)$') { return }
 
     $candidates = @(
-        (Join-Path $RepoDir "mios\usr\share\mios\configurator\index.html"),
-        (Join-Path $MiosShareDir "system\usr\share\mios\configurator\index.html"),
-        (Join-Path $MiosShareDir "bootstrap\usr\share\mios\configurator\index.html")
+        (Join-Path $RepoDir "mios\usr\share\mios\configurator\mios.html"),
+        (Join-Path $MiosShareDir "system\usr\share\mios\configurator\mios.html"),
+        (Join-Path $MiosShareDir "bootstrap\usr\share\mios\configurator\mios.html")
     )
     $html = $null
     foreach ($c in $candidates) { if (Test-Path $c) { $html = $c; break } }
@@ -2459,6 +2459,95 @@ function Get-PodmanMachineOsImage {
     return $localPath
 }
 
+function Move-PodmanWslDistroToM {
+    # Force the podman-managed WSL2 distro VHDX onto M:\. WSL2 ignores
+    # XDG_DATA_HOME; it stores VHDXs at the path passed to `wsl --import`
+    # (or under %LOCALAPPDATA%\Packages\<distro-id>\LocalState if podman
+    # didn't pass an explicit path). The registry HKCU\...\Lxss\<guid>\
+    # BasePath records where each distro's ext4.vhdx actually lives.
+    #
+    # Procedure (idempotent, only fires when BasePath is NOT under M:\):
+    #   1. Read BasePath from registry
+    #   2. If already on M:\ -> no-op + log
+    #   3. Else: wsl --shutdown, export tar, unregister, import to
+    #      M:\MiOS\distros\<distroname> -- VHDX bytes now live on M:\
+    #
+    # podman picks the distro back up because podman locates it by name
+    # via wsl.exe -- the import path doesn't matter to podman's
+    # connection state.
+    param(
+        [Parameter(Mandatory)] [string] $DistroName,
+        [string] $TargetRoot = 'M:\MiOS\distros'
+    )
+    # podman prefixes its WSL distros with `podman-`. Resolve the actual
+    # registered name (callers pass either form -- `MiOS-DEV` or
+    # `podman-MiOS-DEV`). WSL distro names are case-sensitive in the
+    # registry; iterate Lxss/ subkeys and match.
+    $candidates = @($DistroName, "podman-$DistroName")
+    $lxssRoot   = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
+    if (-not (Test-Path $lxssRoot)) {
+        Log-Warn "Move-PodmanWslDistroToM: WSL Lxss registry key missing -- skipping migration"
+        return
+    }
+    $matched = $null
+    foreach ($sub in (Get-ChildItem $lxssRoot -ErrorAction SilentlyContinue)) {
+        $props = Get-ItemProperty $sub.PSPath -ErrorAction SilentlyContinue
+        if (-not $props) { continue }
+        $dn = $props.DistributionName
+        if (-not $dn) { continue }
+        if ($candidates -contains $dn) {
+            $matched = [pscustomobject]@{
+                DistributionName = $dn
+                BasePath         = $props.BasePath
+                RegPath          = $sub.PSPath
+            }
+            break
+        }
+    }
+    if (-not $matched) {
+        Log-Warn "Move-PodmanWslDistroToM: distro $DistroName not registered -- nothing to migrate"
+        return
+    }
+    $current = ($matched.BasePath -replace '^\\\\\?\\','').TrimEnd('\')
+    if ($current -match '^[Mm]:\\') {
+        Log-Ok "podman-WSL distro $($matched.DistributionName) already on M:\ ($current) -- no migration needed"
+        return
+    }
+    # Migrate.
+    Set-Step "Migrating $($matched.DistributionName) WSL distro from $current onto M:\..."
+    if (-not (Test-Path $TargetRoot)) {
+        New-Item -ItemType Directory -Path $TargetRoot -Force -ErrorAction Stop | Out-Null
+    }
+    $newPath = Join-Path $TargetRoot $matched.DistributionName
+    if (Test-Path $newPath) {
+        # Stale dir from a previous failed migration -- safe to wipe
+        # because the registered distro still points at $current.
+        Log-Warn "Removing stale $newPath before re-import"
+        Remove-Item -LiteralPath $newPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    & wsl.exe --shutdown 2>&1 | ForEach-Object { Write-Log "wsl-shutdown: $_" }
+    $tmpTar = Join-Path $env:TEMP "mios-podman-migrate-$([guid]::NewGuid().ToString('N').Substring(0,8)).tar"
+    try {
+        Log-Ok "Exporting $($matched.DistributionName) -> $tmpTar"
+        & wsl.exe --export $matched.DistributionName $tmpTar 2>&1 | ForEach-Object { Write-Log "wsl-export: $_" }
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmpTar)) {
+            Log-Warn "wsl --export $($matched.DistributionName) failed -- aborting M:\ migration"
+            return
+        }
+        & wsl.exe --unregister $matched.DistributionName 2>&1 | ForEach-Object { Write-Log "wsl-unregister: $_" }
+        Log-Ok "Re-importing $($matched.DistributionName) at $newPath"
+        & wsl.exe --import $matched.DistributionName $newPath $tmpTar --version 2 2>&1 | ForEach-Object { Write-Log "wsl-import-M: $_" }
+        if ($LASTEXITCODE -eq 0) {
+            Log-Ok "podman-WSL distro $($matched.DistributionName) is now on M:\ ($newPath)"
+        } else {
+            Log-Warn "wsl --import to M:\ failed; falling back to original location"
+            & wsl.exe --import $matched.DistributionName $current $tmpTar --version 2 2>&1 | ForEach-Object { Write-Log "wsl-import-fallback: $_" }
+        }
+    } finally {
+        if (Test-Path $tmpTar) { Remove-Item $tmpTar -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function New-BuilderDistro([hashtable]$HW) {
     Set-Step "Initializing $DevDistro ($($HW.Cpus) CPUs / $($HW.RamGB)GB / $($HW.DiskGB)GB disk)"
     # Redirect podman-machine state (the VHDX, registry, configs) onto
@@ -2783,6 +2872,22 @@ function New-BuilderDistro([hashtable]$HW) {
     }
     $null = Invoke-NativeQuiet { podman machine set --default $BuilderDistro }
     Log-Ok "$DevDistro ready as default Podman machine"
+
+    # ── Force the podman-MiOS-DEV WSL distro onto M:\ ────────────────────
+    # Operator: "podman-MiOS-DEV MUST also be located on M:\". XDG_DATA_HOME=
+    # M:\podman + Set-PodmanMachineStorageOnM's junctions are SUPPOSED to make
+    # podman init create the distro under M:\, but on some podman versions
+    # the WSL2 VHDX still ends up under %LOCALAPPDATA%\Packages\<guid>\
+    # LocalState (WSL2 ignores XDG_DATA_HOME -- it only respects the path
+    # passed to `wsl --import`). Detect the actual BasePath via registry
+    # and, if not on M:\, do export + unregister + import to force it.
+    if (Test-Path 'M:\') {
+        try {
+            Move-PodmanWslDistroToM -DistroName $BuilderDistro
+        } catch {
+            Log-Warn "podman-WSL distro M:\ migration: $_"
+        }
+    }
 
     # Rootful machine-os distros are not accessible via wsl.exe or podman machine ssh.
     # Build runs from the Windows Podman client via the machine's API -- no exec needed.
@@ -3251,7 +3356,7 @@ fi
 # of mios.git, so these symlinks live in the same view as /.git --
 # the operator's "single source of truth" surface is one cd / away.
 sudo ln -sf usr/share/mios/mios.toml             /mios.toml             2>/dev/null || true
-sudo ln -sf usr/share/mios/configurator/index.html /configurator.html  2>/dev/null || true
+sudo ln -sf usr/share/mios/configurator/mios.html /configurator.html  2>/dev/null || true
 echo "[quadlet-overlay] root symlinks: /mios.toml, /configurator.html"
 
 # Realize sysusers + tmpfiles, then reload systemd so the new units
