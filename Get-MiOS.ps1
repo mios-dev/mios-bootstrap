@@ -3000,17 +3000,13 @@ function Install-MiOSPowerShellProfile {
     $_miosCols    = Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80
     $_miosRows    = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 20
     $_miosScroll  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
-    # frame_width default is COLS (full window width) so the framed
-    # dashboard reaches both edges of the frameless terminal -- matching
-    # the powerline which extends col 0 (leading rounded cap) to col 79
-    # (trailing rounded cap). Operator-reported regression: "dashboard
-    # framing is too narrow ... powerline doesn't reach the right side
-    # (just like the dashboard framing)". The previous cols-2 default
-    # left 2 cells of slack on the right edge. mios.toml [terminal].
-    # frame_width is the SSOT; the configurator HTML exposes this for
-    # operator override. frame_height stays rows-1 so one row is
-    # reserved for the prompt under the dashboard.
-    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default $_miosCols
+    # frame_width default is COLS - 1 per operator "everything should be
+    # -1 width" -- 1-cell gutter on the right edge prevents the frame
+    # from line-wrapping when WT reports WindowWidth one cell over
+    # visible. mios.toml [terminal].frame_width is the SSOT; the
+    # configurator HTML exposes this for operator override.
+    # frame_height stays rows-1 so one row is reserved for the prompt.
+    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default ($_miosCols - 1)
     $_miosFrameH  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default ($_miosRows - 1)
     $miosScriptBody = @"
 # MiOS PowerShell profile -- PSReadLine reload + fastfetch MOTD +
@@ -3172,16 +3168,12 @@ if (`$true) {
         # right edge so the box-drawing border doesn't touch the
         # line-wrap boundary on hosts that lie about their width.
         # Frame width = MIN(live conhost width, mios.toml frame_width).
-        # Operator-reported regression: "framing/dashboard is still
-        # scattered/line wrapping (too wide still)". Earlier I had
-        # WIDTH = MAX which auto-grew the frame to fill wider terminals
-        # -- but on WT versions that report WindowWidth as N+1 (one cell
-        # over the actual visible cell count) the frame's last char
-        # wrapped to the next line, breaking each row across two visual
-        # lines = "scattered" appearance. Capping at WindowWidth means
-        # the frame NEVER exceeds the visible width; capping at TOML
-        # frame_width means the frame respects the operator's chosen
-        # max. Whichever is smaller wins.
+        # Per operator: "everything should be -1 width" -- the -1
+        # convention is enforced at the TOML SSOT layer (mios.toml
+        # [terminal].frame_width = cols-1 = 79 by default), so the code
+        # path itself doesn't subtract; it just respects whatever the
+        # operator-tuned TOML value is. The MIN cap protects against
+        # WT reporting WindowWidth one cell over visible.
         `$_winWNow = try { [Console]::WindowWidth } catch { $_miosFrameW }
         `$WIDTH = [math]::Min(`$_winWNow, $_miosFrameW)
         if (`$WIDTH -lt 20) { `$WIDTH = $_miosFrameW }   # safety floor
