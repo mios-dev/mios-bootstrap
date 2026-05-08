@@ -2185,7 +2185,8 @@ $Script:MiosOmpJson = @'
 {
   "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
   "version": 4,
-  "final_space": true,
+  "//": "final_space=false: don't reserve a trailing column after the prompt -- the right-aligned time segment now uses trailing_diamond U+E0B4 to reach col 79 of the frameless 80-col terminal.",
+  "final_space": false,
   "//": [
     "MiOS Oh-My-Posh theme.",
     "All Nerd Font private-use-area glyphs are encoded as JSON \\uXXXX",
@@ -2382,10 +2383,11 @@ $Script:MiosOmpJson = @'
           "template": " {{ if not .Error }}{{ .Icon }}{{ .Percentage }}{{ end }}{{ .Error }} \uf295 "
         },
         {
+          "//": "Trailing rounded cap (U+E0B4) so the right-aligned powerline reaches col 79 of the frameless terminal -- without trailing_diamond, oh-my-posh ends the segment at the text and leaves the last 1-2 cells uncolored. Operator-reported regression: 'powerline actually doesn't reach the RIGHT side'.",
           "type": "time",
-          "style": "powerline",
-          "invert_powerline": true,
-          "powerline_symbol": "\ue0b6",
+          "style": "diamond",
+          "leading_diamond": "\ue0b6",
+          "trailing_diamond": "\ue0b4",
           "background": "#1A407F",
           "foreground": "#E7DFD3",
           "properties": {
