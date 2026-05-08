@@ -338,31 +338,49 @@ function Show-MiOSBanner {
     # AND BRANDED BANNER OF THE MIOS ASCII BANNER ART -- EVERY WINDOW
     # AND/OR DASHBOARD HAS IT AT THE TOP".
     # Width = 80 cells (frame char to frame char). Inner width = 78.
+    # The ASCII art block + subtitle are CENTERED within the inner
+    # width as a single block (same approach as Show-MiosDashboard) --
+    # not line-by-line, so the art's internal diagonal alignment is
+    # preserved while the whole logo sits visually centered.
     # Box-drawing requires UTF-8 codepage (chcp 65001) -- conhost in
     # CP437/CP1252 mangles ╭╮╰╯│─ to `?`. Callers must set codepage
     # before invoking; the agreement gate + Pass-2 inner cmd both do.
     param([string]$Subtitle = '')
+    $art = @(
+        '      ___                       ___           ___',
+        '     /\__\          ___        /\  \         /\  \',
+        '    /::|  |        /\  \      /::\  \       /::\  \',
+        '   /:|:|  |        \:\  \    /:/\:\  \     /:/\ \  \',
+        '  /:/|:|__|__      /::\__\  /:/  \:\  \   _\:\~\ \  \',
+        ' /:/ |::::\__\  __/:/\/__/ /:/__/ \:\__\ /\ \:\ \ \__\',
+        ' \/__/~~/:/  / /\/:/  /    \:\  \ /:/  / \:\ \:\ \/__/',
+        '       /:/  /  \::/__/      \:\  /:/  /   \:\ \:\__\',
+        '      /:/  /    \:\__\       \:\/:/  /     \:\/:/  /',
+        '     /:/  /      \/__/        \::/  /       \::/  /',
+        '     \/__/                     \/__/         \/__/'
+    )
     $sub = if ($Subtitle) { $Subtitle } else { 'Immutable Fedora AI Workstation' }
-    # Center the subtitle within the 78-col inner width.
-    $subPadTotal = [math]::Max(0, 78 - $sub.Length)
-    $subL = ' ' * [math]::Floor($subPadTotal / 2)
-    $subR = ' ' * ($subPadTotal - [math]::Floor($subPadTotal / 2))
-    @"
-╭──────────────────────────────────────────────────────────────────────────────╮
-│       ___                       ___           ___                            │
-│      /\__\          ___        /\  \         /\  \                           │
-│     /::|  |        /\  \      /::\  \       /::\  \                          │
-│    /:|:|  |        \:\  \    /:/\:\  \     /:/\ \  \                         │
-│   /:/|:|__|__      /::\__\  /:/  \:\  \   _\:\~\ \  \                        │
-│  /:/ |::::\__\  __/:/\/__/ /:/__/ \:\__\ /\ \:\ \ \__\                       │
-│  \/__/~~/:/  / /\/:/  /    \:\  \ /:/  / \:\ \:\ \/__/                       │
-│        /:/  /  \::/__/      \:\  /:/  /   \:\ \:\__\                         │
-│       /:/  /    \:\__\       \:\/:/  /     \:\/:/  /                         │
-│      /:/  /      \/__/        \::/  /       \::/  /                          │
-│      \/__/                     \/__/         \/__/                           │
-│$subL$sub$subR│
-╰──────────────────────────────────────────────────────────────────────────────╯
-"@
+    $inner = 78
+    # Block-center: pad every art line by the SAME left-pad so internal
+    # diagonal alignment is preserved.
+    $maxArt = ($art | Measure-Object -Property Length -Maximum).Maximum
+    $blockL = ' ' * [math]::Max(0, [math]::Floor(($inner - $maxArt) / 2))
+    # Subtitle centered on its own (different width than the art block).
+    $subPad = [math]::Max(0, $inner - $sub.Length)
+    $subL = ' ' * [math]::Floor($subPad / 2)
+    $subR = ' ' * ($subPad - [math]::Floor($subPad / 2))
+    $top    = '╭' + ('─' * $inner) + '╮'
+    $bottom = '╰' + ('─' * $inner) + '╯'
+    $rows = @($top)
+    foreach ($a in $art) {
+        $line = $blockL + $a
+        # Right-pad to fill inner width.
+        $line = $line + (' ' * [math]::Max(0, $inner - $line.Length))
+        $rows += '│' + $line + '│'
+    }
+    $rows += '│' + $subL + $sub + $subR + '│'
+    $rows += $bottom
+    $rows -join "`n"
 }
 
 function Show-MiOSAgreement {
@@ -502,42 +520,120 @@ function Invoke-MiOSAgreementGate {
         }
     } catch {}
 
-    # Two-page render with a single Read-Host pause between. The agreement
-    # is ~85 lines and a typical install conhost is 80x40, so a single
-    # Write-Host + Read-Host would auto-scroll past the top before the
-    # operator can read it. Splitting at the natural break (after section
-    # 3, before DATA AND NETWORK POSTURE) gives ~45 lines per page -- both
-    # pages fit visibly in 80x40 with the pause prompt at the bottom.
-    $text  = Show-MiOSAgreement
-    $lines = $text -split "`r?`n"
-    # Find the divider before "4. DATA AND NETWORK POSTURE" -- a stable
-    # marker independent of cosmetic spacing tweaks. Fall back to the
-    # midpoint if the section header ever gets renamed.
-    $splitAt = $null
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match '^\s*4\.\s*DATA AND NETWORK POSTURE') {
-            # Back up to the divider line above the section header.
-            for ($j = $i - 1; $j -ge 0; $j--) {
-                if ($lines[$j] -match '^-{8,}$') { $splitAt = $j; break }
+    # Win32 helpers for re-centering on every page refresh. Operator-
+    # reported regression: "window respawns slightly off-center every
+    # time it refreshes the window". Conhost doesn't move the Win32
+    # window on Clear-Host, but tiny size renegotiations (font cache /
+    # DPI re-resolve when the active monitor changes) drift it. We
+    # snapshot the active monitor once and re-center on every page.
+    if (-not ('MiOSGate.W' -as [type])) {
+        try {
+            Add-Type -Namespace MiOSGate -Name W -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
+'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
+        } catch {}
+    }
+    try { Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue } catch {}
+    # Capture the operator's active monitor ONCE at gate entry. Using
+    # Cursor.Position drifts to the last mouse-move which on long pages
+    # is wherever the operator parked the cursor while reading. Sticking
+    # to the first sample anchors all subsequent re-centers to the same
+    # display.
+    $_gateScreen = $null
+    try {
+        $_gpt = [System.Windows.Forms.Cursor]::Position
+        $_gateScreen = [System.Windows.Forms.Screen]::FromPoint($_gpt).WorkingArea
+    } catch {}
+    function _Center-MiOSGateConsole {
+        if (-not ('MiOSGate.W' -as [type])) { return }
+        if (-not $_gateScreen) { return }
+        try {
+            $h = [MiOSGate.W]::GetConsoleWindow()
+            if ($h -eq [IntPtr]::Zero) { return }
+            $r = New-Object System.Drawing.Rectangle
+            [void][MiOSGate.W]::GetWindowRect($h, [ref]$r)
+            $w = $r.Width  - $r.X
+            $hp = $r.Height - $r.Y
+            $x = $_gateScreen.X + [int](([math]::Max(0, $_gateScreen.Width  - $w )) / 2)
+            $y = $_gateScreen.Y + [int](([math]::Max(0, $_gateScreen.Height - $hp)) / 2)
+            [void][MiOSGate.W]::MoveWindow($h, $x, $y, $w, $hp, $true)
+        } catch {}
+    }
+
+    # AUTO-PAGINATE so the banner ALWAYS stays visible at the top of
+    # the window. Operator-reported regression: previous two-page split
+    # had page 1 = 53 lines but the conhost only shows 40 rows, so the
+    # banner auto-scrolled off the top before the prompt rendered. The
+    # operator had to scroll up to see the banner -- which violated
+    # "EVERY WINDOW HAS THE BANNER AT THE TOP".
+    #
+    # Strategy: render the banner first, then pack as many content lines
+    # as fit in (window_rows - banner_rows - prompt_rows - margin) before
+    # pausing. Repeat until the agreement body is exhausted, then enter
+    # the Acknowledged prompt loop on the final page.
+    $banner    = Show-MiOSBanner -Subtitle 'Project Acknowledgement'
+    $bannerRows = ($banner -split "`n").Count
+    # Strip the leading framed banner from Show-MiOSAgreement output --
+    # we'll prepend our own per-page so each page starts with it.
+    $body = Show-MiOSAgreement
+    $bodyLines = $body -split "`r?`n"
+    # Drop the banner block at the top (lines until the closing ╰...╯).
+    $strip = 0
+    for ($i = 0; $i -lt $bodyLines.Count; $i++) {
+        if ($bodyLines[$i].StartsWith('╰')) { $strip = $i + 1; break }
+    }
+    $contentLines = @($bodyLines | Select-Object -Skip $strip)
+    # Trim trailing empty lines so the last page doesn't waste rows.
+    while ($contentLines.Count -gt 0 -and $contentLines[-1] -match '^\s*$') {
+        $contentLines = $contentLines[0..($contentLines.Count - 2)]
+    }
+
+    $winRows    = try { [Console]::WindowHeight } catch { 40 }
+    if ($winRows -lt 30) { $winRows = 30 }   # safety floor
+    $promptRows = 3                          # blank + 2-line prompt
+    $perPage    = [math]::Max(8, $winRows - $bannerRows - $promptRows)
+
+    # Slice content into page-sized chunks, breaking at section dividers
+    # when possible so a section's title doesn't get orphaned at the
+    # bottom of one page with its body on the next.
+    $pages = @()
+    $start = 0
+    while ($start -lt $contentLines.Count) {
+        $end = [math]::Min($start + $perPage - 1, $contentLines.Count - 1)
+        # If we're not at the end of the content, prefer a divider line
+        # (^-{8,}$) as the cut point so a section header isn't orphaned.
+        if ($end -lt ($contentLines.Count - 1)) {
+            for ($k = $end; $k -ge $start + [math]::Max(8, $perPage - 12); $k--) {
+                if ($contentLines[$k] -match '^-{8,}$') {
+                    # Cut just BEFORE the divider so the next page starts
+                    # with the divider+title+divider block intact.
+                    $end = $k - 1
+                    break
+                }
             }
-            if (-not $splitAt) { $splitAt = $i }
-            break
+        }
+        $pages += ,($contentLines[$start..$end])
+        $start = $end + 1
+    }
+
+    for ($p = 0; $p -lt $pages.Count; $p++) {
+        $isLast = ($p -eq $pages.Count - 1)
+        $pageNum = $p + 1
+        $subt = "Project Acknowledgement (page $pageNum of $($pages.Count))"
+        Clear-Host
+        # Re-center the conhost window on the OPERATOR'S active monitor
+        # captured at gate entry. Without this, conhost drifts a few
+        # pixels per Clear-Host (font cache / DPI renegotiation).
+        _Center-MiOSGateConsole
+        Write-Host (Show-MiOSBanner -Subtitle $subt)
+        Write-Host (($pages[$p]) -join "`n")
+        Write-Host ''
+        if (-not $isLast) {
+            Read-Host "[mios] Press Enter for page $($pageNum + 1) of $($pages.Count)" | Out-Null
         }
     }
-    if (-not $splitAt) { $splitAt = [int]($lines.Count / 2) }
-
-    # Page 1 already starts with the framed banner (the agreement text
-    # itself begins with Show-MiOSBanner output). Page 2 needs the banner
-    # re-rendered at top per operator: "EVERY WINDOW SHOULD HAVE A FRAMED
-    # AND BRANDED BANNER OF THE MIOS ASCII BANNER ART -- EVERY WINDOW
-    # AND/OR DASHBOARD HAS IT AT THE TOP".
-    Clear-Host
-    Write-Host (($lines[0..($splitAt - 1)]) -join "`n")
-    Write-Host ''
-    Read-Host "[mios] Page 1 of 2 -- press Enter to view the rest" | Out-Null
-    Clear-Host
-    Write-Host (Show-MiOSBanner -Subtitle 'Project Acknowledgement (page 2 of 2)')
-    Write-Host (($lines[$splitAt..($lines.Count - 1)]) -join "`n")
 
     # Prompt loop.
     while ($true) {
