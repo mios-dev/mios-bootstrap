@@ -875,27 +875,27 @@ try {
             `$_root = [MEW.N]::GetAncestor(`$_consoleHwnd, 2)
             if (`$_root -ne [IntPtr]::Zero) { `$_root } else { `$_consoleHwnd }
         } else { [IntPtr]::Zero }
-        if (`$_h -eq [IntPtr]::Zero) { `$_dbgLines.Add("attempt `${_attempt}: no hwnd"); continue }
+        if (`$_h -eq [IntPtr]::Zero) { `$_dbgLines.Add(('attempt {0}: no hwnd' -f `$_attempt)); continue }
         `$_rect = New-Object System.Drawing.Rectangle
         `$_grcOk = [MEW.N]::GetWindowRect(`$_h, [ref]`$_rect)
         `$_actualW = `$_rect.Width  - `$_rect.X
         `$_actualH = `$_rect.Height - `$_rect.Y
-        if (`$_actualW -le 0 -or `$_actualH -le 0) { `$_dbgLines.Add("attempt `${_attempt}: zero dims grc=`$_grcOk"); continue }
+        if (`$_actualW -le 0 -or `$_actualH -le 0) { `$_dbgLines.Add(('attempt {0}: zero dims grc={1}' -f `$_attempt, `$_grcOk)); continue }
         `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
         `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
         `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_actualW)) / 2)
         `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_actualH)) / 2)
         # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14
         `$_swp = [MEW.N]::SetWindowPos(`$_h, [IntPtr]::Zero, `$_x, `$_y, `$_actualW, `$_actualH, 0x14)
-        `$_dbgLines.Add("attempt `${_attempt}: hwnd=0x`$([int64]`$_h | %{ '{0:X}' -f `$_ }) console=0x`$([int64]`$_consoleHwnd | %{ '{0:X}' -f `$_ }) rect=`$(`$_rect.X),`$(`$_rect.Y) dims=`${_actualW}x`${_actualH} screen=`$(`$_s.X),`$(`$_s.Y) `$(`$_s.Width)x`$(`$_s.Height) target=`${_x},`${_y} SWPok=`$_swp")
+        `$_dbgLines.Add(('attempt {0}: hwnd=0x{1:X} console=0x{2:X} rect={3},{4} dims={5}x{6} screen={7},{8} {9}x{10} target={11},{12} SWPok={13}' -f `$_attempt, ([int64]`$_h), ([int64]`$_consoleHwnd), `$_rect.X, `$_rect.Y, `$_actualW, `$_actualH, `$_s.X, `$_s.Y, `$_s.Width, `$_s.Height, `$_x, `$_y, `$_swp))
         # Verify by re-reading the rect.
         `$_rect2 = New-Object System.Drawing.Rectangle
         [void][MEW.N]::GetWindowRect(`$_h, [ref]`$_rect2)
         if (`$_rect2.X -eq `$_x -and `$_rect2.Y -eq `$_y) {
-            `$_dbgLines.Add("attempt `${_attempt}: SUCCESS at `$(`$_rect2.X),`$(`$_rect2.Y)")
+            `$_dbgLines.Add(('attempt {0}: SUCCESS at {1},{2}' -f `$_attempt, `$_rect2.X, `$_rect2.Y))
             break
         }
-        `$_dbgLines.Add("attempt `${_attempt}: post-SWP rect=`$(`$_rect2.X),`$(`$_rect2.Y) (target was `${_x},`${_y}) -- retrying")
+        `$_dbgLines.Add(('attempt {0}: post-SWP rect={1},{2} (target was {3},{4}) -- retrying' -f `$_attempt, `$_rect2.X, `$_rect2.Y, `$_x, `$_y))
     }
     try { Set-Content -LiteralPath `$_dbg -Value (`$_dbgLines -join [Environment]::NewLine) -Encoding UTF8 } catch {}
 } catch {
