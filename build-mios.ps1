@@ -6460,11 +6460,16 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # padding=0 + suppressApplicationTitle deliver the closest-to-
     # frameless WT can do while keeping acrylic alive.
 
-    # Retry-loop center: WT in focus mode often re-positions itself
-    # to its remembered location AFTER our first SetWindowPos. Three
-    # spaced-out moves stick where one doesn't.
+    # Persistent re-center loop. Operator-reported regression: "window
+    # also doesn't launch centered still -- should re-center every few
+    # ticks". Single-shot SetWindowPos was losing races against WT's
+    # post-spawn layout work (acrylic backdrop allocation, font cache,
+    # focus-mode size renegotiation) which trigger 1-2 size adjustments
+    # AFTER the initial paint. 12 ticks at 500ms = 6 seconds total --
+    # long enough for WT to settle, short enough that operator can
+    # manually drag the window after the loop exits if they want.
     $topmost = [IntPtr]::new(-1)
-    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+    for ($attempt = 0; $attempt -lt 12; $attempt++) {
         $rect = New-Object MiOSLaunch.Native.Win+RECT
         if ([MiOSLaunch.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) {
             $rw = $rect.Right - $rect.Left
@@ -6472,12 +6477,14 @@ if ($hwnd -ne [IntPtr]::Zero) {
             if ($rw -gt 0 -and $rh -gt 0) {
                 $cx = [int]($work.X + ($work.Width  - $rw) / 2)
                 $cy = [int]($work.Y + ($work.Height - $rh) / 2)
-                # HWND_TOPMOST + SWP_SHOWWINDOW = 0x40.
-                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, $topmost, $cx, $cy, $rw, $rh, 0x40)
-                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, $rw, $rh, 0x04)
+                # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14 --
+                # don't steal focus or fight z-order with other windows.
+                # Dropped the prior HWND_TOPMOST pass to avoid pinning
+                # MiOS above other windows (wasn't operator-requested).
+                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, $rw, $rh, 0x14)
             }
         }
-        Start-Sleep -Milliseconds 350
+        Start-Sleep -Milliseconds 500
     }
 }
 '@
@@ -6485,13 +6492,41 @@ if ($hwnd -ne [IntPtr]::Zero) {
     Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
     Log-Ok "MiOS native launcher staged: $miosLauncher"
 
-    # Shortcut targets the centering launcher with -WindowStyle Hidden so
-    # there's no console-flash before WT appears. -NoProfile keeps the
-    # launcher cold-start fast (typically < 300 ms before wt.exe spawns).
+    # Shortcut targets WT.EXE DIRECTLY -- no pwsh launcher pre-flash.
+    # Operator-reported regression: "opening apps shouldn't open a regular
+    # windows terminal/powershell window before launching the MiOS app
+    # ecosystem(s) -- MiOS app icons opens the app windows directly -- no
+    # flashing a prompt that then launches the correct MiOS terminal
+    # profile/application(s)".
+    #
+    # The previous launcher pwsh.exe -NoProfile -WindowStyle Hidden -File
+    # mios-launch.ps1 still produced a brief conhost flash before wt.exe
+    # spawned (Windows shows the host process briefly even with
+    # WindowStyle=Hidden). wt.exe is itself a windowed application -- the
+    # .lnk pointing at wt.exe with the right args produces zero flash
+    # because there's no intermediate console host.
+    #
+    # Trade-off: lose the centering retry loop that mios-launch.ps1
+    # provided. WT's --pos flag honors the initial position; the post-
+    # bootstrap auto-launch path (in Get-MiOS.ps1's elevation block) still
+    # runs the persistent re-center for the post-install spawn, but the
+    # ongoing daily-shortcut path leans on WT's own positioning. If WT's
+    # placement drifts the operator can edit globals.initialPosition in
+    # mios.toml or right-click + drag.
     if ($wtExe) {
-        $hubTarget = $pwshExe
-        $hubArgs   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$miosLauncher`""
+        $hubTarget = $wtExe
+        # -w MiOS = named window (matches the post-bootstrap spawn so
+        # subsequent clicks reuse the same window via globalSummon).
+        # --size in cells -- WT auto-pixel-sizes for active DPI.
+        # --focus = borderless / no titlebar / no tab strip.
+        # -p MiOS = use the MiOS profile (which carries the bound pwsh
+        # commandline + dot-source of M:\MiOS\powershell\profile.ps1).
+        $hubArgs   = "-w MiOS --size $($script:MiosAppCols),$($script:MiosAppRows) --focus -p MiOS"
     } else {
+        # Fallback: no wt.exe found -- run the bare hub script in a pwsh
+        # console (still pre-flashes but at least gives the operator a
+        # working shell). This branch should be unreachable on a
+        # successful install since WT is a Phase 5 prerequisite.
         $hubTarget = $pwshExe
         $hubArgs   = "-NoExit -ExecutionPolicy Bypass -Command `"& { $hubResizePrelude; & '$hubPath' }`""
     }
@@ -6590,22 +6625,58 @@ if ($hwnd -ne [IntPtr]::Zero) {
         $vBin  = Join-Path $MiosBinDir $v.Bin
         $vIcon = Join-Path $MiosIconsDir $v.Icon
         $vLnk  = Join-Path $StartMenuDir ("{0}.lnk" -f $v.Name)
-        # MiOS-DEV: bash login itself keeps the window alive (no -NoExit).
-        # MiOS Config: hands off to the OS default browser via Start-Process
-        #              and exits -- no -NoExit (no terminal needed).
-        # MiOS Help: -NoExit so the help screen stays visible until the
-        # operator presses a key (the script ends with ReadKey).
-        if ($v.Name -eq 'MiOS-DEV' -or $v.Name -eq 'MiOS Config') {
-            $vArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
-        } else {
-            $vArgs = "-NoProfile -NoExit -ExecutionPolicy Bypass -File `"$vBin`""
+        # Eliminate the pwsh.exe pre-flash. Per operator: "opening apps
+        # shouldn't open a regular windows terminal/powershell window
+        # before launching the MiOS app ecosystem(s)". Each app picks the
+        # right target executable so there's NO intermediate console:
+        #   MiOS-DEV     -> wt.exe -p MiOS-DEV (windowed app, zero flash)
+        #   MiOS Config  -> the mios.html file directly (default browser
+        #                   opens, zero console)
+        #   MiOS Help    -> wt.exe spawning pwsh + the help script
+        #                   (windowed; pwsh runs INSIDE WT, no separate
+        #                    conhost flash)
+        $vTarget = $pwshExe
+        $vArgs   = $null
+        switch ($v.Name) {
+            'MiOS-DEV' {
+                if ($wtExe) {
+                    $vTarget = $wtExe
+                    $vArgs   = "-w MiOS-DEV --size $($script:MiosAppCols),$($script:MiosAppRows) --focus -p MiOS-DEV"
+                } else {
+                    $vArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
+                }
+            }
+            'MiOS Config' {
+                # Resolve mios.html directly so the .lnk targets the file
+                # (Windows shell-execute opens it in the default browser
+                # with no console flash). Falls back to the launcher
+                # script if the html isn't on disk yet.
+                $_cfgHtml = Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\mios.html'
+                if (Test-Path -LiteralPath $_cfgHtml) {
+                    $vTarget = $_cfgHtml
+                    $vArgs   = ''
+                } else {
+                    $vTarget = $pwshExe
+                    $vArgs   = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
+                }
+            }
+            default {
+                # MiOS Help (and any future verbs) -- run inside WT so the
+                # help text renders themed, no pwsh pre-flash.
+                if ($wtExe) {
+                    $vTarget = $wtExe
+                    $vArgs   = "-w 0 --size $($script:MiosAppCols),$($script:MiosAppRows) --focus -p MiOS pwsh.exe -NoProfile -NoExit -ExecutionPolicy Bypass -File `"$vBin`""
+                } else {
+                    $vArgs = "-NoProfile -NoExit -ExecutionPolicy Bypass -File `"$vBin`""
+                }
+            }
         }
         # Start Menu (admin-installed all-users path).
-        New-MiosShortcut -LnkPath $vLnk -TargetExe $pwshExe -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
+        New-MiosShortcut -LnkPath $vLnk -TargetExe $vTarget -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
         # Desktop -- so the verb is also one click from the desktop.
         if ($desktopDir -and (Test-Path $desktopDir)) {
             $vDesk = Join-Path $desktopDir ("{0}.lnk" -f $v.Name)
-            New-MiosShortcut -LnkPath $vDesk -TargetExe $pwshExe -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
+            New-MiosShortcut -LnkPath $vDesk -TargetExe $vTarget -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
         }
         Log-Ok ("Per-verb Start Menu + Desktop shortcut: {0} -> {1}" -f $v.Name, $v.Bin)
     }

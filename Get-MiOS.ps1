@@ -1094,22 +1094,31 @@ if (`$_launchMiosOnClose) {
             Start-Sleep -Milliseconds 150
         }
         if (`$_wtHwnd -ne [IntPtr]::Zero) {
-            # Center using the ACTUAL post-spawn outer rect (GetWindowRect)
-            # NOT a hardcoded pixel size. WT auto-pixel-sizes for the
-            # active DPI when given --size in cells, so the actual rect
-            # is the correct cell-derived size. Read it, compute screen-
-            # centered X,Y, retry 3x to defeat WT's --pos-ignored-in-focus
-            # quirk.
-            for (`$_i = 0; `$_i -lt 3; `$_i++) {
+            # Persistent re-center loop. Operator-reported regression:
+            # "window also doesn't launch centered still -- should re-
+            # center every few ticks". Single-shot SetWindowPos was
+            # losing the race against WT's own post-spawn layout work
+            # (acrylic backdrop allocation, font cache, etc. trigger
+            # 1-2 size renegotiations after the initial paint). Loop
+            # 12 times at 500ms = ~6 seconds total -- long enough for
+            # WT to settle, short enough that the operator can still
+            # manually drag the window after if they want. Each tick
+            # re-reads the actual rect (so a WT resize during the loop
+            # gets re-centered with the new dims) and applies SetWindow
+            # Pos. The loop is the bootstrap's last action before exit
+            # so it doesn't block any other phase.
+            for (`$_i = 0; `$_i -lt 12; `$_i++) {
                 `$_actualRect = New-Object System.Drawing.Rectangle
                 [void][MEW.W]::GetWindowRect(`$_wtHwnd, [ref]`$_actualRect)
                 `$_aw = `$_actualRect.Width  - `$_actualRect.X
                 `$_ah = `$_actualRect.Height - `$_actualRect.Y
-                if (`$_aw -le 0 -or `$_ah -le 0) { Start-Sleep -Milliseconds 350; continue }
+                if (`$_aw -le 0 -or `$_ah -le 0) { Start-Sleep -Milliseconds 500; continue }
                 `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - `$_aw)) / 2)
                 `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - `$_ah)) / 2)
-                [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, `$_aw, `$_ah, 0x04)
-                Start-Sleep -Milliseconds 350
+                # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14 so we
+                # don't steal focus or fight z-order with other windows.
+                [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, `$_aw, `$_ah, 0x14)
+                Start-Sleep -Milliseconds 500
             }
         }
     } catch {}
