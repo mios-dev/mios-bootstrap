@@ -2974,8 +2974,10 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     $_curY = $_cursorPre.Y
     # Bootstrap window dims (the elevated conhost that runs Pass-1 +
     # Pass-2 + readme/acknowledgements). Pulled from mios.toml
-    # [terminal.install] -- vendor default 80x40. The post-install
-    # MiOS app spawn uses [terminal] (80x20, portal feel).
+    # [terminal.install] -- vendor default 80x40 for log/output room.
+    # The post-install MiOS APP spawn uses [terminal] (80x20, portal
+    # feel) because the operator-facing terminal is shorter than the
+    # install-time log window.
     # Compute target pixel dims HERE so they bake as literal integers
     # into the rendered inner cmd -- the spawned pwsh has no access
     # to outer-scope variables.
@@ -2986,9 +2988,17 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     $_cellH    = Get-MiosTomlValue -Section 'theme.font'       -Key 'cell_h_px'       -Default 20
     $_chromeW  = Get-MiosTomlValue -Section 'theme.font'       -Key 'chrome_w_px'     -Default 20
     $_chromeH  = Get-MiosTomlValue -Section 'theme.font'       -Key 'chrome_h_px'     -Default 12
-    # Pixel target -- 80x40 cells * 10x20 px + 20x12 chrome = 820x812 px.
+    # Pixel target for the BOOTSTRAP window (80x40 cells).
     $_winWPx   = ($_elevCols * $_cellW) + $_chromeW
     $_winHPx   = ($_elevRows * $_cellH) + $_chromeH
+    # Separate dims for the post-install MiOS APP spawn (80x20 -- the
+    # canonical operator-facing terminal). These bake into the inner
+    # cmd alongside $_elevCols/$_elevRows but drive the wt.exe -p MiOS
+    # spawn at end-of-bootstrap, NOT the bootstrap conhost itself.
+    $_appCols  = Get-MiosTomlValue -Section 'terminal'         -Key 'cols'            -Default 80
+    $_appRows  = Get-MiosTomlValue -Section 'terminal'         -Key 'rows'            -Default 20
+    $_appWPx   = ($_appCols * $_cellW) + $_chromeW
+    $_appHPx   = ($_appRows * $_cellH) + $_chromeH
     $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
     $_innerCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
@@ -3154,8 +3164,8 @@ if (`$_launchMiosOnClose) {
         # show/hide.
         `$_wtArgs = @(
             '-w', 'MiOS',
-            '--pos', ("`$(`$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_winWPx)) / 2)),`$(`$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_winHPx)) / 2))"),
-            '--size', "$_elevCols,$_elevRows",
+            '--pos', ("`$(`$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_appWPx)) / 2)),`$(`$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_appHPx)) / 2))"),
+            '--size', "$_appCols,$_appRows",
             '--focus',
             '-p', 'MiOS'
         )
