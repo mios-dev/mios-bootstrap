@@ -449,13 +449,43 @@ function Invoke-MiOSAgreementGate {
     }
     if ($env:MIOS_GETMIOS_RELAUNCHED -eq '1') { return $true }   # inner call inherits outer accept
 
+    # Resize Pass-1 conhost BEFORE rendering. The irm|iex one-liner
+    # spawns powershell.exe -Command, which inherits the default conhost
+    # geometry (~80x25 / 120x30 depending on host). The agreement is
+    # ~104 lines: at 80x25 the entire document scrolls past in a flash,
+    # the operator sees only the prompt at the bottom, and perceives it
+    # as broken ("scrolls to the bottom immediately"). Bumping the
+    # buffer + window up to 80x60 with a 9000-line scrollback lets the
+    # operator scroll up coherently and keeps the prompt anchored at
+    # the visible bottom of a sensibly-sized window.
+    try { & chcp.com 65001 *> $null } catch {}
+    try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
+    try { [Console]::SetBufferSize(80, 9000) } catch {}
+    try { [Console]::SetWindowSize(80, 60) } catch {}
+    # Center on operator's active display before paint. We capture
+    # cursor position first so the agreement window lands where the
+    # operator was looking, not on the primary monitor by default.
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+        Add-Type -Namespace MEW -Name AGW -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
+'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
+        $_pt0 = try { [System.Windows.Forms.Cursor]::Position } catch { New-Object System.Drawing.Point 100,100 }
+        $_sa  = [System.Windows.Forms.Screen]::FromPoint($_pt0).WorkingArea
+        # Pixel target: 80 cols * 10 px + 20 chrome / 60 rows * 20 px + 12 chrome.
+        $_aW  = 820
+        $_aH  = 1212
+        $_aH  = [math]::Min($_aH, [math]::Max(600, $_sa.Height - 80))
+        $_ax  = $_sa.X + [int](([math]::Max(0, $_sa.Width  - $_aW)) / 2)
+        $_ay  = $_sa.Y + [int](([math]::Max(0, $_sa.Height - $_aH)) / 2)
+        [void][MEW.AGW]::MoveWindow([MEW.AGW]::GetConsoleWindow(), $_ax, $_ay, $_aW, $_aH, $true)
+    } catch {}
+    Clear-Host
     # Render the agreement summary. Plain Write-Host (no paging) so
-    # the operator sees the full text scroll past in the 80x40 window
-    # and the Read-Host prompt appears directly underneath. Out-Host
-    # -Paging was problematic: at 80x40 the agreement is ~80 lines so
-    # it triggered the pager (<SPACE> next page; <CR> next line; Q
-    # quit) which the operator hated. The operator can scroll back up
-    # to read if they want; the prompt is what matters for consent.
+    # the operator sees the full text in the resized 80x60 window and
+    # the Read-Host prompt appears at the bottom. Out-Host -Paging was
+    # problematic (operator hated the SPACE/CR/Q controls).
     $text = Show-MiOSAgreement
     Write-Host $text
 
@@ -3276,8 +3306,23 @@ if (`$_launchMiosOnClose) {
     } catch {}
 }
 "@
-    $_innerBytes   = [Text.Encoding]::Unicode.GetBytes($_innerCmd)
-    $_innerEncoded = [Convert]::ToBase64String($_innerBytes)
+    # Write the inner cmd to a temp .ps1 and pass -File. Why NOT
+    # -EncodedCommand: the inner cmd is ~12.5 KB of source. UTF-16
+    # encoding doubles that to ~25 KB; Base64 expands to ~33 KB. Start-
+    # Process -Verb RunAs goes through ShellExecute, whose lpParameters
+    # is capped at 32,767 chars (signed 16-bit limit). The encoded
+    # payload + surrounding -NoLogo / -NoProfile / -ExecutionPolicy /
+    # -NoExit / -EncodedCommand args pushes us OVER 32 KB -- ShellExecute
+    # returns ERROR_INVALID_PARAMETER (0x80070057) which surfaces to the
+    # operator as "Self-elevation failed: The parameter is incorrect."
+    # UAC never even fires; Pass-2 never opens. -File <shortpath> keeps
+    # the command line tiny regardless of inner cmd size, so ShellExecute
+    # is happy.
+    $_innerScript = Join-Path $env:TEMP ('mios-elev-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
+    # UTF-8 with BOM so pwsh / powershell.exe both parse Unicode glyphs
+    # in the dashboard banner correctly.
+    $_utf8Bom = New-Object System.Text.UTF8Encoding($true)
+    [IO.File]::WriteAllText($_innerScript, $_innerCmd, $_utf8Bom)
     $_shell = $null
     foreach ($_c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe","$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
         if ($_c -and (Test-Path -LiteralPath $_c -PathType Leaf)) { $_shell = $_c; break }
@@ -3290,7 +3335,7 @@ if (`$_launchMiosOnClose) {
     $_elevSucceeded = $false
     try {
         Start-Process -FilePath $_shell `
-            -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand', $_innerEncoded) `
+            -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-File', $_innerScript) `
             -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
         Write-Host ''
         Write-Host '  [+] Elevated MiOS bootstrap window opened.' -ForegroundColor Green
