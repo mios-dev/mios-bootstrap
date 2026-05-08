@@ -7565,18 +7565,32 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
         # native app, then prints hint lines and returns. No auto-chain.
         $_dispGb = 256
         try { $v = Get-Volume -DriveLetter M -ErrorAction SilentlyContinue; if ($v) { $_dispGb = [math]::Round($v.Size/1GB,0) } } catch {}
+        # Banner title + bullet list resolve through mios.toml
+        # [messages.install_complete] (SSOT). Operator edits via mios.html
+        # for any custom branding text. Vendor fallback below is the cold
+        # first-run set when no TOML is reachable.
+        $_completeTitle = Get-MiosTomlValue -Section 'messages.install_complete' -Key 'title' -Default 'MiOS Windows-side install complete'
+        $_completeBullets = @(Get-MiosTomlValue -Section 'messages.install_complete' -Key 'bullets' -Default @(
+            ('M:\ partition ({0} GB NTFS, label MIOS-DEV)' -f $_dispGb),
+            'Podman Desktop + podman-MiOS-DEV machine',
+            'mios.git + mios-bootstrap overlaid at M:\',
+            'MiOS terminal essentials layered into MiOS-DEV',
+            'Native Windows app: Start Menu + Desktop + per-verb shortcuts',
+            'MiOS PowerShell profile (oh-my-posh, dashboard, mios <verb>)'
+        ))
+        # Substitute {disk_gb} placeholder if the operator templated it
+        # in a custom mios.toml entry.
+        $_completeBullets = @($_completeBullets | ForEach-Object { $_ -replace '\{disk_gb\}', $_dispGb })
+        $_titlePadded = '  |  ' + $_completeTitle.PadRight(76) + '|'
         Write-Host ''
         Write-Host '  +' ('-' * 76) '+' -ForegroundColor DarkCyan
-        Write-Host '  |  MiOS Windows-side install complete                                        |' -ForegroundColor Cyan
+        Write-Host $_titlePadded -ForegroundColor Cyan
         Write-Host '  +' ('-' * 76) '+' -ForegroundColor DarkCyan
         Write-Host ''
         Write-Host '    Installed ...............................................................' -ForegroundColor DarkGray
-        Write-Host ('      [+] M:\ partition ({0} GB NTFS, label MIOS-DEV)' -f $_dispGb) -ForegroundColor Green
-        Write-Host '      [+] Podman Desktop + podman-MiOS-DEV machine' -ForegroundColor Green
-        Write-Host '      [+] mios.git + mios-bootstrap overlaid at M:\' -ForegroundColor Green
-        Write-Host '      [+] MiOS terminal essentials layered into MiOS-DEV' -ForegroundColor Green
-        Write-Host '      [+] Native Windows app: Start Menu + Desktop + per-verb shortcuts' -ForegroundColor Green
-        Write-Host '      [+] MiOS PowerShell profile (oh-my-posh, dashboard, mios <verb>)' -ForegroundColor Green
+        foreach ($_b in $_completeBullets) {
+            Write-Host ('      [+] ' + $_b) -ForegroundColor Green
+        }
         Write-Host ''
         Write-Host '    What''s next? Type any of these in the MiOS terminal:' -ForegroundColor White
         # Verb list resolves through mios.toml [verbs] (SSOT). Operator
