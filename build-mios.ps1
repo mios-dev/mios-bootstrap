@@ -2569,7 +2569,11 @@ function Move-PodmanWslDistroToM {
     # connection state.
     param(
         [Parameter(Mandatory)] [string] $DistroName,
-        [string] $TargetRoot = 'M:\MiOS\distros'
+        # Default uses $script:MiosDistroDir which already centralizes
+        # the distro-storage root across admin/user/data-disk modes
+        # (set in build-mios.ps1's "Paths & constants" block + updated
+        # by Update-MiosInstallPaths when M:\ comes online).
+        [string] $TargetRoot = $(if ($script:MiosDistroDir) { $script:MiosDistroDir } else { 'M:\MiOS\distros' })
     )
     # podman prefixes its WSL distros with `podman-`. Resolve the actual
     # registered name (callers pass either form -- `MiOS-DEV` or
@@ -5003,8 +5007,12 @@ function Install-MiosWindowsTools {
         $env:PATH  = (@($_machPath, $_userPath, $MiosBinDir) | Where-Object { $_ }) -join ';'
     } catch {}
 
-    # Final verification -- which targeted binaries are actually on PATH now?
-    foreach ($probe in @('fastfetch','btop','rg','fzf','jq','gh','bat','fd','pwsh','oh-my-posh')) {
+    # Final verification -- which targeted binaries are actually on PATH
+    # now? Probe list resolves through mios.toml [packages.windows].
+    # verify_probes (NEW key) so operators can extend/shrink the
+    # post-install verification surface via mios.html.
+    $_probes = @(Get-MiosTomlValue -Section 'packages.windows' -Key 'verify_probes' -Default @('fastfetch','btop','rg','fzf','jq','gh','bat','fd','pwsh','oh-my-posh'))
+    foreach ($probe in $_probes) {
         if (Get-Command $probe -ErrorAction SilentlyContinue) {
             Log-Ok ("verify: '{0}' is on PATH" -f $probe)
         } else {
