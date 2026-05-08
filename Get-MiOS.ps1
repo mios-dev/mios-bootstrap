@@ -645,6 +645,67 @@ function Install-MiOSWindowsTerminal {
     return $true
 }
 
+function Install-MiOSPwsh7 {
+    # Ensure PowerShell 7 (`pwsh.exe`) is on disk BEFORE the WT MiOS
+    # profile is generated, so the profile's `commandline` can bind
+    # to pwsh.exe rather than silently falling back to Windows
+    # PowerShell 5.1. PS 5.1 has the OLD PSReadLine that breaks
+    # oh-my-posh init's modern PSReadLine integration; the resulting
+    # MiOS terminal renders the OPERATOR'S pre-existing PS 5.1
+    # profile (whatever broken oh-my-posh init they had — typical
+    # symptom: "CONFIG NOT FOUND" prompt segment). Install-MiOSTerminalExtras
+    # at Step 6/7 also installs Microsoft.PowerShell, but that's
+    # AFTER WT profile creation — too late.
+    #
+    # Idempotent: probes existing install before re-installing.
+    # Refreshes $env:PATH after install so the caller's pwsh
+    # detection (Get-AppxPackage / Get-Command pwsh) sees the new
+    # binary in this same session.
+    $existing = $null
+    foreach ($c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe",
+                     "$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
+        if ($c -and (Test-Path -LiteralPath $c)) { $existing = $c; break }
+    }
+    if (-not $existing) {
+        try {
+            $appx = Get-AppxPackage -Name 'Microsoft.PowerShell' -ErrorAction SilentlyContinue
+            if ($appx -and $appx.InstallLocation) {
+                $cand = Join-Path $appx.InstallLocation 'pwsh.exe'
+                if (Test-Path -LiteralPath $cand) { $existing = $cand }
+            }
+        } catch {}
+    }
+    if ($existing) {
+        Write-Host "  [+] PowerShell 7 already installed: $existing" -ForegroundColor DarkGray
+        return $true
+    }
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "  [!] winget not available; cannot install PowerShell 7." -ForegroundColor Yellow
+        Write-Host "      WT MiOS profile will fall back to Windows PS 5.1 (broken oh-my-posh init likely)." -ForegroundColor DarkGray
+        return $false
+    }
+    Write-Host "  [*] Installing PowerShell 7 (Microsoft.PowerShell) via winget..." -ForegroundColor Cyan
+    try {
+        & winget install --id Microsoft.PowerShell --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+    } catch {
+        Write-Host "  [!] winget install Microsoft.PowerShell failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [!] winget exit code $LASTEXITCODE -- pwsh 7 may not be installed." -ForegroundColor Yellow
+        return $false
+    }
+    # Refresh $env:PATH so the caller's Get-Command pwsh / Get-AppxPackage
+    # discovery picks up the new binary in this session.
+    try {
+        $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
+        $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
+        $env:PATH = (@($_machPath, $_userPath) | Where-Object { $_ }) -join ';'
+    } catch {}
+    Write-Host "  [+] PowerShell 7 installed; PATH refreshed for this session." -ForegroundColor Green
+    return $true
+}
+
 function Install-MiOSGeistFont {
     if (Test-MiOSFontInstalled) {
         Write-Host "  [+] GeistMono Nerd Font already installed (HKCU/HKLM)." -ForegroundColor DarkGray
@@ -908,6 +969,16 @@ function Install-MiOSTerminalProfile {
     # fell back to defaults for the rest. Stripping back to the
     # bare minimum proven-working set; will re-add carefully once
     # this verifies rendering with full theming.
+    # Terminal dims sourced from mios.toml [terminal].cols / .rows so
+    # opening the WT profile DIRECTLY (without the launcher's --size
+    # arg, e.g. from the WT dropdown) still produces an 80x20 window.
+    # Without these, WT inherits the operator's global default
+    # (typically 120x30) and the dashboard's framing breaks.
+    $_miosWtCols = Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80
+    if (-not ($_miosWtCols -is [int]) -or $_miosWtCols -lt 40 -or $_miosWtCols -gt 240) { $_miosWtCols = 80 }
+    $_miosWtRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20
+    if (-not ($_miosWtRows -is [int]) -or $_miosWtRows -lt 10 -or $_miosWtRows -gt 120) { $_miosWtRows = 20 }
+
     $commonProfileProps = [ordered]@{
         colorScheme              = (Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
         font                     = [ordered]@{
@@ -923,6 +994,12 @@ function Install-MiOSTerminalProfile {
         padding                  = $_themePadding
         suppressApplicationTitle = $_themeSuppress
         scrollbarState           = $_themeScrollbar
+        # initialCols / initialRows lock the dims when WT spawns this
+        # profile from a non-launcher entry point (dropdown, "MiOS
+        # Terminal" Start Menu shortcut). Operator-edited via mios.toml
+        # [terminal].cols / .rows.
+        initialCols              = $_miosWtCols
+        initialRows              = $_miosWtRows
         hidden                   = $false
     }
 
@@ -2406,10 +2483,16 @@ if (`$true) {
     # idempotent (latest already has it). This makes oh-my-posh's
     # PSReadLine integration work regardless of installed version.
     if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
+        # Shell-aware: oh-my-posh init pwsh emits PS 7+ syntax that
+        # FAILS silently in Windows PowerShell 5.1, leaving the
+        # operator's pre-existing broken init showing "CONFIG NOT
+        # FOUND". Detect PS edition and use the matching arg
+        # (`powershell` for 5.1 / Desktop, `pwsh` for 7+ / Core).
+        `$_ompShell = if (`$PSVersionTable.PSEdition -eq 'Desktop') { 'powershell' } else { 'pwsh' }
         `$ompInit = if (`$miosOmp -and (Test-Path -LiteralPath `$miosOmp)) {
-            (oh-my-posh init pwsh --config `$miosOmp) -join "``n"
+            (oh-my-posh init `$_ompShell --config `$miosOmp) -join "``n"
         } else {
-            (oh-my-posh init pwsh) -join "``n"
+            (oh-my-posh init `$_ompShell) -join "``n"
         }
         if (`$ompInit) {
             `$ompInit = [regex]::Replace(`$ompInit, 'Get-PSReadLineKeyHandler\s+(?!-)([A-Za-z][\w+]*)', 'Get-PSReadLineKeyHandler -Chord ''`$1''')
@@ -3474,26 +3557,28 @@ if ($true) {
         Write-Host "  [!] Windows theme registry write failed: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 
-    Write-Host "  [*] Step 1/6: Installing Windows Terminal (base) via winget..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 1/7: Installing Windows Terminal (base) via winget..." -ForegroundColor Cyan
     if (-not (Install-MiOSWindowsTerminal)) {
         Write-Host "  [!] WT install failed -- bootstrap cannot continue without a themed WT to launch into." -ForegroundColor Red
         Write-Host "      Install manually and re-run: winget install Microsoft.WindowsTerminal" -ForegroundColor DarkGray
         exit 1
     }
-    Write-Host "  [*] Step 2/6: Patching WT settings.json with MiOS scheme + profiles..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 2/7: Installing PowerShell 7 (pwsh) BEFORE WT profile creation..." -ForegroundColor Cyan
+    Install-MiOSPwsh7               | Out-Null
+    Write-Host "  [*] Step 3/7: Patching WT settings.json with MiOS scheme + profiles..." -ForegroundColor Cyan
     Install-MiOSTerminalProfile     | Out-Null
-    Write-Host "  [*] Step 3/6: Installing GeistMono Nerd Font (per-user, HKCU)..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 4/7: Installing GeistMono Nerd Font (per-user, HKCU)..." -ForegroundColor Cyan
     Install-MiOSGeistFont           | Out-Null
-    Write-Host "  [*] Step 4/6: Installing fastfetch + staging MiOS-themed config..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 5/7: Installing fastfetch + staging MiOS-themed config..." -ForegroundColor Cyan
     Install-MiOSFastfetch           | Out-Null
-    Write-Host "  [*] Step 5/7: oh-my-posh + PSReadLine + mios.omp.json + profile wiring..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 6/8: oh-my-posh + PSReadLine + mios.omp.json + profile wiring..." -ForegroundColor Cyan
     Update-MiOSOhMyPosh             | Out-Null
     Update-MiOSPSReadLine           | Out-Null
     Install-MiOSOhMyPoshTheme       | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
-    Write-Host "  [*] Step 6/7: Installing terminal completion / UX modules..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 7/8: Installing terminal completion / UX modules..." -ForegroundColor Cyan
     Install-MiOSTerminalExtras      | Out-Null
-    Write-Host "  [*] Step 7/7: Registering MiOS as a native Windows app..." -ForegroundColor Cyan
+    Write-Host "  [*] Step 8/8: Registering MiOS as a native Windows app..." -ForegroundColor Cyan
     Install-MiOSNativeApp           | Out-Null
 
     # Refresh $env:PATH from registry BEFORE dot-sourcing the profile.
