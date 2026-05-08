@@ -4666,20 +4666,23 @@ function Install-MiosWindowsTools {
     $wingetRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
     $extraPaths = @()
     if (Test-Path $wingetRoot) {
-        # Walk every package install dir; if it contains an .exe at the
-        # top level, that's the binary path winget added.
-        Get-ChildItem -Path $wingetRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-            $dir = $_.FullName
-            $exes = Get-ChildItem -Path $dir -Filter '*.exe' -File -ErrorAction SilentlyContinue
-            if ($exes) { $extraPaths += $dir }
-            # Also walk one level deep -- some packages nest the binary
-            # under a versioned subdir (fastfetch-cli.fastfetch_*\fastfetch-windows-amd64\fastfetch.exe).
-            Get-ChildItem -Path $dir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-                $sub = $_.FullName
-                $exesSub = Get-ChildItem -Path $sub -Filter '*.exe' -File -ErrorAction SilentlyContinue
-                if ($exesSub) { $extraPaths += $sub }
-            }
-        }
+        # Walk every package install dir up to 4 levels deep; if any
+        # subdir contains a .exe, add that subdir to PATH. winget nests
+        # binaries under various depths:
+        #   <pkg_id>_<source>_<hash>\<binary>.exe                        (1)
+        #   <pkg_id>_<source>_<hash>\<vendor>\<binary>.exe               (2)
+        #   <pkg_id>_<source>_<hash>\<vendor>\<arch>\<binary>.exe        (3)
+        #   <pkg_id>_<source>_<hash>\<vendor>\<arch>\<ver>\<binary>.exe  (4)
+        # btop4win lands at depth 2; fastfetch at depth 2; sharkdp.bat at
+        # depth 2 (inside `bat-x.x.x-x86_64-pc-windows-msvc\bat.exe`).
+        $exeDirs = New-Object System.Collections.Generic.HashSet[string]
+        try {
+            Get-ChildItem -Path $wingetRoot -Recurse -Filter '*.exe' -File -ErrorAction SilentlyContinue -Depth 4 |
+                ForEach-Object {
+                    if ($_.DirectoryName) { [void]$exeDirs.Add($_.DirectoryName) }
+                }
+        } catch {}
+        $extraPaths = @($exeDirs)
     }
     # MiOS app bin directory (oh-my-posh.exe, etc. that build-mios.ps1 stages itself).
     if (Test-Path $MiosBinDir) { $extraPaths += $MiosBinDir }
@@ -4713,6 +4716,83 @@ function Install-MiosWindowsTools {
             Log-Warn "User PATH persist failed: $($_.Exception.Message)"
         }
     }
+
+    # Direct-download fallbacks for binaries that winget either failed
+    # to install (broken Store manifest, missing applicable installer)
+    # or installed under a non-canonical name (btop4win.exe instead of
+    # btop.exe). Land them in $MiosBinDir so they're on PATH alongside
+    # oh-my-posh.exe.
+    if (-not (Get-Command fastfetch -ErrorAction SilentlyContinue)) {
+        Log-Ok 'fastfetch: winget unsuccessful -- attempting direct download from GitHub releases...'
+        try {
+            $api = 'https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest'
+            $rel = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent'='mios-bootstrap' } -ErrorAction Stop
+            $asset = $rel.assets | Where-Object { $_.name -match 'windows-amd64\.zip$' } | Select-Object -First 1
+            if ($asset) {
+                $zip = Join-Path $env:TEMP "fastfetch-$(Get-Random).zip"
+                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -ErrorAction Stop
+                $extractRoot = Join-Path $env:TEMP "fastfetch-$(Get-Random)"
+                Expand-Archive -LiteralPath $zip -DestinationPath $extractRoot -Force
+                $exe = Get-ChildItem -Path $extractRoot -Recurse -Filter 'fastfetch.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($exe) {
+                    Copy-Item -Path $exe.FullName -Destination (Join-Path $MiosBinDir 'fastfetch.exe') -Force
+                    Log-Ok ("fastfetch installed direct: {0} -> {1}" -f $asset.name, (Join-Path $MiosBinDir 'fastfetch.exe'))
+                }
+                Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+                Log-Warn 'fastfetch: no windows-amd64.zip asset found in latest release'
+            }
+        } catch { Log-Warn ("fastfetch direct-download failed: {0}" -f $_.Exception.Message) }
+    }
+
+    # btop: winget package id is `aristocratos.btop4win` and the
+    # binary is `btop4win.exe` (not `btop.exe`). Find the install,
+    # symlink/copy it as `btop.exe` into $MiosBinDir so the canonical
+    # `btop` command works. Also fall back to direct download from
+    # GitHub releases if the winget install missed.
+    if (-not (Get-Command btop -ErrorAction SilentlyContinue)) {
+        Log-Ok 'btop: probing winget btop4win install + GitHub fallback...'
+        $btopExe = $null
+        $wingetBtop = Get-ChildItem -Path $wingetRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^aristocratos\.btop4win' } |
+            Select-Object -First 1
+        if ($wingetBtop) {
+            $cand = Get-ChildItem -Path $wingetBtop.FullName -Recurse -Filter 'btop4win.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($cand) { $btopExe = $cand.FullName }
+        }
+        if (-not $btopExe) {
+            try {
+                $api = 'https://api.github.com/repos/aristocratos/btop4win/releases/latest'
+                $rel = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent'='mios-bootstrap' } -ErrorAction Stop
+                $asset = $rel.assets | Where-Object { $_.name -match '\.zip$' } | Select-Object -First 1
+                if ($asset) {
+                    $zip = Join-Path $env:TEMP "btop4win-$(Get-Random).zip"
+                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -ErrorAction Stop
+                    $extractRoot = Join-Path $env:TEMP "btop4win-$(Get-Random)"
+                    Expand-Archive -LiteralPath $zip -DestinationPath $extractRoot -Force
+                    $cand = Get-ChildItem -Path $extractRoot -Recurse -Filter 'btop4win.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if ($cand) { $btopExe = $cand.FullName }
+                    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+                    # Don't delete $extractRoot -- $btopExe needs to keep existing.
+                }
+            } catch { Log-Warn ("btop direct-download failed: {0}" -f $_.Exception.Message) }
+        }
+        if ($btopExe -and (Test-Path -LiteralPath $btopExe)) {
+            $dst = Join-Path $MiosBinDir 'btop.exe'
+            try {
+                Copy-Item -Path $btopExe -Destination $dst -Force
+                Log-Ok ("btop installed: {0} -> {1}" -f $btopExe, $dst)
+            } catch { Log-Warn ("btop copy failed: {0}" -f $_.Exception.Message) }
+        }
+    }
+
+    # Re-run final PATH refresh -- pick up any direct-download binaries.
+    try {
+        $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
+        $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
+        $env:PATH  = (@($_machPath, $_userPath, $MiosBinDir) | Where-Object { $_ }) -join ';'
+    } catch {}
 
     # Final verification -- which targeted binaries are actually on PATH now?
     foreach ($probe in @('fastfetch','btop','rg','fzf','jq','gh','bat','fd','pwsh','oh-my-posh')) {
