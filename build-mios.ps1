@@ -3780,6 +3780,25 @@ function Invoke-GhcrLogin([string]$Token) {
     else { Log-Warn "ghcr.io login failed -- build may fail pulling base image" }
 }
 
+# ============================================================================
+# DEPRECATED: Invoke-WindowsPodmanBuild
+# ----------------------------------------------------------------------------
+# This function (and its sibling helpers Invoke-WslBuild,
+# Invoke-DeployPipeline, New-MiosHyperVVm below) belongs to the
+# pre-self-replication architecture where Windows ran `podman build`
+# directly. As of v0.2.4 (memory: feedback_mios_dev_is_the_builder)
+# the dev VM IS the builder; Windows is provisioning + handoff ONLY.
+# All Phase 9 Build paths run inside MiOS-DEV via mios-build-driver,
+# triggered by the `mios build` verb (M:\MiOS\bin\mios-build.ps1).
+#
+# These functions are now UNREACHABLE: -BuildOnly / -FullBuild are
+# force-deprecated at line 202 ($BootstrapOnly = $true), and every
+# control-flow gate (`if ($BootstrapOnly)` returns; `if (-not
+# $BootstrapOnly)` blocks) routes around them.
+#
+# Kept in-tree for one release cycle so git-blame still resolves the
+# legacy callers; a follow-up commit will delete them outright.
+# ============================================================================
 function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [string]$MiosHostname,
                                    [string]$AiModel = "qwen2.5-coder:7b",
                                    [string]$EmbedModel = "nomic-embed-text",
@@ -6054,6 +6073,13 @@ if ($activeDistro) {
         return
     }
 
+    # DEPRECATED PATH: Phase 9 Build on Windows. Unreachable since
+    # $BootstrapOnly is force-set to $true at line 202; the
+    # `if ($BootstrapOnly) { return }` block above catches every operator-
+    # reachable invocation. The actual build pipeline runs INSIDE MiOS-DEV
+    # via /usr/libexec/mios/mios-build-driver, triggered by the
+    # `mios build` verb. Kept here as dead code so git-blame still resolves
+    # legacy refs; a follow-up commit will delete this branch.
     Start-Phase 9
     $rc = Invoke-WslBuild -Distro $activeDistro -BaseImage $HW.BaseImage -AiModel $HW.AiModel
     if ($rc -eq 0) {
@@ -7015,7 +7041,14 @@ Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." 
     Log-Ok "uninstall.ps1 written"
     End-Phase $script:AppRegPhaseId
 
-    # ── Phase 9 -- Build ──────────────────────────────────────────────────────
+    # ── Phase 9 -- Build (DEPRECATED) ─────────────────────────────────────────
+    # Same self-replication enforcement applies: $BootstrapOnly is forced
+    # to $true at line 202, so this Phase-9 invocation is unreachable from
+    # the operator-facing flow. The build pipeline runs INSIDE MiOS-DEV
+    # via /usr/libexec/mios/mios-build-driver; the `mios build` verb
+    # (M:\MiOS\bin\mios-build.ps1) is the canonical operator trigger.
+    # Kept here as dead code so git-blame still resolves legacy refs;
+    # a follow-up commit will delete this branch outright.
     Start-Phase 9
     # Pass the operator-chosen model selection (Phase 6 prompt) through
     # to the build so 37-ollama-prep.sh bakes the right pair into
