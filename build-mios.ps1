@@ -4663,27 +4663,39 @@ function Install-MiosWindowsTools {
     # those install dirs NOW + add them to both this-session $env:PATH
     # AND persist the additions to User PATH so next-launch shells
     # (the WT MiOS profile) inherit them.
-    $wingetRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
-    $extraPaths = @()
-    if (Test-Path $wingetRoot) {
-        # Walk every package install dir up to 4 levels deep; if any
+    # winget binaries live in MULTIPLE places depending on scope and
+    # whether the package's manifest registers a shim:
+    #
+    #   1. %LOCALAPPDATA%\Microsoft\WinGet\Links\        <-- THE WIN
+    #      winget auto-creates .exe shims here for every user-scope
+    #      package whose manifest declares a Commands entry. This is
+    #      the canonical "winget bin dir" -- adding it to PATH makes
+    #      EVERY winget user-scope package callable by its canonical
+    #      name (rg, fzf, jq, bat, fd, gh, ...).
+    #   2. %LOCALAPPDATA%\Microsoft\WinGet\Packages\<id>_*\...        <-- user-scope install root
+    #   3. %ProgramFiles%\WinGet\Packages\<id>_*\...                  <-- machine-scope install root
+    #
+    # All three get walked + their binary-containing dirs added to PATH.
+    $exeDirs = New-Object System.Collections.Generic.HashSet[string]
+    $linksDir = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links'
+    if (Test-Path $linksDir) { [void]$exeDirs.Add($linksDir) }
+
+    foreach ($wingetRoot in @(
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'),
+        (Join-Path $env:ProgramFiles 'WinGet\Packages')
+    )) {
+        if (-not (Test-Path $wingetRoot)) { continue }
+        # Walk every package install dir up to 5 levels deep; if any
         # subdir contains a .exe, add that subdir to PATH. winget nests
-        # binaries under various depths:
-        #   <pkg_id>_<source>_<hash>\<binary>.exe                        (1)
-        #   <pkg_id>_<source>_<hash>\<vendor>\<binary>.exe               (2)
-        #   <pkg_id>_<source>_<hash>\<vendor>\<arch>\<binary>.exe        (3)
-        #   <pkg_id>_<source>_<hash>\<vendor>\<arch>\<ver>\<binary>.exe  (4)
-        # btop4win lands at depth 2; fastfetch at depth 2; sharkdp.bat at
-        # depth 2 (inside `bat-x.x.x-x86_64-pc-windows-msvc\bat.exe`).
-        $exeDirs = New-Object System.Collections.Generic.HashSet[string]
+        # binaries under various depths (vendor / arch / version / etc).
         try {
-            Get-ChildItem -Path $wingetRoot -Recurse -Filter '*.exe' -File -ErrorAction SilentlyContinue -Depth 4 |
+            Get-ChildItem -Path $wingetRoot -Recurse -Filter '*.exe' -File -ErrorAction SilentlyContinue -Depth 5 |
                 ForEach-Object {
                     if ($_.DirectoryName) { [void]$exeDirs.Add($_.DirectoryName) }
                 }
         } catch {}
-        $extraPaths = @($exeDirs)
     }
+    $extraPaths = @($exeDirs)
     # MiOS app bin directory (oh-my-posh.exe, etc. that build-mios.ps1 stages itself).
     if (Test-Path $MiosBinDir) { $extraPaths += $MiosBinDir }
     $extraPaths = $extraPaths | Sort-Object -Unique

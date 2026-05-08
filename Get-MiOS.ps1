@@ -2232,11 +2232,13 @@ function Install-MiOSPowerShellProfile {
     $_miosCols    = Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80
     $_miosRows    = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 20
     $_miosScroll  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
-    # frame_width defaults to cols (NOT cols-1) so the dashboard box
-    # fills the 80-col terminal edge-to-edge, no trailing column. Operator
-    # confirmed: "strictly maintain 80x20 defaults". frame_height stays
-    # rows-1 so one row is reserved for the prompt under the dashboard.
-    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default $_miosCols
+    # frame_width default is cols-2 (operator-confirmed): the dashboard
+    # box leaves a 1-column gutter on the left AND right of the 80-col
+    # terminal so the box doesn't visually crowd the edges. mios.toml
+    # [terminal].frame_width is the SSOT; the configurator HTML exposes
+    # this for operator override. frame_height stays rows-1 so one row
+    # is reserved for the prompt under the dashboard.
+    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default ($_miosCols - 2)
     $_miosFrameH  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default ($_miosRows - 1)
     $miosScriptBody = @"
 # MiOS PowerShell profile -- PSReadLine reload + fastfetch MOTD +
