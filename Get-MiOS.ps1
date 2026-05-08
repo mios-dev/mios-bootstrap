@@ -1929,7 +1929,10 @@ if ($hwnd -ne [IntPtr]::Zero) {
     if (-not $pwshExe) { Write-Host "  [!] No pwsh.exe found; cannot create launcher .lnk." -ForegroundColor Yellow; return }
 
     $lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
-    $lnkDesc = 'MiOS -- Immutable Fedora AI Workstation. Borderless 80x30 acrylic terminal.'
+    # .lnk Description = mios.toml [branding].tagline + a short
+    # technical sub-line. SSOT lift per "no hardcoding ANYWHERE".
+    $_lnkTag = Get-MiosTomlValue -Section 'branding' -Key 'tagline' -Default 'My Personalized OS'
+    $lnkDesc = "MiOS -- $_lnkTag. Borderless 80x30 acrylic terminal."
 
     # Resolve an icon: prefer M:\MiOS\icons\mios.ico if present, else
     # fall back to wt.exe's embedded icon (still better than the
