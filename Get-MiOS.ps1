@@ -1969,6 +1969,15 @@ function Install-MiOSNativeApp {
 # borderless, no titlebar/tab-row), 80 cols x 30 rows, screen-centered
 # on whichever monitor the cursor is currently on, always-on-top.
 # Runs invisibly (parent shortcut uses -WindowStyle Hidden).
+#
+# Optional `-Verb <name>` runs `mios <name>` inside the spawned MiOS
+# window after the profile body loads. Used by the per-verb shortcuts
+# (MiOS-DEV.lnk, MiOS Help.lnk, MiOS Config.lnk, etc.) to UNIFY all
+# MiOS native-app surfaces under the SAME launch path: same dims, same
+# focus mode, same centering, same WT profile, same chrome. Operator:
+# "UNIFY all MiOS app windows/themed windows terminal windows to use
+# the same profile and launch params GLOBALLY!!!"
+param([string]$Verb = '')
 $ErrorActionPreference = 'SilentlyContinue'
 
 try {
@@ -1984,6 +1993,14 @@ Add-Type -AssemblyName System.Windows.Forms
 $Cols = __MIOS_COLS__; $Rows = __MIOS_ROWS__
 $winW = ($Cols * __MIOS_CELL_W__) + __MIOS_CHROME_W__
 $winH = ($Rows * __MIOS_CELL_H__) + __MIOS_CHROME_H__
+
+# Window name: MiOS for the bare hub launch, MiOS-<verb> for verb
+# launches. Per-verb unique names prevent verb tabs piling into the
+# main MiOS hub window -- each click opens its OWN centered focus
+# window. The hub stays single-instance (clicking MiOS again reuses
+# the existing window). Win+Space summon still targets `MiOS` (the hub)
+# per mios.toml [theme.terminal].summon_window_name.
+$winName = if ([string]::IsNullOrWhiteSpace($Verb)) { 'MiOS' } else { 'MiOS-' + $Verb }
 
 $cur  = [System.Windows.Forms.Cursor]::Position
 $work = [System.Windows.Forms.Screen]::FromPoint($cur).WorkingArea
@@ -2005,14 +2022,42 @@ if (-not $wtExe) {
     exit 1
 }
 
-# `-w MiOS` (NOT -1) names the window so it matches the post-bootstrap
-# spawn. Without the named window, clicking the MiOS shortcut produces
-# a DIFFERENT window than the one that opens at end-of-bootstrap, AND
-# the Win+Space global summon binding (which targets window name=MiOS)
-# can't toggle it. Both paths now produce the SAME WT MiOS window.
-# Also no `nt` subcommand -- empty subcommand line uses the profile's
-# bound commandline (Windows pwsh + MiOS PS profile body).
-$wtArgs = @('-w','MiOS','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p','MiOS')
+# `-w <winName>` names the window so click-to-focus finds it and the
+# post-launch SetWindowPos retry can target it. The hub uses
+# `-w MiOS` (single-instance, summon-targetable). Per-verb launches
+# use `-w MiOS-<verb>` (own window per verb -- no tab-pile).
+#
+# Empty subcommand on hub launches uses the profile's bound commandline
+# (Windows pwsh + MiOS PS profile body via Install-MiOSTerminalProfile).
+# On verb launches, override commandline with a pwsh that loads the
+# profile body explicitly THEN runs `mios <verb>` -- otherwise wt.exe's
+# subcommand replaces the profile commandline and we lose the dashboard
+# render + the `mios` function definition.
+if ([string]::IsNullOrWhiteSpace($Verb)) {
+    $wtArgs = @('-w',$winName,'--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p','MiOS')
+} else {
+    # Profile body path: M:\MiOS\powershell\profile.ps1 (the canonical
+    # MiOS pwsh body that defines the `mios` function + dashboard +
+    # mios-* aliases). Without dot-sourcing it the verb call fails
+    # with "mios: command not found".
+    $miosProfile = 'M:\MiOS\powershell\profile.ps1'
+    if (-not (Test-Path -LiteralPath $miosProfile)) {
+        $miosProfile = Join-Path $env:LOCALAPPDATA 'MiOS\powershell\profile.ps1'
+    }
+    # Resolve pwsh -- Stable WT's MiOS profile binds to PowerShell 7;
+    # use the same here for parity. Fall back to system pwsh.exe on PATH.
+    $pwshExe = $null
+    try {
+        $pwshPkg = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+        if ($pwshPkg) { $pwshExe = $pwshPkg.Source }
+    } catch {}
+    if (-not $pwshExe) { $pwshExe = 'pwsh.exe' }
+    # Build the inline command. Escape single quotes for embedding.
+    $verbSafe = $Verb -replace "'","''"
+    $miosProfileSafe = $miosProfile -replace "'","''"
+    $cmd = "`$env:MIOS_APP_CONTEXT='1'; if (Test-Path '$miosProfileSafe') { . '$miosProfileSafe' }; mios $verbSafe"
+    $wtArgs = @('-w',$winName,'--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p','MiOS',$pwshExe,'-NoLogo','-NoExit','-NoProfile','-Command',$cmd)
+}
 $spawnedAt = Get-Date
 Start-Process -FilePath $wtExe -ArgumentList $wtArgs
 
@@ -2154,9 +2199,16 @@ if ($hwnd -ne [IntPtr]::Zero) {
         param([string]$Path, [string]$Verb, [string]$Desc)
         $sc = $shell.CreateShortcut($Path)
         $sc.TargetPath       = $pwshExe
-        # Spawn the launcher (themed WT MiOS window) then run `mios <verb>`
-        # inside it. Single -Command keeps the .lnk argument quoting clean.
-        $sc.Arguments        = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& '$launcherPath'; Start-Sleep -Milliseconds 800; & wt.exe -w 0 nt -p MiOS pwsh -NoExit -Command 'mios $Verb'`""
+        # UNIFIED launch path: every per-verb shortcut goes through
+        # mios-launch.ps1 -Verb <name>. Same dims, same focus mode,
+        # same centering, same WT profile, same chrome as the bare
+        # MiOS hub. The launcher spawns wt.exe with `-w MiOS-<verb>`
+        # (own window per verb -- no tab-pile in the hub window) and
+        # an inline pwsh command that dot-sources the MiOS profile
+        # body THEN runs `mios <verb>`. Operator: "UNIFY all MiOS app
+        # windows/themed windows terminal windows to use the same
+        # profile and launch params GLOBALLY!!!"
+        $sc.Arguments        = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Verb $Verb"
         $sc.WorkingDirectory = $miosRoot
         $sc.Description      = $Desc
         $sc.WindowStyle      = 7
