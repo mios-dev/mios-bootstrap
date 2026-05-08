@@ -1616,6 +1616,34 @@ function Install-MiOSTerminalProfile {
     if ([string]::IsNullOrWhiteSpace($_themePadding)) { $_themePadding = '0' }
     $_themeSuppress    = Get-MiosTomlValue -Section 'theme'      -Key 'suppress_app_title' -Default $true
     if ($_themeSuppress -isnot [bool]) { $_themeSuppress = $true }
+    # launch_mode -- forces WT focus mode (no titlebar, no tabs) at
+    # window-create time so the pseudo-console reports the actual
+    # visible cell count from first paint. Without this, WT initially
+    # measures the viewport WITH titlebar/tabs (cell count = cols-1)
+    # and only re-measures after `scrollbarState=hidden` takes over,
+    # by which time the first prompt has already been rendered to the
+    # wrong width. With launch_mode=focus, the chrome is gone before
+    # the first paint, so cell count = cols immediately.
+    $_themeLaunchMode  = Get-MiosTomlValue -Section 'theme'      -Key 'launch_mode'        -Default 'focus'
+    if ($_themeLaunchMode -notin @('default','focus','maximized','maximizedFocus','fullscreen','focusFullscreen')) { $_themeLaunchMode = 'focus' }
+    # disable_animations -- defaults to FALSE (animations ON) per
+    # operator: "enable animations and all preview features in the MiOS
+    # Windows Terminal profile -- full aesthetics! ALSO: can it quickly
+    # fade on open and close??". WT's built-in window open/close fade is
+    # gated on disableAnimations=false + useAcrylic=true. The trade-off:
+    # acrylic-recompute on first paint MAY re-trigger the off-by-N
+    # cell-count bug; if the powerline wraps again with animations on,
+    # bump mios.toml [terminal].right_margin to 1 as the targeted band-
+    # aid (NOT animations off -- operator wants the aesthetics).
+    $_themeNoAnimate   = Get-MiosTomlValue -Section 'theme'      -Key 'disable_animations' -Default $false
+    if ($_themeNoAnimate -isnot [bool]) { $_themeNoAnimate = $false }
+    # enable_preview_features -- gates the bundle of WT experimental.*
+    # toggles that are aesthetics-relevant (URL detection, AtlasEngine
+    # GPU renderer, forced-VT input, full-repaint rendering). Defaults
+    # to TRUE per operator. Set to false only if a specific WT version
+    # ships a regression in one of the preview keys.
+    $_themePreviewFx   = Get-MiosTomlValue -Section 'theme'      -Key 'enable_preview_features' -Default $true
+    if ($_themePreviewFx -isnot [bool]) { $_themePreviewFx = $true }
     $_themeAccent = Get-MiosTomlValue -Section 'colors' -Key 'accent' -Default '#1A407F'
     if ([string]::IsNullOrWhiteSpace($_themeAccent) -or ($_themeAccent -notmatch '^#[0-9A-Fa-f]{3,8}$')) {
         $_themeAccent = '#1A407F'
@@ -1727,32 +1755,88 @@ function Install-MiOSTerminalProfile {
         $wtJson = ConvertFrom-Json '{ "profiles": { "list": [] }, "schemes": [] }'
     }
 
-    # NO GLOBAL WRITES. Per operator pivot: do NOT set launchMode,
-    # defaultProfile, centerOnLaunch, profiles.defaults, theme, etc.
-    # The operator's existing settings.json globals stay untouched.
-    # MiOS only adds itself as TWO profiles + ONE color scheme. The
-    # frameless / centered / 80x30 / always-on-top behavior all comes
-    # from wt.exe command-line args at launch time.
+    # GLOBAL WRITES (edge-to-edge pivot 2026-05-08): the prior "no
+    # globals" stance left WT's pseudo-console reporting +1-2 cells
+    # over the actual visible cell count during first paint, before
+    # `profiles.defaults.scrollbarState='hidden'` could take effect.
+    # That made oh-my-posh's right-aligned powerline block wrap the
+    # trailing time char to col 0 of the next line ("powerline seconds
+    # rolling over to the left under the second-line ❯"). Operator:
+    # "MiOS app/windows terminal windows should be completely
+    # frameless/borderless with no margin (edge-to-edge printing)."
+    #
+    # Setting `launchMode = "focus"` at the ROOT level strips the title
+    # bar AND the tab row from the very first paint, so WT measures the
+    # viewport at the actual cell count cols × rows. Pairing it with
+    # per-profile `suppressApplicationTitle = true` keeps WT from
+    # re-measuring whenever the shell tries to set the window title
+    # (every `cd`, every prompt repaint), and `disableAnimations = true`
+    # skips the acrylic-recompute pass that re-measures the cell grid.
+    # All three are required: drop any one and the off-by-N comes back.
     if (-not $wtJson.profiles) {
         $emptyProfilesObj = [PSCustomObject]@{ list = @() }
         $wtJson | Add-Member -NotePropertyName profiles -NotePropertyValue $emptyProfilesObj -Force
     }
 
-    # GLOBAL no-scrollbars + zero-padding via profiles.defaults. Per
-    # operator: "MiOS app window/terminal window(s) should all have NO
-    # scrollbars inhibiting any windows globally!!". Per-profile
-    # scrollbarState only affects that profile; profiles.defaults
-    # applies to EVERY profile including auto-generated ones (cmd,
-    # PowerShell, WSL distros), so when an operator switches profiles
-    # they keep the borderless+scrollbar-less feel.
+    # Root-level launchMode -- forces focus mode (no titlebar, no tabs)
+    # globally. This affects EVERY WT window the operator opens, not
+    # just MiOS profiles. Operator-approved 2026-05-08 ("go fix
+    # mios-bootstrap edge-to-edge now") because `--focus` on the wt.exe
+    # CLI alone hides tabs but leaves the titlebar, so the off-by-N
+    # cell-count bug persisted on launches that didn't go through the
+    # MiOS launcher. Sourced from mios.toml [theme].launch_mode (SSOT)
+    # so an operator who needs tabs back can flip it via mios.html
+    # without editing this script. Use `wt.exe -w 0 nt` for a transient
+    # tabs-and-titlebar window if needed.
+    $wtJson | Add-Member -NotePropertyName launchMode -NotePropertyValue $_themeLaunchMode -Force
+
+    # GLOBAL no-scrollbars + zero-padding + no-titlebar-rewriting via
+    # profiles.defaults. Per operator: "MiOS app window/terminal
+    # window(s) should all have NO scrollbars inhibiting any windows
+    # globally!!". Per-profile scrollbarState only affects that profile;
+    # profiles.defaults applies to EVERY profile including auto-
+    # generated ones (cmd, PowerShell, WSL distros), so when an operator
+    # switches profiles they keep the borderless+scrollbar-less feel.
+    # suppressApplicationTitle=true and disableAnimations=true are the
+    # second + third legs of the edge-to-edge tripod (see comment
+    # above) -- without them, WT re-measures the viewport after the
+    # first prompt has already been rendered using the wrong width.
     if (-not $wtJson.profiles.defaults) {
         $wtJson.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([PSCustomObject]@{}) -Force
     }
-    $wtJson.profiles.defaults | Add-Member -NotePropertyName scrollbarState -NotePropertyValue 'hidden' -Force
-    $wtJson.profiles.defaults | Add-Member -NotePropertyName padding        -NotePropertyValue '0'      -Force
-    $wtJson.profiles.defaults | Add-Member -NotePropertyName useAcrylic     -NotePropertyValue $true    -Force
-    $wtJson.profiles.defaults | Add-Member -NotePropertyName opacity        -NotePropertyValue 50       -Force
-    $wtJson.profiles.defaults | Add-Member -NotePropertyName systemBackdrop -NotePropertyValue 'acrylic' -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName scrollbarState           -NotePropertyValue $_themeScrollbar -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName padding                  -NotePropertyValue $_themePadding   -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName useAcrylic               -NotePropertyValue $_themeAcrylic   -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName opacity                  -NotePropertyValue $_themeOpacity   -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName systemBackdrop           -NotePropertyValue $_themeBackdrop  -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName suppressApplicationTitle -NotePropertyValue $_themeSuppress  -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName disableAnimations        -NotePropertyValue $_themeNoAnimate -Force
+
+    # Preview / experimental features bundle. All gated on
+    # mios.toml [theme].enable_preview_features. Operator: "enable
+    # animations and all preview features in the MiOS Windows Terminal
+    # profile -- full aesthetics!" Each key here MUST be a documented
+    # WT experimental knob (no random invented keys -- WT silently
+    # rejects unknown keys, and a single rejected key can cascade into
+    # the entire profile being skipped, which manifests as "MiOS scheme
+    # never applied" / "powerline glyphs render as boxes").
+    if ($_themePreviewFx) {
+        # GPU-accelerated text renderer (AtlasEngine). Faster + cleaner
+        # subpixel antialiasing for powerline glyphs.
+        $wtJson.profiles.defaults | Add-Member -NotePropertyName useAtlasEngine -NotePropertyValue $true -Force
+        # URL hyperlink detection (Ctrl-click to open). Aesthetic +
+        # functional: URLs render with a subtle underline on hover.
+        $wtJson.profiles.defaults | Add-Member -NotePropertyName 'experimental.detectURLs' -NotePropertyValue $true -Force
+        # ForceVT input -- routes ALL input through the VT pathway, so
+        # modifier keys (Ctrl/Alt/Shift combos) hit the shell as
+        # documented escape sequences instead of being intercepted by
+        # WT's native key handler.
+        $wtJson.profiles.defaults | Add-Member -NotePropertyName 'experimental.input.forceVT' -NotePropertyValue $true -Force
+        # Cleaner full-repaint rendering on resize / scrollback nav --
+        # avoids the partial-row tearing the default differential
+        # repaint sometimes shows under acrylic.
+        $wtJson.profiles.defaults | Add-Member -NotePropertyName 'experimental.rendering.forceFullRepaint' -NotePropertyValue $true -Force
+    }
 
     # Schemes: upsert MiOS (force [object[]] so a single-entry schemes
     # array doesn't get unwrapped to a bare object by ConvertTo-Json).
