@@ -4558,6 +4558,106 @@ function New-Shortcut([string]$Path,[string]$Target,[string]$Args="",[string]$De
     $sc.Save()
 }
 
+function Install-MiosWindowsTools {
+    # Install [packages.windows] CLI tools via winget BEFORE
+    # Install-WindowsBranding runs. Reads the SSOT (mios.toml's
+    # [packages.windows] table) so the package list is operator-tunable
+    # via mios.html. Includes Microsoft.PowerShell (pwsh 7),
+    # fastfetch, btop, sharkdp.bat/.fd, ripgrep, fzf, jq, gh, etc. --
+    # everything the MiOS terminal experience depends on.
+    #
+    # Idempotent: probes existing install per-package (winget list
+    # --exact) before re-installing. Refreshes $env:PATH on completion
+    # so newly-installed binaries are reachable for the rest of this
+    # session (Install-WindowsBranding's mios-launch.ps1 generation,
+    # the M:\ profile body, etc.).
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Log-Warn "winget not available -- [packages.windows] CLI tools NOT installed (fastfetch / btop / pwsh / etc. will be missing)"
+        return
+    }
+
+    Set-Step "Installing [packages.windows] CLI tools via winget (SSOT: mios.toml)..."
+
+    # Resolve the [packages.windows].pkgs list from mios.toml. Try the
+    # operator-overlay path first, then vendor.
+    $tomlText = $null
+    foreach ($cand in @('M:\etc\mios\mios.toml', 'M:\usr\share\mios\mios.toml', (Join-Path $MiosBootstrapShadow 'mios.toml'))) {
+        if (Test-Path -LiteralPath $cand) {
+            try {
+                $tomlText = Get-Content -LiteralPath $cand -Raw -ErrorAction Stop
+                Log-Ok "[packages.windows] sourced from: $cand"
+                break
+            } catch {}
+        }
+    }
+    if (-not $tomlText) {
+        Log-Warn "Could not locate mios.toml for [packages.windows] resolution -- using minimal hardcoded fallback"
+        $pkgs = @('Git.Git','Microsoft.PowerShell','Microsoft.WindowsTerminal','7zip.7zip','fastfetch-cli.fastfetch','aristocratos.btop4win')
+    } else {
+        # Regex-extract `[packages.windows] ... pkgs = [ ... ]` (DOTALL
+        # across the section, terminating at the next [section] header).
+        $rx  = '(?ms)^\[packages\.windows\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
+        $m   = [regex]::Match($tomlText, $rx)
+        $pkgs = @()
+        if ($m.Success) {
+            $stripped = ($m.Groups['list'].Value -split "`n" |
+                         ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -join ' '
+            $pkgs = @(
+                $stripped -split ',' |
+                ForEach-Object {
+                    $s = $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
+                    if ($s) { $s }
+                }
+            )
+        }
+        if ($pkgs.Count -eq 0) {
+            Log-Warn "[packages.windows].pkgs unparseable -- using minimal hardcoded fallback"
+            $pkgs = @('Git.Git','Microsoft.PowerShell','Microsoft.WindowsTerminal','7zip.7zip','fastfetch-cli.fastfetch','aristocratos.btop4win')
+        } else {
+            Log-Ok "[packages.windows] resolved $($pkgs.Count) package(s) from TOML SSOT"
+        }
+    }
+
+    $installed = 0
+    $skipped   = 0
+    $failed    = 0
+    foreach ($pkg in $pkgs) {
+        try {
+            $probe = & winget list --id $pkg --exact 2>$null
+            if ($LASTEXITCODE -eq 0 -and (($probe -join "`n") -match [regex]::Escape($pkg))) {
+                $skipped++
+                continue
+            }
+            & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Log-Ok "winget install: $pkg"
+                $installed++
+            } else {
+                Log-Warn ("winget install: {0} (exit {1})" -f $pkg, $LASTEXITCODE)
+                $failed++
+            }
+        } catch {
+            Log-Warn ("winget install: {0} -- {1}" -f $pkg, $_.Exception.Message)
+            $failed++
+        }
+    }
+    Log-Ok ("[packages.windows] winget summary: {0} installed / {1} already-present / {2} failed" -f $installed, $skipped, $failed)
+
+    # Refresh $env:PATH from registry so this session sees newly-
+    # installed binaries (winget updates User PATH on install but the
+    # current pwsh inherited the parent env). Without this, the next
+    # function's `Get-Command fastfetch` returns null even though
+    # fastfetch IS on disk.
+    try {
+        $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
+        $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
+        $env:PATH = (@($_machPath, $_userPath) | Where-Object { $_ }) -join ';'
+        Log-Ok '$env:PATH refreshed -- newly-installed binaries reachable for the rest of this session'
+    } catch {
+        Log-Warn "PATH refresh failed: $($_.Exception.Message)"
+    }
+}
+
 function Install-WindowsBranding {
     # Mirror MiOS's Linux branding (Geist + Symbols-Only Nerd Font +
     # oh-my-posh) onto the Windows host so PowerShell, Windows Terminal,
@@ -6271,6 +6371,7 @@ if ($activeDistro) {
             Rename-PodmanDevDistro
         }
     }
+    Install-MiosWindowsTools   # winget install [packages.windows] (fastfetch, btop, pwsh, ...)
     Install-WindowsBranding
     Install-MiosLauncher
     if ($BootstrapOnly) {
@@ -6960,6 +7061,7 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
     # WSL distro stays as "podman-MiOS-DEV" for podman's sake. Set
     # $env:MIOS_RENAME_DISTRO=1 to opt in.
     Restore-PodmanPrefix   # auto-recover from any previous rename
+    Install-MiosWindowsTools   # winget install [packages.windows] (fastfetch, btop, pwsh, ...)
     Install-WindowsBranding
 
     $devHealthy = Test-MiosDevDistroHealthy
