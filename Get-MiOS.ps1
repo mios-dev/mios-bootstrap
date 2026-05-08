@@ -904,7 +904,42 @@ try {
     # at a corrupted profile body from a prior failed run. Pass-1
     # below will overwrite the profile with a properly-BOMed UTF-8
     # version regardless.
-    & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript
+    #
+    # FRESH-SYSTEM FALLBACK: pwsh.exe (PowerShell 7) is part of
+    # [packages.windows] which the operator hasn't installed yet on a
+    # cold first run. Operator-reported regression: "this was a run on
+    # a fresh system with no pre-requisites and fails immediately ...
+    # The term 'pwsh.exe' is not recognized". Resolve the child shell
+    # in priority order: pwsh 7 (preferred) -> Microsoft Store pwsh ->
+    # Windows PS 5.1 (always present). PS 5.1 runs the bootstrap fine;
+    # build-mios.ps1's Install-MiosWindowsTools will winget-install
+    # Microsoft.PowerShell during Phase 5 so subsequent runs use pwsh 7.
+    `$_childShell = `$null
+    foreach (`$_cs in @("`$env:ProgramFiles\PowerShell\7\pwsh.exe","`$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
+        if (`$_cs -and (Test-Path -LiteralPath `$_cs -PathType Leaf)) { `$_childShell = `$_cs; break }
+    }
+    if (-not `$_childShell) {
+        try {
+            `$_appx = Get-AppxPackage -Name 'Microsoft.PowerShell' -ErrorAction SilentlyContinue
+            if (`$_appx -and `$_appx.InstallLocation) {
+                `$_cand = Join-Path `$_appx.InstallLocation 'pwsh.exe'
+                if (Test-Path -LiteralPath `$_cand -PathType Leaf) { `$_childShell = `$_cand }
+            }
+        } catch {}
+    }
+    if (-not `$_childShell) {
+        `$_cmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+        if (`$_cmd -and `$_cmd.Source -and (Test-Path -LiteralPath `$_cmd.Source -PathType Leaf)) {
+            `$_childShell = `$_cmd.Source
+        }
+    }
+    if (-not `$_childShell) {
+        `$_w51 = "`$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+        if (Test-Path -LiteralPath `$_w51 -PathType Leaf) { `$_childShell = `$_w51 }
+    }
+    if (-not `$_childShell) { `$_childShell = 'powershell.exe' }
+    Write-Host ('      Using ' + `$_childShell) -ForegroundColor DarkGray
+    & `$_childShell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript
     `$_rc = `$LASTEXITCODE
     Remove-Item -LiteralPath `$tmpScript -Force -ErrorAction SilentlyContinue
     `$_launchMiosOnClose = `$false
