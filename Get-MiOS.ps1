@@ -3805,15 +3805,25 @@ function Set-WingetStorageOnM {
         New-Item -ItemType Directory -Path $MRoot -Force -ErrorAction Stop | Out-Null
         Write-Host "    [+] created $MRoot" -ForegroundColor DarkGray
     }
-    foreach ($_sub in @('Packages','Cache','PortableLinks','PortablePackagesRoot')) {
+    foreach ($_sub in @('Packages','Cache','PortableLinks','PortablePackagesRoot','MachinePackages')) {
         $sd = Join-Path $MRoot $_sub
         if (-not (Test-Path $sd)) { New-Item -ItemType Directory -Path $sd -Force | Out-Null }
     }
+    # Resolve %ProgramFiles% defensively -- on 64-bit Windows the
+    # canonical machine WinGet path is "C:\Program Files\WinGet\Packages".
+    $_pf = $env:ProgramFiles
+    if (-not $_pf) { $_pf = $env:ProgramW6432 }
+    if (-not $_pf) { $_pf = 'C:\Program Files' }
     $candidates = @(
         @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages');             Dst = (Join-Path $MRoot 'Packages')             },
         @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Cache');                Dst = (Join-Path $MRoot 'Cache')                },
         @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links');                Dst = (Join-Path $MRoot 'PortableLinks')        },
-        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Portable\PackagesRoot'); Dst = (Join-Path $MRoot 'PortablePackagesRoot') }
+        @{ Src = (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Portable\PackagesRoot'); Dst = (Join-Path $MRoot 'PortablePackagesRoot') },
+        # Machine-scope winget retry (used when --scope user fails -- e.g.
+        # Microsoft.PowerShell, .NET runtimes, system-wide tools) lands
+        # in %ProgramFiles%\WinGet\Packages. Junction to M:\ so machine-
+        # scope installs ALSO end up on M:\.
+        @{ Src = (Join-Path $_pf 'WinGet\Packages');                                    Dst = (Join-Path $MRoot 'MachinePackages')      }
     )
     foreach ($c in $candidates) {
         $p = $c.Src; $tgt = $c.Dst
