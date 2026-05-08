@@ -898,34 +898,44 @@ $script:DW         = [math]::Max(60, [math]::Min(([Console]::WindowWidth - 6), 7
 # $AppRegPhaseId is the index for the "App registration" phase in
 # whichever array is active; the Start-Phase / End-Phase callers near
 # the bottom of the script reference it so we don't hardcode 8 or 5.
-if ($BootstrapOnly) {
-    $script:PhaseNames = @(
-        "Hardware + Prerequisites",
-        "Detecting environment",
-        "Directories and repos",
-        "MiOS-DEV distro",
-        "WSL2 configuration",
-        "App registration"
-    )
-    $script:AppRegPhaseId = 5
-} else {
-    $script:PhaseNames = @(
-        "Hardware + Prerequisites",
-        "Detecting environment",
-        "Directories and repos",
-        "MiOS-DEV distro",
-        "WSL2 configuration",
-        "Verifying build context",
-        "Identity",
-        "Writing identity",
-        "App registration",
-        "Building OCI image",
-        "Exporting WSL2 image",
-        "Registering 'MiOS' WSL2",
-        "Building disk images",
-        "Deploying Hyper-V VM"
-    )
-    $script:AppRegPhaseId = 8
+# Phase names resolve through mios.toml [install_phases.<mode>] (SSOT).
+# Operator edits via mios.html flow mios.toml -> next install run uses
+# the new names. Vendor fallback below is the cold first-run set when
+# no TOML is reachable.
+$_phaseFallbackBootstrap = @(
+    "Hardware + Prerequisites",
+    "Detecting environment",
+    "Directories and repos",
+    "MiOS-DEV distro",
+    "WSL2 configuration",
+    "App registration"
+)
+$_phaseFallbackFull = @(
+    "Hardware + Prerequisites",
+    "Detecting environment",
+    "Directories and repos",
+    "MiOS-DEV distro",
+    "WSL2 configuration",
+    "Verifying build context",
+    "Identity",
+    "Writing identity",
+    "App registration",
+    "Building OCI image",
+    "Exporting WSL2 image",
+    "Registering 'MiOS' WSL2",
+    "Building disk images",
+    "Deploying Hyper-V VM"
+)
+$_phaseSection = if ($BootstrapOnly) { 'install_phases.bootstrap' } else { 'install_phases.full' }
+$_phaseFallback = if ($BootstrapOnly) { $_phaseFallbackBootstrap } else { $_phaseFallbackFull }
+$script:PhaseNames = @(Get-MiosTomlValue -Section $_phaseSection -Key 'names' -Default $_phaseFallback)
+if (-not $script:PhaseNames -or $script:PhaseNames.Count -eq 0) { $script:PhaseNames = $_phaseFallback }
+# AppRegPhaseId is the 0-based index of "App registration" within the
+# active PhaseNames array. Resolved by name search so reordering doesn't
+# break the post-phase-N callers.
+$script:AppRegPhaseId = [array]::IndexOf([string[]]$script:PhaseNames, 'App registration')
+if ($script:AppRegPhaseId -lt 0) {
+    $script:AppRegPhaseId = if ($BootstrapOnly) { 5 } else { 8 }
 }
 $script:TotalPhases = $script:PhaseNames.Count
 # PhStat size tracks the active PhaseNames so the dashboard's status
@@ -5117,6 +5127,51 @@ function Install-WindowsBranding {
         New-Item -ItemType Directory -Path $MiosThemesDir -Force | Out-Null
         $themeDst = Join-Path $MiosThemesDir 'mios.omp.json'
         Copy-Item -Path $miosThemeSrc -Destination $themeDst -Force
+        # Substitute powerline glyphs from mios.toml [theme.prompt] (SSOT).
+        # The on-disk omp.json ships with vendor-default rounded caps
+        # ( / ); operators who switch to sharp triangles or
+        # flat separators via mios.html overwrite [theme.prompt].
+        # powerline_right / .powerline_left / .leading_diamond / .trailing_diamond
+        # which we patch into the staged copy here. Per operator: "no
+        # hardcoding ANYWHERE -- everything from the toml/html".
+        try {
+            $_pwRight = Get-MiosTomlValue -Section 'theme.prompt' -Key 'powerline_right'  -Default ''
+            $_pwLeft  = Get-MiosTomlValue -Section 'theme.prompt' -Key 'powerline_left'   -Default ''
+            $_ldDia   = Get-MiosTomlValue -Section 'theme.prompt' -Key 'leading_diamond'  -Default ''
+            $_trDia   = Get-MiosTomlValue -Section 'theme.prompt' -Key 'trailing_diamond' -Default ''
+            $_omp = Get-Content -LiteralPath $themeDst -Raw -Encoding UTF8
+            # Map each TOML glyph to its JSON-escaped \uXXXX equivalent
+            # so the on-disk file remains ASCII-safe (the source omp.json
+            # explicitly notes "Nerd Font private-use-area glyphs are
+            # encoded as \uXXXX so the file roundtrips through any editor
+            # without losing the U+E000..F8FF code points").
+            function _Esc([string]$s) {
+                if (-not $s) { return $null }
+                $cp = [int][char]$s[0]
+                return ('\u{0:x4}' -f $cp)
+            }
+            $_eR = _Esc $_pwRight; $_eL = _Esc $_pwLeft; $_eLD = _Esc $_ldDia; $_eTD = _Esc $_trDia
+            # Replace every powerline_symbol occurrence by VALUE -- the
+            # current vendor default is  (right) or  (left);
+            # we don't know which segments use which without parsing,
+            # so we substitute by current literal in two passes.
+            if ($_eR -and $_eR -ne '') { $_omp = $_omp -replace '\\ue0b4', $_eR }
+            if ($_eL -and $_eL -ne '') { $_omp = $_omp -replace '\\ue0b6', $_eL }
+            # leading_diamond / trailing_diamond appear only on diamond-
+            # style segments (the leading text + trailing time caps).
+            # Patch by JSON key: "leading_diamond": "" -> the new
+            # value. Same for trailing_diamond.
+            if ($_eLD -and $_eLD -ne '') {
+                $_omp = $_omp -replace '("leading_diamond"\s*:\s*")\\u[0-9a-fA-F]{4}', ('${1}' + $_eLD)
+            }
+            if ($_eTD -and $_eTD -ne '') {
+                $_omp = $_omp -replace '("trailing_diamond"\s*:\s*")\\u[0-9a-fA-F]{4}', ('${1}' + $_eTD)
+            }
+            Set-Content -LiteralPath $themeDst -Value $_omp -Encoding UTF8 -NoNewline
+            Log-Ok "omp.json glyphs synced from mios.toml [theme.prompt]"
+        } catch {
+            Log-Warn "omp.json [theme.prompt] substitution failed: $($_.Exception.Message) -- shipped defaults retained"
+        }
         Log-Ok "MiOS oh-my-posh theme staged at $themeDst"
 
         # Inject (or refresh) a thin REDIRECTOR in the user's PowerShell
@@ -6411,11 +6466,38 @@ if ($hwnd -ne [IntPtr]::Zero) {
     #   5. Uninstall MiOS    Created in the legacy block ~line 7126.
     #
     # Both Start Menu .lnk AND Desktop .lnk for each.
+    # The native-app catalog resolves through mios.toml [apps] (SSOT).
+    # Operator-renames the apps via mios.html -- the configurator writes
+    # mios.toml -- next install regenerates Start Menu / Desktop shortcuts
+    # against the new name+bin+icon set. Vendor fallback below mirrors
+    # what mios.toml [apps] ships with for cold first-run before any
+    # operator edit.
     $verbShortcuts = @(
         @{ Name = 'MiOS-DEV';    Bin = 'mios-dev.ps1';    Icon = 'mios-dev.ico';    Desc = 'Open MiOS-DEV (podman machine) directly to its themed dashboard' },
         @{ Name = 'MiOS Config'; Bin = 'mios-config.ps1'; Icon = 'mios-config.ico'; Desc = 'Open mios.html (the HTML configurator) in your default browser to edit mios.toml' },
         @{ Name = 'MiOS Help';   Bin = 'mios-help.ps1';   Icon = 'mios-help.ico';   Desc = 'Full verb + functionality reference (every MiOS command and where things live)' }
     )
+    try {
+        $_appsTomlText = $null
+        foreach ($_cand in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $MiosBootstrapShadow 'mios.toml'),'C:\MiOS\usr\share\mios\mios.toml')) {
+            if (Test-Path -LiteralPath $_cand) { try { $_appsTomlText = Get-Content -LiteralPath $_cand -Raw -ErrorAction Stop; break } catch {} }
+        }
+        if ($_appsTomlText) {
+            # Source of truth: [apps.shortcuts] -- not [apps] (which holds
+            # hub-app metadata: aumid, start_menu_folder, hub_shortcut_name).
+            $_appsBlock = [regex]::Match($_appsTomlText, '(?ms)^\[apps\.shortcuts\]\s*\r?\n(.*?)(?=^\[|\z)')
+            if ($_appsBlock.Success) {
+                $_resolvedApps = @()
+                foreach ($_ln in ($_appsBlock.Groups[1].Value -split "`n")) {
+                    $_am = [regex]::Match($_ln, '^\s*[a-z0-9_-]+\s*=\s*\{[^}]*name\s*=\s*"([^"]+)"[^}]*bin\s*=\s*"([^"]+)"[^}]*icon\s*=\s*"([^"]+)"[^}]*description\s*=\s*"([^"]+)"')
+                    if ($_am.Success) {
+                        $_resolvedApps += @{ Name = $_am.Groups[1].Value; Bin = $_am.Groups[2].Value; Icon = $_am.Groups[3].Value; Desc = $_am.Groups[4].Value }
+                    }
+                }
+                if ($_resolvedApps.Count -gt 0) { $verbShortcuts = $_resolvedApps }
+            }
+        }
+    } catch {}
     foreach ($v in $verbShortcuts) {
         $vBin  = Join-Path $MiosBinDir $v.Bin
         $vIcon = Join-Path $MiosIconsDir $v.Icon
