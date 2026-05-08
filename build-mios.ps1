@@ -220,8 +220,18 @@ try {
         [void][MiosBuildLoad.W]::GetWindowRect($_lh, [ref]$_lr)
         $_lw = $_lr.Width  - $_lr.X
         $_lh2 = $_lr.Height - $_lr.Y
-        $_lcur = [System.Windows.Forms.Cursor]::Position
-        $_ls   = [System.Windows.Forms.Screen]::FromPoint($_lcur).WorkingArea
+        # Center on the conhost's CURRENT monitor (where the window
+        # already sits), NOT on Cursor.Position. Operator-reported
+        # regression: "acknowledgement and install windows wander from
+        # center still". Using cursor position made every successive
+        # re-center jump to whichever monitor the operator's mouse was
+        # on at that instant -- so the install window appeared to
+        # wander between monitors mid-flow. Anchoring to the conhost's
+        # OWN monitor pins it stable: Pass-2 placed the window on the
+        # operator's active display at Pass-2-launch time; build-mios's
+        # re-center keeps it there regardless of subsequent mouse moves.
+        $_lcenter = New-Object System.Drawing.Point ($_lr.X + [int]($_lw / 2)), ($_lr.Y + [int]($_lh2 / 2))
+        $_ls   = [System.Windows.Forms.Screen]::FromPoint($_lcenter).WorkingArea
         $_lx = $_ls.X + [int](([math]::Max(0, $_ls.Width  - $_lw )) / 2)
         $_ly = $_ls.Y + [int](([math]::Max(0, $_ls.Height - $_lh2)) / 2)
         [void][MiosBuildLoad.W]::MoveWindow($_lh, $_lx, $_ly, $_lw, $_lh2, $true)

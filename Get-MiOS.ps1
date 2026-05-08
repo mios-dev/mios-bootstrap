@@ -549,10 +549,7 @@ function Invoke-MiOSAgreementGate {
     $_gateTargetW  = $null
     $_gateTargetH  = $null
     try {
-        $_gpt = [System.Windows.Forms.Cursor]::Position
-        $_gateScreen = [System.Windows.Forms.Screen]::FromPoint($_gpt).WorkingArea
-        # Let conhost settle after the 80x40 SetWindowSize above, then
-        # snapshot the actual Win32 dims as our forever target.
+        # Let conhost settle after the 80x40 SetWindowSize above.
         Start-Sleep -Milliseconds 100
         if ('MiOSGate.W' -as [type]) {
             $_gh = [MiOSGate.W]::GetConsoleWindow()
@@ -561,6 +558,14 @@ function Invoke-MiOSAgreementGate {
                 [void][MiOSGate.W]::GetWindowRect($_gh, [ref]$_gr)
                 $_gateTargetW = $_gr.Width  - $_gr.X
                 $_gateTargetH = $_gr.Height - $_gr.Y
+                # Anchor to the conhost's OWN monitor (where Pass-2 placed
+                # it), NOT Cursor.Position. Operator-reported regression:
+                # "acknowledgement and install windows wander from center".
+                # Cursor-based monitor selection drifts to whichever
+                # display the mouse is on -- which on multi-monitor setups
+                # makes successive page re-centers jump between displays.
+                $_gateCenter = New-Object System.Drawing.Point ($_gr.X + [int]($_gateTargetW / 2)), ($_gr.Y + [int]($_gateTargetH / 2))
+                $_gateScreen = [System.Windows.Forms.Screen]::FromPoint($_gateCenter).WorkingArea
                 $_gateTargetX = $_gateScreen.X + [int](([math]::Max(0, $_gateScreen.Width  - $_gateTargetW)) / 2)
                 $_gateTargetY = $_gateScreen.Y + [int](([math]::Max(0, $_gateScreen.Height - $_gateTargetH)) / 2)
             }
