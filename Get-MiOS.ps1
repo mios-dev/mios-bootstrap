@@ -898,7 +898,15 @@ try {
     # all Pass-1 output live in the elevated host (Read-Host pause
     # at the end keeps it visible).
     `$tmpScript = Join-Path `$env:TEMP ('mios-getmios-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
-    [IO.File]::WriteAllText(`$tmpScript, `$src, [System.Text.UTF8Encoding]::new(`$false))
+    # UTF-8 WITH BOM so PS 5.1 (the fresh-system fallback) parses it
+    # as UTF-8 instead of Windows-1252. Without the BOM, PS 5.1's
+    # parser sees the file as cp1252 and mangles every Unicode glyph
+    # in the source (box-drawing chars '|' / '/' became 'â”‚' / 'â”'
+    # mojibake), throwing "Unexpected token 'â”‚'" before the script
+    # body runs. pwsh 7 reads no-BOM UTF-8 fine, but the bootstrap's
+    # child shell is whatever's available on a fresh box -- which is
+    # PS 5.1 until Phase 5 winget-installs Microsoft.PowerShell.
+    [IO.File]::WriteAllText(`$tmpScript, `$src, [System.Text.UTF8Encoding]::new(`$true))
     # -NoProfile prevents the elevated child pwsh from auto-loading
     # any stale `$PROFILE.CurrentUserAllHosts redirector that points
     # at a corrupted profile body from a prior failed run. Pass-1
