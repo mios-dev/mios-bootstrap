@@ -6646,10 +6646,21 @@ function _BoxRow {
     "│ " + $Inner.PadRight($maxInner) + " │"
 }
 
+# Top-of-script banner. Title + tagline lines resolve through mios.toml
+# [messages.installer_banner] (SSOT). Operator rebrands via mios.html.
+# Vendor fallbacks below preserve the existing wording when no TOML
+# is reachable. {version} placeholder substitutes $MiosVersion.
+$_bannerTitle    = Get-MiosTomlValue -Section 'messages.installer_banner' -Key 'title'    -Default "'MiOS' {version}  --  Unified Windows Installer"
+$_bannerTaglines = @(Get-MiosTomlValue -Section 'messages.installer_banner' -Key 'taglines' -Default @(
+    'Immutable Fedora AI Workstation',
+    'WSL2 + Podman  │  Offline Build Pipeline'
+))
+$_bannerTitle = $_bannerTitle -replace '\{version\}', $MiosVersion
 Write-Host $bTop -ForegroundColor Cyan
-Write-Host (_BoxRow "'MiOS' $MiosVersion  --  Unified Windows Installer") -ForegroundColor Cyan
-Write-Host (_BoxRow "Immutable Fedora AI Workstation")                   -ForegroundColor Cyan
-Write-Host (_BoxRow "WSL2 + Podman  │  Offline Build Pipeline")          -ForegroundColor Cyan
+Write-Host (_BoxRow $_bannerTitle) -ForegroundColor Cyan
+foreach ($_tg in $_bannerTaglines) {
+    Write-Host (_BoxRow ($_tg -replace '\{version\}', $MiosVersion)) -ForegroundColor Cyan
+}
 Write-Host $bBot -ForegroundColor Cyan
 Write-Host ""
 
