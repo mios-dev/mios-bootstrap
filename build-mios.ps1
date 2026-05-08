@@ -7310,12 +7310,26 @@ if ($activeDistro) {
             # MiOS-DEV.
             $null = Invoke-NativeQuiet { git config --unset core.worktree }
             $null = Invoke-NativeQuiet { git remote add origin $MiosRepoUrl }
-            # Capture stderr from git fetch so a failure surfaces with
-            # actual diagnostic text -- previous Invoke-NativeQuiet
-            # swallowed every line via `2>&1 | Out-Null`, leaving the
-            # operator with a bare "exit 128" and no clue what failed.
-            $fetchOut = & git fetch --depth=1 origin main 2>&1
-            $fetchExit = $LASTEXITCODE
+            # Capture stderr+stdout from git fetch so a failure surfaces
+            # with diagnostic text. Wrapped in $ErrorActionPreference=
+            # 'Continue' + PSNativeCommandUseErrorActionPreference=$false
+            # so git's INFORMATIONAL stderr (the "From https://..." line
+            # that fetch always prints on success) doesn't terminate the
+            # script. Operator-reported regression: that informational
+            # line was being thrown as a PowerShell exception under the
+            # default 'Stop' preference, surfacing as
+            # `FATAL: From https://github.com/mios-dev/MiOS` even though
+            # fetch had succeeded.
+            $fetchOut  = $null
+            $fetchExit = & {
+                $ErrorActionPreference = 'Continue'
+                if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                    $PSNativeCommandUseErrorActionPreference = $false
+                }
+                $script:_fetchOut = & git fetch --depth=1 origin main 2>&1
+                $LASTEXITCODE
+            }
+            $fetchOut = $script:_fetchOut
             $fetchOut | ForEach-Object { Write-Log "git-fetch: $_" }
             if ($fetchExit -ne 0) {
                 $tail = ($fetchOut | Select-Object -Last 5) -join ' / '
