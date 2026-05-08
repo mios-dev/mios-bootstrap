@@ -3155,16 +3155,20 @@ if (`$true) {
         # themed terminal window". cols-1 leaves 1 char of slack at the
         # right edge so the box-drawing border doesn't touch the
         # line-wrap boundary on hosts that lie about their width.
-        # Auto-detect the live conhost width and prefer it over the
-        # mios.toml [terminal].frame_width default. Operator-reported
-        # regression: "dashboard frame is 1 character too narrow!".
-        # The TOML default is 80 cells; on operators whose WT terminal
-        # opens at 81 (or any width > 80) the 80-col frame visibly
-        # leaves >=1 col of slack on the right. Reading [Console]::
-        # WindowWidth at render time makes the frame fill whatever the
-        # terminal currently is; the TOML value remains the floor.
+        # Frame width = MIN(live conhost width, mios.toml frame_width).
+        # Operator-reported regression: "framing/dashboard is still
+        # scattered/line wrapping (too wide still)". Earlier I had
+        # WIDTH = MAX which auto-grew the frame to fill wider terminals
+        # -- but on WT versions that report WindowWidth as N+1 (one cell
+        # over the actual visible cell count) the frame's last char
+        # wrapped to the next line, breaking each row across two visual
+        # lines = "scattered" appearance. Capping at WindowWidth means
+        # the frame NEVER exceeds the visible width; capping at TOML
+        # frame_width means the frame respects the operator's chosen
+        # max. Whichever is smaller wins.
         `$_winWNow = try { [Console]::WindowWidth } catch { $_miosFrameW }
-        `$WIDTH = if (`$_winWNow -gt $_miosFrameW) { `$_winWNow } else { $_miosFrameW }
+        `$WIDTH = [math]::Min(`$_winWNow, $_miosFrameW)
+        if (`$WIDTH -lt 20) { `$WIDTH = $_miosFrameW }   # safety floor
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
 

@@ -6492,6 +6492,107 @@ if ($hwnd -ne [IntPtr]::Zero) {
     Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
     Log-Ok "MiOS native launcher staged: $miosLauncher"
 
+    # Compile a TINY native .exe launcher with subsystem:Windows (no
+    # console). Operator-reported requirement: "opening apps shouldn't
+    # open a regular windows terminal/powershell window before launching
+    # the MiOS app ecosystem(s)" + "opening the app window now opens NOT
+    # centered at all". The previous wt.exe-direct .lnk eliminated the
+    # pwsh pre-flash but lost the post-launch centering. The pwsh-File
+    # .lnk had centering but flashed. A native .exe with no console gets
+    # us BOTH: zero flash + post-launch SetWindowPos centering loop.
+    $miosLauncherExe = Join-Path $MiosBinDir 'mios-launch.exe'
+    $launcherCs = @'
+using System;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Forms;
+
+class MiOSLaunch {
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int q, uint f);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int L,T,R,B; }
+
+    static int Main(string[] args) {
+        try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch {}
+        string profile = (args.Length > 0) ? args[0] : "MiOS";
+        string cols = (args.Length > 1) ? args[1] : "80";
+        string rows = (args.Length > 2) ? args[2] : "20";
+        // Resolve wt.exe via APPX install location (preferred) or PATH.
+        string wt = null;
+        try {
+            string ps = "powershell.exe";
+            var psi = new ProcessStartInfo(ps, "-NoProfile -Command \"(Get-AppxPackage Microsoft.WindowsTerminal).InstallLocation\"");
+            psi.UseShellExecute = false; psi.RedirectStandardOutput = true; psi.CreateNoWindow = true;
+            var p = Process.Start(psi); string loc = p.StandardOutput.ReadToEnd().Trim(); p.WaitForExit();
+            if (!string.IsNullOrEmpty(loc)) {
+                string cand = Path.Combine(loc, "wt.exe");
+                if (File.Exists(cand)) wt = cand;
+            }
+        } catch {}
+        if (wt == null) {
+            foreach (string d in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';')) {
+                if (string.IsNullOrEmpty(d)) continue;
+                try { string c = Path.Combine(d, "wt.exe"); if (File.Exists(c)) { wt = c; break; } } catch {}
+            }
+        }
+        if (wt == null) { MessageBox.Show("Windows Terminal (wt.exe) not found. Re-run the MiOS bootstrap.","MiOS",MessageBoxButtons.OK,MessageBoxIcon.Error); return 1; }
+        DateTime spawnAt = DateTime.UtcNow;
+        try {
+            var psi = new ProcessStartInfo(wt, "-w " + profile + " --size " + cols + "," + rows + " --focus -p " + profile);
+            psi.UseShellExecute = false; psi.CreateNoWindow = true;
+            Process.Start(psi);
+        } catch (Exception ex) { MessageBox.Show("wt.exe spawn failed: " + ex.Message,"MiOS",MessageBoxButtons.OK,MessageBoxIcon.Error); return 2; }
+        // Find the WT window we just spawned + center it on the
+        // operator's active monitor. 12 ticks @ 500ms = ~6s of
+        // persistent re-centering to defeat WT's post-spawn layout
+        // renegotiations.
+        IntPtr hwnd = IntPtr.Zero;
+        DateTime deadline = DateTime.UtcNow.AddMilliseconds(8000);
+        while (DateTime.UtcNow < deadline && hwnd == IntPtr.Zero) {
+            try {
+                var ps = Process.GetProcessesByName("WindowsTerminal").Where(p => p.StartTime.ToUniversalTime() >= spawnAt.AddSeconds(-1)).OrderByDescending(p => p.StartTime).FirstOrDefault();
+                if (ps != null && ps.MainWindowHandle != IntPtr.Zero && IsWindowVisible(ps.MainWindowHandle)) hwnd = ps.MainWindowHandle;
+            } catch {}
+            if (hwnd == IntPtr.Zero) Thread.Sleep(150);
+        }
+        if (hwnd == IntPtr.Zero) return 0;
+        Point cur = Cursor.Position;
+        Screen scr = Screen.FromPoint(cur);
+        for (int i = 0; i < 12; i++) {
+            RECT r;
+            if (GetWindowRect(hwnd, out r)) {
+                int w = r.R - r.L, h = r.B - r.T;
+                if (w > 0 && h > 0) {
+                    int x = scr.WorkingArea.X + Math.Max(0, scr.WorkingArea.Width  - w) / 2;
+                    int y = scr.WorkingArea.Y + Math.Max(0, scr.WorkingArea.Height - h) / 2;
+                    // SWP_NOZORDER | SWP_NOACTIVATE = 0x14
+                    SetWindowPos(hwnd, IntPtr.Zero, x, y, w, h, 0x14);
+                }
+            }
+            Thread.Sleep(500);
+        }
+        return 0;
+    }
+}
+'@
+    try {
+        Add-Type -TypeDefinition $launcherCs `
+            -ReferencedAssemblies System.Drawing,System.Windows.Forms `
+            -OutputType WindowsApplication `
+            -OutputAssembly $miosLauncherExe `
+            -ErrorAction Stop
+        Log-Ok "MiOS native .exe launcher compiled: $miosLauncherExe (subsystem:Windows -- zero pre-flash)"
+    } catch {
+        Log-Warn "mios-launch.exe compile failed: $($_.Exception.Message) -- falling back to pwsh launcher (will pre-flash)"
+        $miosLauncherExe = $null
+    }
+
     # Shortcut targets WT.EXE DIRECTLY -- no pwsh launcher pre-flash.
     # Operator-reported regression: "opening apps shouldn't open a regular
     # windows terminal/powershell window before launching the MiOS app
@@ -6513,14 +6614,14 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # ongoing daily-shortcut path leans on WT's own positioning. If WT's
     # placement drifts the operator can edit globals.initialPosition in
     # mios.toml or right-click + drag.
-    if ($wtExe) {
+    if ($miosLauncherExe -and (Test-Path -LiteralPath $miosLauncherExe)) {
+        # Native .exe launcher with subsystem:Windows -- ZERO console
+        # flash + post-launch SetWindowPos centering. Best of both worlds.
+        $hubTarget = $miosLauncherExe
+        $hubArgs   = "MiOS $($script:MiosAppCols) $($script:MiosAppRows)"
+    } elseif ($wtExe) {
+        # Fallback: wt.exe direct (no flash but no centering).
         $hubTarget = $wtExe
-        # -w MiOS = named window (matches the post-bootstrap spawn so
-        # subsequent clicks reuse the same window via globalSummon).
-        # --size in cells -- WT auto-pixel-sizes for active DPI.
-        # --focus = borderless / no titlebar / no tab strip.
-        # -p MiOS = use the MiOS profile (which carries the bound pwsh
-        # commandline + dot-source of M:\MiOS\powershell\profile.ps1).
         $hubArgs   = "-w MiOS --size $($script:MiosAppCols),$($script:MiosAppRows) --focus -p MiOS"
     } else {
         # Fallback: no wt.exe found -- run the bare hub script in a pwsh
@@ -6639,7 +6740,11 @@ if ($hwnd -ne [IntPtr]::Zero) {
         $vArgs   = $null
         switch ($v.Name) {
             'MiOS-DEV' {
-                if ($wtExe) {
+                if ($miosLauncherExe -and (Test-Path -LiteralPath $miosLauncherExe)) {
+                    # Native launcher + MiOS-DEV profile = no flash + centering.
+                    $vTarget = $miosLauncherExe
+                    $vArgs   = "MiOS-DEV $($script:MiosAppCols) $($script:MiosAppRows)"
+                } elseif ($wtExe) {
                     $vTarget = $wtExe
                     $vArgs   = "-w MiOS-DEV --size $($script:MiosAppCols),$($script:MiosAppRows) --focus -p MiOS-DEV"
                 } else {
