@@ -6361,28 +6361,43 @@ $ErrorActionPreference = 'SilentlyContinue'
 
 try {
     Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Dpi' -MemberDefinition @"
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr value);
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 "@
-    [MiOSLaunch.Native.Dpi]::SetProcessDPIAware() | Out-Null
+    # Per-monitor v2 (-4) so Screen.WorkingArea + SetWindowPos coords
+    # match across monitors of different DPI. Falls back to legacy
+    # SetProcessDPIAware (per-monitor v1) on older Windows.
+    $_dpiOk = $false
+    try { $_dpiOk = [MiOSLaunch.Native.Dpi]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) } catch {}
+    if (-not $_dpiOk) { try { [MiOSLaunch.Native.Dpi]::SetProcessDPIAware() | Out-Null } catch {} }
 } catch {}
 
 Add-Type -AssemblyName System.Windows.Forms
 
-# Cell metrics (Geist Mono 12pt, lineHeight=1.0): ~10 x 20 px.
-# Outer-rect slack for DWM frame + scrollbar + acrylic edge: +20 W, +12 H.
-# Dims match the post-bootstrap WT MiOS spawn (mios.toml [terminal]):
-# 80 cols x 20 rows. Earlier this hardcoded 80x30 -- which produced a
-# DIFFERENT-sized window from the post-bootstrap spawn, so clicking
-# the MiOS shortcut opened the "wrong" window.
+# Dims in CELLS only (mios.toml [terminal] -- 80x20 portal feel).
+# DON'T compute pixel dims from hardcoded cell metrics: at 100% DPI
+# Geist Mono 12pt is ~10x20 px but at 200% DPI it's ~20x40 px. The
+# previous `$winW = ($Cols * 10) + 20` hardcode produced a HALF-SIZE
+# pixel rect on 200% DPI hosts -- operator-reported regression: "MiOS
+# app has launched with 1/2 sized window now". WT auto-pixel-sizes
+# the window correctly for the active DPI when spawned with --size
+# in cells; we just need to wait for the window to surface and then
+# read its ACTUAL pixel dims via GetWindowRect for centering.
 $Cols   = 80
 $Rows   = 20
-$winW   = ($Cols * 10) + 20
-$winH   = ($Rows * 20) + 12
 
+# Pre-spawn target position is a best-effort estimate using the
+# operator's primary-screen DPI. If WT honors --pos, this is where it
+# lands initially; the post-launch SetWindowPos retry corrects to the
+# ACTUAL cell-derived pixel dims regardless.
 $cur    = [System.Windows.Forms.Cursor]::Position
 $work   = [System.Windows.Forms.Screen]::FromPoint($cur).WorkingArea
-$x      = [int]($work.X + ($work.Width  - $winW) / 2)
-$y      = [int]($work.Y + ($work.Height - $winH) / 2)
+# Rough estimate -- only used for initial --pos hint; final pos is
+# computed AFTER the window surfaces using the real dims.
+$_cellW = 10
+$_cellH = 20
+$x = [int]($work.X + [math]::Max(0, $work.Width  - ($Cols * $_cellW + 20)) / 2)
+$y = [int]($work.Y + [math]::Max(0, $work.Height - ($Rows * $_cellH + 12)) / 2)
 if ($x -lt $work.X) { $x = $work.X }
 if ($y -lt $work.Y) { $y = $work.Y }
 
