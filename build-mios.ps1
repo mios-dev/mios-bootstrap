@@ -5151,6 +5151,79 @@ else { Write-Host "configurator not found at `$cfg" -ForegroundColor Yellow }
 "@
     Set-Content -Path $cfgPath -Value $cfgScript -Encoding UTF8
 
+    # mios-build.ps1 -- THE operator-typed `mios build` verb. The Day-0
+    # contract: Windows host does ack + MiOS-DEV provisioning, then
+    # STOPS. `mios build` is the operator-triggered next step that
+    # promotes any operator edits saved to %USERPROFILE%\Downloads, syncs
+    # the M:\ overlay to origin/main, then SSHes into MiOS-DEV and
+    # ignites mios-build-driver. The dev VM is THE builder; Windows is
+    # provisioning + handoff ONLY.
+    $buildPath  = Join-Path $MiosBinDir 'mios-build.ps1'
+    $miosEtcDir = Join-Path $MiosRepoDir 'etc\mios'
+    $miosShareDirInRepo = Join-Path $MiosRepoDir 'mios\usr\share\mios'
+    $buildScript = @"
+# <MiOSRoot>\bin\mios-build.ps1 -- the operator-triggered `mios build` verb.
+# Self-replication contract: edit mios.toml in mios.html (browser saves
+# it to %USERPROFILE%\Downloads on Windows because file:// can't write
+# back), then run this script. It promotes the newest mios*.toml /
+# *mios*.html from Downloads into M:\etc\mios + M:\usr\share\mios,
+# archives the source as .imported-<timestamp>, syncs the M:\ overlay
+# to origin/main, then SSHes into MiOS-DEV to run mios-build-driver
+# (the actual build pipeline). Architectural Law 5 + the .git IS /
+# invariant flow through end-to-end.
+$devResolveBlock
+`$ErrorActionPreference = 'Continue'
+`$downloads = Join-Path `$env:USERPROFILE 'Downloads'
+`$promoteTargets = @(
+    @{ Pattern = 'mios*.toml';  TargetDir = "$miosEtcDir";       Filename = 'mios.toml' }
+    @{ Pattern = '*mios*.html'; TargetDir = "$miosShareDirInRepo\configurator"; Filename = 'index.html' }
+)
+`$promoted = `$false
+foreach (`$pt in `$promoteTargets) {
+    `$candidates = Get-ChildItem -Path `$downloads -Filter `$pt.Pattern -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending
+    if (-not `$candidates) { continue }
+    `$src = `$candidates[0]
+    if (-not (Test-Path `$pt.TargetDir)) {
+        New-Item -ItemType Directory -Path `$pt.TargetDir -Force | Out-Null
+    }
+    `$dst = Join-Path `$pt.TargetDir `$pt.Filename
+    Copy-Item -Path `$src.FullName -Destination `$dst -Force
+    `$ts  = Get-Date -Format 'yyyyMMdd-HHmmss'
+    `$archive = Join-Path `$src.DirectoryName ("{0}.imported-{1}" -f `$src.Name, `$ts)
+    Move-Item -Path `$src.FullName -Destination `$archive -Force
+    Write-Host ("  [promote] {0} -> {1}" -f `$src.Name, `$dst) -ForegroundColor Green
+    Write-Host ("            archived as {0}" -f (Split-Path `$archive -Leaf)) -ForegroundColor DarkGray
+    `$promoted = `$true
+}
+if (-not `$promoted) {
+    Write-Host '  [promote] no mios*.toml / *mios*.html in Downloads -- proceeding with current overlay' -ForegroundColor DarkGray
+}
+
+# Sync M:\ overlay to origin/main so the build inside MiOS-DEV picks up
+# both the operator's promoted edits AND the latest upstream. mios-pull.ps1
+# delegates to /usr/bin/mios-pull inside the dev distro for the actual
+# git fetch + reset --hard.
+`$pull = Join-Path `$PSScriptRoot 'mios-pull.ps1'
+if (Test-Path `$pull) {
+    Write-Host '  [pull] syncing M:\ overlay to origin/main...' -ForegroundColor Cyan
+    & pwsh.exe -NoProfile -File `$pull
+} else {
+    Write-Host '  [pull] mios-pull.ps1 not found -- skipping pull, build will run against staged tree' -ForegroundColor Yellow
+}
+
+# SSH handoff into MiOS-DEV. mios-build-driver is THE build pipeline:
+# overlay -> account -> install -> smoketest -> build -> deploy -> boot.
+# The build dashboard renders here in this WT tab (live, not proxied).
+`$distro = Resolve-MiosDevDistro
+Write-Host ''
+Write-Host ('  [build] handing off to {0}:/usr/libexec/mios/mios-build-driver' -f `$distro) -ForegroundColor Cyan
+Write-Host ''
+& wsl.exe -d `$distro --user mios --cd / -- bash -lc '/usr/libexec/mios/mios-build-driver'
+"@
+    Set-Content -Path $buildPath -Value $buildScript -Encoding UTF8
+    Log-Ok "mios-build.ps1 (the `mios build` verb) staged at $buildPath"
+
     # mios.ps1 -- THE MiOS app. Single launcher that replaces the
     # previous per-verb Start Menu shortcuts. Each verb (Build, Dev VM,
     # Update, Dashboard, Configurator, ...) is a numbered menu item;
@@ -5236,7 +5309,7 @@ function Show-MiosApp {
 function Invoke-Verb {
     param([string]$Key)
     switch ($Key) {
-        '1' { & (Join-Path $Script:MiOSBin 'mios-update.ps1') -BuildOnly }
+        '1' { & (Join-Path $Script:MiOSBin 'mios-build.ps1')              }
         '2' { & (Join-Path $Script:MiOSBin 'mios-dev.ps1')                }
         '3' { & (Join-Path $Script:MiOSBin 'mios-pull.ps1')               }
         '4' { & (Join-Path $Script:MiOSBin 'mios-dash.ps1')               }
@@ -5685,7 +5758,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # The main MiOS.lnk above stays as the unified hub.
     $verbShortcuts = @(
         @{ Name = 'MiOS-DEV';          Bin = 'mios-dev.ps1';    Icon = 'mios-dev.ico';    Desc = 'Enter the MiOS-DEV WSL2 distro (root shell)' },
-        @{ Name = 'MiOS Build';        Bin = 'mios-update.ps1'; Icon = 'mios-build.ico';  Desc = 'Build the deployable MiOS OCI image (podman build + deploy)' },
+        @{ Name = 'MiOS Build';        Bin = 'mios-build.ps1';  Icon = 'mios-build.ico';  Desc = 'Promote Downloads edits, sync overlay, SSH into MiOS-DEV and ignite mios-build-driver' },
         @{ Name = 'MiOS Dashboard';    Bin = 'mios-dash.ps1';   Icon = 'mios-dash.ico';   Desc = 'Live MiOS system view (services, fastfetch, git tree)' },
         @{ Name = 'MiOS Configurator'; Bin = 'mios-config.ps1'; Icon = 'mios-config.ico'; Desc = 'Edit mios.toml in the GUI (Epiphany via WSLg)' },
         @{ Name = 'MiOS Update';       Bin = 'mios-update.ps1'; Icon = 'mios-update.ico'; Desc = 'Re-run the MiOS bootstrap (refresh terminal + dev VM)' },
@@ -5696,22 +5769,19 @@ if ($hwnd -ne [IntPtr]::Zero) {
         $vIcon  = Join-Path $MiosIconsDir $v.Icon
         $vLnk   = Join-Path $StartMenuDir ("{0}.lnk" -f $v.Name)
         $vArgs  = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
-        # Build verb runs with -BuildOnly so it triggers the OCI build,
-        # not the full bootstrap re-run.
-        if ($v.Name -eq 'MiOS Build') {
-            $vArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`" -BuildOnly"
-        }
         # Verbs that don't drop into a shell (Configurator launches
         # Epiphany, Pull is one-shot) close after running -- use pwsh
         # without -NoExit. MiOS-DEV intentionally lands in the WSL
         # shell and stays there. Dashboard / Update / Build keep their
-        # output visible via -NoExit.
+        # output visible via -NoExit so the operator can read what
+        # happened (especially mios-build, which streams the dev-VM
+        # build-driver output and exits when the build completes).
         if ($v.Name -in @('MiOS-DEV')) {
             # mios-dev.ps1 wraps wsl.exe; the WSL session itself keeps
             # the window alive, no -NoExit needed.
             $vArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
         } elseif ($v.Name -in @('MiOS Build','MiOS Dashboard','MiOS Update')) {
-            $vArgs = "-NoProfile -NoExit -ExecutionPolicy Bypass -File `"$vBin`"" + $(if ($v.Name -eq 'MiOS Build') { ' -BuildOnly' } else { '' })
+            $vArgs = "-NoProfile -NoExit -ExecutionPolicy Bypass -File `"$vBin`""
         }
         New-MiosShortcut -LnkPath $vLnk -TargetExe $pwshExe -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
         Log-Ok ("Per-verb Start Menu shortcut: {0} -> {1}" -f $v.Name, $v.Bin)
@@ -6891,9 +6961,10 @@ exit 1
     # pwsh invisible -- only the WT window appears.
     $launcherArgs    = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$miosLauncher`""
     $launcherArgsDev = "$launcherArgs -Profile MiOS-DEV"
+    $miosBuildVerb = Join-Path $MiosBinDir 'mios-build.ps1'
     @(
         @{ F="MiOS Setup.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`"";              D="Re-run full 'MiOS' setup" },
-        @{ F="Build MiOS.lnk";         T=$pwsh;     A="-ExecutionPolicy Bypass -File `"$selfSc`" -BuildOnly";    D="Build 'MiOS' OCI image (Phase 6+: identity, podman build, deploy)" },
+        @{ F="Build MiOS.lnk";         T=$pwsh;     A="-NoProfile -NoExit -ExecutionPolicy Bypass -File `"$miosBuildVerb`""; D="Promote Downloads edits, sync overlay, SSH into MiOS-DEV, ignite mios-build-driver" },
         @{ F="MiOS Configurator.lnk";  T=$pwsh;     A="-NoProfile -ExecutionPolicy Bypass -File `"$cfgScript`""; D="Edit mios.toml in Epiphany via WSLg" },
         @{ F="MiOS Terminal.lnk";      T=$pwsh;     A=$launcherArgs;                                             D="Open MiOS WT profile (borderless, 80x30, screen-centered)" },
         @{ F="MiOS Dev Shell.lnk";     T=$pwsh;     A=$launcherArgsDev;                                          D="Open MiOS-DEV WT profile (borderless, 80x30, screen-centered)" },
