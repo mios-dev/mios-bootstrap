@@ -1737,6 +1737,22 @@ function Install-MiOSTerminalProfile {
         $wtJson | Add-Member -NotePropertyName profiles -NotePropertyValue $emptyProfilesObj -Force
     }
 
+    # GLOBAL no-scrollbars + zero-padding via profiles.defaults. Per
+    # operator: "MiOS app window/terminal window(s) should all have NO
+    # scrollbars inhibiting any windows globally!!". Per-profile
+    # scrollbarState only affects that profile; profiles.defaults
+    # applies to EVERY profile including auto-generated ones (cmd,
+    # PowerShell, WSL distros), so when an operator switches profiles
+    # they keep the borderless+scrollbar-less feel.
+    if (-not $wtJson.profiles.defaults) {
+        $wtJson.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([PSCustomObject]@{}) -Force
+    }
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName scrollbarState -NotePropertyValue 'hidden' -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName padding        -NotePropertyValue '0'      -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName useAcrylic     -NotePropertyValue $true    -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName opacity        -NotePropertyValue 50       -Force
+    $wtJson.profiles.defaults | Add-Member -NotePropertyName systemBackdrop -NotePropertyValue 'acrylic' -Force
+
     # Schemes: upsert MiOS (force [object[]] so a single-entry schemes
     # array doesn't get unwrapped to a bare object by ConvertTo-Json).
     if (-not $wtJson.schemes) {
