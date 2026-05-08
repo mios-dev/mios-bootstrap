@@ -1767,11 +1767,27 @@ function Install-MiOSTerminalProfile {
 
     # MiOS-DEV profile: drops the operator straight into the MiOS-DEV WSL2
     # distro as the mios user, cwd /. Same look as MiOS (acrylic, font,
-    # scheme) so the only visible difference is the prompt context.
+    # Resolve the actual on-disk WSL distro name. podman machine init
+    # registers the distro as 'podman-MiOS-DEV' (podman hardcodes the
+    # 'podman-' prefix), even though the operator-facing name is
+    # MiOS-DEV. Operator-reported regression: clicking the MiOS-DEV
+    # shortcut threw 'WSL_E_DISTRO_NOT_FOUND' because the profile
+    # commandline targeted bare 'MiOS-DEV' which doesn't exist on disk.
+    # Walk the registered distro list at install time and pick the
+    # first match in priority order: prefer 'podman-MiOS-DEV' (post
+    # init) -> 'MiOS-DEV' (post Restore-PodmanPrefix) -> 'podman-MiOS-
+    # BUILDER' (legacy) -> 'MiOS-BUILDER' (legacy).
+    $_devDistroName = 'podman-MiOS-DEV'   # default if probing fails
+    try {
+        $_wslList = @(& wsl.exe -l -q 2>$null) | ForEach-Object { ($_ -replace [char]0,'').Trim() } | Where-Object { $_ }
+        foreach ($_cand in @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')) {
+            if ($_wslList -contains $_cand) { $_devDistroName = $_cand; break }
+        }
+    } catch {}
     $miosDevProfile = [ordered]@{
         guid              = $miosDevGuid
         name              = 'MiOS-DEV'
-        commandline       = 'wsl.exe -d MiOS-DEV --cd / --user mios'
+        commandline       = ('wsl.exe -d ' + $_devDistroName + ' --cd / --user mios')
         startingDirectory = $null
     }
     foreach ($k in $commonProfileProps.Keys) { $miosDevProfile[$k] = $commonProfileProps[$k] }
