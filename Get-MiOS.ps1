@@ -951,59 +951,28 @@ try {
     # which is where 90% of the install time lives. Operator sees
     # all Pass-1 output live in the elevated host (Read-Host pause
     # at the end keeps it visible).
-    `$tmpScript = Join-Path `$env:TEMP ('mios-getmios-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
-    # UTF-8 WITH BOM so PS 5.1 (the fresh-system fallback) parses it
-    # as UTF-8 instead of Windows-1252. Without the BOM, PS 5.1's
-    # parser reads the file as cp1252 and mangles every Unicode glyph
-    # in the source (the U+2502 vertical-bar box-drawing char becomes
-    # 3-byte mojibake under cp1252), throwing Unexpected-token errors
-    # before the script body runs. pwsh 7 reads no-BOM UTF-8 fine, but
-    # the bootstrap's child shell is whatever's available on a fresh
-    # box -- PS 5.1 until Phase 5 winget-installs Microsoft.PowerShell.
-    [IO.File]::WriteAllText(`$tmpScript, `$src, [System.Text.UTF8Encoding]::new(`$true))
-    # -NoProfile prevents the elevated child pwsh from auto-loading
-    # any stale `$PROFILE.CurrentUserAllHosts redirector that points
-    # at a corrupted profile body from a prior failed run. Pass-1
-    # below will overwrite the profile with a properly-BOMed UTF-8
-    # version regardless.
-    #
-    # FRESH-SYSTEM FALLBACK: pwsh.exe (PowerShell 7) is part of
-    # [packages.windows] which the operator hasn't installed yet on a
-    # cold first run. Operator-reported regression: "this was a run on
-    # a fresh system with no pre-requisites and fails immediately ...
-    # The term 'pwsh.exe' is not recognized". Resolve the child shell
-    # in priority order: pwsh 7 (preferred) -> Microsoft Store pwsh ->
-    # Windows PS 5.1 (always present). PS 5.1 runs the bootstrap fine;
-    # build-mios.ps1's Install-MiosWindowsTools will winget-install
-    # Microsoft.PowerShell during Phase 5 so subsequent runs use pwsh 7.
-    `$_childShell = `$null
-    foreach (`$_cs in @("`$env:ProgramFiles\PowerShell\7\pwsh.exe","`$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
-        if (`$_cs -and (Test-Path -LiteralPath `$_cs -PathType Leaf)) { `$_childShell = `$_cs; break }
+    # Run the freshly-fetched Get-MiOS.ps1 IN-PROCESS via scriptblock.
+    # The previous `& pwsh.exe -File $tmpScript` spawned a new pwsh
+    # process. On Windows 11 with WT as the default terminal, that
+    # spawn opened a NEW WT TAB / WINDOW (operator-reported regression:
+    # "spawns bootstrap window (correct) >> THEN opens a new window
+    # (incorrect) >> THEN ALSO spawns the acknowledgement window").
+    # In-process scriptblock execution eliminates the third window AND
+    # avoids the cross-process console handle dance that previously
+    # broke Read-Host on PS 5.1 fallback. Any `exit N` calls inside
+    # Get-MiOS.ps1 will terminate THIS pwsh -- but that's exactly what
+    # the operator wants for a unified "single bulk-install window"
+    # experience. The existing try/catch wrapping is enough to keep
+    # the elevation host visible long enough for the Read-Host pause
+    # at the bottom of the inner cmd to fire.
+    `$_rc = 0
+    try {
+        & ([scriptblock]::Create(`$src))
+    } catch {
+        Write-Host ''
+        Write-Host ('  [!] In-process bootstrap throw: ' + `$_.Exception.Message) -ForegroundColor Red
+        `$_rc = 1
     }
-    if (-not `$_childShell) {
-        try {
-            `$_appx = Get-AppxPackage -Name 'Microsoft.PowerShell' -ErrorAction SilentlyContinue
-            if (`$_appx -and `$_appx.InstallLocation) {
-                `$_cand = Join-Path `$_appx.InstallLocation 'pwsh.exe'
-                if (Test-Path -LiteralPath `$_cand -PathType Leaf) { `$_childShell = `$_cand }
-            }
-        } catch {}
-    }
-    if (-not `$_childShell) {
-        `$_cmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-        if (`$_cmd -and `$_cmd.Source -and (Test-Path -LiteralPath `$_cmd.Source -PathType Leaf)) {
-            `$_childShell = `$_cmd.Source
-        }
-    }
-    if (-not `$_childShell) {
-        `$_w51 = "`$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-        if (Test-Path -LiteralPath `$_w51 -PathType Leaf) { `$_childShell = `$_w51 }
-    }
-    if (-not `$_childShell) { `$_childShell = 'powershell.exe' }
-    Write-Host ('      Using ' + `$_childShell) -ForegroundColor DarkGray
-    & `$_childShell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript
-    `$_rc = `$LASTEXITCODE
-    Remove-Item -LiteralPath `$tmpScript -Force -ErrorAction SilentlyContinue
     if (`$_rc -ne 0) {
         Write-Host ''
         Write-Host ('  [!] Bootstrap exited with code ' + `$_rc) -ForegroundColor Red
@@ -3078,15 +3047,18 @@ if (`$true) {
         # themed terminal window". cols-1 leaves 1 char of slack at the
         # right edge so the box-drawing border doesn't touch the
         # line-wrap boundary on hosts that lie about their width.
-        # Frame width = MIN(live conhost width, mios.toml frame_width).
-        # Per operator: "everything should be -1 width" -- the -1
-        # convention is enforced at the TOML SSOT layer (mios.toml
-        # [terminal].frame_width = cols-1 = 79 by default), so the code
-        # path itself doesn't subtract; it just respects whatever the
-        # operator-tuned TOML value is. The MIN cap protects against
-        # WT reporting WindowWidth one cell over visible.
+        # Frame width = MIN(live conhost width - 1, mios.toml frame_width).
+        # Per operator's repeated regression "still line wraps framing AND
+        # powerlines STILL" -- WT's pseudo-console pads the visible cell
+        # count by 1-2 cells beyond what's actually paintable (scrollbar
+        # reservation lingers from before profiles.defaults takes effect,
+        # or the cell rounding when the WT window pixel size doesn't
+        # divide evenly by the active DPI cell width). Always leaving 1
+        # cell of slack BELOW the live conhost width guarantees no wrap
+        # regardless of WT version / DPI quirks. The TOML frame_width
+        # remains the upper cap so operators can pin a narrower frame.
         `$_winWNow = try { [Console]::WindowWidth } catch { $_miosFrameW }
-        `$WIDTH = [math]::Min(`$_winWNow, $_miosFrameW)
+        `$WIDTH = [math]::Min((`$_winWNow - 1), $_miosFrameW)
         if (`$WIDTH -lt 20) { `$WIDTH = $_miosFrameW }   # safety floor
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
