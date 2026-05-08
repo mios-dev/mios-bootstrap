@@ -6602,15 +6602,46 @@ class MiOSLaunch {
     }
 }
 '@
-    try {
-        Add-Type -TypeDefinition $launcherCs `
-            -ReferencedAssemblies System.Drawing,System.Windows.Forms `
-            -OutputType WindowsApplication `
-            -OutputAssembly $miosLauncherExe `
-            -ErrorAction Stop
-        Log-Ok "MiOS native .exe launcher compiled: $miosLauncherExe (subsystem:Windows -- zero pre-flash)"
-    } catch {
-        Log-Warn "mios-launch.exe compile failed: $($_.Exception.Message) -- falling back to pwsh launcher (will pre-flash)"
+    # PS 5.1's Add-Type rejects -OutputType WindowsApplication. Invoke
+    # the .NET Framework C# compiler (csc.exe) directly. Ships with
+    # every Windows machine that has .NET 4.x installed (which is all
+    # supported Windows versions). The /target:winexe flag sets PE
+    # subsystem:Windows so the resulting .exe has no console.
+    $_csc = $null
+    foreach ($_cscCand in @(
+        "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
+        "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+    )) {
+        if (Test-Path -LiteralPath $_cscCand) { $_csc = $_cscCand; break }
+    }
+    if ($_csc) {
+        $_launcherCs = Join-Path $env:TEMP ('mios-launch-' + [guid]::NewGuid().Guid.Substring(0,8) + '.cs')
+        try {
+            Set-Content -LiteralPath $_launcherCs -Value $launcherCs -Encoding UTF8
+            $_cscArgs = @(
+                '/nologo',
+                '/target:winexe',                # subsystem:Windows -- no console host
+                '/optimize+',
+                '/reference:System.Drawing.dll',
+                '/reference:System.Windows.Forms.dll',
+                ('/out:' + $miosLauncherExe),
+                $_launcherCs
+            )
+            $_cscOut = & $_csc @_cscArgs 2>&1
+            if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $miosLauncherExe)) {
+                Log-Ok "MiOS native .exe launcher compiled via csc.exe: $miosLauncherExe (subsystem:Windows -- zero pre-flash)"
+            } else {
+                Log-Warn ("mios-launch.exe csc compile failed (exit {0}): {1}" -f $LASTEXITCODE, (($_cscOut | Select-Object -Last 5) -join ' / '))
+                $miosLauncherExe = $null
+            }
+        } catch {
+            Log-Warn "mios-launch.exe csc compile failed: $($_.Exception.Message) -- falling back to pwsh launcher (will pre-flash)"
+            $miosLauncherExe = $null
+        } finally {
+            if (Test-Path -LiteralPath $_launcherCs) { Remove-Item -LiteralPath $_launcherCs -Force -ErrorAction SilentlyContinue }
+        }
+    } else {
+        Log-Warn "csc.exe not found under %WINDIR%\Microsoft.NET\Framework{,64}\v4.0.30319 -- mios-launch.exe not compiled"
         $miosLauncherExe = $null
     }
 

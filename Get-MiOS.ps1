@@ -888,14 +888,14 @@ try {
         # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14
         `$_swp = [MEW.N]::SetWindowPos(`$_h, [IntPtr]::Zero, `$_x, `$_y, `$_actualW, `$_actualH, 0x14)
         `$_dbgLines.Add(('attempt {0}: hwnd=0x{1:X} console=0x{2:X} rect={3},{4} dims={5}x{6} screen={7},{8} {9}x{10} target={11},{12} SWPok={13}' -f `$_attempt, ([int64]`$_h), ([int64]`$_consoleHwnd), `$_rect.X, `$_rect.Y, `$_actualW, `$_actualH, `$_s.X, `$_s.Y, `$_s.Width, `$_s.Height, `$_x, `$_y, `$_swp))
-        # Verify by re-reading the rect.
-        `$_rect2 = New-Object System.Drawing.Rectangle
-        [void][MEW.N]::GetWindowRect(`$_h, [ref]`$_rect2)
-        if (`$_rect2.X -eq `$_x -and `$_rect2.Y -eq `$_y) {
-            `$_dbgLines.Add(('attempt {0}: SUCCESS at {1},{2}' -f `$_attempt, `$_rect2.X, `$_rect2.Y))
-            break
-        }
-        `$_dbgLines.Add(('attempt {0}: post-SWP rect={1},{2} (target was {3},{4}) -- retrying' -f `$_attempt, `$_rect2.X, `$_rect2.Y, `$_x, `$_y))
+        # Don't break on success. Operator-reported regression: "spawned
+        # install window still isn't centered/self centering STILL".
+        # Logs showed centering succeeded on attempt 0 but the window
+        # subsequently moved -- conhost/WT re-layouts after every output
+        # paint + SetWindowSize call can shift the window. Keep re-
+        # centering through all 12 ticks (~6 seconds) so the window
+        # stays put through the inner-cmd's banner Write-Host calls,
+        # the IRM fetch, and the child pwsh spawn.
     }
     try { Set-Content -LiteralPath `$_dbg -Value (`$_dbgLines -join [Environment]::NewLine) -Encoding UTF8 } catch {}
 } catch {
