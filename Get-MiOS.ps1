@@ -332,24 +332,43 @@ function Get-MiosTomlValue {
     return $raw.Trim('"', "'")
 }
 
-function Show-MiOSAgreement {
+function Show-MiOSBanner {
+    # Framed branded ASCII banner -- shown at the top of EVERY MiOS
+    # window/dashboard per operator: "EVERY WINDOW SHOULD HAVE A FRAMED
+    # AND BRANDED BANNER OF THE MIOS ASCII BANNER ART -- EVERY WINDOW
+    # AND/OR DASHBOARD HAS IT AT THE TOP".
+    # Width = 80 cells (frame char to frame char). Inner width = 78.
+    # Box-drawing requires UTF-8 codepage (chcp 65001) -- conhost in
+    # CP437/CP1252 mangles ╭╮╰╯│─ to `?`. Callers must set codepage
+    # before invoking; the agreement gate + Pass-2 inner cmd both do.
+    param([string]$Subtitle = '')
+    $sub = if ($Subtitle) { $Subtitle } else { 'Immutable Fedora AI Workstation' }
+    # Center the subtitle within the 78-col inner width.
+    $subPadTotal = [math]::Max(0, 78 - $sub.Length)
+    $subL = ' ' * [math]::Floor($subPadTotal / 2)
+    $subR = ' ' * ($subPadTotal - [math]::Floor($subPadTotal / 2))
     @"
-================================================================================
-      ___                       ___           ___
-     /\__\          ___        /\  \         /\  \
-    /::|  |        /\  \      /::\  \       /::\  \
-   /:|:|  |        \:\  \    /:/\:\  \     /:/\ \  \
-  /:/|:|__|__      /::\__\  /:/  \:\  \   _\:\~\ \  \
- /:/ |::::\__\  __/:/\/__/ /:/__/ \:\__\ /\ \:\ \ \__\
- \/__/~~/:/  / /\/:/  /    \:\  \ /:/  / \:\ \:\ \/__/
-       /:/  /  \::/__/      \:\  /:/  /   \:\ \:\__\
-      /:/  /    \:\__\       \:\/:/  /     \:\/:/  /
-     /:/  /      \/__/        \::/  /       \::/  /
-     \/__/                     \/__/         \/__/
+╭──────────────────────────────────────────────────────────────────────────────╮
+│       ___                       ___           ___                            │
+│      /\__\          ___        /\  \         /\  \                           │
+│     /::|  |        /\  \      /::\  \       /::\  \                          │
+│    /:|:|  |        \:\  \    /:/\:\  \     /:/\ \  \                         │
+│   /:/|:|__|__      /::\__\  /:/  \:\  \   _\:\~\ \  \                        │
+│  /:/ |::::\__\  __/:/\/__/ /:/__/ \:\__\ /\ \:\ \ \__\                       │
+│  \/__/~~/:/  / /\/:/  /    \:\  \ /:/  / \:\ \:\ \/__/                       │
+│        /:/  /  \::/__/      \:\  /:/  /   \:\ \:\__\                         │
+│       /:/  /    \:\__\       \:\/:/  /     \:\/:/  /                         │
+│      /:/  /      \/__/        \::/  /       \::/  /                          │
+│      \/__/                     \/__/         \/__/                           │
+│$subL$sub$subR│
+╰──────────────────────────────────────────────────────────────────────────────╯
+"@
+}
 
-                        MiOS  --  Project Acknowledgement
-================================================================================
-
+function Show-MiOSAgreement {
+    $banner = Show-MiOSBanner -Subtitle 'Project Acknowledgement'
+    @"
+$banner
 The full document lives at AGREEMENTS.md (in the mios-bootstrap repo,
 fetched in step 5 below). The summary you are reading is the abridged
 operator-facing extract -- it is enough to make an informed accept-or-
@@ -433,8 +452,6 @@ No thanks     -- exit 78 (EX_CONFIG). Nothing modified, nothing pulled.
 For unattended / CI invocation, set
   `$env:MIOS_AGREEMENT_ACK = 'accepted'`
 in the host environment to bypass this prompt as declared policy.
-
-================================================================================
 "@
 }
 
@@ -469,13 +486,19 @@ function Invoke-MiOSAgreementGate {
     try { & chcp.com 65001 *> $null } catch {}
     try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
     try {
+        # Don't clamp by LargestWindowSize: at 200% DPI it can return as
+        # low as 20 rows on a 1080p monitor, which produced the operator-
+        # reported regression "window opens but is 1/2 the size it should
+        # be". 80x40 is the documented [terminal.install] target -- if
+        # conhost can't fit it visibly the worst case is silent fallback
+        # to LargestWindowSize anyway, but most setups handle it fine.
         $_curW = [Console]::WindowWidth
         if ($_curW -gt 80) {
-            [Console]::SetWindowSize(80, [math]::Min(40, [Console]::LargestWindowSize.Height))
+            [Console]::SetWindowSize(80, 40)
             [Console]::SetBufferSize(80, 9000)
         } else {
             [Console]::SetBufferSize(80, 9000)
-            [Console]::SetWindowSize(80, [math]::Min(40, [Console]::LargestWindowSize.Height))
+            [Console]::SetWindowSize(80, 40)
         }
     } catch {}
 
@@ -503,11 +526,17 @@ function Invoke-MiOSAgreementGate {
     }
     if (-not $splitAt) { $splitAt = [int]($lines.Count / 2) }
 
+    # Page 1 already starts with the framed banner (the agreement text
+    # itself begins with Show-MiOSBanner output). Page 2 needs the banner
+    # re-rendered at top per operator: "EVERY WINDOW SHOULD HAVE A FRAMED
+    # AND BRANDED BANNER OF THE MIOS ASCII BANNER ART -- EVERY WINDOW
+    # AND/OR DASHBOARD HAS IT AT THE TOP".
     Clear-Host
     Write-Host (($lines[0..($splitAt - 1)]) -join "`n")
     Write-Host ''
     Read-Host "[mios] Page 1 of 2 -- press Enter to view the rest" | Out-Null
     Clear-Host
+    Write-Host (Show-MiOSBanner -Subtitle 'Project Acknowledgement (page 2 of 2)')
     Write-Host (($lines[$splitAt..($lines.Count - 1)]) -join "`n")
 
     # Prompt loop.
@@ -643,22 +672,39 @@ try {
     # which produced LITERAL `\$_elevCols` in the rendered script,
     # which evaluated to $null inner-side, multiplied by cell dims
     # to zero, and gave a 20x12 (basically 1x1 visible) window.
-    # Resize the cell buffer FIRST so conhost expects target cells.
-    try { [Console]::SetBufferSize($_elevCols, $_elevScr) } catch {}
-    try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
+    # Branch on current width: SetBufferSize fails when shrinking buffer
+    # below current window; SetWindowSize fails when growing window
+    # beyond current buffer. Conhost rule: buffer.cols >= window.cols.
+    `$_curW = [Console]::WindowWidth
+    if (`$_curW -gt $_elevCols) {
+        try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
+        try { [Console]::SetBufferSize($_elevCols, $_elevScr) } catch {}
+    } else {
+        try { [Console]::SetBufferSize($_elevCols, $_elevScr) } catch {}
+        try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
+    }
+    # SetWindowSize tells conhost to display N cells; conhost itself
+    # auto-pixel-sizes the Win32 window correctly for the active DPI.
+    # DON'T MoveWindow with hardcoded pixel dims (the previous behaviour
+    # of `MoveWindow ... 820x812`) -- at 150% DPI conhost cells render
+    # ~16 px wide so a 820 px window only fits ~50 cells, and at 200%
+    # DPI ~33 cells. Operator-reported regression at 200% DPI:
+    # "window opens but is 1/2 the size it should be". Reading the
+    # ACTUAL post-resize Win32 window dims via GetWindowRect and using
+    # those for centering keeps the window correctly cell-sized while
+    # still putting it on the operator's active display.
+    Start-Sleep -Milliseconds 100
     `$_h = [MEW.N]::GetConsoleWindow()
+    `$_rect = New-Object System.Drawing.Rectangle
+    [void][MEW.N]::GetWindowRect(`$_h, [ref]`$_rect)
+    `$_actualW = `$_rect.Width  - `$_rect.X
+    `$_actualH = `$_rect.Height - `$_rect.Y
     # Resolve which monitor the OPERATOR was on at the moment of paste.
     `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
     `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
-    # Center within active monitor's working area using the COMPUTED
-    # target pixel size (literal integers baked from outer scope).
-    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - $_winWPx)) / 2)
-    `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - $_winHPx)) / 2)
-    [MEW.N]::MoveWindow(`$_h, `$_x, `$_y, $_winWPx, $_winHPx, `$true) | Out-Null
-    # Brief settle, then re-resize cell buffer in case conhost re-
-    # negotiated its size after MoveWindow.
-    Start-Sleep -Milliseconds 100
-    try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
+    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_actualW)) / 2)
+    `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_actualH)) / 2)
+    [MEW.N]::MoveWindow(`$_h, `$_x, `$_y, `$_actualW, `$_actualH, `$true) | Out-Null
 } catch {}
 Write-Host ''
 Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
