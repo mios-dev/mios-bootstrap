@@ -359,7 +359,7 @@ function Show-MiOSBanner {
         '     /:/  /      \/__/        \::/  /       \::/  /',
         '     \/__/                     \/__/         \/__/'
     )
-    $sub = if ($Subtitle) { $Subtitle } else { 'Immutable Fedora AI Workstation' }
+    $sub = if ($Subtitle) { $Subtitle } else { Get-MiosTomlValue -Section 'branding' -Key 'tagline' -Default 'Immutable Fedora AI Workstation' }
     $inner = 78
     # Block-center: pad every art line by the SAME left-pad so internal
     # diagonal alignment is preserved.

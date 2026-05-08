@@ -5777,7 +5777,20 @@ Clear-Host
 Write-Host ''
 Write-Host '  ╭──────────────────────────────────────────────────────────────────────────╮' -ForegroundColor $accent
 Write-Host '  │                   MiOS  --  Help / Verb Reference                        │' -ForegroundColor $accent
-Write-Host '  │   Immutable Fedora AI Workstation  --  Self-replicating bootc OS         │' -ForegroundColor $accent
+# Tagline resolves through mios.toml [branding].tagline_long at runtime
+# (SSOT). No hardcoding -- per operator: "no hardcoding ANYWHERE".
+$_helpTagline = 'Immutable Fedora AI Workstation  --  Self-replicating bootc OS'
+foreach ($_tcand in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml','C:\MiOS\usr\share\mios\mios.toml')) {
+    if (Test-Path -LiteralPath $_tcand) {
+        try {
+            $_tt = Get-Content -LiteralPath $_tcand -Raw -ErrorAction Stop
+            $_m = [regex]::Match($_tt, '(?ms)^\[branding\].*?^\s*tagline_long\s*=\s*"([^"]+)"')
+            if ($_m.Success) { $_helpTagline = $_m.Groups[1].Value; break }
+        } catch {}
+    }
+}
+$_helpTagPad = $_helpTagline.PadRight(72).Substring(0, [math]::Min(72, $_helpTagline.Length))
+Write-Host ('  │   ' + $_helpTagPad.PadRight(72) + '   │') -ForegroundColor $accent
 Write-Host '  ╰──────────────────────────────────────────────────────────────────────────╯' -ForegroundColor $accent
 
 Header 'Core verbs' 'Type any of these in a MiOS terminal, OR click the matching Start Menu shortcut.'
