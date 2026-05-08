@@ -860,33 +860,47 @@ try {
     # ACTUAL post-resize Win32 window dims via GetWindowRect and using
     # those for centering keeps the window correctly cell-sized while
     # still putting it on the operator's active display.
-    Start-Sleep -Milliseconds 100
-    # Walk to the TOPMOST ancestor of the conhost handle. When WT is
-    # the default terminal app (Windows 11 default since 22H2), Get-
-    # ConsoleWindow returns the OpenConsole pseudo-host HWND, NOT the
-    # WindowsTerminal.exe HWND that owns the visible window. GA_ROOT
-    # (=2) walks up to the WT main window, so SetWindowPos there
-    # actually moves what the operator sees. On legacy conhost the
-    # ancestor walk is a no-op and we move the conhost directly.
-    `$_consoleHwnd = [MEW.N]::GetConsoleWindow()
-    `$_h = if (`$_consoleHwnd -ne [IntPtr]::Zero) {
-        `$_root = [MEW.N]::GetAncestor(`$_consoleHwnd, 2)
-        if (`$_root -ne [IntPtr]::Zero) { `$_root } else { `$_consoleHwnd }
-    } else { [IntPtr]::Zero }
-    if (`$_h -ne [IntPtr]::Zero) {
+    # Retry loop: window may not be fully realized + sized yet at first
+    # call; SetWindowPos before that is a silent no-op. Try up to 8x
+    # over ~2 seconds. Log every step to %TEMP%\mios-center-debug.log
+    # so operator can paste back what's happening when "windows aren't
+    # centering" recurs.
+    `$_dbg = Join-Path `$env:TEMP 'mios-center-debug.log'
+    `$_dbgLines = New-Object System.Collections.Generic.List[string]
+    `$_dbgLines.Add("[`$([DateTime]::Now.ToString('HH:mm:ss.fff'))] Pass-2 inner cmd center start")
+    for (`$_attempt = 0; `$_attempt -lt 8; `$_attempt++) {
+        Start-Sleep -Milliseconds 250
+        `$_consoleHwnd = [MEW.N]::GetConsoleWindow()
+        `$_h = if (`$_consoleHwnd -ne [IntPtr]::Zero) {
+            `$_root = [MEW.N]::GetAncestor(`$_consoleHwnd, 2)
+            if (`$_root -ne [IntPtr]::Zero) { `$_root } else { `$_consoleHwnd }
+        } else { [IntPtr]::Zero }
+        if (`$_h -eq [IntPtr]::Zero) { `$_dbgLines.Add("attempt `$_attempt: no hwnd"); continue }
         `$_rect = New-Object System.Drawing.Rectangle
-        [void][MEW.N]::GetWindowRect(`$_h, [ref]`$_rect)
+        `$_grcOk = [MEW.N]::GetWindowRect(`$_h, [ref]`$_rect)
         `$_actualW = `$_rect.Width  - `$_rect.X
         `$_actualH = `$_rect.Height - `$_rect.Y
-        # Resolve which monitor the OPERATOR was on at the moment of paste.
+        if (`$_actualW -le 0 -or `$_actualH -le 0) { `$_dbgLines.Add("attempt `$_attempt: zero dims grc=`$_grcOk"); continue }
         `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
         `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
         `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_actualW)) / 2)
         `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_actualH)) / 2)
         # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14
-        [void][MEW.N]::SetWindowPos(`$_h, [IntPtr]::Zero, `$_x, `$_y, `$_actualW, `$_actualH, 0x14)
+        `$_swp = [MEW.N]::SetWindowPos(`$_h, [IntPtr]::Zero, `$_x, `$_y, `$_actualW, `$_actualH, 0x14)
+        `$_dbgLines.Add("attempt `$_attempt: hwnd=0x`$([int64]`$_h | %{ '{0:X}' -f `$_ }) console=0x`$([int64]`$_consoleHwnd | %{ '{0:X}' -f `$_ }) rect=`$(`$_rect.X),`$(`$_rect.Y) dims=`${_actualW}x`${_actualH} screen=`$(`$_s.X),`$(`$_s.Y) `$(`$_s.Width)x`$(`$_s.Height) target=`$_x,`$_y SWPok=`$_swp")
+        # Verify by re-reading the rect.
+        `$_rect2 = New-Object System.Drawing.Rectangle
+        [void][MEW.N]::GetWindowRect(`$_h, [ref]`$_rect2)
+        if (`$_rect2.X -eq `$_x -and `$_rect2.Y -eq `$_y) {
+            `$_dbgLines.Add("attempt `$_attempt: SUCCESS at `$(`$_rect2.X),`$(`$_rect2.Y)")
+            break
+        }
+        `$_dbgLines.Add("attempt `$_attempt: post-SWP rect=`$(`$_rect2.X),`$(`$_rect2.Y) (target was `$_x,`$_y) -- retrying")
     }
-} catch {}
+    try { Set-Content -LiteralPath `$_dbg -Value (`$_dbgLines -join [Environment]::NewLine) -Encoding UTF8 } catch {}
+} catch {
+    try { Add-Content -LiteralPath (Join-Path `$env:TEMP 'mios-center-debug.log') -Value "Pass-2 inner cmd center FAILED: `$(`$_.Exception.Message)" } catch {}
+}
 Write-Host ''
 Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
 # Build the cache-busted URL HERE inside the inner cmd, NOT via outer-
