@@ -1059,9 +1059,15 @@ if (`$_launchMiosOnClose) {
         # binding (Win+Space) can target it via globalSummon name=MiOS.
         # Without a named window, the toggle binding has nothing to
         # show/hide.
+        # No --pos: hardcoded $_appWPx/$_appHPx (baked from outer scope's
+        # 100% DPI cell metrics 80*10+20 = 820 px etc.) gave a half-size
+        # placement on high-DPI hosts. Operator-reported regression: "MiOS
+        # app terminal windows are still launching half the size it should
+        # be". --size in CELLS lets WT pick the right pixel size for the
+        # active DPI; the post-spawn SetWindowPos retry below reads the
+        # ACTUAL outer-rect via GetWindowRect and centers from THAT.
         `$_wtArgs = @(
             '-w', 'MiOS',
-            '--pos', ("`$(`$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_appWPx)) / 2)),`$(`$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_appHPx)) / 2))"),
             '--size', "$_appCols,$_appRows",
             '--focus',
             '-p', 'MiOS'
@@ -1088,19 +1094,21 @@ if (`$_launchMiosOnClose) {
             Start-Sleep -Milliseconds 150
         }
         if (`$_wtHwnd -ne [IntPtr]::Zero) {
-            # ENFORCE the target pixel size ($_appWPx / $_appHPx baked
-            # from mios.toml [terminal] + [theme.font] cell metrics).
-            # Using GetWindowRect's current size (the previous behaviour)
-            # only re-centered the window without resizing it -- so when
-            # WT's `-w MiOS` added a tab to a pre-existing wider MiOS
-            # window, the operator saw a ~167-col terminal instead of
-            # the canonical 80x20. SetWindowPos with $_appWPx / $_appHPx
-            # forces the resize so the post-bootstrap MiOS app spawn is
-            # deterministic.
-            `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_appWPx)) / 2)
-            `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_appHPx)) / 2)
+            # Center using the ACTUAL post-spawn outer rect (GetWindowRect)
+            # NOT a hardcoded pixel size. WT auto-pixel-sizes for the
+            # active DPI when given --size in cells, so the actual rect
+            # is the correct cell-derived size. Read it, compute screen-
+            # centered X,Y, retry 3x to defeat WT's --pos-ignored-in-focus
+            # quirk.
             for (`$_i = 0; `$_i -lt 3; `$_i++) {
-                [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, $_appWPx, $_appHPx, 0x04)
+                `$_actualRect = New-Object System.Drawing.Rectangle
+                [void][MEW.W]::GetWindowRect(`$_wtHwnd, [ref]`$_actualRect)
+                `$_aw = `$_actualRect.Width  - `$_actualRect.X
+                `$_ah = `$_actualRect.Height - `$_actualRect.Y
+                if (`$_aw -le 0 -or `$_ah -le 0) { Start-Sleep -Milliseconds 350; continue }
+                `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - `$_aw)) / 2)
+                `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - `$_ah)) / 2)
+                [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, `$_aw, `$_ah, 0x04)
                 Start-Sleep -Milliseconds 350
             }
         }
