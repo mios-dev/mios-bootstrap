@@ -1354,14 +1354,14 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # surface they prefer (and pin manually -- Win11 disabled programmatic
     # pinning to Start, so we drop the .lnk and the operator right-clicks
     # → "Pin to Start" / "Pin to Taskbar").
+    # Operator-curated 4-app surface: MiOS (the terminal hub, created
+    # separately above as MiOS.lnk), MiOS-DEV (dev VM dashboard),
+    # MiOS Help (verb reference), Uninstall MiOS (Add/Remove). The
+    # build / dash / config / update / pull verbs are operator-typed
+    # commands INSIDE the MiOS terminal, NOT separate native apps.
     $miosVerbs = @(
-        @{ File='MiOS-DEV.lnk';          Verb='dev';    Desc='Enter the MiOS-DEV podman machine (wsl into the dev VM)' },
-        @{ File='MiOS Build.lnk';        Verb='build';  Desc='Build MiOS: open mios-config.html, save, then build the OCI image inside MiOS-DEV' },
-        @{ File='MiOS Dashboard.lnk';    Verb='dash';   Desc='Show the MiOS dashboard (framed banner + fastfetch info + verb hints)' },
-        @{ File='MiOS Configurator.lnk'; Verb='config'; Desc='Edit mios.toml in the HTML configurator (no build)' },
-        @{ File='MiOS Update.lnk';       Verb='update'; Desc='Re-run the bootstrap (cache-busted) -- pulls latest from origin' },
-        @{ File='MiOS Pull.lnk';         Verb='pull';   Desc='Sync M:\ overlay to origin/main (lightweight, no rebuild)' },
-        @{ File='MiOS Help.lnk';         Verb='help';   Desc='List every MiOS verb' }
+        @{ File='MiOS-DEV.lnk';  Verb='dev';   Desc='Open MiOS-DEV (podman machine) directly to its themed dashboard (banner + fastfetch + framing)' },
+        @{ File='MiOS Help.lnk'; Verb='help';  Desc='Full verb + functionality reference (every MiOS command and where things live)' }
     )
     $writeVerbLnk = {
         param([string]$Path, [string]$Verb, [string]$Desc)
@@ -1386,6 +1386,21 @@ if ($hwnd -ne [IntPtr]::Zero) {
     }
     Write-Host "  [+] Per-verb shortcuts: $($miosVerbs.Count) Start Menu + $($miosVerbs.Count) Desktop entries staged." -ForegroundColor DarkGray
     Write-Host "      Right-click any of them in Start to Pin to Start / Pin to Taskbar (Win11 dropped programmatic pinning)." -ForegroundColor DarkGray
+
+    # Stale-shortcut cleanup -- earlier revisions created MiOS Build /
+    # Dashboard / Configurator / Update / Pull as separate native apps.
+    # The 4-app set is now MiOS, MiOS-DEV, MiOS Help, Uninstall MiOS;
+    # the rest are operator-typed verbs INSIDE the terminal. Reap any
+    # leftover .lnk's so a re-run of Get-MiOS.ps1 normalizes the menu.
+    foreach ($legacy in @('MiOS Build.lnk','MiOS Dashboard.lnk','MiOS Configurator.lnk','MiOS Update.lnk','MiOS Pull.lnk','MiOS Setup.lnk','MiOS Terminal.lnk','MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','Build MiOS.lnk')) {
+        foreach ($dir in @($startMenuDir, $desktopDir)) {
+            if (-not $dir) { continue }
+            $stale = Join-Path $dir $legacy
+            if (Test-Path -LiteralPath $stale) {
+                try { Remove-Item -LiteralPath $stale -Force -ErrorAction SilentlyContinue; Write-Host "  [+] Removed stale shortcut: $stale" -ForegroundColor DarkGray } catch {}
+            }
+        }
+    }
 
     # AppUserModelID on both shortcuts so taskbar/Start group correctly.
     if (-not ('MiOS.NativeApp.Aumid' -as [type])) {
