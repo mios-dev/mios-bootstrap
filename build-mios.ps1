@@ -6786,12 +6786,59 @@ $script:IdentInfo = "Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:'
 Show-Dashboard -Force
 
 $preOk = $true
-if (Get-Command git    -EA SilentlyContinue) { Log-Ok "Git $((& git --version 2>&1) -replace 'git version ','')" }
-else { Log-Fail "Git not found -- winget install Git.Git"; $preOk = $false }
-if (Get-Command wsl    -EA SilentlyContinue) { Log-Ok "WSL2 available" }
-else { Log-Warn "WSL2 not found -- run: wsl --install" }
-if (Get-Command podman -EA SilentlyContinue) { Log-Ok "Podman $((& podman --version 2>&1) -replace 'podman version ','')" }
-else { Log-Warn "Podman not found -- winget install RedHat.Podman-Desktop" }
+# Auto-install Phase 0 prerequisites via winget. Per operator: "the
+# irm|iex web invoke should also install all windows side pre-requisites".
+# Phase 0 used to JUST CHECK + fail. Now we winget-install on miss
+# so a fresh-system irm|iex carries the bootstrap end-to-end. The
+# prereq catalog resolves through mios.toml [bootstrap.prereqs] (SSOT)
+# so operators can swap to alternative implementations (Mercurial
+# instead of Git, Hyper-V instead of WSL2 -- not that we recommend
+# either, but the SSOT lets it happen) via mios.html.
+$_prereqs = @(
+    @{ Cmd = 'git';    Pkg = (Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'git_pkg'    -Default 'Git.Git');                 Label = 'Git';    Required = $true  }
+    @{ Cmd = 'wsl';    Pkg = (Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'wsl_pkg'    -Default 'Microsoft.WSL');           Label = 'WSL2';   Required = $true  }
+    @{ Cmd = 'podman'; Pkg = (Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_pkg' -Default 'RedHat.Podman-Desktop');   Label = 'Podman'; Required = $true  }
+)
+foreach ($_pq in $_prereqs) {
+    if (Get-Command $_pq.Cmd -EA SilentlyContinue) {
+        $_ver = ''
+        try {
+            switch ($_pq.Cmd) {
+                'git'    { $_ver = ((& git --version 2>&1) -replace 'git version ','') }
+                'wsl'    { $_ver = 'available' }
+                'podman' { $_ver = ((& podman --version 2>&1) -replace 'podman version ','') }
+            }
+        } catch {}
+        Log-Ok ("{0} {1}" -f $_pq.Label, $_ver)
+        continue
+    }
+    if (-not (Get-Command winget -EA SilentlyContinue)) {
+        Log-Fail ("{0} not found and winget unavailable -- cannot auto-install. Install {1} manually." -f $_pq.Label, $_pq.Pkg)
+        if ($_pq.Required) { $preOk = $false }
+        continue
+    }
+    Log-Ok ("{0} not found -- winget installing {1}..." -f $_pq.Label, $_pq.Pkg)
+    & winget install --id $_pq.Pkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 |
+        ForEach-Object { Write-Log ("winget[{0}]: {1}" -f $_pq.Cmd, $_) }
+    $_rc = $LASTEXITCODE
+    # Refresh PATH so the just-installed tool is reachable in this session
+    # (winget appends to the user's PATH but only NEW shells see it).
+    try {
+        $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
+        $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
+        $env:PATH  = (@($_machPath, $_userPath) | Where-Object { $_ }) -join ';'
+    } catch {}
+    if (Get-Command $_pq.Cmd -EA SilentlyContinue) {
+        Log-Ok ("{0} installed via winget" -f $_pq.Label)
+    } elseif ($_pq.Cmd -eq 'wsl' -and $_rc -eq 0) {
+        # WSL install often requires a reboot; the wsl.exe stub may not be
+        # on PATH until then, but the install itself succeeded.
+        Log-Warn ("{0} installed -- a reboot may be required for wsl.exe to surface on PATH" -f $_pq.Label)
+    } else {
+        Log-Fail ("{0} winget install exit {1} -- bootstrap cannot proceed without {2}" -f $_pq.Label, $_rc, $_pq.Cmd)
+        if ($_pq.Required) { $preOk = $false }
+    }
+}
 
 if (-not $preOk) { End-Phase 0 -Fail; throw "Prerequisites missing -- see log: $LogFile" }
 
