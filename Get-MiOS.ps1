@@ -456,39 +456,59 @@ function Invoke-MiOSAgreementGate {
     # conhost (~80x25) where the ~104-line summary scrolled past in a
     # flash and the operator only saw the bottom prompt.
 
-    # Resize the elevated Pass-2 conhost UP from 80x40 to 80x60 BEFORE
-    # rendering, so the agreement summary fits with breathing room.
-    # build-mios.ps1 will resize back to 80x40 once the install starts.
+    # Ensure the conhost is 80 cells wide BEFORE rendering. Use the same
+    # branching SetBufferSize/SetWindowSize pattern as the WinR-entry
+    # resize at the top of this script (lines 105-115): the order matters
+    # because the Win32 console rule is `buffer.cols >= window.cols`.
+    # DON'T call MoveWindow with hardcoded pixel dimensions: at 150-200%
+    # DPI, conhost cells are ~16-25 px so a hardcoded 820 px window only
+    # fits 33-50 cells visible while the buffer stays 80 wide -- conhost
+    # adds a horizontal scrollbar and the operator sees what looks like a
+    # 20x40 window. Letting SetWindowSize drive the Win32 window size
+    # auto-pixel-sizes correctly at any DPI.
     try { & chcp.com 65001 *> $null } catch {}
     try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
-    try { [Console]::SetBufferSize(80, 9000) } catch {}
-    try { [Console]::SetWindowSize(80, 60) } catch {}
-    # Center on operator's active display before paint. We capture
-    # cursor position first so the agreement window lands where the
-    # operator was looking, not on the primary monitor by default.
     try {
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-        Add-Type -Namespace MEW -Name AGW -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
-'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
-        $_pt0 = try { [System.Windows.Forms.Cursor]::Position } catch { New-Object System.Drawing.Point 100,100 }
-        $_sa  = [System.Windows.Forms.Screen]::FromPoint($_pt0).WorkingArea
-        # Pixel target: 80 cols * 10 px + 20 chrome / 60 rows * 20 px + 12 chrome.
-        $_aW  = 820
-        $_aH  = 1212
-        $_aH  = [math]::Min($_aH, [math]::Max(600, $_sa.Height - 80))
-        $_ax  = $_sa.X + [int](([math]::Max(0, $_sa.Width  - $_aW)) / 2)
-        $_ay  = $_sa.Y + [int](([math]::Max(0, $_sa.Height - $_aH)) / 2)
-        [void][MEW.AGW]::MoveWindow([MEW.AGW]::GetConsoleWindow(), $_ax, $_ay, $_aW, $_aH, $true)
+        $_curW = [Console]::WindowWidth
+        if ($_curW -gt 80) {
+            [Console]::SetWindowSize(80, [math]::Min(40, [Console]::LargestWindowSize.Height))
+            [Console]::SetBufferSize(80, 9000)
+        } else {
+            [Console]::SetBufferSize(80, 9000)
+            [Console]::SetWindowSize(80, [math]::Min(40, [Console]::LargestWindowSize.Height))
+        }
     } catch {}
+
+    # Two-page render with a single Read-Host pause between. The agreement
+    # is ~85 lines and a typical install conhost is 80x40, so a single
+    # Write-Host + Read-Host would auto-scroll past the top before the
+    # operator can read it. Splitting at the natural break (after section
+    # 3, before DATA AND NETWORK POSTURE) gives ~45 lines per page -- both
+    # pages fit visibly in 80x40 with the pause prompt at the bottom.
+    $text  = Show-MiOSAgreement
+    $lines = $text -split "`r?`n"
+    # Find the divider before "4. DATA AND NETWORK POSTURE" -- a stable
+    # marker independent of cosmetic spacing tweaks. Fall back to the
+    # midpoint if the section header ever gets renamed.
+    $splitAt = $null
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*4\.\s*DATA AND NETWORK POSTURE') {
+            # Back up to the divider line above the section header.
+            for ($j = $i - 1; $j -ge 0; $j--) {
+                if ($lines[$j] -match '^-{8,}$') { $splitAt = $j; break }
+            }
+            if (-not $splitAt) { $splitAt = $i }
+            break
+        }
+    }
+    if (-not $splitAt) { $splitAt = [int]($lines.Count / 2) }
+
     Clear-Host
-    # Render the agreement summary. Plain Write-Host (no paging) so
-    # the operator sees the full text in the resized 80x60 window and
-    # the Read-Host prompt appears at the bottom. Out-Host -Paging was
-    # problematic (operator hated the SPACE/CR/Q controls).
-    $text = Show-MiOSAgreement
-    Write-Host $text
+    Write-Host (($lines[0..($splitAt - 1)]) -join "`n")
+    Write-Host ''
+    Read-Host "[mios] Page 1 of 2 -- press Enter to view the rest" | Out-Null
+    Clear-Host
+    Write-Host (($lines[$splitAt..($lines.Count - 1)]) -join "`n")
 
     # Prompt loop.
     while ($true) {
