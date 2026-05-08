@@ -3287,16 +3287,45 @@ if (`$_launchMiosOnClose) {
         if (Test-Path -LiteralPath $_w51 -PathType Leaf) { $_shell = $_w51 }
     }
     if (-not $_shell) { $_shell = 'powershell.exe' }
+    $_elevSucceeded = $false
     try {
         Start-Process -FilePath $_shell `
             -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-EncodedCommand', $_innerEncoded) `
             -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
-        Write-Host '  [+] Elevated MiOS bootstrap window opened. Continuing the install there.' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  [+] Elevated MiOS bootstrap window opened.' -ForegroundColor Green
+        Write-Host '      The install continues in that NEW window (look for the' -ForegroundColor DarkGray
+        Write-Host "      MiOS banner). This Pass-1 window's job is done." -ForegroundColor DarkGray
+        $_elevSucceeded = $true
     } catch {
+        Write-Host ''
         Write-Host "  [!] Self-elevation failed: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host '      Open an elevated PowerShell manually and re-run:' -ForegroundColor DarkGray
+        Write-Host '      If you saw a UAC prompt, accept it and re-paste the one-liner.' -ForegroundColor DarkGray
+        Write-Host '      Or open an elevated PowerShell manually and re-run:' -ForegroundColor DarkGray
         Write-Host "        irm $_rawUrl | iex" -ForegroundColor DarkGray
     }
+    # KEEP THIS PASS-1 WINDOW OPEN UNTIL OPERATOR ACKS.
+    # Operator-reported regression: after typing 'acknowledged' at the
+    # AGREEMENTS.md gate, Pass-1's powershell.exe (launched via the
+    # irm|iex one-liner WITHOUT -NoExit) exited the moment the script
+    # body completed -- which made the operator perceive the window as
+    # "killed" by their typing 'acknowledged'. Actually this is normal:
+    # Pass-1 self-elevates -> Pass-2 admin window opens fresh -> Pass-1
+    # has done its job and exits. But the perception is that typing
+    # 'acknowledged' destroyed everything.
+    # Block here on Read-Host so Pass-1 stays visible with the
+    # success/failure banner above. The operator presses Enter when
+    # they've SEEN that elevation worked and Pass-2 is alive (or read
+    # the failure detail), then closes the now-redundant Pass-1 window
+    # at their own pace.
+    Write-Host ''
+    if ($_elevSucceeded) {
+        Write-Host '  Pass-1 done. Switch focus to the elevated Pass-2 window to continue.' -ForegroundColor Cyan
+        Write-Host '  Press Enter to close THIS Pass-1 window when you''re ready.' -ForegroundColor Yellow -NoNewline
+    } else {
+        Write-Host '  Pass-1 elevation FAILED. Read the error above, then press Enter to close.' -ForegroundColor Yellow -NoNewline
+    }
+    $null = Read-Host
     return
 }
 
