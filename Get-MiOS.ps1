@@ -3210,9 +3210,9 @@ function mios-build {
     if (-not `$skipConfig) {
         `$cfgHtml = `$null
         foreach (`$c in @(
-            'M:\usr\share\mios\configurator\index.html',
-            'M:\MiOS\usr\share\mios\configurator\index.html',
-            'C:\MiOS\usr\share\mios\configurator\index.html'
+            'M:\usr\share\mios\configurator\mios.html',
+            'M:\MiOS\usr\share\mios\configurator\mios.html',
+            'C:\MiOS\usr\share\mios\configurator\mios.html'
         )) { if (Test-Path -LiteralPath `$c) { `$cfgHtml = `$c; break } }
         if (`$cfgHtml) {
             # Capture mtime BEFORE opening so we can tell if the operator
@@ -3280,7 +3280,7 @@ function mios-build {
                 Where-Object { `$_.Name -notmatch '\.imported-' } |
                 Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
             if (`$htmlSrc) {
-                `$htmlDst = 'M:\usr\share\mios\configurator\index.html'
+                `$htmlDst = 'M:\usr\share\mios\configurator\mios.html'
                 `$htmlPar = Split-Path -Parent `$htmlDst
                 if (-not (Test-Path -LiteralPath `$htmlPar)) {
                     New-Item -ItemType Directory -Path `$htmlPar -Force | Out-Null
@@ -3341,8 +3341,8 @@ function mios-pull {
 }
 
 function mios-config {
-    `$cfg = if (Test-Path 'M:\usr\share\mios\configurator\index.html') { 'M:\usr\share\mios\configurator\index.html' }
-           elseif (Test-Path 'C:\MiOS\usr\share\mios\configurator\index.html') { 'C:\MiOS\usr\share\mios\configurator\index.html' }
+    `$cfg = if (Test-Path 'M:\usr\share\mios\configurator\mios.html') { 'M:\usr\share\mios\configurator\mios.html' }
+           elseif (Test-Path 'C:\MiOS\usr\share\mios\configurator\mios.html') { 'C:\MiOS\usr\share\mios\configurator\mios.html' }
            else { `$null }
     if (`$cfg) {
         Start-Process `$cfg

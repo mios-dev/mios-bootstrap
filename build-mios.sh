@@ -338,7 +338,7 @@ prompt_model() {
 }
 
 launch_configurator() {
-    # Optional GUI step. Open /usr/share/mios/configurator/index.html
+    # Optional GUI step. Open /usr/share/mios/configurator/mios.html
     # in the operator's default browser, stage a writable mios.toml
     # template at a known path, and wait for the operator to save
     # before continuing. The HTML uses the File System Access API to
@@ -362,10 +362,10 @@ launch_configurator() {
     # post-install location).
     local html=""
     for cand in \
-        "${bootstrap_root}/usr/share/mios/configurator/index.html" \
-        "/usr/share/mios/configurator/index.html" \
-        "${bootstrap_root}/../mios/usr/share/mios/configurator/index.html" \
-        "/tmp/mios-bootstrap-src/usr/share/mios/configurator/index.html"
+        "${bootstrap_root}/usr/share/mios/configurator/mios.html" \
+        "/usr/share/mios/configurator/mios.html" \
+        "${bootstrap_root}/../mios/usr/share/mios/configurator/mios.html" \
+        "/tmp/mios-bootstrap-src/usr/share/mios/configurator/mios.html"
     do
         if [[ -f "$cand" ]]; then html="$cand"; break; fi
     done

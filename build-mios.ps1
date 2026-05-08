@@ -1811,7 +1811,7 @@ function Open-ConfiguratorInDev([string]$RepoDir, [string]$Html) {
     $devUser = ((& wsl.exe -d $wslDistro --exec bash -c "getent passwd 1000 | cut -d: -f1" 2>$null) -join "").Trim()
     if (-not $devUser) { $devUser = "user" }
 
-    # Convert C:\path\index.html -> /mnt/c/path/index.html
+    # Convert C:\path\mios.html -> /mnt/c/path/mios.html
     $drive    = $Html.Substring(0,1).ToLower()
     $htmlWsl  = "/mnt/$drive" + ($Html.Substring(2) -replace '\\','/')
 
@@ -5592,7 +5592,7 @@ if (Test-Path `$bootstrapBs) {
 
     # mios-config.ps1 -- opens the HTML configurator in default browser.
     $cfgPath = Join-Path $MiosBinDir 'mios-config.ps1'
-    $cfgHtml = Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\index.html'
+    $cfgHtml = Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\mios.html'
     $cfgScript = @"
 `$cfg = "$cfgHtml"
 if (Test-Path `$cfg) { Start-Process `$cfg }
@@ -5655,17 +5655,17 @@ Verb 'mios pull'    'git fetch + hard reset M:\ overlay to origin/main (no rebui
 Verb 'mios update'  'Re-run the bootstrap (cache-busted) -- refresh terminal + dev VM.'
 Verb 'mios help'    'This list.'
 
-Header 'Native Windows apps' 'Each verb is also a Start Menu / Desktop shortcut.'
-Verb 'MiOS'              'The MiOS terminal. Themed Windows Terminal MiOS profile, 80x20,'
-Note '                    acrylic 50%%, MiOS color palette, oh-my-posh + dashboard on'
-Note '                    every launch. Right-click -> Pin to Start / Pin to Taskbar.'
-Verb 'MiOS-DEV'          'Drops you into the MiOS-DEV podman machine immediately.'
-Verb 'MiOS Build'        'Same as `mios build` -- one-click build trigger.'
-Verb 'MiOS Configurator' 'Opens mios.html (the configurator) in the default browser.'
-Verb 'MiOS Dashboard'    'Same as `mios dash` -- one-click dashboard render.'
-Verb 'MiOS Update'       'Same as `mios update`.'
-Verb 'MiOS Pull'         'Same as `mios pull`.'
-Verb 'MiOS Help'         'This help screen, as a clickable app.'
+Header 'Native Windows apps' 'The five-app MiOS surface (Start Menu + Desktop).'
+Verb 'MiOS'         'The MiOS terminal. Themed Windows Terminal MiOS profile, 80x20,'
+Note '                acrylic 50%%, MiOS color palette, oh-my-posh + dashboard on'
+Note '                every launch. Right-click -> Pin to Start / Pin to Taskbar.'
+Verb 'MiOS-DEV'     'Drops you into the MiOS-DEV podman machine immediately.'
+Verb 'MiOS Config'  'Opens mios.html (the configurator) in the default browser.'
+Note '                Edit identity, AI, packages, ports, services, theme. Save'
+Note '                writes mios.toml to %USERPROFILE%\Downloads; `mios build`'
+Note '                step 2 promotes it into the M:\ overlay automatically.'
+Verb 'MiOS Help'    'This help screen, as a clickable app.'
+Verb 'Uninstall MiOS' 'Remove MiOS (preserves per-user config).'
 
 Header 'How MiOS is laid out' 'Every operator-tunable value lives in mios.toml.'
 Note '   M:\                            Data partition (256 GB NTFS, label MIOS-DEV)'
@@ -5707,7 +5707,7 @@ Note '                            (default http://localhost:8080/v1 -- LocalAI Q
 Note '   6. UNPRIVILEGED-QUADLETS every Quadlet declares User=, Group=, Delegate=yes'
 
 Header 'Where to dig deeper'
-Note '   mios.html    /usr/share/mios/configurator/index.html  (HTML editor for mios.toml)'
+Note '   mios.html    /usr/share/mios/configurator/mios.html   (HTML editor for mios.toml)'
 Note '   AGENTS.md    M:\MiOS\repo\mios\AGENTS.md              (canonical agents.md doc)'
 Note '   README.md    M:\MiOS\repo\mios\README.md              (project overview)'
 Note '   GitHub       https://github.com/mios-dev/MiOS'
@@ -5743,7 +5743,7 @@ $devResolveBlock
 `$downloads = Join-Path `$env:USERPROFILE 'Downloads'
 `$promoteTargets = @(
     @{ Pattern = 'mios*.toml';  TargetDir = "$miosEtcDir";       Filename = 'mios.toml' }
-    @{ Pattern = '*mios*.html'; TargetDir = "$miosShareDirInRepo\configurator"; Filename = 'index.html' }
+    @{ Pattern = '*mios*.html'; TargetDir = "$miosShareDirInRepo\configurator"; Filename = 'mios.html' }
 )
 `$promoted = `$false
 foreach (`$pt in `$promoteTargets) {
@@ -6325,9 +6325,9 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # The main MiOS.lnk above stays as the unified hub.
     # Per-verb shortcuts -- minimal, operator-curated set.
     # The hub 'MiOS.lnk' is created earlier at line ~5743 (the terminal
-    # itself). Operator-typed verbs (build / config / dash / update /
-    # pull) are NOT separate apps -- they're commands typed inside
-    # the MiOS terminal. The native-app surface is exactly four:
+    # itself). Operator-typed verbs (build / dash / update / pull) are
+    # NOT separate apps -- they're commands typed inside the MiOS
+    # terminal. The native-app surface is exactly five:
     #
     #   1. MiOS              The Windows-side terminal (themed WT MiOS
     #                        profile, dashboard on launch). Created at
@@ -6336,22 +6336,30 @@ if ($hwnd -ne [IntPtr]::Zero) {
     #                        the Linux-side dashboard rendering at
     #                        login (full piping/framing/ASCII logo,
     #                        all theming).
-    #   3. MiOS Help         Full verb + functionality reference.
-    #   4. Uninstall MiOS    Created in the legacy block ~line 7126.
+    #   3. MiOS Config       Opens mios.html (the configurator) in the
+    #                        operator's default browser. Browser saves
+    #                        edited mios.toml to %USERPROFILE%\Downloads;
+    #                        `mios build` step 2 promotes Downloads
+    #                        edits into M:\etc\mios + M:\usr\share\mios.
+    #   4. MiOS Help         Full verb + functionality reference.
+    #   5. Uninstall MiOS    Created in the legacy block ~line 7126.
     #
     # Both Start Menu .lnk AND Desktop .lnk for each.
     $verbShortcuts = @(
-        @{ Name = 'MiOS-DEV';   Bin = 'mios-dev.ps1';  Icon = 'mios-dev.ico';  Desc = 'Open MiOS-DEV (podman machine) directly to its themed dashboard' },
-        @{ Name = 'MiOS Help';  Bin = 'mios-help.ps1'; Icon = 'mios-help.ico'; Desc = 'Full verb + functionality reference (every MiOS command and where things live)' }
+        @{ Name = 'MiOS-DEV';    Bin = 'mios-dev.ps1';    Icon = 'mios-dev.ico';    Desc = 'Open MiOS-DEV (podman machine) directly to its themed dashboard' },
+        @{ Name = 'MiOS Config'; Bin = 'mios-config.ps1'; Icon = 'mios-config.ico'; Desc = 'Open mios.html (the HTML configurator) in your default browser to edit mios.toml' },
+        @{ Name = 'MiOS Help';   Bin = 'mios-help.ps1';   Icon = 'mios-help.ico';   Desc = 'Full verb + functionality reference (every MiOS command and where things live)' }
     )
     foreach ($v in $verbShortcuts) {
         $vBin  = Join-Path $MiosBinDir $v.Bin
         $vIcon = Join-Path $MiosIconsDir $v.Icon
         $vLnk  = Join-Path $StartMenuDir ("{0}.lnk" -f $v.Name)
         # MiOS-DEV: bash login itself keeps the window alive (no -NoExit).
+        # MiOS Config: hands off to the OS default browser via Start-Process
+        #              and exits -- no -NoExit (no terminal needed).
         # MiOS Help: -NoExit so the help screen stays visible until the
         # operator presses a key (the script ends with ReadKey).
-        if ($v.Name -eq 'MiOS-DEV') {
+        if ($v.Name -eq 'MiOS-DEV' -or $v.Name -eq 'MiOS Config') {
             $vArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
         } else {
             $vArgs = "-NoProfile -NoExit -ExecutionPolicy Bypass -File `"$vBin`""
@@ -6367,10 +6375,13 @@ if ($hwnd -ne [IntPtr]::Zero) {
     }
 
     # Garbage-collect any stale shortcuts from earlier revisions whose
-    # names don't match the current 4-app set (MiOS, MiOS-DEV, MiOS
-    # Help, Uninstall MiOS). Idempotent: if absent, skip. Cleans up
-    # both the per-verb shortcuts that were created in earlier
-    # revisions AND legacy-named shortcuts.
+    # names don't match the current 5-app set (MiOS, MiOS-DEV, MiOS
+    # Config, MiOS Help, Uninstall MiOS). Idempotent: if absent, skip.
+    # Cleans up both the per-verb shortcuts that were created in
+    # earlier revisions AND legacy-named shortcuts.
+    # NOTE: 'MiOS Configurator.lnk' is the older long-form name for
+    # what is now 'MiOS Config.lnk' -- listed here so an upgrade from
+    # a prior install doesn't leave both shortcuts visible.
     $staleLnks = @(
         # Removed verbs (now operator-typed inside the MiOS terminal):
         'MiOS Build.lnk', 'MiOS Configurator.lnk', 'MiOS Dashboard.lnk',
@@ -7562,11 +7573,13 @@ exit 1
     # acrylic window screen-centered, regardless of last-window position
     # WT might have remembered. -WindowStyle Hidden keeps the wrapper
     # pwsh invisible -- only the WT window appears.
-    # Final native-app shortcut set (4 apps total, per operator):
+    # Final native-app shortcut set (5 apps total, per operator):
     #   MiOS              the terminal hub (created earlier in
     #                     Install-MiosLauncher line ~5743)
     #   MiOS-DEV          dev VM dashboard (created in verbShortcuts
     #                     loop line ~5904)
+    #   MiOS Config       opens mios.html in default browser
+    #                     (created in verbShortcuts loop line ~5904)
     #   MiOS Help         verb reference (created in verbShortcuts
     #                     loop line ~5904)
     #   Uninstall MiOS    Add/Remove-style uninstaller (this block)
@@ -7574,14 +7587,15 @@ exit 1
     # The legacy MiOS Setup / Build MiOS / MiOS Configurator / MiOS
     # Terminal / MiOS Dev Shell shortcuts have been retired -- those
     # verbs are operator-typed inside the MiOS terminal, NOT separate
-    # native apps.
+    # native apps. ('MiOS Configurator' is the legacy long-form name
+    # for the new 'MiOS Config' app.)
     @(
         @{ F="Uninstall MiOS.lnk";  T=$pwsh;  A="-ExecutionPolicy Bypass -File `"$uninstSc`"";  D="Remove MiOS (preserves per-user config)" }
     ) | ForEach-Object { New-Shortcut (Join-Path $StartMenuDir $_.F) $_.T $_.A $_.D $MiosInstallDir }
 
     # Stale-shortcut cleanup -- if a legacy revision dropped any of
     # these names, remove them so the operator's Start Menu / Desktop
-    # match the canonical 4-app set.
+    # match the canonical 5-app set.
     $desktopDir = [Environment]::GetFolderPath('Desktop')
     foreach ($legacy in @('MiOS Setup.lnk','Build MiOS.lnk','MiOS Configurator.lnk','MiOS Terminal.lnk','MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','MiOS Build.lnk','MiOS Dashboard.lnk','MiOS Update.lnk','MiOS Pull.lnk')) {
         foreach ($dir in @($StartMenuDir, $desktopDir)) {
@@ -7592,7 +7606,7 @@ exit 1
             }
         }
     }
-    Log-Ok "Add/Remove Programs + Start Menu created (4 native apps: MiOS, MiOS-DEV, MiOS Help, Uninstall MiOS)"
+    Log-Ok "Add/Remove Programs + Start Menu created (5 native apps: MiOS, MiOS-DEV, MiOS Config, MiOS Help, Uninstall MiOS)"
 
     # Uninstaller script. Removes the install dir + machine-wide
     # ProgramData state + Start Menu + registry entry + Podman/WSL2
