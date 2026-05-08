@@ -1004,7 +1004,6 @@ try {
     & `$_childShell -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript
     `$_rc = `$LASTEXITCODE
     Remove-Item -LiteralPath `$tmpScript -Force -ErrorAction SilentlyContinue
-    `$_launchMiosOnClose = `$false
     if (`$_rc -ne 0) {
         Write-Host ''
         Write-Host ('  [!] Bootstrap exited with code ' + `$_rc) -ForegroundColor Red
@@ -1012,14 +1011,20 @@ try {
         Write-Host '      build-mios.ps1''s own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.' -ForegroundColor DarkGray
         Write-Host ''
     } else {
-        # Bootstrap succeeded -- defer the MiOS app spawn until the
-        # operator CLOSES this window. Per operator: "the actual
-        # process of closing the bootstrap powershell window after
-        # installation is what should procure and spawn the MiOS
-        # app's window".
-        `$_launchMiosOnClose = `$true
+        # Per operator: "irm|iex invocation(s) should pre-condition
+        # everything ... THEN spawns only 1 other window for the bulk
+        # installation steps (this should be unified and not spawn
+        # multiple other windows that inherently breaks the center
+        # spawning anyways) ... LIKE an App!!!". So Pass-2 is the ONE
+        # bulk-install window. When it's done, NO new MiOS-app spawn --
+        # the operator clicks the MiOS Start Menu / Desktop shortcut
+        # from here on. This collapses the install to exactly two
+        # windows total: Pass-1 small box (closes immediately after
+        # spawning Pass-2) + Pass-2 elevated bootstrap (closes when the
+        # operator presses Enter at the prompt below). No third window,
+        # no off-center respawn, no juggling.
         Write-Host ''
-        Write-Host '  [+] Bootstrap complete. Press Enter to close THIS window and launch the MiOS app.' -ForegroundColor Green
+        Write-Host '  [+] Bootstrap complete. Open the MiOS shortcut (Start Menu / Desktop) when ready.' -ForegroundColor Green
     }
 } catch {
     Write-Host ''
@@ -1027,102 +1032,8 @@ try {
     Write-Host ''
 }
 Write-Host ''
-if (`$_launchMiosOnClose) {
-    Write-Host '  Press Enter to close this bootstrap window and launch the MiOS app...' -ForegroundColor Yellow -NoNewline
-} else {
-    Write-Host '  Press Enter to close this elevated bootstrap window...' -ForegroundColor DarkGray -NoNewline
-}
+Write-Host '  Press Enter to close this elevated bootstrap window...' -ForegroundColor DarkGray -NoNewline
 `$null = Read-Host
-
-# ── ON CLOSE: spawn the MiOS app ─────────────────────────────────
-# This block fires AFTER the operator presses Enter (the close
-# action). Per operator: the close is what should procure and
-# spawn the MiOS app's window. The spawn happens HERE, then the
-# bootstrap conhost exits naturally.
-if (`$_launchMiosOnClose) {
-    try {
-        # Resolve wt.exe (prefer Stable appx install location).
-        `$_wtExe = `$null
-        try {
-            `$_pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
-            if (`$_pkg -and `$_pkg.InstallLocation) {
-                `$_cand = Join-Path `$_pkg.InstallLocation 'wt.exe'
-                if (Test-Path -LiteralPath `$_cand) { `$_wtExe = `$_cand }
-            }
-        } catch {}
-        if (-not `$_wtExe) { `$_wtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
-        if (-not `$_wtExe) { throw 'wt.exe not found' }
-        # Centered position on cursor's active monitor (pre-UAC capture).
-        `$_pt2 = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
-        `$_s2  = [System.Windows.Forms.Screen]::FromPoint(`$_pt2).WorkingArea
-        # `-w MiOS` names the window "MiOS" so the global summon
-        # binding (Win+Space) can target it via globalSummon name=MiOS.
-        # Without a named window, the toggle binding has nothing to
-        # show/hide.
-        # No --pos: hardcoded $_appWPx/$_appHPx (baked from outer scope's
-        # 100% DPI cell metrics 80*10+20 = 820 px etc.) gave a half-size
-        # placement on high-DPI hosts. Operator-reported regression: "MiOS
-        # app terminal windows are still launching half the size it should
-        # be". --size in CELLS lets WT pick the right pixel size for the
-        # active DPI; the post-spawn SetWindowPos retry below reads the
-        # ACTUAL outer-rect via GetWindowRect and centers from THAT.
-        `$_wtArgs = @(
-            '-w', 'MiOS',
-            '--size', "$_appCols,$_appRows",
-            '--focus',
-            '-p', 'MiOS'
-        )
-        `$_spawnedAt = Get-Date
-        Start-Process -FilePath `$_wtExe -ArgumentList `$_wtArgs -ErrorAction Stop
-        # Post-spawn SetWindowPos correction (wt.exe --pos unreliable
-        # in --focus mode).
-        Add-Type -Namespace MEW -Name W -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle r);
-[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
-'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
-        `$_deadline = (Get-Date).AddMilliseconds(8000)
-        `$_wtHwnd = [IntPtr]::Zero
-        while ((Get-Date) -lt `$_deadline) {
-            `$_proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
-                      Where-Object { `$_.StartTime -ge `$_spawnedAt.AddSeconds(-1) } |
-                      Sort-Object StartTime -Descending | Select-Object -First 1
-            if (`$_proc -and `$_proc.MainWindowHandle -ne [IntPtr]::Zero -and [MEW.W]::IsWindowVisible(`$_proc.MainWindowHandle)) {
-                `$_wtHwnd = `$_proc.MainWindowHandle
-                break
-            }
-            Start-Sleep -Milliseconds 150
-        }
-        if (`$_wtHwnd -ne [IntPtr]::Zero) {
-            # Persistent re-center loop. Operator-reported regression:
-            # "window also doesn't launch centered still -- should re-
-            # center every few ticks". Single-shot SetWindowPos was
-            # losing the race against WT's own post-spawn layout work
-            # (acrylic backdrop allocation, font cache, etc. trigger
-            # 1-2 size renegotiations after the initial paint). Loop
-            # 12 times at 500ms = ~6 seconds total -- long enough for
-            # WT to settle, short enough that the operator can still
-            # manually drag the window after if they want. Each tick
-            # re-reads the actual rect (so a WT resize during the loop
-            # gets re-centered with the new dims) and applies SetWindow
-            # Pos. The loop is the bootstrap's last action before exit
-            # so it doesn't block any other phase.
-            for (`$_i = 0; `$_i -lt 12; `$_i++) {
-                `$_actualRect = New-Object System.Drawing.Rectangle
-                [void][MEW.W]::GetWindowRect(`$_wtHwnd, [ref]`$_actualRect)
-                `$_aw = `$_actualRect.Width  - `$_actualRect.X
-                `$_ah = `$_actualRect.Height - `$_actualRect.Y
-                if (`$_aw -le 0 -or `$_ah -le 0) { Start-Sleep -Milliseconds 500; continue }
-                `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - `$_aw)) / 2)
-                `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - `$_ah)) / 2)
-                # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14 so we
-                # don't steal focus or fight z-order with other windows.
-                [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, `$_aw, `$_ah, 0x14)
-                Start-Sleep -Milliseconds 500
-            }
-        }
-    } catch {}
-}
 "@
     # Write the inner cmd to a temp .ps1 and pass -File. Why NOT
     # -EncodedCommand: the inner cmd is ~12.5 KB of source. UTF-16
