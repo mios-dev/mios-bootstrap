@@ -5155,20 +5155,68 @@ $devResolveBlock
 wsl.exe -d (Resolve-MiosDevDistro) --user root sudo /usr/bin/mios-pull @args
 "@ -Encoding UTF8
 
-    # mios-update.ps1 -- re-runs build-mios.ps1 from the cloned repo to
-    # refresh the Windows side (oh-my-posh, fonts, theme, launcher).
+    # mios-update.ps1 -- self-updates the bootstrap from origin BEFORE
+    # re-running build-mios.ps1. This is what makes `mios update` actually
+    # pick up upstream changes: previously it ran the LOCAL stale
+    # build-mios.ps1 directly, so any fix shipped to origin/main never
+    # reached the operator until they manually re-paste the irm|iex
+    # one-liner. The new flow:
+    #
+    #   1. git -C M:\MiOS\bootstrap-shadow fetch + reset --hard origin/main
+    #   2. robocopy mios-bootstrap shadow -> M:\ overlay (refreshes the
+    #      build-mios.ps1 the next step will run)
+    #   3. pwsh -File <freshly-overlaid build-mios.ps1>
+    #
+    # Step 1 is idempotent (no-op if the shadow's HEAD already matches
+    # origin/main); step 2 is destructive over the overlay paths but
+    # those are managed by mios-bootstrap anyway.
     $bootstrapBuild = Join-Path $MiosRepoDir 'mios-bootstrap\build-mios.ps1'
     $updatePath = Join-Path $MiosBinDir 'mios-update.ps1'
     $updateScript = @"
-# Refreshes the Windows-side MiOS install by re-running build-mios.ps1.
-# Skips the heavy build / VM provisioning phases via -ResetOnly when
-# possible; passes any extra arguments through.
-`$bs = "$bootstrapBuild"
-if (Test-Path `$bs) {
-    & pwsh.exe -NoProfile -File `$bs @args
+# <MiOSRoot>\bin\mios-update.ps1 -- self-updating bootstrap re-runner.
+# Fetches latest mios-bootstrap from origin/main, re-overlays it onto
+# M:\, then re-runs build-mios.ps1 with whatever args were passed.
+`$ErrorActionPreference = 'SilentlyContinue'
+`$shadow      = "$MiosBootstrapShadow"
+`$repoDir     = "$MiosRepoDir"
+`$bootstrapBs = "$bootstrapBuild"
+
+# 1. Self-update the shadow if .git is present and the operator's
+#    network can reach origin. Falls through silently on failure --
+#    the next step still runs the (possibly stale) local copy.
+if (Test-Path (Join-Path `$shadow '.git')) {
+    Write-Host '  [mios update] Fetching latest mios-bootstrap from origin/main...' -ForegroundColor Cyan
+    Push-Location `$shadow
+    try {
+        & git remote set-url origin '$MiosBootstrapUrl' 2>&1 | Out-Null
+        & git fetch --depth=1 origin main 2>&1 | Out-Null
+        if (`$LASTEXITCODE -eq 0) {
+            & git reset --hard FETCH_HEAD 2>&1 | Out-Null
+            if (`$LASTEXITCODE -eq 0) {
+                Write-Host '  [mios update] mios-bootstrap shadow updated to origin/main HEAD.' -ForegroundColor Green
+            } else {
+                Write-Host '  [mios update] git reset failed; running with possibly-stale shadow.' -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host '  [mios update] git fetch failed (offline?); running with possibly-stale shadow.' -ForegroundColor Yellow
+        }
+    } finally { Pop-Location }
+
+    # 2. Re-overlay shadow onto M:\ so the build-mios.ps1 we run is
+    #    the fresh one. /XD .git keeps mios.git's .git intact.
+    Write-Host '  [mios update] Re-overlaying mios-bootstrap files onto M:\...' -ForegroundColor Cyan
+    & robocopy `$shadow `$repoDir /E /XD .git /NJH /NJS /NFL /NDL /NP 2>&1 | Out-Null
 } else {
-    Write-Host "build-mios.ps1 not found at `$bs" -ForegroundColor Yellow
-    Write-Host "Re-clone with: git clone $MiosBootstrapUrl `"$MiosRepoDir\mios-bootstrap`""
+    Write-Host "  [mios update] No mios-bootstrap shadow at `$shadow -- running local build-mios.ps1 as-is." -ForegroundColor Yellow
+}
+
+# 3. Re-run build-mios.ps1 (now refreshed) with all forwarded args.
+if (Test-Path `$bootstrapBs) {
+    & pwsh.exe -NoProfile -File `$bootstrapBs @args
+} else {
+    Write-Host "  [mios update] build-mios.ps1 not found at `$bootstrapBs" -ForegroundColor Red
+    Write-Host "  [mios update] Re-paste the canonical irm|iex one-liner to recover:" -ForegroundColor Yellow
+    Write-Host '    powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"' -ForegroundColor DarkGray
 }
 "@
     Set-Content -Path $updatePath -Value $updateScript -Encoding UTF8
