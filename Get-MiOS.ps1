@@ -1306,18 +1306,28 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 150
 }
 if ($hwnd -ne [IntPtr]::Zero) {
+    # ENFORCE the target pixel size ($winW / $winH computed from
+    # mios.toml [terminal].cols/.rows + [theme.font] cell metrics).
+    # The previous version of this code used $rw/$rh from GetWindowRect
+    # -- which is the CURRENT window size -- and only re-centered.
+    # When `wt.exe -w MiOS` added a tab to an existing wider window
+    # (operator already had a MiOS-named WT window from a prior run),
+    # the launcher kept the old wide dims and the operator saw a
+    # ~167-col terminal instead of the canonical 80x20. SetWindowPos
+    # with the COMPUTED target dims ($winW / $winH) forces the resize
+    # every launch so the MiOS terminal is deterministic.
     $topmost = [IntPtr]::new(-1)
+    $cx = [int]($work.X + ($work.Width  - $winW) / 2); if ($cx -lt $work.X) { $cx = $work.X }
+    $cy = [int]($work.Y + ($work.Height - $winH) / 2); if ($cy -lt $work.Y) { $cy = $work.Y }
     for ($i = 0; $i -lt 3; $i++) {
-        $rect = New-Object MiOSLaunch.Native.Win+RECT
-        if ([MiOSLaunch.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) {
-            $rw = $rect.Right - $rect.Left; $rh = $rect.Bottom - $rect.Top
-            if ($rw -gt 0 -and $rh -gt 0) {
-                $cx = [int]($work.X + ($work.Width - $rw) / 2)
-                $cy = [int]($work.Y + ($work.Height - $rh) / 2)
-                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, $topmost, $cx, $cy, $rw, $rh, 0x40)
-                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, $rw, $rh, 0x04)
-            }
-        }
+        # 0x40 = SWP_SHOWWINDOW | SWP_NOOWNERZORDER (apply size + topmost).
+        # 0x04 = SWP_NOZORDER                       (re-apply to release topmost
+        #                                            after the window is the
+        #                                            front-most; without this
+        #                                            second pass the operator
+        #                                            can't focus other windows).
+        [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, $topmost,           $cx, $cy, $winW, $winH, 0x40)
+        [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero,     $cx, $cy, $winW, $winH, 0x04)
         Start-Sleep -Milliseconds 350
     }
 }
@@ -3247,17 +3257,19 @@ if (`$_launchMiosOnClose) {
             Start-Sleep -Milliseconds 150
         }
         if (`$_wtHwnd -ne [IntPtr]::Zero) {
+            # ENFORCE the target pixel size ($_appWPx / $_appHPx baked
+            # from mios.toml [terminal] + [theme.font] cell metrics).
+            # Using GetWindowRect's current size (the previous behaviour)
+            # only re-centered the window without resizing it -- so when
+            # WT's `-w MiOS` added a tab to a pre-existing wider MiOS
+            # window, the operator saw a ~167-col terminal instead of
+            # the canonical 80x20. SetWindowPos with $_appWPx / $_appHPx
+            # forces the resize so the post-bootstrap MiOS app spawn is
+            # deterministic.
+            `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_appWPx)) / 2)
+            `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_appHPx)) / 2)
             for (`$_i = 0; `$_i -lt 3; `$_i++) {
-                `$_rWt = New-Object System.Drawing.Rectangle
-                if ([MEW.W]::GetWindowRect(`$_wtHwnd, [ref]`$_rWt)) {
-                    `$_rwW = `$_rWt.Width  - `$_rWt.X
-                    `$_rwH = `$_rWt.Height - `$_rWt.Y
-                    if (`$_rwW -gt 0 -and `$_rwH -gt 0) {
-                        `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - `$_rwW)) / 2)
-                        `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - `$_rwH)) / 2)
-                        [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, `$_rwW, `$_rwH, 0x04)
-                    }
-                }
+                [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, $_appWPx, $_appHPx, 0x04)
                 Start-Sleep -Milliseconds 350
             }
         }
