@@ -536,29 +536,43 @@ function Invoke-MiOSAgreementGate {
         } catch {}
     }
     try { Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue } catch {}
-    # Capture the operator's active monitor ONCE at gate entry. Using
-    # Cursor.Position drifts to the last mouse-move which on long pages
-    # is wherever the operator parked the cursor while reading. Sticking
-    # to the first sample anchors all subsequent re-centers to the same
-    # display.
-    $_gateScreen = $null
+    # Capture the operator's active monitor + the FROZEN target pixel
+    # rect ONCE at gate entry. Reading current dims via GetWindowRect on
+    # every page lets conhost's tiny per-render renegotiations drift the
+    # window a few pixels each time -- the operator-reported "final
+    # agreements window still ends up off-centered". Pinning to a frozen
+    # target X,Y,W,H on every MoveWindow is a no-op when the window is
+    # already there, and a snap-back when conhost has drifted.
+    $_gateScreen   = $null
+    $_gateTargetX  = $null
+    $_gateTargetY  = $null
+    $_gateTargetW  = $null
+    $_gateTargetH  = $null
     try {
         $_gpt = [System.Windows.Forms.Cursor]::Position
         $_gateScreen = [System.Windows.Forms.Screen]::FromPoint($_gpt).WorkingArea
+        # Let conhost settle after the 80x40 SetWindowSize above, then
+        # snapshot the actual Win32 dims as our forever target.
+        Start-Sleep -Milliseconds 100
+        if ('MiOSGate.W' -as [type]) {
+            $_gh = [MiOSGate.W]::GetConsoleWindow()
+            if ($_gh -ne [IntPtr]::Zero) {
+                $_gr = New-Object System.Drawing.Rectangle
+                [void][MiOSGate.W]::GetWindowRect($_gh, [ref]$_gr)
+                $_gateTargetW = $_gr.Width  - $_gr.X
+                $_gateTargetH = $_gr.Height - $_gr.Y
+                $_gateTargetX = $_gateScreen.X + [int](([math]::Max(0, $_gateScreen.Width  - $_gateTargetW)) / 2)
+                $_gateTargetY = $_gateScreen.Y + [int](([math]::Max(0, $_gateScreen.Height - $_gateTargetH)) / 2)
+            }
+        }
     } catch {}
     function _Center-MiOSGateConsole {
         if (-not ('MiOSGate.W' -as [type])) { return }
-        if (-not $_gateScreen) { return }
+        if ($null -eq $_gateTargetX) { return }
         try {
             $h = [MiOSGate.W]::GetConsoleWindow()
             if ($h -eq [IntPtr]::Zero) { return }
-            $r = New-Object System.Drawing.Rectangle
-            [void][MiOSGate.W]::GetWindowRect($h, [ref]$r)
-            $w = $r.Width  - $r.X
-            $hp = $r.Height - $r.Y
-            $x = $_gateScreen.X + [int](([math]::Max(0, $_gateScreen.Width  - $w )) / 2)
-            $y = $_gateScreen.Y + [int](([math]::Max(0, $_gateScreen.Height - $hp)) / 2)
-            [void][MiOSGate.W]::MoveWindow($h, $x, $y, $w, $hp, $true)
+            [void][MiOSGate.W]::MoveWindow($h, $_gateTargetX, $_gateTargetY, $_gateTargetW, $_gateTargetH, $true)
         } catch {}
     }
 
@@ -1500,7 +1514,13 @@ function Install-MiOSTerminalProfile {
     # deterministic.
     # Single-quoted PS string with `''` for embedded literal quotes.
     # ConvertTo-Json will JSON-encode the outer double-quotes correctly.
-    $profileCmdline = '"' + $defaultPwsh + '" -NoLogo -NoExit -NoProfile -Command "if (Test-Path ''' + $miosProfilePath + ''') { . ''' + $miosProfilePath + ''' }"'
+    # `$env:MIOS_APP_CONTEXT='1'` is the gate signal the M:\ profile
+    # body checks before resizing the conhost to the MiOS-app dims
+    # (80x20). Without this signal the profile body skips the resize,
+    # which is what we want during BOOTSTRAP/INSTALL where any child
+    # pwsh inheriting `$PROFILE.CurrentUserAllHosts redirector should
+    # NOT shrink the operator's 80x40 install conhost mid-install.
+    $profileCmdline = '"' + $defaultPwsh + '" -NoLogo -NoExit -NoProfile -Command "$env:MIOS_APP_CONTEXT=''1''; if (Test-Path ''' + $miosProfilePath + ''') { . ''' + $miosProfilePath + ''' }"'
 
     # Per-profile shared settings -- apply to BOTH "MiOS" and "MiOS-DEV"
     # so they look/feel identical. Belt-AND-braces acrylic settings:
@@ -2825,38 +2845,52 @@ if (`$Global:MiosProfileLoaded) { return }
 # operator never sees a default-sized window briefly before the
 # resize. Idempotent -- a second pass via the inner script
 # (Pass-2 elevation) is a no-op.
-try {
-    `$_curW = [Console]::WindowWidth
-    if (`$_curW -gt $_miosCols) {
-        [Console]::SetWindowSize($_miosCols, $_miosRows)
-        [Console]::SetBufferSize($_miosCols, $_miosScroll)
-    } else {
-        [Console]::SetBufferSize($_miosCols, $_miosScroll)
-        [Console]::SetWindowSize($_miosCols, $_miosRows)
-    }
-} catch {}
-try {
-    Add-Type -Namespace MiosWin -Name N -MemberDefinition @'
+#
+# IMPORTANT GATE: only resize when we're actually in the MiOS APP
+# context (i.e. the WT MiOS profile launched us). Otherwise -- if a
+# child pwsh during BOOTSTRAP/INSTALL accidentally loads this profile
+# via `$PROFILE.CurrentUserAllHosts redirector -- the resize shrinks
+# the operator's 80x40 install conhost down to the 80x20 MiOS-app
+# size mid-install. Operator-reported regression: "window changes to
+# the MiOS Global sizes of 80x20 somewhere in the middle of the
+# installations". `$env:MIOS_APP_CONTEXT is set ONLY by the WT MiOS
+# profile commandline (see Install-MiOSTerminalProfile in Get-MiOS.ps1).
+if (`$env:MIOS_APP_CONTEXT) {
+    try {
+        `$_curW = [Console]::WindowWidth
+        if (`$_curW -gt $_miosCols) {
+            [Console]::SetWindowSize($_miosCols, $_miosRows)
+            [Console]::SetBufferSize($_miosCols, $_miosScroll)
+        } else {
+            [Console]::SetBufferSize($_miosCols, $_miosScroll)
+            [Console]::SetWindowSize($_miosCols, $_miosRows)
+        }
+    } catch {}
+}
+if (`$env:MIOS_APP_CONTEXT) {
+    try {
+        Add-Type -Namespace MiosWin -Name N -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
 '@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
-    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-    `$_hwnd = [MiosWin.N]::GetConsoleWindow()
-    `$_r = New-Object System.Drawing.Rectangle
-    [MiosWin.N]::GetWindowRect(`$_hwnd, [ref]`$_r) | Out-Null
-    `$_w = `$_r.Width  - `$_r.X
-    `$_h = `$_r.Height - `$_r.Y
-    # Center on the ACTIVE display (where the cursor currently is),
-    # NOT PrimaryScreen. On multi-monitor hosts the operator launches
-    # mios.bat from whichever monitor they're working on; the window
-    # should land THERE.
-    `$_cur = [System.Windows.Forms.Cursor]::Position
-    `$_s   = [System.Windows.Forms.Screen]::FromPoint(`$_cur).WorkingArea
-    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_w)) / 2)
-    `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_h)) / 2)
-    [MiosWin.N]::MoveWindow(`$_hwnd, `$_x, `$_y, `$_w, `$_h, `$true) | Out-Null
-} catch {}
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+        `$_hwnd = [MiosWin.N]::GetConsoleWindow()
+        `$_r = New-Object System.Drawing.Rectangle
+        [MiosWin.N]::GetWindowRect(`$_hwnd, [ref]`$_r) | Out-Null
+        `$_w = `$_r.Width  - `$_r.X
+        `$_h = `$_r.Height - `$_r.Y
+        # Center on the ACTIVE display (where the cursor currently is),
+        # NOT PrimaryScreen. On multi-monitor hosts the operator launches
+        # mios.bat from whichever monitor they're working on; the window
+        # should land THERE.
+        `$_cur = [System.Windows.Forms.Cursor]::Position
+        `$_s   = [System.Windows.Forms.Screen]::FromPoint(`$_cur).WorkingArea
+        `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_w)) / 2)
+        `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_h)) / 2)
+        [MiosWin.N]::MoveWindow(`$_hwnd, `$_x, `$_y, `$_w, `$_h, `$true) | Out-Null
+    } catch {}
+}
 
 # NO TERMINAL-TYPE GATE. Always run the PSReadLine reload + oh-my-
 # posh init. The WT_SESSION gate on the previous version was
