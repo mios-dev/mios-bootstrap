@@ -875,27 +875,27 @@ try {
             `$_root = [MEW.N]::GetAncestor(`$_consoleHwnd, 2)
             if (`$_root -ne [IntPtr]::Zero) { `$_root } else { `$_consoleHwnd }
         } else { [IntPtr]::Zero }
-        if (`$_h -eq [IntPtr]::Zero) { `$_dbgLines.Add("attempt `$_attempt: no hwnd"); continue }
+        if (`$_h -eq [IntPtr]::Zero) { `$_dbgLines.Add("attempt `${_attempt}: no hwnd"); continue }
         `$_rect = New-Object System.Drawing.Rectangle
         `$_grcOk = [MEW.N]::GetWindowRect(`$_h, [ref]`$_rect)
         `$_actualW = `$_rect.Width  - `$_rect.X
         `$_actualH = `$_rect.Height - `$_rect.Y
-        if (`$_actualW -le 0 -or `$_actualH -le 0) { `$_dbgLines.Add("attempt `$_attempt: zero dims grc=`$_grcOk"); continue }
+        if (`$_actualW -le 0 -or `$_actualH -le 0) { `$_dbgLines.Add("attempt `${_attempt}: zero dims grc=`$_grcOk"); continue }
         `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
         `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
         `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - `$_actualW)) / 2)
         `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - `$_actualH)) / 2)
         # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14
         `$_swp = [MEW.N]::SetWindowPos(`$_h, [IntPtr]::Zero, `$_x, `$_y, `$_actualW, `$_actualH, 0x14)
-        `$_dbgLines.Add("attempt `$_attempt: hwnd=0x`$([int64]`$_h | %{ '{0:X}' -f `$_ }) console=0x`$([int64]`$_consoleHwnd | %{ '{0:X}' -f `$_ }) rect=`$(`$_rect.X),`$(`$_rect.Y) dims=`${_actualW}x`${_actualH} screen=`$(`$_s.X),`$(`$_s.Y) `$(`$_s.Width)x`$(`$_s.Height) target=`$_x,`$_y SWPok=`$_swp")
+        `$_dbgLines.Add("attempt `${_attempt}: hwnd=0x`$([int64]`$_h | %{ '{0:X}' -f `$_ }) console=0x`$([int64]`$_consoleHwnd | %{ '{0:X}' -f `$_ }) rect=`$(`$_rect.X),`$(`$_rect.Y) dims=`${_actualW}x`${_actualH} screen=`$(`$_s.X),`$(`$_s.Y) `$(`$_s.Width)x`$(`$_s.Height) target=`${_x},`${_y} SWPok=`$_swp")
         # Verify by re-reading the rect.
         `$_rect2 = New-Object System.Drawing.Rectangle
         [void][MEW.N]::GetWindowRect(`$_h, [ref]`$_rect2)
         if (`$_rect2.X -eq `$_x -and `$_rect2.Y -eq `$_y) {
-            `$_dbgLines.Add("attempt `$_attempt: SUCCESS at `$(`$_rect2.X),`$(`$_rect2.Y)")
+            `$_dbgLines.Add("attempt `${_attempt}: SUCCESS at `$(`$_rect2.X),`$(`$_rect2.Y)")
             break
         }
-        `$_dbgLines.Add("attempt `$_attempt: post-SWP rect=`$(`$_rect2.X),`$(`$_rect2.Y) (target was `$_x,`$_y) -- retrying")
+        `$_dbgLines.Add("attempt `${_attempt}: post-SWP rect=`$(`$_rect2.X),`$(`$_rect2.Y) (target was `${_x},`${_y}) -- retrying")
     }
     try { Set-Content -LiteralPath `$_dbg -Value (`$_dbgLines -join [Environment]::NewLine) -Encoding UTF8 } catch {}
 } catch {
@@ -954,12 +954,12 @@ try {
     `$tmpScript = Join-Path `$env:TEMP ('mios-getmios-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
     # UTF-8 WITH BOM so PS 5.1 (the fresh-system fallback) parses it
     # as UTF-8 instead of Windows-1252. Without the BOM, PS 5.1's
-    # parser sees the file as cp1252 and mangles every Unicode glyph
-    # in the source (box-drawing chars '|' / '/' became 'â”‚' / 'â”'
-    # mojibake), throwing "Unexpected token 'â”‚'" before the script
-    # body runs. pwsh 7 reads no-BOM UTF-8 fine, but the bootstrap's
-    # child shell is whatever's available on a fresh box -- which is
-    # PS 5.1 until Phase 5 winget-installs Microsoft.PowerShell.
+    # parser reads the file as cp1252 and mangles every Unicode glyph
+    # in the source (the U+2502 vertical-bar box-drawing char becomes
+    # 3-byte mojibake under cp1252), throwing Unexpected-token errors
+    # before the script body runs. pwsh 7 reads no-BOM UTF-8 fine, but
+    # the bootstrap's child shell is whatever's available on a fresh
+    # box -- PS 5.1 until Phase 5 winget-installs Microsoft.PowerShell.
     [IO.File]::WriteAllText(`$tmpScript, `$src, [System.Text.UTF8Encoding]::new(`$true))
     # -NoProfile prevents the elevated child pwsh from auto-loading
     # any stale `$PROFILE.CurrentUserAllHosts redirector that points
