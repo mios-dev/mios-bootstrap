@@ -447,17 +447,18 @@ function Invoke-MiOSAgreementGate {
         [Console]::Error.WriteLine("[mios] AGREEMENTS.md acknowledged via MIOS_AGREEMENT_ACK; proceeding.")
         return $true
     }
-    if ($env:MIOS_GETMIOS_RELAUNCHED -eq '1') { return $true }   # inner call inherits outer accept
+    # Note: gate IS rendered in the elevated relaunch (Pass-2). Pass-1
+    # (the small black box from `irm|iex`) self-elevates and exits
+    # BEFORE this function is ever invoked -- the agreement belongs in
+    # the properly-sized 80x40 Pass-2 conhost. The previous behaviour
+    # short-circuited Pass-2 via $env:MIOS_GETMIOS_RELAUNCHED, which
+    # caused the agreement to be rendered in Pass-1's tiny inherited
+    # conhost (~80x25) where the ~104-line summary scrolled past in a
+    # flash and the operator only saw the bottom prompt.
 
-    # Resize Pass-1 conhost BEFORE rendering. The irm|iex one-liner
-    # spawns powershell.exe -Command, which inherits the default conhost
-    # geometry (~80x25 / 120x30 depending on host). The agreement is
-    # ~104 lines: at 80x25 the entire document scrolls past in a flash,
-    # the operator sees only the prompt at the bottom, and perceives it
-    # as broken ("scrolls to the bottom immediately"). Bumping the
-    # buffer + window up to 80x60 with a 9000-line scrollback lets the
-    # operator scroll up coherently and keeps the prompt anchored at
-    # the visible bottom of a sensibly-sized window.
+    # Resize the elevated Pass-2 conhost UP from 80x40 to 80x60 BEFORE
+    # rendering, so the agreement summary fits with breathing room.
+    # build-mios.ps1 will resize back to 80x40 once the install starts.
     try { & chcp.com 65001 *> $null } catch {}
     try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
     try { [Console]::SetBufferSize(80, 9000) } catch {}
@@ -508,7 +509,347 @@ function Invoke-MiOSAgreementGate {
         }
     }
 }
+# 1. ALWAYS spawn a fresh elevated pwsh window. The original `irm | iex`
+# host inherits whatever terminal called us (VS Code integrated, remote
+# session, embedded host, etc.) which often (a) isn't admin, (b) is the
+# wrong size for the build, and (c) breaks console cursor positioning.
+# A fresh top-level pwsh window guarantees a clean, properly-sized
+# environment regardless of where the curl was run from.
+#
+# ── Auto-elevate at script entry (single UAC) ───────────────────────
+# Per operator: "irm|iex mios.bat Win + R entry should it itself auto
+# elevate!!! it needs admin rights to install some components without
+# several UAC prompts interrupting the install".
+#
+# Previously this script split work into Pass-1 (user) + Pass-2 (admin
+# via mid-install UAC). That meant operator saw the UAC prompt halfway
+# through; some Pass-2 steps (M:\ partition shrink, Podman Desktop
+# winget install, podman machine init) need elevation, so the prompt
+# was unavoidable -- but firing it at the start instead means ONE
+# UAC interaction up-front and the entire install runs in the same
+# elevated session.
+#
+# Sentinel: $env:MIOS_GETMIOS_RELAUNCHED prevents the elevated relaunch
+# from re-elevating in an infinite loop.
+$_isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
+    Write-Host ''
+    Write-Host '  [*] MiOS bootstrap requires admin (M:\ partition + Podman + dev VM).' -ForegroundColor Cyan
+    Write-Host '  [*] Triggering UAC -- accept to continue. The install will then run' -ForegroundColor Cyan
+    Write-Host '      in the elevated window, single prompt only.' -ForegroundColor DarkGray
+    # Capture cursor position BEFORE the UAC prompt, while the operator's
+    # attention is still on whichever monitor they pasted from. By the
+    # time the inner script runs (after UAC accept), Cursor.Position is
+    # at the UAC "Yes" button location -- typically the primary monitor,
+    # NOT necessarily where the operator was working. Embed the captured
+    # X,Y as constants in the inner cmd so Screen.FromPoint() resolves
+    # to the active-display before-elevation, not after.
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    $_cursorPre = try { [System.Windows.Forms.Cursor]::Position } catch { New-Object System.Drawing.Point 100,100 }
+    $_curX = $_cursorPre.X
+    $_curY = $_cursorPre.Y
+    # Bootstrap window dims (the elevated conhost that runs Pass-1 +
+    # Pass-2 + readme/acknowledgements). Pulled from mios.toml
+    # [terminal.install] -- vendor default 80x40 for log/output room.
+    # The post-install MiOS APP spawn uses [terminal] (80x20, portal
+    # feel) because the operator-facing terminal is shorter than the
+    # install-time log window.
+    # Compute target pixel dims HERE so they bake as literal integers
+    # into the rendered inner cmd -- the spawned pwsh has no access
+    # to outer-scope variables.
+    $_elevCols = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols'            -Default 80
+    $_elevRows = Get-MiosTomlValue -Section 'terminal.install' -Key 'rows'            -Default 40
+    $_elevScr  = Get-MiosTomlValue -Section 'terminal'         -Key 'scrollback_rows' -Default 9000
+    $_cellW    = Get-MiosTomlValue -Section 'theme.font'       -Key 'cell_w_px'       -Default 10
+    $_cellH    = Get-MiosTomlValue -Section 'theme.font'       -Key 'cell_h_px'       -Default 20
+    $_chromeW  = Get-MiosTomlValue -Section 'theme.font'       -Key 'chrome_w_px'     -Default 20
+    $_chromeH  = Get-MiosTomlValue -Section 'theme.font'       -Key 'chrome_h_px'     -Default 12
+    # Pixel target for the BOOTSTRAP window (80x40 cells).
+    $_winWPx   = ($_elevCols * $_cellW) + $_chromeW
+    $_winHPx   = ($_elevRows * $_cellH) + $_chromeH
+    # Separate dims for the post-install MiOS APP spawn (80x20 -- the
+    # canonical operator-facing terminal). These bake into the inner
+    # cmd alongside $_elevCols/$_elevRows but drive the wt.exe -p MiOS
+    # spawn at end-of-bootstrap, NOT the bootstrap conhost itself.
+    $_appCols  = Get-MiosTomlValue -Section 'terminal'         -Key 'cols'            -Default 80
+    $_appRows  = Get-MiosTomlValue -Section 'terminal'         -Key 'rows'            -Default 20
+    $_appWPx   = ($_appCols * $_cellW) + $_chromeW
+    $_appHPx   = ($_appRows * $_cellH) + $_chromeH
+    $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
+    $_innerCmd = @"
+`$env:MIOS_GETMIOS_RELAUNCHED='1'
+`$env:MIOS_CACHE_BUSTED='1'
+# AGREEMENT_ACK is intentionally NOT pre-set. Pass-2 (this elevated
+# relaunch) is where the operator reads + acks the agreement, in the
+# properly-sized 80x40 conhost. Pre-accepting via env would skip the
+# gate -- which would defeat the point of moving the gate here.
+# Tell the MiOS pwsh profile body to render the framed dashboard +
+# oh-my-posh prompt for THIS bootstrap window. The profile gates the
+# dashboard call on `$env:WT_SESSION OR `$env:TERM_PROGRAM='mios';
+# elevated pwsh in conhost has neither, so without this the install
+# runs in a vanilla black box. Setting it here makes the elevated
+# bootstrap window itself the MiOS terminal experience.
+`$env:TERM_PROGRAM='mios'
+# Force UTF-8 codepage + output encoding BEFORE any output paints.
+# Without this, conhost defaults to CP437/CP1252 and the dashboard's
+# Unicode box-drawing glyphs (╭ ╮ ╰ ╯ │ ─ ├ ┤) render as `?`. Setting
+# OutputEncoding alone isn't enough -- chcp 65001 changes the active
+# codepage for the underlying console, which is what affects glyph
+# substitution.
+try { & chcp.com 65001 *> `$null } catch {}
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
+try { [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new(`$false) } catch {}
+try { `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
+# Pre-UAC cursor location (captured by the launching pwsh BEFORE Start-
+# Process -Verb RunAs); use these constants instead of querying
+# Cursor.Position now (which would read at the UAC Yes-button click
+# location, defeating the active-display intent).
+`$_curXPre = $_curX
+`$_curYPre = $_curY
+try {
+    Add-Type -Namespace MEW -Name N -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
+'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    # Pixel target size -- BAKED from outer scope as literal integers
+    # via @"..."@ interpolation (no backticks on $_winWPx / $_winHPx /
+    # $_elevCols / $_elevRows / $_elevScr). The inner pwsh process
+    # cannot see outer-scope variables (it's a fresh pwsh.exe spawn);
+    # everything we want it to know must be substituted at template-
+    # build time. Earlier broken edits used backticks on $_elevCols
+    # which produced LITERAL `\$_elevCols` in the rendered script,
+    # which evaluated to $null inner-side, multiplied by cell dims
+    # to zero, and gave a 20x12 (basically 1x1 visible) window.
+    # Resize the cell buffer FIRST so conhost expects target cells.
+    try { [Console]::SetBufferSize($_elevCols, $_elevScr) } catch {}
+    try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
+    `$_h = [MEW.N]::GetConsoleWindow()
+    # Resolve which monitor the OPERATOR was on at the moment of paste.
+    `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
+    `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
+    # Center within active monitor's working area using the COMPUTED
+    # target pixel size (literal integers baked from outer scope).
+    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - $_winWPx)) / 2)
+    `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - $_winHPx)) / 2)
+    [MEW.N]::MoveWindow(`$_h, `$_x, `$_y, $_winWPx, $_winHPx, `$true) | Out-Null
+    # Brief settle, then re-resize cell buffer in case conhost re-
+    # negotiated its size after MoveWindow.
+    Start-Sleep -Milliseconds 100
+    try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
+} catch {}
+Write-Host ''
+Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
+Write-Host ('      Cache-busted Get-MiOS.ps1 fetch: ' + '$_rawUrl') -ForegroundColor DarkGray
+Write-Host ''
+try {
+    `$src = Invoke-RestMethod -Uri '$_rawUrl' -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } -ErrorAction Stop
+    # Write to a temp .ps1 and run as a CHILD pwsh process so any
+    # 'exit N' calls inside Get-MiOS.ps1 terminate the child, NOT our
+    # hosting elevation window. Without this, any preflight 'exit 1'
+    # killed the elevated host before the operator could read the
+    # error or pause for inspection -- the window appeared to "die
+    # silently". Per operator: "the incorrectly launched powershell
+    # window... just dies silently--seemingly no logs in sight!!!"
+    # Log path: M:\MiOS\logs if M:\ exists (the canonical install-on-M
+    # location), else %TEMP%. The child pwsh runs Start-Transcript
+    # internally so the log gets every Write-Host without the parent
+    # having to pipe through Tee-Object (which DESTROYS the child's
+    # `$Host.UI.RawUI` console handle and makes `$RawUI.CursorPosition
+    # = @{X=0;Y=0}` throw "The handle is invalid" -- exactly the crash
+    # the operator hit in commit 1e3484f).
+    # NO PRELUDE PREPEND. Get-MiOS.ps1 has a `param()` block at the
+    # top of the file -- PowerShell requires param() to be the FIRST
+    # statement in a script (after comments / using statements). My
+    # prior commits prepended chcp/Start-Transcript lines which
+    # pushed param() to line 6+, causing PowerShell to parse the
+    # block's arguments as standalone assignments:
+    #     "[string]\$RepoUrl = 'https://github.com/mios-dev/...'"
+    #     -> "The assignment expression is not valid"
+    # The codepage + Console encoding are ALREADY set in the inner
+    # cmd (chcp 65001 etc. above); the child pwsh inherits the
+    # conhost codepage from this elevated parent, so Unicode glyphs
+    # render correctly without an inline prelude.
+    # Logging during Pass-1 is sacrificed for now -- build-mios.ps1's
+    # own logging at M:\MiOS\logs\mios-install-*.log covers Pass-2+
+    # which is where 90% of the install time lives. Operator sees
+    # all Pass-1 output live in the elevated host (Read-Host pause
+    # at the end keeps it visible).
+    `$tmpScript = Join-Path `$env:TEMP ('mios-getmios-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
+    [IO.File]::WriteAllText(`$tmpScript, `$src, [System.Text.UTF8Encoding]::new(`$false))
+    # -NoProfile prevents the elevated child pwsh from auto-loading
+    # any stale `$PROFILE.CurrentUserAllHosts redirector that points
+    # at a corrupted profile body from a prior failed run. Pass-1
+    # below will overwrite the profile with a properly-BOMed UTF-8
+    # version regardless.
+    & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript
+    `$_rc = `$LASTEXITCODE
+    Remove-Item -LiteralPath `$tmpScript -Force -ErrorAction SilentlyContinue
+    `$_launchMiosOnClose = `$false
+    if (`$_rc -ne 0) {
+        Write-Host ''
+        Write-Host ('  [!] Bootstrap exited with code ' + `$_rc) -ForegroundColor Red
+        Write-Host '      Output above is the failure detail (Pass-1 has no separate log).' -ForegroundColor DarkGray
+        Write-Host '      build-mios.ps1''s own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.' -ForegroundColor DarkGray
+        Write-Host ''
+    } else {
+        # Bootstrap succeeded -- defer the MiOS app spawn until the
+        # operator CLOSES this window. Per operator: "the actual
+        # process of closing the bootstrap powershell window after
+        # installation is what should procure and spawn the MiOS
+        # app's window".
+        `$_launchMiosOnClose = `$true
+        Write-Host ''
+        Write-Host '  [+] Bootstrap complete. Press Enter to close THIS window and launch the MiOS app.' -ForegroundColor Green
+    }
+} catch {
+    Write-Host ''
+    Write-Host ('  [!] Bootstrap fetch/run failed: ' + `$_.Exception.Message) -ForegroundColor Red
+    Write-Host ''
+}
+Write-Host ''
+if (`$_launchMiosOnClose) {
+    Write-Host '  Press Enter to close this bootstrap window and launch the MiOS app...' -ForegroundColor Yellow -NoNewline
+} else {
+    Write-Host '  Press Enter to close this elevated bootstrap window...' -ForegroundColor DarkGray -NoNewline
+}
+`$null = Read-Host
 
+# ── ON CLOSE: spawn the MiOS app ─────────────────────────────────
+# This block fires AFTER the operator presses Enter (the close
+# action). Per operator: the close is what should procure and
+# spawn the MiOS app's window. The spawn happens HERE, then the
+# bootstrap conhost exits naturally.
+if (`$_launchMiosOnClose) {
+    try {
+        # Resolve wt.exe (prefer Stable appx install location).
+        `$_wtExe = `$null
+        try {
+            `$_pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
+            if (`$_pkg -and `$_pkg.InstallLocation) {
+                `$_cand = Join-Path `$_pkg.InstallLocation 'wt.exe'
+                if (Test-Path -LiteralPath `$_cand) { `$_wtExe = `$_cand }
+            }
+        } catch {}
+        if (-not `$_wtExe) { `$_wtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
+        if (-not `$_wtExe) { throw 'wt.exe not found' }
+        # Centered position on cursor's active monitor (pre-UAC capture).
+        `$_pt2 = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
+        `$_s2  = [System.Windows.Forms.Screen]::FromPoint(`$_pt2).WorkingArea
+        # `-w MiOS` names the window "MiOS" so the global summon
+        # binding (Win+Space) can target it via globalSummon name=MiOS.
+        # Without a named window, the toggle binding has nothing to
+        # show/hide.
+        `$_wtArgs = @(
+            '-w', 'MiOS',
+            '--pos', ("`$(`$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_appWPx)) / 2)),`$(`$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_appHPx)) / 2))"),
+            '--size', "$_appCols,$_appRows",
+            '--focus',
+            '-p', 'MiOS'
+        )
+        `$_spawnedAt = Get-Date
+        Start-Process -FilePath `$_wtExe -ArgumentList `$_wtArgs -ErrorAction Stop
+        # Post-spawn SetWindowPos correction (wt.exe --pos unreliable
+        # in --focus mode).
+        Add-Type -Namespace MEW -Name W -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle r);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
+'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
+        `$_deadline = (Get-Date).AddMilliseconds(8000)
+        `$_wtHwnd = [IntPtr]::Zero
+        while ((Get-Date) -lt `$_deadline) {
+            `$_proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
+                      Where-Object { `$_.StartTime -ge `$_spawnedAt.AddSeconds(-1) } |
+                      Sort-Object StartTime -Descending | Select-Object -First 1
+            if (`$_proc -and `$_proc.MainWindowHandle -ne [IntPtr]::Zero -and [MEW.W]::IsWindowVisible(`$_proc.MainWindowHandle)) {
+                `$_wtHwnd = `$_proc.MainWindowHandle
+                break
+            }
+            Start-Sleep -Milliseconds 150
+        }
+        if (`$_wtHwnd -ne [IntPtr]::Zero) {
+            # ENFORCE the target pixel size ($_appWPx / $_appHPx baked
+            # from mios.toml [terminal] + [theme.font] cell metrics).
+            # Using GetWindowRect's current size (the previous behaviour)
+            # only re-centered the window without resizing it -- so when
+            # WT's `-w MiOS` added a tab to a pre-existing wider MiOS
+            # window, the operator saw a ~167-col terminal instead of
+            # the canonical 80x20. SetWindowPos with $_appWPx / $_appHPx
+            # forces the resize so the post-bootstrap MiOS app spawn is
+            # deterministic.
+            `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_appWPx)) / 2)
+            `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_appHPx)) / 2)
+            for (`$_i = 0; `$_i -lt 3; `$_i++) {
+                [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, $_appWPx, $_appHPx, 0x04)
+                Start-Sleep -Milliseconds 350
+            }
+        }
+    } catch {}
+}
+"@
+    # Write the inner cmd to a temp .ps1 and pass -File. Why NOT
+    # -EncodedCommand: the inner cmd is ~12.5 KB of source. UTF-16
+    # encoding doubles that to ~25 KB; Base64 expands to ~33 KB. Start-
+    # Process -Verb RunAs goes through ShellExecute, whose lpParameters
+    # is capped at 32,767 chars (signed 16-bit limit). The encoded
+    # payload + surrounding -NoLogo / -NoProfile / -ExecutionPolicy /
+    # -NoExit / -EncodedCommand args pushes us OVER 32 KB -- ShellExecute
+    # returns ERROR_INVALID_PARAMETER (0x80070057) which surfaces to the
+    # operator as "Self-elevation failed: The parameter is incorrect."
+    # UAC never even fires; Pass-2 never opens. -File <shortpath> keeps
+    # the command line tiny regardless of inner cmd size, so ShellExecute
+    # is happy.
+    $_innerScript = Join-Path $env:TEMP ('mios-elev-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
+    # UTF-8 with BOM so pwsh / powershell.exe both parse Unicode glyphs
+    # in the dashboard banner correctly.
+    $_utf8Bom = New-Object System.Text.UTF8Encoding($true)
+    [IO.File]::WriteAllText($_innerScript, $_innerCmd, $_utf8Bom)
+    $_shell = $null
+    foreach ($_c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe","$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
+        if ($_c -and (Test-Path -LiteralPath $_c -PathType Leaf)) { $_shell = $_c; break }
+    }
+    if (-not $_shell) {
+        $_w51 = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+        if (Test-Path -LiteralPath $_w51 -PathType Leaf) { $_shell = $_w51 }
+    }
+    if (-not $_shell) { $_shell = 'powershell.exe' }
+    try {
+        Start-Process -FilePath $_shell `
+            -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-File', $_innerScript) `
+            -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
+        # SUCCESS: Pass-1 has done its job. Pass-2 is alive in a new
+        # elevated window which will fetch the latest Get-MiOS.ps1, render
+        # the agreement gate (in 80x40), and run the install. Pass-1 must
+        # EXIT IMMEDIATELY so the operator's focus moves cleanly to Pass-2.
+        # The hosting `powershell -Command "irm | iex"` has no -NoExit, so
+        # `return` here lets Pass-1's powershell.exe close on its own.
+        # Operator perceives: small black box flashes -> UAC prompt ->
+        # properly-sized elevated window appears with the agreement.
+        return
+    } catch {
+        # FAILURE PATH: keep Pass-1 visible so the operator can read the
+        # error detail (UAC denied, ShellExecute failure, etc.). On
+        # success Pass-1 has already returned above.
+        Write-Host ''
+        Write-Host "  [!] Self-elevation failed: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host '      If you saw a UAC prompt, accept it and re-paste the one-liner.' -ForegroundColor DarkGray
+        Write-Host '      Or open an elevated PowerShell manually and re-run:' -ForegroundColor DarkGray
+        Write-Host "        irm $_rawUrl | iex" -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host '  Pass-1 elevation FAILED. Read the error above, then press Enter to close.' -ForegroundColor Yellow -NoNewline
+        $null = Read-Host
+        return
+    }
+}
+
+# AGREEMENT GATE -- runs in Pass-2 only. Pass-1 returned out of the
+# elevation block above, so reaching this line means we're already in
+# the properly-sized 80x40 elevated conhost. The gate function resizes
+# UP to 80x60 to give the ~104-line agreement breathing room, then
+# blocks on Read-Host until the operator types "Acknowledged" or aborts.
 Invoke-MiOSAgreementGate | Out-Null
 
 # ───────────────────────────────────────────────────────────────────────
@@ -3028,359 +3369,12 @@ public struct RECT { public int Left, Top, Right, Bottom; }
     return $true
 }
 
-# 1. ALWAYS spawn a fresh elevated pwsh window. The original `irm | iex`
-# host inherits whatever terminal called us (VS Code integrated, remote
-# session, embedded host, etc.) which often (a) isn't admin, (b) is the
-# wrong size for the build, and (c) breaks console cursor positioning.
-# A fresh top-level pwsh window guarantees a clean, properly-sized
-# environment regardless of where the curl was run from.
-#
-# ── Auto-elevate at script entry (single UAC) ───────────────────────
-# Per operator: "irm|iex mios.bat Win + R entry should it itself auto
-# elevate!!! it needs admin rights to install some components without
-# several UAC prompts interrupting the install".
-#
-# Previously this script split work into Pass-1 (user) + Pass-2 (admin
-# via mid-install UAC). That meant operator saw the UAC prompt halfway
-# through; some Pass-2 steps (M:\ partition shrink, Podman Desktop
-# winget install, podman machine init) need elevation, so the prompt
-# was unavoidable -- but firing it at the start instead means ONE
-# UAC interaction up-front and the entire install runs in the same
-# elevated session.
-#
-# Sentinel: $env:MIOS_GETMIOS_RELAUNCHED prevents the elevated relaunch
-# from re-elevating in an infinite loop.
-$_isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
-    Write-Host ''
-    Write-Host '  [*] MiOS bootstrap requires admin (M:\ partition + Podman + dev VM).' -ForegroundColor Cyan
-    Write-Host '  [*] Triggering UAC -- accept to continue. The install will then run' -ForegroundColor Cyan
-    Write-Host '      in the elevated window, single prompt only.' -ForegroundColor DarkGray
-    # Capture cursor position BEFORE the UAC prompt, while the operator's
-    # attention is still on whichever monitor they pasted from. By the
-    # time the inner script runs (after UAC accept), Cursor.Position is
-    # at the UAC "Yes" button location -- typically the primary monitor,
-    # NOT necessarily where the operator was working. Embed the captured
-    # X,Y as constants in the inner cmd so Screen.FromPoint() resolves
-    # to the active-display before-elevation, not after.
-    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-    $_cursorPre = try { [System.Windows.Forms.Cursor]::Position } catch { New-Object System.Drawing.Point 100,100 }
-    $_curX = $_cursorPre.X
-    $_curY = $_cursorPre.Y
-    # Bootstrap window dims (the elevated conhost that runs Pass-1 +
-    # Pass-2 + readme/acknowledgements). Pulled from mios.toml
-    # [terminal.install] -- vendor default 80x40 for log/output room.
-    # The post-install MiOS APP spawn uses [terminal] (80x20, portal
-    # feel) because the operator-facing terminal is shorter than the
-    # install-time log window.
-    # Compute target pixel dims HERE so they bake as literal integers
-    # into the rendered inner cmd -- the spawned pwsh has no access
-    # to outer-scope variables.
-    $_elevCols = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols'            -Default 80
-    $_elevRows = Get-MiosTomlValue -Section 'terminal.install' -Key 'rows'            -Default 40
-    $_elevScr  = Get-MiosTomlValue -Section 'terminal'         -Key 'scrollback_rows' -Default 9000
-    $_cellW    = Get-MiosTomlValue -Section 'theme.font'       -Key 'cell_w_px'       -Default 10
-    $_cellH    = Get-MiosTomlValue -Section 'theme.font'       -Key 'cell_h_px'       -Default 20
-    $_chromeW  = Get-MiosTomlValue -Section 'theme.font'       -Key 'chrome_w_px'     -Default 20
-    $_chromeH  = Get-MiosTomlValue -Section 'theme.font'       -Key 'chrome_h_px'     -Default 12
-    # Pixel target for the BOOTSTRAP window (80x40 cells).
-    $_winWPx   = ($_elevCols * $_cellW) + $_chromeW
-    $_winHPx   = ($_elevRows * $_cellH) + $_chromeH
-    # Separate dims for the post-install MiOS APP spawn (80x20 -- the
-    # canonical operator-facing terminal). These bake into the inner
-    # cmd alongside $_elevCols/$_elevRows but drive the wt.exe -p MiOS
-    # spawn at end-of-bootstrap, NOT the bootstrap conhost itself.
-    $_appCols  = Get-MiosTomlValue -Section 'terminal'         -Key 'cols'            -Default 80
-    $_appRows  = Get-MiosTomlValue -Section 'terminal'         -Key 'rows'            -Default 20
-    $_appWPx   = ($_appCols * $_cellW) + $_chromeW
-    $_appHPx   = ($_appRows * $_cellH) + $_chromeH
-    $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
-    $_innerCmd = @"
-`$env:MIOS_GETMIOS_RELAUNCHED='1'
-`$env:MIOS_AGREEMENT_ACK='accepted'
-`$env:MIOS_CACHE_BUSTED='1'
-# Tell the MiOS pwsh profile body to render the framed dashboard +
-# oh-my-posh prompt for THIS bootstrap window. The profile gates the
-# dashboard call on `$env:WT_SESSION OR `$env:TERM_PROGRAM='mios';
-# elevated pwsh in conhost has neither, so without this the install
-# runs in a vanilla black box. Setting it here makes the elevated
-# bootstrap window itself the MiOS terminal experience.
-`$env:TERM_PROGRAM='mios'
-# Force UTF-8 codepage + output encoding BEFORE any output paints.
-# Without this, conhost defaults to CP437/CP1252 and the dashboard's
-# Unicode box-drawing glyphs (╭ ╮ ╰ ╯ │ ─ ├ ┤) render as `?`. Setting
-# OutputEncoding alone isn't enough -- chcp 65001 changes the active
-# codepage for the underlying console, which is what affects glyph
-# substitution.
-try { & chcp.com 65001 *> `$null } catch {}
-try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
-try { [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new(`$false) } catch {}
-try { `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
-# Pre-UAC cursor location (captured by the launching pwsh BEFORE Start-
-# Process -Verb RunAs); use these constants instead of querying
-# Cursor.Position now (which would read at the UAC Yes-button click
-# location, defeating the active-display intent).
-`$_curXPre = $_curX
-`$_curYPre = $_curY
-try {
-    Add-Type -Namespace MEW -Name N -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
-'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
-    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-    # Pixel target size -- BAKED from outer scope as literal integers
-    # via @"..."@ interpolation (no backticks on $_winWPx / $_winHPx /
-    # $_elevCols / $_elevRows / $_elevScr). The inner pwsh process
-    # cannot see outer-scope variables (it's a fresh pwsh.exe spawn);
-    # everything we want it to know must be substituted at template-
-    # build time. Earlier broken edits used backticks on $_elevCols
-    # which produced LITERAL `\$_elevCols` in the rendered script,
-    # which evaluated to $null inner-side, multiplied by cell dims
-    # to zero, and gave a 20x12 (basically 1x1 visible) window.
-    # Resize the cell buffer FIRST so conhost expects target cells.
-    try { [Console]::SetBufferSize($_elevCols, $_elevScr) } catch {}
-    try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
-    `$_h = [MEW.N]::GetConsoleWindow()
-    # Resolve which monitor the OPERATOR was on at the moment of paste.
-    `$_pt = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
-    `$_s  = [System.Windows.Forms.Screen]::FromPoint(`$_pt).WorkingArea
-    # Center within active monitor's working area using the COMPUTED
-    # target pixel size (literal integers baked from outer scope).
-    `$_x = `$_s.X + [int](([math]::Max(0, `$_s.Width  - $_winWPx)) / 2)
-    `$_y = `$_s.Y + [int](([math]::Max(0, `$_s.Height - $_winHPx)) / 2)
-    [MEW.N]::MoveWindow(`$_h, `$_x, `$_y, $_winWPx, $_winHPx, `$true) | Out-Null
-    # Brief settle, then re-resize cell buffer in case conhost re-
-    # negotiated its size after MoveWindow.
-    Start-Sleep -Milliseconds 100
-    try { [Console]::SetWindowSize($_elevCols, $_elevRows) } catch {}
-} catch {}
-Write-Host ''
-Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
-Write-Host ('      Cache-busted Get-MiOS.ps1 fetch: ' + '$_rawUrl') -ForegroundColor DarkGray
-Write-Host ''
-try {
-    `$src = Invoke-RestMethod -Uri '$_rawUrl' -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } -ErrorAction Stop
-    # Write to a temp .ps1 and run as a CHILD pwsh process so any
-    # 'exit N' calls inside Get-MiOS.ps1 terminate the child, NOT our
-    # hosting elevation window. Without this, any preflight 'exit 1'
-    # killed the elevated host before the operator could read the
-    # error or pause for inspection -- the window appeared to "die
-    # silently". Per operator: "the incorrectly launched powershell
-    # window... just dies silently--seemingly no logs in sight!!!"
-    # Log path: M:\MiOS\logs if M:\ exists (the canonical install-on-M
-    # location), else %TEMP%. The child pwsh runs Start-Transcript
-    # internally so the log gets every Write-Host without the parent
-    # having to pipe through Tee-Object (which DESTROYS the child's
-    # `$Host.UI.RawUI` console handle and makes `$RawUI.CursorPosition
-    # = @{X=0;Y=0}` throw "The handle is invalid" -- exactly the crash
-    # the operator hit in commit 1e3484f).
-    # NO PRELUDE PREPEND. Get-MiOS.ps1 has a `param()` block at the
-    # top of the file -- PowerShell requires param() to be the FIRST
-    # statement in a script (after comments / using statements). My
-    # prior commits prepended chcp/Start-Transcript lines which
-    # pushed param() to line 6+, causing PowerShell to parse the
-    # block's arguments as standalone assignments:
-    #     "[string]\$RepoUrl = 'https://github.com/mios-dev/...'"
-    #     -> "The assignment expression is not valid"
-    # The codepage + Console encoding are ALREADY set in the inner
-    # cmd (chcp 65001 etc. above); the child pwsh inherits the
-    # conhost codepage from this elevated parent, so Unicode glyphs
-    # render correctly without an inline prelude.
-    # Logging during Pass-1 is sacrificed for now -- build-mios.ps1's
-    # own logging at M:\MiOS\logs\mios-install-*.log covers Pass-2+
-    # which is where 90% of the install time lives. Operator sees
-    # all Pass-1 output live in the elevated host (Read-Host pause
-    # at the end keeps it visible).
-    `$tmpScript = Join-Path `$env:TEMP ('mios-getmios-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
-    [IO.File]::WriteAllText(`$tmpScript, `$src, [System.Text.UTF8Encoding]::new(`$false))
-    # -NoProfile prevents the elevated child pwsh from auto-loading
-    # any stale `$PROFILE.CurrentUserAllHosts redirector that points
-    # at a corrupted profile body from a prior failed run. Pass-1
-    # below will overwrite the profile with a properly-BOMed UTF-8
-    # version regardless.
-    & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `$tmpScript
-    `$_rc = `$LASTEXITCODE
-    Remove-Item -LiteralPath `$tmpScript -Force -ErrorAction SilentlyContinue
-    `$_launchMiosOnClose = `$false
-    if (`$_rc -ne 0) {
-        Write-Host ''
-        Write-Host ('  [!] Bootstrap exited with code ' + `$_rc) -ForegroundColor Red
-        Write-Host '      Output above is the failure detail (Pass-1 has no separate log).' -ForegroundColor DarkGray
-        Write-Host '      build-mios.ps1''s own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.' -ForegroundColor DarkGray
-        Write-Host ''
-    } else {
-        # Bootstrap succeeded -- defer the MiOS app spawn until the
-        # operator CLOSES this window. Per operator: "the actual
-        # process of closing the bootstrap powershell window after
-        # installation is what should procure and spawn the MiOS
-        # app's window".
-        `$_launchMiosOnClose = `$true
-        Write-Host ''
-        Write-Host '  [+] Bootstrap complete. Press Enter to close THIS window and launch the MiOS app.' -ForegroundColor Green
-    }
-} catch {
-    Write-Host ''
-    Write-Host ('  [!] Bootstrap fetch/run failed: ' + `$_.Exception.Message) -ForegroundColor Red
-    Write-Host ''
-}
-Write-Host ''
-if (`$_launchMiosOnClose) {
-    Write-Host '  Press Enter to close this bootstrap window and launch the MiOS app...' -ForegroundColor Yellow -NoNewline
-} else {
-    Write-Host '  Press Enter to close this elevated bootstrap window...' -ForegroundColor DarkGray -NoNewline
-}
-`$null = Read-Host
 
-# ── ON CLOSE: spawn the MiOS app ─────────────────────────────────
-# This block fires AFTER the operator presses Enter (the close
-# action). Per operator: the close is what should procure and
-# spawn the MiOS app's window. The spawn happens HERE, then the
-# bootstrap conhost exits naturally.
-if (`$_launchMiosOnClose) {
-    try {
-        # Resolve wt.exe (prefer Stable appx install location).
-        `$_wtExe = `$null
-        try {
-            `$_pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
-            if (`$_pkg -and `$_pkg.InstallLocation) {
-                `$_cand = Join-Path `$_pkg.InstallLocation 'wt.exe'
-                if (Test-Path -LiteralPath `$_cand) { `$_wtExe = `$_cand }
-            }
-        } catch {}
-        if (-not `$_wtExe) { `$_wtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
-        if (-not `$_wtExe) { throw 'wt.exe not found' }
-        # Centered position on cursor's active monitor (pre-UAC capture).
-        `$_pt2 = New-Object System.Drawing.Point `$_curXPre, `$_curYPre
-        `$_s2  = [System.Windows.Forms.Screen]::FromPoint(`$_pt2).WorkingArea
-        # `-w MiOS` names the window "MiOS" so the global summon
-        # binding (Win+Space) can target it via globalSummon name=MiOS.
-        # Without a named window, the toggle binding has nothing to
-        # show/hide.
-        `$_wtArgs = @(
-            '-w', 'MiOS',
-            '--pos', ("`$(`$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_appWPx)) / 2)),`$(`$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_appHPx)) / 2))"),
-            '--size', "$_appCols,$_appRows",
-            '--focus',
-            '-p', 'MiOS'
-        )
-        `$_spawnedAt = Get-Date
-        Start-Process -FilePath `$_wtExe -ArgumentList `$_wtArgs -ErrorAction Stop
-        # Post-spawn SetWindowPos correction (wt.exe --pos unreliable
-        # in --focus mode).
-        Add-Type -Namespace MEW -Name W -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle r);
-[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
-'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
-        `$_deadline = (Get-Date).AddMilliseconds(8000)
-        `$_wtHwnd = [IntPtr]::Zero
-        while ((Get-Date) -lt `$_deadline) {
-            `$_proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
-                      Where-Object { `$_.StartTime -ge `$_spawnedAt.AddSeconds(-1) } |
-                      Sort-Object StartTime -Descending | Select-Object -First 1
-            if (`$_proc -and `$_proc.MainWindowHandle -ne [IntPtr]::Zero -and [MEW.W]::IsWindowVisible(`$_proc.MainWindowHandle)) {
-                `$_wtHwnd = `$_proc.MainWindowHandle
-                break
-            }
-            Start-Sleep -Milliseconds 150
-        }
-        if (`$_wtHwnd -ne [IntPtr]::Zero) {
-            # ENFORCE the target pixel size ($_appWPx / $_appHPx baked
-            # from mios.toml [terminal] + [theme.font] cell metrics).
-            # Using GetWindowRect's current size (the previous behaviour)
-            # only re-centered the window without resizing it -- so when
-            # WT's `-w MiOS` added a tab to a pre-existing wider MiOS
-            # window, the operator saw a ~167-col terminal instead of
-            # the canonical 80x20. SetWindowPos with $_appWPx / $_appHPx
-            # forces the resize so the post-bootstrap MiOS app spawn is
-            # deterministic.
-            `$_cx = `$_s2.X + [int](([math]::Max(0, `$_s2.Width  - $_appWPx)) / 2)
-            `$_cy = `$_s2.Y + [int](([math]::Max(0, `$_s2.Height - $_appHPx)) / 2)
-            for (`$_i = 0; `$_i -lt 3; `$_i++) {
-                [void][MEW.W]::SetWindowPos(`$_wtHwnd, [IntPtr]::Zero, `$_cx, `$_cy, $_appWPx, $_appHPx, 0x04)
-                Start-Sleep -Milliseconds 350
-            }
-        }
-    } catch {}
-}
-"@
-    # Write the inner cmd to a temp .ps1 and pass -File. Why NOT
-    # -EncodedCommand: the inner cmd is ~12.5 KB of source. UTF-16
-    # encoding doubles that to ~25 KB; Base64 expands to ~33 KB. Start-
-    # Process -Verb RunAs goes through ShellExecute, whose lpParameters
-    # is capped at 32,767 chars (signed 16-bit limit). The encoded
-    # payload + surrounding -NoLogo / -NoProfile / -ExecutionPolicy /
-    # -NoExit / -EncodedCommand args pushes us OVER 32 KB -- ShellExecute
-    # returns ERROR_INVALID_PARAMETER (0x80070057) which surfaces to the
-    # operator as "Self-elevation failed: The parameter is incorrect."
-    # UAC never even fires; Pass-2 never opens. -File <shortpath> keeps
-    # the command line tiny regardless of inner cmd size, so ShellExecute
-    # is happy.
-    $_innerScript = Join-Path $env:TEMP ('mios-elev-' + [guid]::NewGuid().Guid.Substring(0,8) + '.ps1')
-    # UTF-8 with BOM so pwsh / powershell.exe both parse Unicode glyphs
-    # in the dashboard banner correctly.
-    $_utf8Bom = New-Object System.Text.UTF8Encoding($true)
-    [IO.File]::WriteAllText($_innerScript, $_innerCmd, $_utf8Bom)
-    $_shell = $null
-    foreach ($_c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe","$env:ProgramW6432\PowerShell\7\pwsh.exe")) {
-        if ($_c -and (Test-Path -LiteralPath $_c -PathType Leaf)) { $_shell = $_c; break }
-    }
-    if (-not $_shell) {
-        $_w51 = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-        if (Test-Path -LiteralPath $_w51 -PathType Leaf) { $_shell = $_w51 }
-    }
-    if (-not $_shell) { $_shell = 'powershell.exe' }
-    $_elevSucceeded = $false
-    try {
-        Start-Process -FilePath $_shell `
-            -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-File', $_innerScript) `
-            -Verb RunAs -WorkingDirectory $env:WINDIR -ErrorAction Stop
-        Write-Host ''
-        Write-Host '  [+] Elevated MiOS bootstrap window opened.' -ForegroundColor Green
-        Write-Host '      The install continues in that NEW window (look for the' -ForegroundColor DarkGray
-        Write-Host "      MiOS banner). This Pass-1 window's job is done." -ForegroundColor DarkGray
-        $_elevSucceeded = $true
-    } catch {
-        Write-Host ''
-        Write-Host "  [!] Self-elevation failed: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host '      If you saw a UAC prompt, accept it and re-paste the one-liner.' -ForegroundColor DarkGray
-        Write-Host '      Or open an elevated PowerShell manually and re-run:' -ForegroundColor DarkGray
-        Write-Host "        irm $_rawUrl | iex" -ForegroundColor DarkGray
-    }
-    # KEEP THIS PASS-1 WINDOW OPEN UNTIL OPERATOR ACKS.
-    # Operator-reported regression: after typing 'acknowledged' at the
-    # AGREEMENTS.md gate, Pass-1's powershell.exe (launched via the
-    # irm|iex one-liner WITHOUT -NoExit) exited the moment the script
-    # body completed -- which made the operator perceive the window as
-    # "killed" by their typing 'acknowledged'. Actually this is normal:
-    # Pass-1 self-elevates -> Pass-2 admin window opens fresh -> Pass-1
-    # has done its job and exits. But the perception is that typing
-    # 'acknowledged' destroyed everything.
-    # Block here on Read-Host so Pass-1 stays visible with the
-    # success/failure banner above. The operator presses Enter when
-    # they've SEEN that elevation worked and Pass-2 is alive (or read
-    # the failure detail), then closes the now-redundant Pass-1 window
-    # at their own pace.
-    Write-Host ''
-    if ($_elevSucceeded) {
-        Write-Host '  Pass-1 done. Switch focus to the elevated Pass-2 window to continue.' -ForegroundColor Cyan
-        Write-Host '  Press Enter to close THIS Pass-1 window when you''re ready.' -ForegroundColor Yellow -NoNewline
-    } else {
-        Write-Host '  Pass-1 elevation FAILED. Read the error above, then press Enter to close.' -ForegroundColor Yellow -NoNewline
-    }
-    $null = Read-Host
-    return
-}
-
-# Auto-elevation above ALREADY relaunched the script with admin token
-# if the operator pasted from a non-admin shell. By the time we reach
-# this point we're guaranteed admin (either because the operator
-# launched from an already-elevated shell OR because the auto-elevate
-# block re-spawned us). No need to gate on MIOS_GETMIOS_RELAUNCHED;
-# all Pass-1 steps below run unconditionally and the trailing fall-
-# through into Pass-2 (M:\ + Podman + dev VM) runs in the same session.
+# By the time we reach this point we're GUARANTEED admin -- the
+# auto-elevation block at the top of the script (right after the
+# agreement-gate function definition) returned out of Pass-1 if the
+# operator pasted from a non-admin shell, and only Pass-2 (the elevated
+# relaunch) ever falls through to here. Code below runs in Pass-2 only.
 
 # ── Status helpers (used by Step-0 + Pass-2) ─────────────────────────────────
 # Defined here -- BEFORE Pass-1's Step-0 M:\ block -- so the M:\ provisioning
