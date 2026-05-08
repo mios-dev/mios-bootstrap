@@ -138,7 +138,27 @@ function Get-MiosTomlValue {
         }
         return $Default
     }
-    return $raw.Trim('"', "'")
+    # String -- strip SURROUNDING TOML quotes only (no Trim multi-set,
+    # which previously ate leading ' from values like "'MiOS' v0.2.4"
+    # because Trim('"',"'") matches both chars on both ends). Unescape
+    # backslash sequences for double-quoted strings per TOML 1.0.0.
+    if ($raw.Length -ge 2) {
+        $first = $raw[0]; $last = $raw[$raw.Length - 1]
+        if ($first -eq '"' -and $last -eq '"') {
+            $inner = $raw.Substring(1, $raw.Length - 2)
+            $inner = $inner -replace '\\\\', "`u{0001}BS`u{0001}"
+            $inner = $inner -replace '\\"', '"'
+            $inner = $inner -replace '\\n', "`n"
+            $inner = $inner -replace '\\t', "`t"
+            $inner = $inner -replace '\\r', "`r"
+            $inner = $inner -replace "`u{0001}BS`u{0001}", '\'
+            return $inner
+        }
+        if ($first -eq "'" -and $last -eq "'") {
+            return $raw.Substring(1, $raw.Length - 2)
+        }
+    }
+    return $raw
 }
 
 # Resolve canonical terminal dims ONCE at script-load so every later

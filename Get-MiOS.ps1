@@ -328,8 +328,34 @@ function Get-MiosTomlValue {
         }
         return $Default
     }
-    # Default to string -- strip TOML string quotes.
-    return $raw.Trim('"', "'")
+    # Default to string -- strip the SURROUNDING TOML string quotes (and
+    # unescape backslash sequences for double-quoted strings). The
+    # previous Trim('"',"'") was too aggressive: a value like
+    #     "'MiOS' v0.2.4"
+    # had its leading apostrophe stripped because Trim treats the char
+    # set as a multi-set on BOTH ends. Operator-reported regression:
+    # the installer banner rendered as `MiOS' v0.2.4` (missing leading
+    # `'`) instead of `'MiOS' v0.2.4`.
+    if ($raw.Length -ge 2) {
+        $first = $raw[0]; $last = $raw[$raw.Length - 1]
+        if ($first -eq '"' -and $last -eq '"') {
+            # Basic string: strip and unescape \\, \", \n, \t, \r.
+            $inner = $raw.Substring(1, $raw.Length - 2)
+            $inner = $inner -replace '\\\\', "`u{0001}BS`u{0001}"   # placeholder for literal backslash
+            $inner = $inner -replace '\\"', '"'
+            $inner = $inner -replace '\\n', "`n"
+            $inner = $inner -replace '\\t', "`t"
+            $inner = $inner -replace '\\r', "`r"
+            $inner = $inner -replace "`u{0001}BS`u{0001}", '\'
+            return $inner
+        }
+        if ($first -eq "'" -and $last -eq "'") {
+            # Literal string: strip; no unescaping (TOML literal-string semantics).
+            return $raw.Substring(1, $raw.Length - 2)
+        }
+    }
+    # Bare value, no surrounding quotes -- return as-is.
+    return $raw
 }
 
 function Show-MiOSBanner {
@@ -2999,7 +3025,16 @@ if (`$true) {
         # themed terminal window". cols-1 leaves 1 char of slack at the
         # right edge so the box-drawing border doesn't touch the
         # line-wrap boundary on hosts that lie about their width.
-        `$WIDTH = $_miosFrameW
+        # Auto-detect the live conhost width and prefer it over the
+        # mios.toml [terminal].frame_width default. Operator-reported
+        # regression: "dashboard frame is 1 character too narrow!".
+        # The TOML default is 80 cells; on operators whose WT terminal
+        # opens at 81 (or any width > 80) the 80-col frame visibly
+        # leaves >=1 col of slack on the right. Reading [Console]::
+        # WindowWidth at render time makes the frame fill whatever the
+        # terminal currently is; the TOML value remains the floor.
+        `$_winWNow = try { [Console]::WindowWidth } catch { $_miosFrameW }
+        `$WIDTH = if (`$_winWNow -gt $_miosFrameW) { `$_winWNow } else { $_miosFrameW }
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
 
