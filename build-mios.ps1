@@ -4878,6 +4878,7 @@ function New-MiosIcon {
                 'build'  { [char]0x2699 }   # ⚙ gear
                 'update' { [char]0x21BB }   # ↻ clockwise
                 'config' { [char]0x2699 }   # ⚙ gear
+                'help'   { [char]0x003F }   # ? question mark
             }
             $sf = New-Object System.Drawing.StringFormat
             $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
@@ -4966,6 +4967,7 @@ function Install-MiosLauncher {
         'mios-build'   = 'build'
         'mios-update'  = 'update'
         'mios-config'  = 'config'
+        'mios-help'    = 'help'
     }
     $icoPaths = @{}
     foreach ($name in $iconMap.Keys) {
@@ -5169,6 +5171,124 @@ if (Test-Path `$cfg) { Start-Process `$cfg }
 else { Write-Host "configurator not found at `$cfg" -ForegroundColor Yellow }
 "@
     Set-Content -Path $cfgPath -Value $cfgScript -Encoding UTF8
+
+    # mios-help.ps1 -- comprehensive help / verb listing. Standalone
+    # script (not just the M:\ profile's mios-help function) so the
+    # `MiOS Help.lnk` Start Menu shortcut can target it. The script
+    # uses the same MiOS palette as the rest of the surface.
+    $helpPath   = Join-Path $MiosBinDir 'mios-help.ps1'
+    $helpScript = @'
+# <MiOSRoot>\bin\mios-help.ps1 -- the `mios help` verb.
+# Comprehensive verb + functionality listing. Run from any MiOS
+# terminal (`mios help` or click the MiOS Help Start Menu shortcut).
+$ErrorActionPreference = 'SilentlyContinue'
+
+# Color palette -- mirrors mios.toml [colors]. Hardcoded fallbacks
+# so this script works even when mios.toml isn't yet on disk.
+$accent = 'Cyan'      # operator blue (#1A407F)
+$muted  = 'DarkGray'  # silver
+$ok     = 'Green'     # wave green
+$warn   = 'Yellow'    # sunset orange
+
+function Header {
+    param([string]$T, [string]$Sub = '')
+    Write-Host ''
+    Write-Host "  $T" -ForegroundColor $accent
+    Write-Host ('  ' + ('─' * [math]::Min(76, $T.Length + 4))) -ForegroundColor $muted
+    if ($Sub) { Write-Host "  $Sub" -ForegroundColor $muted; Write-Host '' }
+}
+
+function Verb {
+    param([string]$V, [string]$D)
+    Write-Host ('  {0,-12} {1}' -f $V, $D) -ForegroundColor White
+}
+
+function Note {
+    param([string]$T)
+    Write-Host "  $T" -ForegroundColor $muted
+}
+
+Clear-Host
+Write-Host ''
+Write-Host '  ╭──────────────────────────────────────────────────────────────────────────╮' -ForegroundColor $accent
+Write-Host '  │                   MiOS  --  Help / Verb Reference                        │' -ForegroundColor $accent
+Write-Host '  │   Immutable Fedora AI Workstation  --  Self-replicating bootc OS         │' -ForegroundColor $accent
+Write-Host '  ╰──────────────────────────────────────────────────────────────────────────╯' -ForegroundColor $accent
+
+Header 'Core verbs' 'Type any of these in a MiOS terminal, OR click the matching Start Menu shortcut.'
+Verb 'mios'         '(no arg) -- open this help; runs `mios help` by default'
+Verb 'mios build'   'Promote Downloads edits, sync the overlay, SSH into MiOS-DEV,'
+Note '               ignite mios-build-driver -- the full OCI build pipeline.'
+Verb 'mios config'  'Open the HTML configurator (mios.toml editor) in your browser.'
+Note '               Edit identity, AI, packages, ports, services, theme, etc.'
+Verb 'mios dash'    'Render the framed MiOS dashboard (banner + fastfetch + verbs).'
+Verb 'mios dev'     'Drop into the MiOS-DEV podman machine as user `mios` at /.'
+Verb 'mios pull'    'git fetch + hard reset M:\ overlay to origin/main (no rebuild).'
+Verb 'mios update'  'Re-run the bootstrap (cache-busted) -- refresh terminal + dev VM.'
+Verb 'mios help'    'This list.'
+
+Header 'Native Windows apps' 'Each verb is also a Start Menu / Desktop shortcut.'
+Verb 'MiOS'              'The MiOS terminal. Themed Windows Terminal MiOS profile, 80x20,'
+Note '                    acrylic 50%%, MiOS color palette, oh-my-posh + dashboard on'
+Note '                    every launch. Right-click -> Pin to Start / Pin to Taskbar.'
+Verb 'MiOS-DEV'          'Drops you into the MiOS-DEV podman machine immediately.'
+Verb 'MiOS Build'        'Same as `mios build` -- one-click build trigger.'
+Verb 'MiOS Configurator' 'Opens mios.html (the configurator) in the default browser.'
+Verb 'MiOS Dashboard'    'Same as `mios dash` -- one-click dashboard render.'
+Verb 'MiOS Update'       'Same as `mios update`.'
+Verb 'MiOS Pull'         'Same as `mios pull`.'
+Verb 'MiOS Help'         'This help screen, as a clickable app.'
+
+Header 'How MiOS is laid out' 'Every operator-tunable value lives in mios.toml.'
+Note '   M:\                            Data partition (256 GB NTFS, label MIOS-DEV)'
+Note '   M:\MiOS\bin\                   Verb scripts (mios-build, mios-dev, mios-help, ...)'
+Note '   M:\MiOS\repo\mios              The mios.git working tree (`.git IS /` on deploy)'
+Note '   M:\MiOS\repo\mios-bootstrap    The mios-bootstrap.git working tree'
+Note '   M:\etc\mios\mios.toml          Host overlay (operator overrides)'
+Note '   M:\usr\share\mios\mios.toml    Vendor SSOT (default values)'
+Note '   M:\MiOS\themes\mios.omp.json   oh-my-posh theme (MiOS palette)'
+Note '   M:\MiOS\powershell\profile.ps1 PowerShell profile (dashboard + oh-my-posh init)'
+Note '   M:\MiOS\fastfetch\config.jsonc fastfetch theme (banner + system info)'
+
+Header 'The Day-0 -> Day-N self-replication flow'
+Note '   Day-0 (Windows host): irm | iex Get-MiOS.ps1'
+Note '          -> ack + M:\ provision + Podman Desktop + MiOS-DEV machine'
+Note '          -> install Windows Terminal + pwsh 7 + Geist Mono + oh-my-posh'
+Note '          -> register MiOS as a native Windows app (Start Menu + Desktop)'
+Note '          -> STOP. Operator opens the MiOS app and types `mios build`.'
+Note ''
+Note '   `mios build` (operator-typed) -- triggers the full build pipeline:'
+Note '          -> promote Downloads/mios.toml edits to M:\etc\mios\mios.toml'
+Note '          -> mios-pull (sync M:\ to origin/main)'
+Note '          -> SSH into MiOS-DEV -> /usr/libexec/mios/mios-build-driver'
+Note '          -> overlay -> account -> install -> smoketest -> build -> deploy'
+Note '          -> bootc switch + reboot -> MiOS-DEV IS MiOS (full parity)'
+Note ''
+Note '   Day-N (inside MiOS-DEV / any Fedora bootc host):'
+Note '          -> dev environment runs INSIDE MiOS-DEV (Epiphany via WSLg)'
+Note '          -> dual-push: local Forgejo + GitHub -> CI/CD -> bootc switch'
+Note '          -> test deployments: Hyper-V, WSL2/g, QEMU, OCI, ISO, USB, RAW'
+
+Header 'Architectural laws (every contribution obeys these)'
+Note '   1. USR-OVER-ETC          static config in /usr/lib, /etc is admin-override only'
+Note '   2. NO /VAR WRITES AT BUILD   tmpfiles.d realises /var at first boot'
+Note '   3. GIT-MANAGED ROOT      `.git` IS `/` on every deployed host'
+Note '   4. BOOTC-CONTAINER-LINT  every build ends with `bootc container lint`'
+Note '   5. UNIFIED-AI-REDIRECTS  every OpenAI-API client targets MIOS_AI_ENDPOINT'
+Note '                            (default http://localhost:8080/v1 -- LocalAI Quadlet)'
+Note '   6. UNPRIVILEGED-QUADLETS every Quadlet declares User=, Group=, Delegate=yes'
+
+Header 'Where to dig deeper'
+Note '   mios.html    /usr/share/mios/configurator/index.html  (HTML editor for mios.toml)'
+Note '   AGENTS.md    M:\MiOS\repo\mios\AGENTS.md              (canonical agents.md doc)'
+Note '   README.md    M:\MiOS\repo\mios\README.md              (project overview)'
+Note '   GitHub       https://github.com/mios-dev/MiOS'
+Note ''
+Note '   Press any key to close...'
+[void]([System.Console]::ReadKey($true))
+'@
+    Set-Content -Path $helpPath -Value $helpScript -Encoding UTF8
+    Log-Ok "mios-help.ps1 (full verb + functionality reference) staged at $helpPath"
 
     # mios-build.ps1 -- THE operator-typed `mios build` verb. The Day-0
     # contract: Windows host does ack + MiOS-DEV provisioning, then
@@ -5775,13 +5895,21 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # not just as items inside the hub menu. Each shortcut targets the
     # corresponding bin/mios-*.ps1 script with its dedicated icon.
     # The main MiOS.lnk above stays as the unified hub.
+    # Per-verb shortcuts. (The 'MiOS' hub shortcut is created earlier
+    # at line ~5743 -- it IS the terminal: targets mios-launch.ps1
+    # which spawns wt.exe with the themed MiOS profile.) These six
+    # operator-tunable verbs + 'MiOS Help' round out the native-app
+    # surface. Every entry creates a Start Menu .lnk AND a Desktop
+    # .lnk so the operator can pin / drag whichever surface they
+    # want.
     $verbShortcuts = @(
-        @{ Name = 'MiOS-DEV';          Bin = 'mios-dev.ps1';    Icon = 'mios-dev.ico';    Desc = 'Enter the MiOS-DEV WSL2 distro (root shell)' },
+        @{ Name = 'MiOS-DEV';          Bin = 'mios-dev.ps1';    Icon = 'mios-dev.ico';    Desc = 'Enter the MiOS-DEV podman machine immediately (wsl into the dev VM as user mios)' },
         @{ Name = 'MiOS Build';        Bin = 'mios-build.ps1';  Icon = 'mios-build.ico';  Desc = 'Promote Downloads edits, sync overlay, SSH into MiOS-DEV and ignite mios-build-driver' },
         @{ Name = 'MiOS Dashboard';    Bin = 'mios-dash.ps1';   Icon = 'mios-dash.ico';   Desc = 'Live MiOS system view (services, fastfetch, git tree)' },
-        @{ Name = 'MiOS Configurator'; Bin = 'mios-config.ps1'; Icon = 'mios-config.ico'; Desc = 'Edit mios.toml in the GUI (Epiphany via WSLg)' },
-        @{ Name = 'MiOS Update';       Bin = 'mios-update.ps1'; Icon = 'mios-update.ico'; Desc = 'Re-run the MiOS bootstrap (refresh terminal + dev VM)' },
-        @{ Name = 'MiOS Pull';         Bin = 'mios-pull.ps1';   Icon = 'mios-pull.ico';   Desc = 'Sync M:\\ overlay to origin/main (mios-pull)' }
+        @{ Name = 'MiOS Configurator'; Bin = 'mios-config.ps1'; Icon = 'mios-config.ico'; Desc = 'Edit mios.toml in the HTML configurator (browser-side editor)' },
+        @{ Name = 'MiOS Update';       Bin = 'mios-update.ps1'; Icon = 'mios-update.ico'; Desc = 'Re-run the MiOS bootstrap (refresh terminal + dev VM, cache-busted)' },
+        @{ Name = 'MiOS Pull';         Bin = 'mios-pull.ps1';   Icon = 'mios-pull.ico';   Desc = 'Sync M:\\ overlay to origin/main (lightweight, no rebuild)' },
+        @{ Name = 'MiOS Help';         Bin = 'mios-help.ps1';   Icon = 'mios-help.ico';   Desc = 'Full verb + functionality reference (every MiOS command and where things live)' }
     )
     foreach ($v in $verbShortcuts) {
         $vBin   = Join-Path $MiosBinDir $v.Bin
@@ -5791,19 +5919,24 @@ if ($hwnd -ne [IntPtr]::Zero) {
         # Verbs that don't drop into a shell (Configurator launches
         # Epiphany, Pull is one-shot) close after running -- use pwsh
         # without -NoExit. MiOS-DEV intentionally lands in the WSL
-        # shell and stays there. Dashboard / Update / Build keep their
-        # output visible via -NoExit so the operator can read what
-        # happened (especially mios-build, which streams the dev-VM
-        # build-driver output and exits when the build completes).
-        if ($v.Name -in @('MiOS-DEV')) {
+        # shell and stays there. Dashboard / Update / Build / Help
+        # keep their output visible via -NoExit.
+        if ($v.Name -eq 'MiOS-DEV') {
             # mios-dev.ps1 wraps wsl.exe; the WSL session itself keeps
             # the window alive, no -NoExit needed.
             $vArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
-        } elseif ($v.Name -in @('MiOS Build','MiOS Dashboard','MiOS Update')) {
+        } elseif ($v.Name -in @('MiOS Build','MiOS Dashboard','MiOS Update','MiOS Help')) {
             $vArgs = "-NoProfile -NoExit -ExecutionPolicy Bypass -File `"$vBin`""
         }
+
+        # Start Menu (admin-installed all-users path).
         New-MiosShortcut -LnkPath $vLnk -TargetExe $pwshExe -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
-        Log-Ok ("Per-verb Start Menu shortcut: {0} -> {1}" -f $v.Name, $v.Bin)
+        # Desktop -- so every verb is also one click from the desktop.
+        if ($desktopDir -and (Test-Path $desktopDir)) {
+            $vDesk = Join-Path $desktopDir ("{0}.lnk" -f $v.Name)
+            New-MiosShortcut -LnkPath $vDesk -TargetExe $pwshExe -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
+        }
+        Log-Ok ("Per-verb Start Menu + Desktop shortcut: {0} -> {1}" -f $v.Name, $v.Bin)
     }
 
     # Garbage-collect any stale shortcuts from earlier revisions whose
