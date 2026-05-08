@@ -76,10 +76,24 @@ function Resolve-MiosTomlText {
     )) {
         if ($p -and (Test-Path -LiteralPath $p)) {
             try {
-                $script:_MiosTomlCache['_text']   = Get-Content -LiteralPath $p -Raw -ErrorAction Stop
+                # Read as UTF-8. PS 5.1's Get-Content default is the
+                # system ANSI codepage (cp1252 on en-US) which decoded
+                # the UTF-8 PUA glyphs in [theme.prompt] as 3-char
+                # mojibake (the U+E0B4 cap's bytes EE 82 B4 became
+                # 'î‚´'). The omp.json glyph substitution then took
+                # 'î' as the cap and wrote U+00EE into the deployed
+                # theme, producing operator-reported "powerline seconds
+                # are shifted to the next row" + 'î' instead of ''.
+                $script:_MiosTomlCache['_text']   = [IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false)))
                 $script:_MiosTomlCache['_source'] = $p
                 return $script:_MiosTomlCache['_text']
-            } catch {}
+            } catch {
+                try {
+                    $script:_MiosTomlCache['_text']   = Get-Content -LiteralPath $p -Raw -Encoding UTF8 -ErrorAction Stop
+                    $script:_MiosTomlCache['_source'] = $p
+                    return $script:_MiosTomlCache['_text']
+                } catch {}
+            }
         }
     }
     try {
@@ -4821,7 +4835,7 @@ function Install-MiosWindowsTools {
     foreach ($cand in @('M:\etc\mios\mios.toml', 'M:\usr\share\mios\mios.toml', (Join-Path $MiosBootstrapShadow 'mios.toml'))) {
         if (Test-Path -LiteralPath $cand) {
             try {
-                $tomlText = Get-Content -LiteralPath $cand -Raw -ErrorAction Stop
+                $tomlText = [IO.File]::ReadAllText($cand, (New-Object System.Text.UTF8Encoding($false)))
                 Log-Ok "[packages.windows] sourced from: $cand"
                 break
             } catch {}
@@ -5545,7 +5559,32 @@ $ErrorActionPreference = 'SilentlyContinue'
 # Self-locate the MiOS install root (this script is at <root>\bin\mios-dash.ps1).
 $Script:MiOSRoot = Split-Path -Parent $PSScriptRoot
 
-$WIDTH = 80
+# Frame width: read [terminal].cols + [terminal].right_margin from
+# mios.toml at runtime so the operator's mios.html edits flow through
+# without rebuilding. Vendor defaults: cols=80, right_margin=2 -> total
+# frame width 78 (matches Get-MiOS.ps1's Show-MiOSBanner). Operator
+# reported "framing too wide STILL" with the previous hardcoded 80 ->
+# the previous setting consumed the entire 80-col terminal width with
+# no slack and WT's pseudo-console reported width 1 cell over visible
+# during first paint, so the right frame char wrapped.
+$_dashCols = 80; $_dashRightMargin = 2
+foreach ($_dashTomlPath in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $Script:MiOSRoot 'usr\share\mios\mios.toml'))) {
+    if (Test-Path -LiteralPath $_dashTomlPath) {
+        try {
+            $_dashTomlText = [IO.File]::ReadAllText($_dashTomlPath, (New-Object System.Text.UTF8Encoding($false)))
+            $_dashTermSection = [regex]::Match($_dashTomlText, '(?ms)^\[terminal\]\s*$(?<body>.*?)(?=^\[|\z)')
+            if ($_dashTermSection.Success) {
+                $_dashBody = $_dashTermSection.Groups['body'].Value
+                $_dashColsM = [regex]::Match($_dashBody, '(?m)^\s*cols\s*=\s*(?<v>\d+)')
+                if ($_dashColsM.Success) { $_dashCols = [int]$_dashColsM.Groups['v'].Value }
+                $_dashRMM = [regex]::Match($_dashBody, '(?m)^\s*right_margin\s*=\s*(?<v>\d+)')
+                if ($_dashRMM.Success) { $_dashRightMargin = [int]$_dashRMM.Groups['v'].Value }
+            }
+            break
+        } catch {}
+    }
+}
+$WIDTH = [math]::Max(20, $_dashCols - $_dashRightMargin)
 $INNER = $WIDTH - 4
 $F_TL = [char]0x256D; $F_TR = [char]0x256E
 $F_BL = [char]0x2570; $F_BR = [char]0x256F
@@ -6756,7 +6795,7 @@ class MiOSLaunch {
     try {
         $_appsTomlText = $null
         foreach ($_cand in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $MiosBootstrapShadow 'mios.toml'),'C:\MiOS\usr\share\mios\mios.toml')) {
-            if (Test-Path -LiteralPath $_cand) { try { $_appsTomlText = Get-Content -LiteralPath $_cand -Raw -ErrorAction Stop; break } catch {} }
+            if (Test-Path -LiteralPath $_cand) { try { $_appsTomlText = [IO.File]::ReadAllText($_cand, (New-Object System.Text.UTF8Encoding($false))); break } catch {} }
         }
         if ($_appsTomlText) {
             # Source of truth: [apps.shortcuts] -- not [apps] (which holds
@@ -7616,7 +7655,7 @@ if ($activeDistro) {
     foreach ($p in $devVmTomlCands) {
         if (-not (Test-Path -LiteralPath $p)) { continue }
         try {
-            $tomlText = Get-Content -LiteralPath $p -Raw -ErrorAction Stop
+            $tomlText = [IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false)))
             $rx = '(?ms)^\[packages\.dev_vm_essentials\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
             $m  = [regex]::Match($tomlText, $rx)
             if ($m.Success) {
@@ -7998,7 +8037,7 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
         )
         $_tomlText = $null
         foreach ($_cand in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $MiosBootstrapShadow 'mios.toml'))) {
-            if (Test-Path -LiteralPath $_cand) { try { $_tomlText = Get-Content -LiteralPath $_cand -Raw -ErrorAction Stop; break } catch {} }
+            if (Test-Path -LiteralPath $_cand) { try { $_tomlText = [IO.File]::ReadAllText($_cand, (New-Object System.Text.UTF8Encoding($false))); break } catch {} }
         }
         if ($_tomlText) {
             $_verbsBlock = [regex]::Match($_tomlText, '(?ms)^\[verbs\]\s*\r?\n(.*?)(?=^\[|\z)')

@@ -242,10 +242,27 @@ function Resolve-MiosTomlText {
     foreach ($p in $candidates) {
         if ($p -and (Test-Path -LiteralPath $p)) {
             try {
-                $script:_MiosTomlCache['_text']   = Get-Content -LiteralPath $p -Raw -ErrorAction Stop
+                # Read as UTF-8 explicitly. PS 5.1's Get-Content default
+                # is the system ANSI codepage (cp1252 on en-US), which
+                # decoded the UTF-8 PUA glyphs in [theme.prompt] as 3-char
+                # mojibake (U+E0B4's bytes EE 82 B4 became 'î‚´'). My
+                # substitution code then took $s[0]='î' as the glyph and
+                # wrote 'î' into the deployed omp.json, which
+                # rendered the operator's prompt as 'pwsh î M:\ î ...'.
+                # ReadAllText with explicit UTF8Encoding always decodes
+                # the file as UTF-8 regardless of PS version / locale.
+                $script:_MiosTomlCache['_text']   = [IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false)))
                 $script:_MiosTomlCache['_source'] = $p
                 return $script:_MiosTomlCache['_text']
-            } catch {}
+            } catch {
+                # Fallback to PS Get-Content if ReadAllText throws (e.g.
+                # path contains characters PS handles but .NET doesn't).
+                try {
+                    $script:_MiosTomlCache['_text']   = Get-Content -LiteralPath $p -Raw -Encoding UTF8 -ErrorAction Stop
+                    $script:_MiosTomlCache['_source'] = $p
+                    return $script:_MiosTomlCache['_text']
+                } catch {}
+            }
         }
     }
     # Cold first-run: pull origin.
@@ -386,7 +403,16 @@ function Show-MiOSBanner {
         '     \/__/                     \/__/         \/__/'
     )
     $sub = if ($Subtitle) { $Subtitle } else { Get-MiosTomlValue -Section 'branding' -Key 'tagline' -Default 'Immutable Fedora AI Workstation' }
-    $inner = 78
+    # Width: cols - right_margin - 2 frame chars. SSOT from mios.toml.
+    # Operator reported "framing too wide STILL" at the previous hard-
+    # coded inner=78 (total=80) -- that totaled the entire 80-col
+    # terminal width with no slack, and WT's pseudo-console
+    # over-reports by 1 cell during the first paint, so the right
+    # frame char wrapped. inner = cols - right_margin - 2 always
+    # leaves right_margin cells of slack on the right edge.
+    $_bCols      = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols'         -Default (Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80)
+    $_bRightMgn  = Get-MiosTomlValue -Section 'terminal'         -Key 'right_margin' -Default 2
+    $inner = [math]::Max(20, $_bCols - $_bRightMgn - 2)
     # Block-center: pad every art line by the SAME left-pad so internal
     # diagonal alignment is preserved.
     $maxArt = ($art | Measure-Object -Property Length -Maximum).Maximum
@@ -2886,8 +2912,17 @@ function Install-MiOSPowerShellProfile {
     # visible. mios.toml [terminal].frame_width is the SSOT; the
     # configurator HTML exposes this for operator override.
     # frame_height stays rows-1 so one row is reserved for the prompt.
-    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default ($_miosCols - 1)
+    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default ($_miosCols - 2)
     $_miosFrameH  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default ($_miosRows - 1)
+    # right_margin: cells of slack between the rightmost paintable cell
+    # and the rightmost cell the dashboard frame / right-aligned prompt
+    # block writes to. Default 2 because the operator reported "framing
+    # too wide STILL" with the previous cols-1 (1 cell) margin -- WT's
+    # pseudo-console reports WindowWidth 1 cell over the visible/
+    # paintable cell count during the first paint (before the
+    # scrollbarState='hidden' setting and its scrollbar-reservation
+    # release have taken effect). cols-2 always avoids wrap.
+    $_miosRightMargin = Get-MiosTomlValue -Section 'terminal' -Key 'right_margin' -Default 2
     $miosScriptBody = @"
 # MiOS PowerShell profile -- PSReadLine reload + fastfetch MOTD +
 # oh-my-posh init.
@@ -3069,7 +3104,13 @@ if (`$true) {
         # regardless of WT version / DPI quirks. The TOML frame_width
         # remains the upper cap so operators can pin a narrower frame.
         `$_winWNow = try { [Console]::WindowWidth } catch { $_miosFrameW }
-        `$WIDTH = [math]::Min((`$_winWNow - 1), $_miosFrameW)
+        # WIDTH = MIN(live conhost width - right_margin, mios.toml frame_width).
+        # right_margin from mios.toml [terminal].right_margin (default 2) --
+        # the operator reported "framing too wide STILL" with margin=1
+        # because WT's pseudo-console reports the window width 1 cell
+        # over the visible cells before scrollbarState='hidden' takes
+        # effect. margin=2 guarantees no wrap regardless of WT timing.
+        `$WIDTH = [math]::Min((`$_winWNow - $_miosRightMargin), $_miosFrameW)
         if (`$WIDTH -lt 20) { `$WIDTH = $_miosFrameW }   # safety floor
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
