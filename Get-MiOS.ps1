@@ -2204,10 +2204,14 @@ $Script:MiosOmpJson = @'
       "alignment": "left",
       "segments": [
         {
+          "//": "Leading rounded cap (U+E0B6) so the colored powerline starts at col 0 of the frameless MiOS terminal -- replaces the previous plain '\u256d\u2500' text prefix that left cols 0-2 uncolored. The shell segment merges into this leading cap because both share the #1A407F background.",
           "type": "text",
-          "style": "plain",
-          "foreground": "#B7C9D7",
-          "template": "\u256d\u2500"
+          "style": "diamond",
+          "leading_diamond": "\ue0b6",
+          "trailing_diamond": "",
+          "background": "#1A407F",
+          "foreground": "#E7DFD3",
+          "template": ""
         },
         {
           "type": "shell",
@@ -2397,18 +2401,24 @@ $Script:MiosOmpJson = @'
       "newline": true,
       "segments": [
         {
+          "//": "Second-line leading rounded cap matches the first line so the colored powerline reaches col 0. Status segment is plain (no background) so the cap renders alone.",
           "type": "text",
-          "style": "plain",
-          "foreground": "#B7C9D7",
-          "template": "\u2570\u2500"
+          "style": "diamond",
+          "leading_diamond": "",
+          "trailing_diamond": "",
+          "background": "#3E7765",
+          "foreground": "#E7DFD3",
+          "template": ""
         },
         {
           "type": "status",
-          "style": "plain",
-          "foreground": "#3E7765",
-          "foreground_templates": [
+          "style": "powerline",
+          "powerline_symbol": "",
+          "background": "#3E7765",
+          "background_templates": [
             "{{ if gt .Code 0 }}#DC271B{{ end }}"
           ],
+          "foreground": "#E7DFD3",
           "properties": {
             "always_enabled": true
           },
