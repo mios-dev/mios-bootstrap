@@ -2820,13 +2820,17 @@ function Install-MiOSPowerShellProfile {
     $_miosCols    = Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80
     $_miosRows    = Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 20
     $_miosScroll  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
-    # frame_width default is cols-2 (operator-confirmed): the dashboard
-    # box leaves a 1-column gutter on the left AND right of the 80-col
-    # terminal so the box doesn't visually crowd the edges. mios.toml
-    # [terminal].frame_width is the SSOT; the configurator HTML exposes
-    # this for operator override. frame_height stays rows-1 so one row
-    # is reserved for the prompt under the dashboard.
-    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default ($_miosCols - 2)
+    # frame_width default is COLS (full window width) so the framed
+    # dashboard reaches both edges of the frameless terminal -- matching
+    # the powerline which extends col 0 (leading rounded cap) to col 79
+    # (trailing rounded cap). Operator-reported regression: "dashboard
+    # framing is too narrow ... powerline doesn't reach the right side
+    # (just like the dashboard framing)". The previous cols-2 default
+    # left 2 cells of slack on the right edge. mios.toml [terminal].
+    # frame_width is the SSOT; the configurator HTML exposes this for
+    # operator override. frame_height stays rows-1 so one row is
+    # reserved for the prompt under the dashboard.
+    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default $_miosCols
     $_miosFrameH  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default ($_miosRows - 1)
     $miosScriptBody = @"
 # MiOS PowerShell profile -- PSReadLine reload + fastfetch MOTD +
