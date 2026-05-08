@@ -5771,13 +5771,34 @@ if (Test-Path `$bootstrapBs) {
 "@
     Set-Content -Path $updatePath -Value $updateScript -Encoding UTF8
 
-    # mios-config.ps1 -- opens the HTML configurator in default browser.
+    # mios-config.ps1 -- opens the HTML configurator in the operator's
+    # default browser. Walks a candidate list so we hit the M:\ overlay
+    # (canonical operator-edit copy) first, then bootstrap-shadow, then
+    # legacy paths. Per operator: "have the MiOS config link open the
+    # webpage directly in the local browser (opens the mios.html
+    # directly installed on the newly created M:\ directories)".
     $cfgPath = Join-Path $MiosBinDir 'mios-config.ps1'
-    $cfgHtml = Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\mios.html'
+    $_shadowCfg = (Join-Path $MiosBootstrapShadow 'usr\share\mios\configurator\mios.html') -replace '\\','\\'
+    $_legacyCfg = (Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\mios.html') -replace '\\','\\'
     $cfgScript = @"
-`$cfg = "$cfgHtml"
-if (Test-Path `$cfg) { Start-Process `$cfg }
-else { Write-Host "configurator not found at `$cfg" -ForegroundColor Yellow }
+# mios-config.ps1 -- the `mios config` verb / MiOS Config app.
+# Resolves mios.html in priority order and shell-executes it so the
+# operator's default browser opens the page. Edit fields, save -- the
+# browser writes a copy to %USERPROFILE%\Downloads; `mios build` step 2
+# promotes it back to M:\etc\mios + M:\usr\share\mios.
+`$_candidates = @(
+    'M:\usr\share\mios\configurator\mios.html',
+    "$_shadowCfg",
+    "$_legacyCfg"
+)
+`$_html = `$null
+foreach (`$_c in `$_candidates) { if (`$_c -and (Test-Path -LiteralPath `$_c)) { `$_html = `$_c; break } }
+if (`$_html) { Start-Process `$_html }
+else {
+    Write-Host "MiOS configurator HTML not found. Tried:" -ForegroundColor Yellow
+    foreach (`$_c in `$_candidates) { Write-Host "  `$_c" -ForegroundColor DarkGray }
+    Write-Host "Run 'mios update' to refresh the M:\ overlay." -ForegroundColor DarkGray
+}
 "@
     Set-Content -Path $cfgPath -Value $cfgScript -Encoding UTF8
 
@@ -6752,15 +6773,33 @@ class MiOSLaunch {
                 }
             }
             'MiOS Config' {
-                # Resolve mios.html directly so the .lnk targets the file
-                # (Windows shell-execute opens it in the default browser
-                # with no console flash). Falls back to the launcher
-                # script if the html isn't on disk yet.
-                $_cfgHtml = Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\mios.html'
-                if (Test-Path -LiteralPath $_cfgHtml) {
+                # Operator: "have the MiOS config link open the webpage
+                # directly in the local browser (opens the mios.html
+                # directly installed on the newly created M:\
+                # directories)". Resolve the mios.html that was overlaid
+                # at M:\ root by the mios.git Phase-2 overlay -- THAT's
+                # the canonical operator-edit copy. Fall back to the
+                # mios-bootstrap shadow copy then to the launcher script
+                # as last-ditch.
+                $_cfgCandidates = @(
+                    'M:\usr\share\mios\configurator\mios.html',         # canonical mios.git overlay (Phase 2)
+                    (Join-Path $MiosBootstrapShadow 'usr\share\mios\configurator\mios.html'),  # bootstrap shadow
+                    (Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\mios.html')      # legacy share-dir layout
+                )
+                $_cfgHtml = $null
+                foreach ($_cand in $_cfgCandidates) {
+                    if ($_cand -and (Test-Path -LiteralPath $_cand)) { $_cfgHtml = $_cand; break }
+                }
+                if ($_cfgHtml) {
+                    # .lnk targets the .html directly. Windows shell-
+                    # execute opens it in the default browser, ZERO
+                    # console flash. Operator can edit form fields,
+                    # browser saves a copy to %USERPROFILE%\Downloads,
+                    # `mios build` step 2 promotes it back to M:\.
                     $vTarget = $_cfgHtml
                     $vArgs   = ''
                 } else {
+                    Log-Warn "MiOS Config: mios.html not found at any candidate -- shortcut falls back to mios-config.ps1"
                     $vTarget = $pwshExe
                     $vArgs   = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
                 }
