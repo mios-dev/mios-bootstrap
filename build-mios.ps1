@@ -2129,8 +2129,21 @@ function Get-Hardware {
     $hasNvidia = $gpuNames -match "NVIDIA|GeForce|Quadro|RTX|GTX|Tesla"
     $hasAmd    = $gpuNames -match "AMD|Radeon|RX |R[5-9] |Vega|Navi"
     $hasIntel  = $gpuNames -match "Intel|Iris|UHD Graphics|HD Graphics"
-    $baseImage = if ($hasNvidia) { "ghcr.io/ublue-os/ucore-hci:stable-nvidia" } else { "ghcr.io/ublue-os/ucore-hci:stable" }
-    $aiModel   = if ($hostRamGB -ge 32) { "qwen2.5-coder:14b" } elseif ($hostRamGB -ge 12) { "qwen2.5-coder:7b" } else { "phi4-mini:3.8b-q4_K_M" }
+    # Base image variants resolve through mios.toml [image].base_nvidia /
+    # base_no_nvidia (SSOT). Operators can swap upstreams (ucore-minimal,
+    # fedora-bootc, etc.) via mios.html without touching code.
+    $_baseNvidia   = Get-MiosTomlValue -Section 'image' -Key 'base_nvidia'    -Default 'ghcr.io/ublue-os/ucore-hci:stable-nvidia'
+    $_baseNoNvidia = Get-MiosTomlValue -Section 'image' -Key 'base_no_nvidia' -Default 'ghcr.io/ublue-os/ucore-hci:stable'
+    $baseImage     = if ($hasNvidia) { $_baseNvidia } else { $_baseNoNvidia }
+    # AI model auto-pick by host RAM. Thresholds + model IDs from mios.toml
+    # [ai.host_thresholds] (NEW). Operators tune the cutoffs or swap to a
+    # different family (mistral / llama / etc.) via mios.html.
+    $_aiBig    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_gb'        -Default 32
+    $_aiMid    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_gb'        -Default 12
+    $_aiBigM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_model'     -Default 'qwen2.5-coder:14b'
+    $_aiMidM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_model'     -Default 'qwen2.5-coder:7b'
+    $_aiSmallM = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'small_ram_model'   -Default 'phi4-mini:3.8b-q4_K_M'
+    $aiModel   = if ($hostRamGB -ge $_aiBig) { $_aiBigM } elseif ($hostRamGB -ge $_aiMid) { $_aiMidM } else { $_aiSmallM }
 
     # Free space on the data disk (M:\ if provisioned, else C:\). The
     # dev VM's VHDX lives on M:\ when Initialize-MiosDataDisk has run.
@@ -2401,8 +2414,11 @@ function Get-PodmanMachineOsImage {
     # the format from the extension alone.
     [CmdletBinding()]
     param(
-        [string]$Repo = 'quay.io/podman/machine-os',
-        [string]$Tag  = '6.0',
+        # Default Repo + Tag resolve through mios.toml [image].machine_os_repo
+        # / .machine_os_tag (SSOT). Hardcoded fallbacks below are vendor
+        # defaults only -- operators bump the tag (6.0 -> 6.1) via mios.html.
+        [string]$Repo = (Get-MiosTomlValue -Section 'image' -Key 'machine_os_repo' -Default 'quay.io/podman/machine-os'),
+        [string]$Tag  = (Get-MiosTomlValue -Section 'image' -Key 'machine_os_tag'  -Default '6.0'),
         [string]$Architecture = 'x86_64',
         [string]$DiskType = 'wsl',
         [Parameter(Mandatory)] [string]$CacheDir
