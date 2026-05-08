@@ -4749,7 +4749,7 @@ function New-MiosIcon {
     # disambiguates verbs (mios-build vs mios-pull etc.).
     param(
         [Parameter(Mandatory)] [string] $Path,
-        [ValidateSet('plain','dev','pull','dash','build','update','config')] [string] $Badge = 'plain'
+        [ValidateSet('plain','dev','pull','dash','build','update','config','help')] [string] $Badge = 'plain'
     )
     Add-Type -AssemblyName System.Drawing -ErrorAction Stop
     $sizes = @(16, 32, 48, 64, 256)

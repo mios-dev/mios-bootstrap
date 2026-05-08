@@ -508,27 +508,44 @@ Invoke-MiOSAgreementGate | Out-Null
 # overlay). An operator edit in mios.html flows through to this
 # palette without touching any PS1.
 function Get-MiosPalette {
+    # DEFENSIVE color resolution. Every WT scheme field MUST be a valid
+    # `#rrggbb` or `#rgb` hex string -- WT rejects the entire
+    # settings.json with "Line N column N (foreground) Have: ""
+    # Expected: color" if ANY field is empty or malformed, falling back
+    # to bare WT defaults (the operator-reported "no theme / no acrylic
+    # / no MiOS profile" symptom -- WT silently dropped the broken
+    # MiOS scheme). The _hex helper below accepts the TOML value, then
+    # ALWAYS returns a valid hex color: if the resolved value is empty
+    # / null / malformed, it returns the hardcoded fallback instead.
+    function _hex {
+        param([string]$Section, [string]$Key, [string]$Fallback)
+        $v = (Get-MiosTomlValue -Section $Section -Key $Key -Default $Fallback)
+        if (-not $v -or [string]::IsNullOrWhiteSpace($v)) { return $Fallback }
+        $v = $v.Trim()
+        if ($v -notmatch '^#[0-9A-Fa-f]{3,8}$') { return $Fallback }
+        return $v
+    }
     @{
-        bg                = (Get-MiosTomlValue -Section 'colors' -Key 'bg'                       -Default '#282262')
-        fg                = (Get-MiosTomlValue -Section 'colors' -Key 'fg'                       -Default '#E7DFD3')
-        accent            = (Get-MiosTomlValue -Section 'colors' -Key 'accent'                   -Default '#1A407F')
-        cursor            = (Get-MiosTomlValue -Section 'colors' -Key 'cursor'                   -Default '#F35C15')
-        ansi_0_black      = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_0_black'             -Default '#282262')
-        ansi_1_red        = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_1_red'               -Default '#DC271B')
-        ansi_2_green      = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_2_green'             -Default '#3E7765')
-        ansi_3_yellow     = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_3_yellow'            -Default '#F35C15')
-        ansi_4_blue       = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_4_blue'              -Default '#1A407F')
-        ansi_5_magenta    = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_5_magenta'           -Default '#734F39')
-        ansi_6_cyan       = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_6_cyan'              -Default '#B7C9D7')
-        ansi_7_white      = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_7_white'             -Default '#E7DFD3')
-        ansi_8_brblack    = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_8_bright_black'      -Default '#948E8E')
-        ansi_9_brred      = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_9_bright_red'        -Default '#FF6B5C')
-        ansi_10_brgreen   = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_10_bright_green'     -Default '#5FAA8E')
-        ansi_11_bryellow  = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_11_bright_yellow'    -Default '#FF8540')
-        ansi_12_brblue    = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_12_bright_blue'      -Default '#3D6BA8')
-        ansi_13_brmagenta = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_13_bright_magenta'   -Default '#9D7660')
-        ansi_14_brcyan    = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_14_bright_cyan'      -Default '#E0E0E0')
-        ansi_15_brwhite   = (Get-MiosTomlValue -Section 'colors' -Key 'ansi_15_bright_white'     -Default '#FFFFFF')
+        bg                = (_hex 'colors' 'bg'                       '#282262')
+        fg                = (_hex 'colors' 'fg'                       '#E7DFD3')
+        accent            = (_hex 'colors' 'accent'                   '#1A407F')
+        cursor            = (_hex 'colors' 'cursor'                   '#F35C15')
+        ansi_0_black      = (_hex 'colors' 'ansi_0_black'             '#282262')
+        ansi_1_red        = (_hex 'colors' 'ansi_1_red'               '#DC271B')
+        ansi_2_green      = (_hex 'colors' 'ansi_2_green'             '#3E7765')
+        ansi_3_yellow     = (_hex 'colors' 'ansi_3_yellow'            '#F35C15')
+        ansi_4_blue       = (_hex 'colors' 'ansi_4_blue'              '#1A407F')
+        ansi_5_magenta    = (_hex 'colors' 'ansi_5_magenta'           '#734F39')
+        ansi_6_cyan       = (_hex 'colors' 'ansi_6_cyan'              '#B7C9D7')
+        ansi_7_white      = (_hex 'colors' 'ansi_7_white'             '#E7DFD3')
+        ansi_8_brblack    = (_hex 'colors' 'ansi_8_bright_black'      '#948E8E')
+        ansi_9_brred      = (_hex 'colors' 'ansi_9_bright_red'        '#FF6B5C')
+        ansi_10_brgreen   = (_hex 'colors' 'ansi_10_bright_green'     '#5FAA8E')
+        ansi_11_bryellow  = (_hex 'colors' 'ansi_11_bright_yellow'    '#FF8540')
+        ansi_12_brblue    = (_hex 'colors' 'ansi_12_bright_blue'      '#3D6BA8')
+        ansi_13_brmagenta = (_hex 'colors' 'ansi_13_bright_magenta'   '#9D7660')
+        ansi_14_brcyan    = (_hex 'colors' 'ansi_14_bright_cyan'      '#E0E0E0')
+        ansi_15_brwhite   = (_hex 'colors' 'ansi_15_bright_white'     '#FFFFFF')
     }
 }
 $Script:MiosPalette = Get-MiosPalette
@@ -833,29 +850,44 @@ function Install-MiOSTerminalProfile {
     # profile list with a new entry every time.
     $miosGuid = '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}'
 
-    $palette = $Script:MiosPalette
+    # Re-resolve the palette HERE (in case $Script:MiosPalette was cached
+    # before the M:\ TOML existed -- file-load-time evaluation of
+    # Get-MiosPalette can hit the cold-fetch path which may have failed
+    # silently). Then guard EVERY field with the same hex-fallback the
+    # palette resolver applies, so a stale/empty cached value can't leak
+    # into the WT scheme and trigger WT's "Line N column N (foreground)
+    # Have: '' Expected: color" rejection -- which falls back the entire
+    # settings.json to defaults (no MiOS profile, no acrylic, no scheme).
+    $palette = Get-MiosPalette
+    function _miosSchemeColor {
+        param($Value, [string]$Fallback)
+        if (-not $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) { return $Fallback }
+        $v = ([string]$Value).Trim()
+        if ($v -notmatch '^#[0-9A-Fa-f]{3,8}$') { return $Fallback }
+        return $v
+    }
     $miosScheme = [ordered]@{
         name                = 'MiOS'
-        background          = $palette.bg
-        foreground          = $palette.fg
-        cursorColor         = $palette.cursor
-        selectionBackground = $palette.accent
-        black               = $palette.ansi_0_black
-        red                 = $palette.ansi_1_red
-        green               = $palette.ansi_2_green
-        yellow              = $palette.ansi_3_yellow
-        blue                = $palette.ansi_4_blue
-        purple              = $palette.ansi_5_magenta
-        cyan                = $palette.ansi_6_cyan
-        white               = $palette.ansi_7_white
-        brightBlack         = $palette.ansi_8_brblack
-        brightRed           = $palette.ansi_9_brred
-        brightGreen         = $palette.ansi_10_brgreen
-        brightYellow        = $palette.ansi_11_bryellow
-        brightBlue          = $palette.ansi_12_brblue
-        brightPurple        = $palette.ansi_13_brmagenta
-        brightCyan          = $palette.ansi_14_brcyan
-        brightWhite         = $palette.ansi_15_brwhite
+        background          = (_miosSchemeColor $palette.bg                '#282262')
+        foreground          = (_miosSchemeColor $palette.fg                '#E7DFD3')
+        cursorColor         = (_miosSchemeColor $palette.cursor            '#F35C15')
+        selectionBackground = (_miosSchemeColor $palette.accent            '#1A407F')
+        black               = (_miosSchemeColor $palette.ansi_0_black      '#282262')
+        red                 = (_miosSchemeColor $palette.ansi_1_red        '#DC271B')
+        green               = (_miosSchemeColor $palette.ansi_2_green      '#3E7765')
+        yellow              = (_miosSchemeColor $palette.ansi_3_yellow     '#F35C15')
+        blue                = (_miosSchemeColor $palette.ansi_4_blue       '#1A407F')
+        purple              = (_miosSchemeColor $palette.ansi_5_magenta    '#734F39')
+        cyan                = (_miosSchemeColor $palette.ansi_6_cyan       '#B7C9D7')
+        white               = (_miosSchemeColor $palette.ansi_7_white      '#E7DFD3')
+        brightBlack         = (_miosSchemeColor $palette.ansi_8_brblack    '#948E8E')
+        brightRed           = (_miosSchemeColor $palette.ansi_9_brred      '#FF6B5C')
+        brightGreen         = (_miosSchemeColor $palette.ansi_10_brgreen   '#5FAA8E')
+        brightYellow        = (_miosSchemeColor $palette.ansi_11_bryellow  '#FF8540')
+        brightBlue          = (_miosSchemeColor $palette.ansi_12_brblue    '#3D6BA8')
+        brightPurple        = (_miosSchemeColor $palette.ansi_13_brmagenta '#9D7660')
+        brightCyan          = (_miosSchemeColor $palette.ansi_14_brcyan    '#E0E0E0')
+        brightWhite         = (_miosSchemeColor $palette.ansi_15_brwhite   '#FFFFFF')
     }
 
     # Profile commandline: pwsh -NoLogo -NoExit -Command ". 'M:\...'".
