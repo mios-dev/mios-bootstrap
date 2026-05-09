@@ -754,9 +754,17 @@ $_isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIde
             ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     Write-Host ''
-    Write-Host '  [*] MiOS bootstrap requires admin (M:\ partition + Podman + dev VM).' -ForegroundColor Cyan
-    Write-Host '  [*] Triggering UAC -- accept to continue. The install will then run' -ForegroundColor Cyan
-    Write-Host '      in the elevated window, single prompt only.' -ForegroundColor DarkGray
+    # Pass-1 -> Pass-2 UAC handoff prompt strings resolve through
+    # mios.toml [messages.elevation] (SSOT).  Operator rebrands via
+    # mios.html.  Vendor defaults below are the cold-fallback set
+    # when no toml is reachable yet (this runs BEFORE M:\ overlay
+    # exists on first install).
+    $_eAdmin = Get-MiosTomlValue -Section 'messages.elevation' -Key 'admin_required'   -Default '  [*] MiOS bootstrap requires admin (M:\ partition + Podman + dev VM).'
+    $_eUac1  = Get-MiosTomlValue -Section 'messages.elevation' -Key 'uac_trigger_line' -Default '  [*] Triggering UAC -- accept to continue. The install will then run'
+    $_eUac2  = Get-MiosTomlValue -Section 'messages.elevation' -Key 'uac_trigger_hint' -Default '      in the elevated window, single prompt only.'
+    Write-Host $_eAdmin -ForegroundColor Cyan
+    Write-Host $_eUac1  -ForegroundColor Cyan
+    Write-Host $_eUac2  -ForegroundColor DarkGray
     # Capture cursor position BEFORE the UAC prompt, while the operator's
     # attention is still on whichever monitor they pasted from. By the
     # time the inner script runs (after UAC accept), Cursor.Position is
@@ -796,6 +804,16 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     $_appWPx   = ($_appCols * $_cellW) + $_chromeW
     $_appHPx   = ($_appRows * $_cellH) + $_chromeH
     $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
+    # Pass-2 exit-message strings resolved at install time from
+    # mios.toml [messages.pass2_exit] (SSOT). Baked as literals into
+    # the inner-cmd heredoc below.  Single-quote the values + escape
+    # single-quotes so the heredoc-substituted text is a valid PS
+    # literal regardless of operator-supplied content.
+    $_p2ExitedPrefix = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'exited_code_prefix' -Default '  [!] Bootstrap exited with code ') -replace "'", "''"
+    $_p2FailureDtl   = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'failure_detail'     -Default '      Output above is the failure detail (Pass-1 has no separate log).') -replace "'", "''"
+    $_p2BuildLogHnt  = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'build_log_hint'     -Default "      build-mios.ps1's own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.") -replace "'", "''"
+    $_p2FetchFailed  = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'fetch_run_failed'   -Default '  [!] Bootstrap fetch/run failed: ') -replace "'", "''"
+    $_p2PressEnter   = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'press_enter_close'  -Default '  Press Enter to close this elevated bootstrap window...') -replace "'", "''"
     $_innerCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
 `$env:MIOS_CACHE_BUSTED='1'
@@ -988,9 +1006,11 @@ try {
     }
     if (`$_rc -ne 0) {
         Write-Host ''
-        Write-Host ('  [!] Bootstrap exited with code ' + `$_rc) -ForegroundColor Red
-        Write-Host '      Output above is the failure detail (Pass-1 has no separate log).' -ForegroundColor DarkGray
-        Write-Host '      build-mios.ps1''s own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.' -ForegroundColor DarkGray
+        # Strings baked at Pass-1 install time from mios.toml
+        # [messages.pass2_exit] (SSOT).
+        Write-Host ('$_p2ExitedPrefix' + `$_rc) -ForegroundColor Red
+        Write-Host '$_p2FailureDtl' -ForegroundColor DarkGray
+        Write-Host '$_p2BuildLogHnt' -ForegroundColor DarkGray
         Write-Host ''
     } else {
         # Per operator: "irm|iex invocation(s) should pre-condition
@@ -1010,11 +1030,11 @@ try {
     }
 } catch {
     Write-Host ''
-    Write-Host ('  [!] Bootstrap fetch/run failed: ' + `$_.Exception.Message) -ForegroundColor Red
+    Write-Host ('$_p2FetchFailed' + `$_.Exception.Message) -ForegroundColor Red
     Write-Host ''
 }
 Write-Host ''
-Write-Host '  Press Enter to close this elevated bootstrap window...' -ForegroundColor DarkGray -NoNewline
+Write-Host '$_p2PressEnter' -ForegroundColor DarkGray -NoNewline
 `$null = Read-Host
 "@
     # Write the inner cmd to a temp .ps1 and pass -File. Why NOT

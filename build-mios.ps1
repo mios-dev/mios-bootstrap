@@ -2933,26 +2933,45 @@ function New-BuilderDistro([hashtable]$HW) {
                 # operator data lives in the build VM yet.
                 Log-Warn "$BuilderDistro start failed after init-already-exists (exit $LASTEXITCODE) -- force-removing and retrying init"
                 Write-Log "podman-recover-rm-output: $startJoined"
-                & podman machine rm --force $BuilderDistro 2>&1 |
-                    ForEach-Object { Write-Log "podman-recover-rm: $_" }
 
-                # Operator 2026-05-09 hit `getpwnam(root) failed 5` from
-                # the retry-init's internal `wsl.exe -u root -d
-                # podman-MiOS-DEV sh` because podman's `machine rm` left
-                # the WSL distro REGISTRATION behind in a half-broken
-                # state (no /etc/passwd populated yet).  Explicitly
-                # unregister `podman-<BuilderDistro>` here so the
-                # retry-init starts from a clean WSL slate.  Both
-                # name shapes are tried because podman 5.x sometimes
-                # uses bare BuilderDistro and sometimes podman-<name>.
-                foreach ($_wslName in @("podman-$BuilderDistro", $BuilderDistro)) {
-                    & wsl.exe --unregister $_wslName 2>&1 |
-                        ForEach-Object { Write-Log "podman-recover-wsl-unregister: $_" }
+                # Operator 2026-05-09 v2: re-ordered the recovery so WSL
+                # unregister fires BEFORE `podman machine rm`, not after.
+                # When the half-broken distro has no /etc/passwd, podman's
+                # internal `wsl.exe -u root -d podman-MiOS-DEV sh` cleanup
+                # call inside `podman machine rm` itself throws
+                # `getpwnam(root) failed 5` and propagates as a non-zero
+                # exit -- which under PS 7.4+'s default
+                # PSNativeCommandUseErrorActionPreference=$true throws
+                # straight to the outer FATAL handler before any of our
+                # post-rm cleanup runs.  Solution: unregister the WSL
+                # distro first (cheap, doesn't touch /etc/passwd), THEN
+                # podman rm, both wrapped in EAP=Continue so non-zero
+                # exits drop to log entries instead of fatal throws.
+                # podman 5.x uses bare BuilderDistro AND `podman-<name>`
+                # depending on the flow -- try both.
+                & {
+                    $ErrorActionPreference = 'Continue'
+                    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                        $PSNativeCommandUseErrorActionPreference = $false
+                    }
+                    foreach ($_wslName in @("podman-$BuilderDistro", $BuilderDistro)) {
+                        & wsl.exe --unregister $_wslName 2>&1 |
+                            ForEach-Object { Write-Log "podman-recover-wsl-unregister-pre: $_" }
+                    }
+                    # Brief settle so WSL service finishes the unregister
+                    # transaction before podman touches the same name.
+                    Start-Sleep -Seconds 2
+                    & podman machine rm --force $BuilderDistro 2>&1 |
+                        ForEach-Object { Write-Log "podman-recover-rm: $_" }
+                    # Second-pass unregister in case `podman machine rm`
+                    # left a fresh registration behind (rare, but seen on
+                    # podman 5.x's machine init crash path).
+                    foreach ($_wslName in @("podman-$BuilderDistro", $BuilderDistro)) {
+                        & wsl.exe --unregister $_wslName 2>&1 |
+                            ForEach-Object { Write-Log "podman-recover-wsl-unregister-post: $_" }
+                    }
+                    Start-Sleep -Seconds 2
                 }
-                # Brief settle so WSL service finishes the unregister
-                # transaction before podman init creates a new distro
-                # with the same name.
-                Start-Sleep -Seconds 2
 
                 # Sweep ALL candidate podman-machine storage paths
                 # unconditionally. A previous run (admin or otherwise)
