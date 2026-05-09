@@ -904,10 +904,11 @@ try {
     # still putting it on the operator's active display.
     # Retry loop: window may not be fully realized + sized yet at first
     # call; SetWindowPos before that is a silent no-op. Try up to 8x
-    # over ~2 seconds. Log every step to %TEMP%\mios-center-debug.log
-    # so operator can paste back what's happening when "windows aren't
-    # centering" recurs.
-    `$_dbg = Join-Path `$env:TEMP 'mios-center-debug.log'
+    # over ~2 seconds. Log every step to M:\MiOS\logs\mios-center-debug.log
+    # (per feedback_mios_m_drive_everything; falls back to %TEMP% only
+    # when M:\ doesn't exist yet during very-early bootstrap) so operator
+    # can paste back what's happening when "windows aren't centering" recurs.
+    `$_dbg = if (Test-Path 'M:\MiOS\logs') { Join-Path 'M:\MiOS\logs' 'mios-center-debug.log' } else { Join-Path `$env:TEMP 'mios-center-debug.log' }
     `$_dbgLines = New-Object System.Collections.Generic.List[string]
     `$_dbgLines.Add("[`$([DateTime]::Now.ToString('HH:mm:ss.fff'))] Pass-2 inner cmd center start")
     for (`$_attempt = 0; `$_attempt -lt 8; `$_attempt++) {
@@ -941,7 +942,10 @@ try {
     }
     try { Set-Content -LiteralPath `$_dbg -Value (`$_dbgLines -join [Environment]::NewLine) -Encoding UTF8 } catch {}
 } catch {
-    try { Add-Content -LiteralPath (Join-Path `$env:TEMP 'mios-center-debug.log') -Value "Pass-2 inner cmd center FAILED: `$(`$_.Exception.Message)" } catch {}
+    try {
+        `$_dbgFail = if (Test-Path 'M:\MiOS\logs') { Join-Path 'M:\MiOS\logs' 'mios-center-debug.log' } else { Join-Path `$env:TEMP 'mios-center-debug.log' }
+        Add-Content -LiteralPath `$_dbgFail -Value "Pass-2 inner cmd center FAILED: `$(`$_.Exception.Message)"
+    } catch {}
 }
 Write-Host ''
 Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan

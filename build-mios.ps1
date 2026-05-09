@@ -554,13 +554,16 @@ try {
     }
 } catch {}
 
-# Per-user state regardless of scope. These resolve via $env:USERNAME /
-# $env:USERPROFILE so each Windows account on a machine-wide install
-# still gets its own logs and per-user identity overlay -- the "user
-# variables" half of the install contract.
-$MiosConfigDir    = Join-Path ${env:APPDATA}      "MiOS"               # %APPDATA%\MiOS
-$MiosDataDir      = Join-Path ${env:LOCALAPPDATA} "MiOS"               # %LOCALAPPDATA%\MiOS
-$MiosLogDir       = Join-Path $MiosDataDir        "logs"
+# Per-feedback_mios_m_drive_everything: every MiOS-managed file lives on
+# M:\, no LOCALAPPDATA fallbacks. Hard-fail if M:\ is missing rather than
+# silently splitting MiOS state across C:\.
+#
+# Operator-facing logs go to M:\MiOS\logs\mios-install-<stamp>.log so a
+# single mount point holds the full audit trail. $MiosConfigDir and the
+# legacy %LOCALAPPDATA%\MiOS path are FORBIDDEN per memory.
+$MiosDataDir      = 'M:\MiOS'
+$MiosLogDir       = Join-Path $MiosDataDir 'logs'
+$MiosConfigDir    = Join-Path $MiosDataDir 'config'   # was %APPDATA%\MiOS
 
 function Resolve-MiosInstallRoot {
     # Returns the best Windows-side install root, preferring the dedicated
@@ -6986,34 +6989,17 @@ class MiOSLaunch {
         $hubArgs   = "-NoExit -ExecutionPolicy Bypass -Command `"& { $hubResizePrelude; & '$hubPath' }`""
     }
 
-    $hubDesc = 'MiOS -- Immutable Fedora AI workstation. One launcher; all verbs accessible from the menu inside.'
-    $smLnk   = Join-Path $StartMenuDir 'MiOS.lnk'
-    New-MiosShortcut -LnkPath $smLnk -TargetExe $hubTarget -ArgsString $hubArgs -IconFile $icoPath -Description $hubDesc | Out-Null
-    Log-Ok "Start Menu: $smLnk (AppUserModelID = MiOS.Workstation)"
-
-    if (Test-Path $desktopDir) {
-        $deskLnk = Join-Path $desktopDir 'MiOS.lnk'
-        New-MiosShortcut -LnkPath $deskLnk -TargetExe $hubTarget -ArgsString $hubArgs -IconFile $icoPath -Description $hubDesc | Out-Null
-        Log-Ok "Desktop: $deskLnk"
-    }
-
-    # Programmatic Pin to Start. On Windows 10 this works -- the MiOS
-    # tile lands in the operator's Start menu pinned area. On Windows
-    # 11 (21H2+) Microsoft removed the "Pin to Start" verb and there's
-    # no supported programmatic replacement; the no-op falls through
-    # and we log a hint so the operator knows to right-click → Pin
-    # to Start themselves.
-    if (Invoke-MiosPinToStart -LnkPath $smLnk) {
-        Log-Ok "MiOS pinned to Start menu (Windows 10 verb path)"
-    } else {
-        # Determine whether we're on Win11 to tailor the hint.
-        $os = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption
-        if ($os -match 'Windows 11') {
-            Log-Warn "Windows 11 removed programmatic Pin-to-Start. Right-click MiOS in Start search → Pin to Start to add the tile manually."
-        } else {
-            Log-Warn "Pin-to-Start verb unavailable. Right-click '$smLnk' → Pin to Start to add the tile."
-        }
-    }
+    # ── Hub MiOS.lnk + pin handled by Get-MiOS.ps1's Install-MiOSNativeApp ──
+    # build-mios.ps1 used to create a SECOND hub shortcut at
+    # C:\ProgramData\...\Start Menu\Programs\MiOS\MiOS.lnk (system-wide)
+    # while Get-MiOS.ps1 created the per-user one. Two creators racing
+    # on the same name produced inconsistent state and broken targets
+    # (operator caught in 2026-05-09 install screenshot). Removed:
+    # Get-MiOS.ps1 is now the single source of truth for the canonical
+    # 4-shortcut set. Per-user shortcuts only -- system-wide install
+    # would surface MiOS to other accounts that may not have M:\ access.
+    $smLnk = Join-Path $StartMenuDir 'MiOS.lnk'
+    Log-Ok "Hub MiOS.lnk creation delegated to Get-MiOS.ps1 Install-MiOSNativeApp (per-user, canonical 4-set)"
 
     # ── Per-verb native-app shortcuts ────────────────────────────────
     # Per operator: every MiOS verb appears as its own native Windows
