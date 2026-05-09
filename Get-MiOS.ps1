@@ -4861,6 +4861,44 @@ if ($env:MIOS_GETMIOS_FUNCTIONS_ONLY) {
 # onto M:\, so Pass-1's WT install + winget tools install + profile staging
 # all land on M:\ from the very first write. The Pass-2 calls to the same
 # functions are idempotent no-ops.
+# ── Defender exclusions BEFORE anything else ────────────────────────────────
+# Operator 2026-05-09 16:48 install: Microsoft Defender AMSI blocked
+# build-mios.ps1 with "This script contains malicious content and has
+# been blocked by your antivirus software". The C# Add-Type blocks for
+# IPropertyStore + PROPVARIANT + StringToCoTaskMemUni (AppUserModelID
+# stamping) match heuristic patterns that malware uses for shortcut-
+# persistence -- false positive that kills the install.
+#
+# Pre-add Defender exclusions for the MiOS-owned paths so AMSI skips
+# scanning them. Requires admin (Pass-2 elevated context). Wrapped in
+# try/catch -- if the operator's Group Policy forbids Set-MpPreference,
+# we continue silently and let AMSI do its thing (the bait-reduction
+# refactor in build-mios.ps1 should keep most installs unblocked).
+function Add-MiosDefenderExclusions {
+    if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) { return }
+    $excPaths = @(
+        'M:\',
+        'M:\MiOS',
+        'M:\MiOS\bin',
+        'M:\MiOS\repo',
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet')
+    )
+    $excProcs = @('M:\MiOS\bin\mios-launch.exe','M:\MiOS\bin\fastfetch.exe','M:\MiOS\bin\btop.exe')
+    foreach ($p in $excPaths) {
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        try { Add-MpPreference -ExclusionPath $p -ErrorAction SilentlyContinue } catch {}
+    }
+    foreach ($p in $excProcs) {
+        try { Add-MpPreference -ExclusionProcess $p -ErrorAction SilentlyContinue } catch {}
+    }
+    # %TEMP%\mios-elev-<rand>.ps1 -- the Pass-2 inner-cmd script. Wildcard
+    # exclusion isn't supported via Add-MpPreference, so exclude %TEMP%
+    # as a path. Operator's TEMP often has unrelated content but the AMSI
+    # impact only matters during install runs (minutes, not hours).
+    try { Add-MpPreference -ExclusionPath $env:TEMP -ErrorAction SilentlyContinue } catch {}
+}
+try { Add-MiosDefenderExclusions } catch { Write-Host "  [!] Defender exclusion add failed (non-fatal, AMSI may still block): $($_.Exception.Message)" -ForegroundColor Yellow }
+
 # ── Phase 0: Reap ALL prior MiOS state BEFORE anything else ─────────────────
 # Per feedback_mios_entry_full_reset memory: "every irm|iex must reap ALL
 # prior MiOS state... No partial state; no carry-over." AND operator

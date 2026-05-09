@@ -6604,103 +6604,21 @@ $endMark
         return
     }
 
-    # New-MiosShortcut -- helper that drops a single .lnk. Returns the
-    # path so callers can log it.
-    function New-MiosShortcut {
-        param(
-            [string]$LnkPath,
-            [string]$TargetExe,
-            [string]$ArgsString,
-            [string]$IconFile,
-            [string]$Description
-        )
-        $lnk = $shell.CreateShortcut($LnkPath)
-        $lnk.TargetPath       = $TargetExe
-        $lnk.Arguments        = $ArgsString
-        $lnk.WorkingDirectory = $env:USERPROFILE
-        if ($IconFile -and (Test-Path $IconFile)) { $lnk.IconLocation = "$IconFile,0" }
-        $lnk.Description      = $Description
-        $lnk.WindowStyle      = 1
-        $lnk.Save()
-        # Brand the shortcut with an AppUserModelID so Windows treats it
-        # as a distinct first-class app -- not a generic "PowerShell
-        # shortcut". This makes (a) Pin-to-Start group all MiOS launches
-        # under the same tile, (b) the taskbar group spawned wt.exe
-        # windows under the MiOS app, and (c) Start search surface MiOS
-        # as its own entry instead of collapsing under "Windows
-        # PowerShell".
-        try { Set-MiosShortcutAppUserModelID -LnkPath $LnkPath -AppId 'MiOS.Workstation' } catch { Log-Warn "AppUserModelID set failed: $($_.Exception.Message)" }
-        return $LnkPath
-    }
-
-    # Install the C# IPropertyStore helper once per session so each
-    # New-MiosShortcut call doesn't re-Add-Type. PS 5.1 + 7 compatible.
-    if (-not ('MiOS.Native.Aumid' -as [type])) {
-        Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-namespace MiOS.Native {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct PROPERTYKEY {
-        public Guid fmtid;
-        public uint pid;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    public struct PROPVARIANT {
-        public ushort vt;
-        public ushort wReserved1;
-        public ushort wReserved2;
-        public ushort wReserved3;
-        public IntPtr p;
-        public IntPtr p2;
-    }
-    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"),
-     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    public interface IPropertyStore {
-        [PreserveSig] int GetCount(out uint cProps);
-        [PreserveSig] int GetAt(uint iProp, out PROPERTYKEY pkey);
-        [PreserveSig] int GetValue(ref PROPERTYKEY key, out PROPVARIANT pv);
-        [PreserveSig] int SetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
-        [PreserveSig] int Commit();
-    }
-    public static class Aumid {
-        [DllImport("shell32.dll", CharSet=CharSet.Unicode, PreserveSig=false)]
-        public static extern void SHGetPropertyStoreFromParsingName(
-            string pszPath, IntPtr pbc, int flags, ref Guid riid, out IPropertyStore ppv);
-        [DllImport("ole32.dll", PreserveSig=false)]
-        public static extern void PropVariantClear(ref PROPVARIANT pvar);
-        public static void SetAppUserModelID(string lnkPath, string appId) {
-            Guid ipsGuid = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99");
-            IPropertyStore ps;
-            SHGetPropertyStoreFromParsingName(lnkPath, IntPtr.Zero, 2, ref ipsGuid, out ps);
-            try {
-                PROPERTYKEY pk = new PROPERTYKEY {
-                    fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"),
-                    pid = 5
-                };
-                IntPtr strPtr = Marshal.StringToCoTaskMemUni(appId);
-                PROPVARIANT pv = new PROPVARIANT { vt = 31, p = strPtr };
-                try {
-                    ps.SetValue(ref pk, ref pv);
-                    ps.Commit();
-                } finally {
-                    PropVariantClear(ref pv);
-                }
-            } finally {
-                Marshal.FinalReleaseComObject(ps);
-            }
-        }
-    }
-}
-'@ -Language CSharp -ErrorAction SilentlyContinue
-    }
-
-    function Set-MiosShortcutAppUserModelID {
-        param([string]$LnkPath, [string]$AppId)
-        if (-not (Test-Path -LiteralPath $LnkPath)) { return }
-        if (-not ('MiOS.Native.Aumid' -as [type])) { return }
-        [MiOS.Native.Aumid]::SetAppUserModelID($LnkPath, $AppId)
-    }
+    # NOTE: New-MiosShortcut + the IPropertyStore Add-Type C# block that
+    # used to live here have been REMOVED. They are dead code -- the only
+    # callers were the hub MiOS.lnk creator + the per-verb $verbShortcuts
+    # loop, both of which were removed in earlier commits when shortcut
+    # creation moved to Get-MiOS.ps1's FINAL STEP block.
+    #
+    # The IPropertyStore + PROPVARIANT + StringToCoTaskMemUni pattern
+    # was triggering Microsoft Defender AMSI as malicious content
+    # (operator's 16:48 install: "This script contains malicious content
+    # and has been blocked by your antivirus software"). Removing the
+    # dead code eliminates the AMSI bait. Get-MiOS.ps1 still has its
+    # own copy of the IPropertyStore code for the canonical 4-shortcut
+    # AumID stamping; that file is web-fetched and runs early enough
+    # in the install that AMSI's session-context heuristics don't
+    # combine multiple flag patterns the way they did with build-mios.ps1.
 
     # Try programmatic Pin to Start. Works on Windows 10; no-op on
     # Windows 11 (Microsoft removed the "Pin to Start" verb in 21H2+).
