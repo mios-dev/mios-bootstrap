@@ -934,25 +934,60 @@ function Write-Log {
     if ($L -eq "WARN")  { $script:WarnCount++ }
 }
 
-# ── Dashboard state ───────────────────────────────────────────────────────────
-# UNIFIED width formula -- ONE function (Get-MiosFrameWidth) used by
-# every framed surface in build-mios.ps1 + Show-MiosDashboard +
-# mios-dashboard.sh.  Operator 2026-05-09: "ALL dashboards render to
-# the edge of the MiOS app window size constraints!! ... mios.toml
-# unifying the variables for all GLOBAL dashboards".  No second site
-# computing the formula independently.
-#
-# Sources (mios.toml [terminal] SSOT):
-#   right_margin -- cells reserved at the right edge for WT chrome
-#   frame_width  -- absolute upper-cap for the frame
-#
-# Returns: max(60, min(WindowWidth - right_margin, frame_width)).
-$script:_dwFrameW   = (Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'  -Default 75)
-$script:_dwRightMgn = (Get-MiosTomlValue -Section 'terminal' -Key 'right_margin' -Default 5)
-if (-not ($script:_dwFrameW   -is [int]) -or $script:_dwFrameW   -lt 20) { $script:_dwFrameW   = 75 }
-if (-not ($script:_dwRightMgn -is [int]) -or $script:_dwRightMgn -lt 0)  { $script:_dwRightMgn = 5  }
+# ── MiOS globals (ONE central loader) ────────────────────────────────────────
+# Operator 2026-05-09: "EXACTLY BUT FOR ALL VARIABLES GLOBALLY!!!!".
+# Every shared mios.toml value the build pipeline reads is loaded
+# ONCE here into the $script:Mios* namespace and read by name from
+# downstream code instead of each site re-calling Get-MiosTomlValue.
+# Single source-of-truth catalog -- one call site for each toml key.
+function Initialize-MiosGlobals {
+    # ── [terminal] -- dims + framing ─────────────────────────
+    $script:MiosCols       = [int](Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80)
+    $script:MiosRows       = [int](Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 20)
+    $script:MiosScroll     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000)
+    $script:MiosFrameW     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default 75)
+    $script:MiosFrameH     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default 19)
+    $script:MiosRightMgn   = [int](Get-MiosTomlValue -Section 'terminal' -Key 'right_margin'    -Default 5)
+    if ($script:MiosCols     -lt 40) { $script:MiosCols     = 80 }
+    if ($script:MiosRows     -lt 10) { $script:MiosRows     = 20 }
+    if ($script:MiosFrameW   -lt 20) { $script:MiosFrameW   = 75 }
+    if ($script:MiosFrameH   -lt 5)  { $script:MiosFrameH   = 19 }
+    if ($script:MiosRightMgn -lt 0)  { $script:MiosRightMgn = 5  }
+    # ── [theme.font] -- font + cell metrics ──────────────────
+    $script:MiosFontFamily = [string](Get-MiosTomlValue -Section 'theme.font' -Key 'family'      -Default 'GeistMono Nerd Font Mono')
+    $script:MiosFontSize   = [int]   (Get-MiosTomlValue -Section 'theme.font' -Key 'size'        -Default 12)
+    $script:MiosFontWeight = [string](Get-MiosTomlValue -Section 'theme.font' -Key 'weight'      -Default 'normal')
+    $script:MiosCellW      = [int]   (Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px'   -Default 10)
+    $script:MiosCellH      = [int]   (Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px'   -Default 20)
+    $script:MiosChromeW    = [int]   (Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px' -Default 20)
+    $script:MiosChromeH    = [int]   (Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px' -Default 12)
+    # ── [theme.terminal] -- WT profile names ─────────────────
+    $script:MiosSchemeName     = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name'         -Default 'MiOS')
+    $script:MiosProfileName    = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'profile_name'        -Default 'MiOS-WIN')
+    $script:MiosDevProfileName = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'dev_profile_name'    -Default 'MiOS-DEV')
+    $script:MiosHubTargetProf  = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'hub_target_profile'  -Default 'MiOS-DEV')
+    $script:MiosSummonKeys     = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'summon_keys'         -Default 'win+space')
+    $script:MiosSummonWindow   = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'summon_window_name'  -Default 'MiOS-DEV')
+    # ── [apps] -- shortcut / AumID names ─────────────────────
+    $script:MiosAumid          = [string](Get-MiosTomlValue -Section 'apps' -Key 'aumid'             -Default 'MiOS.Workstation')
+    $script:MiosStartMenuFold  = [string](Get-MiosTomlValue -Section 'apps' -Key 'start_menu_folder' -Default 'MiOS')
+    $script:MiosHubLnkName     = [string](Get-MiosTomlValue -Section 'apps' -Key 'hub_shortcut_name' -Default 'MiOS')
+    # ── [branding] -- taglines + dashboard frame chars ───────
+    $script:MiosTagline        = [string](Get-MiosTomlValue -Section 'branding' -Key 'tagline'      -Default 'My Personal Operating System')
+    $script:MiosTaglineLong    = [string](Get-MiosTomlValue -Section 'branding' -Key 'tagline_long' -Default 'My Personal Operating System  --  Immutable Fedora AI Workstation')
+    $script:MiosTaglineApp     = [string](Get-MiosTomlValue -Section 'branding' -Key 'tagline_app'  -Default $script:MiosTagline)
+    $script:MiosFrameChars     = [string](Get-MiosTomlValue -Section 'branding.dashboard' -Key 'frame_chars' -Default '╭─╮│╰╯')
+    if ($script:MiosFrameChars.Length -lt 6) { $script:MiosFrameChars = '╭─╮│╰╯' }
+}
+Initialize-MiosGlobals
+
+# UNIFIED width formula -- ONE function used by every framed surface
+# in build-mios.ps1 (load-time + post-resize Show-Dashboard +
+# install-complete banner) AND Show-MiosDashboard (Get-MiOS.ps1) AND
+# mios-dashboard.sh (Linux).  WIDTH = min(WindowWidth - right_margin,
+# frame_width) sourced from the [terminal] section loaded above.
 function Get-MiosFrameWidth {
-    [math]::Max(60, [math]::Min(([Console]::WindowWidth - $script:_dwRightMgn), $script:_dwFrameW))
+    [math]::Max(60, [math]::Min(([Console]::WindowWidth - $script:MiosRightMgn), $script:MiosFrameW))
 }
 $script:DW = Get-MiosFrameWidth
 # Per the self-replication architecture, the Windows side (BootstrapOnly,
