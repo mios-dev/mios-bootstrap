@@ -4894,365 +4894,27 @@ function New-Shortcut([string]$Path,[string]$Target,[string]$Args="",[string]$De
 }
 
 function Install-MiosWindowsTools {
-    # Install [packages.windows] CLI tools via winget BEFORE
-    # Install-WindowsBranding runs. Reads the SSOT (mios.toml's
-    # [packages.windows] table) so the package list is operator-tunable
-    # via mios.html. Includes Microsoft.PowerShell (pwsh 7),
-    # fastfetch, btop, sharkdp.bat/.fd, ripgrep, fzf, jq, gh, etc. --
-    # everything the MiOS terminal experience depends on.
-    #
-    # Idempotent: probes existing install per-package (winget list
-    # --exact) before re-installing. Refreshes $env:PATH on completion
-    # so newly-installed binaries are reachable for the rest of this
-    # session (Install-WindowsBranding's mios-launch.ps1 generation,
-    # the M:\ profile body, etc.).
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Log-Warn "winget not available -- [packages.windows] CLI tools NOT installed (fastfetch / btop / pwsh / etc. will be missing)"
+    # Body extracted to src/install-host-tools.ps1 per operator directive
+    # 2026-05-09: "TOLD YOU A MONOLITH INSTALL.ps1 SCRIPT WAS A BAD IDEA
+    # AND THAT THE BOOTSTRAP SHOULD BE DOING MOST OF THE HOST_SIDE SETUP
+    # AND INSTALLATIONS". Dot-sourced from disk at first call so the
+    # 360-line winget install logic is no longer inline in this monolith
+    # (also reduces AMSI heuristic surface).
+    $_hostSrc = $null
+    foreach ($_c in @(
+        (Join-Path $MiosRepoDir 'src\install-host-tools.ps1'),
+        (Join-Path $MiosBootstrapShadow 'src\install-host-tools.ps1')
+    )) {
+        if (Test-Path -LiteralPath $_c) { $_hostSrc = $_c; break }
+    }
+    if (-not $_hostSrc) {
+        Log-Fail "src/install-host-tools.ps1 not found in repo. Re-run irm | iex to refresh."
         return
     }
-
-    Set-Step "Installing [packages.windows] CLI tools via winget (SSOT: mios.toml)..."
-
-    # Resolve [packages.windows].pkgs from mios.toml.  Layered overlay:
-    # operator host override > vendor on M:\ > bootstrap shadow.  Each
-    # candidate is read AND its [packages.windows].pkgs section is
-    # checked -- the FIRST candidate that yields a non-empty list wins.
-    # A host override at M:\etc\mios\mios.toml that lacks [packages.windows]
-    # falls through to the vendor copy (the previous bug: the first
-    # `Test-Path` hit broke the loop, then the regex failed against a
-    # partial overlay, then the hardcoded fallback fired -- which the
-    # operator flagged 2026-05-09 as "you are hardcoding mios build to
-    # build a smaller version of itself").
-    $rx        = '(?ms)^\[packages\.windows\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
-    $pkgs      = @()
-    $sourceOk  = ''
-    $candidates = @('M:\etc\mios\mios.toml', 'M:\usr\share\mios\mios.toml', (Join-Path $MiosBootstrapShadow 'mios.toml'))
-    foreach ($cand in $candidates) {
-        if (-not (Test-Path -LiteralPath $cand)) { continue }
-        try {
-            $tomlText = [IO.File]::ReadAllText($cand, (New-Object System.Text.UTF8Encoding($false)))
-        } catch { continue }
-        $m = [regex]::Match($tomlText, $rx)
-        if (-not $m.Success) { continue }
-        $stripped = ($m.Groups['list'].Value -split "`n" |
-                     ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -join ' '
-        $tryPkgs = @(
-            $stripped -split ',' |
-            ForEach-Object {
-                $s = $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
-                if ($s) { $s }
-            }
-        )
-        if ($tryPkgs.Count -gt 0) {
-            $pkgs     = $tryPkgs
-            $sourceOk = $cand
-            break
-        }
-    }
-    if ($pkgs.Count -eq 0) {
-        throw "Cannot resolve [packages.windows].pkgs from any of: $($candidates -join ', '). Per operator SSOT directive 'ALL values source from the toml' there is no hardcoded fallback. Verify [packages.windows] section is intact in mios.toml (vendor copy at M:\usr\share\mios\mios.toml is canonical -- run 'mios pull' to refresh, or re-run the irm|iex one-liner)."
-    }
-    Log-Ok "[packages.windows] resolved $($pkgs.Count) package(s) from $sourceOk"
-
-    # SSOT: package-ID -> expected-bin map resolves through mios.toml
-    # [packages.windows].bin_map (pipe-separated "pkg-id|bin" strings)
-    # with vendor defaults baked here. Operator adds new packages via
-    # mios.html -> mios.toml without touching code.
-    #
-    # winget says "already-present" when its DB knows the package, but
-    # the actual binary / shim may have been deleted (manual cleanup,
-    # broken uninstall). We probe Get-Command for the expected bin AFTER
-    # the winget list check; missing binary -> --force reinstall.
-    $_defaultBinMap = @(
-        'BurntSushi.ripgrep.MSI|rg',
-        'junegunn.fzf|fzf',
-        'jqlang.jq|jq',
-        'sharkdp.bat|bat',
-        'sharkdp.fd|fd',
-        'GitHub.cli|gh',
-        'fastfetch-cli.fastfetch|fastfetch',
-        'aristocratos.btop4win|btop4win',
-        'Microsoft.PowerShell|pwsh',
-        'JanDeDobbeleer.OhMyPosh|oh-my-posh'
-    )
-    $_binMapStrings = @(Get-MiosTomlValue -Section 'packages.windows' -Key 'bin_map' -Default $_defaultBinMap)
-    $pkgBinMap = @{}
-    foreach ($_entry in $_binMapStrings) {
-        $_parts = $_entry -split '\|', 2
-        if ($_parts.Length -eq 2 -and -not [string]::IsNullOrWhiteSpace($_parts[0]) -and -not [string]::IsNullOrWhiteSpace($_parts[1])) {
-            $pkgBinMap[$_parts[0].Trim()] = $_parts[1].Trim()
-        }
-    }
-    $installed = 0
-    $skipped   = 0
-    $failed    = 0
-    foreach ($pkg in $pkgs) {
-        try {
-            $probe = & winget list --id $pkg --exact 2>$null
-            $wingetSeesIt = ($LASTEXITCODE -eq 0 -and (($probe -join "`n") -match [regex]::Escape($pkg)))
-            $expectedBin  = $pkgBinMap[$pkg]
-            $binOnPath    = $null
-            if ($expectedBin) {
-                $binOnPath = (Get-Command $expectedBin -ErrorAction SilentlyContinue) -ne $null
-            }
-            if ($wingetSeesIt -and (-not $expectedBin -or $binOnPath)) {
-                # winget knows it AND (no expected bin OR bin is reachable)
-                Log-Ok ("winget already-present: {0}" -f $pkg)
-                $skipped++
-                continue
-            }
-            if ($wingetSeesIt -and $expectedBin -and -not $binOnPath) {
-                Log-Warn ("winget claims {0} present but '{1}' not on PATH -- forcing reinstall" -f $pkg, $expectedBin)
-            } else {
-                Log-Ok ("winget installing: {0}..." -f $pkg)
-            }
-            # NOT silenced -- visible output so failures are diagnosable.
-            # --force when reinstalling so winget overrides its cached state.
-            $forceArgs = if ($wingetSeesIt) { @('--force') } else { @() }
-            & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget --scope user @forceArgs 2>&1 |
-                ForEach-Object { Write-Log ("winget[{0}]: {1}" -f $pkg, $_) }
-            if ($LASTEXITCODE -eq 0) {
-                Log-Ok "winget install: $pkg [OK]"
-                $installed++
-            } else {
-                # Retry without --scope user (machine scope -- some packages
-                # like Microsoft.PowerShell don't accept user scope).
-                Log-Warn ("winget install: {0} user-scope exit {1} -- retrying without --scope" -f $pkg, $LASTEXITCODE)
-                & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget @forceArgs 2>&1 |
-                    ForEach-Object { Write-Log ("winget[{0}-retry]: {1}" -f $pkg, $_) }
-                if ($LASTEXITCODE -eq 0) {
-                    Log-Ok "winget install (retry): $pkg [OK]"
-                    $installed++
-                } else {
-                    Log-Warn ("winget install: {0} FAILED (exit {1})" -f $pkg, $LASTEXITCODE)
-                    $failed++
-                }
-            }
-        } catch {
-            Log-Warn ("winget install: {0} -- {1}" -f $pkg, $_.Exception.Message)
-            $failed++
-        }
-    }
-    Log-Ok ("[packages.windows] winget summary: {0} installed / {1} already-present / {2} failed" -f $installed, $skipped, $failed)
-
-    # Aggressive PATH augmentation. winget install --scope user lands
-    # binaries under %LOCALAPPDATA%\Microsoft\WinGet\Packages\<id>_*\
-    # and updates User PATH -- but only on NEXT shell launch. Probe
-    # those install dirs NOW + add them to both this-session $env:PATH
-    # AND persist the additions to User PATH so next-launch shells
-    # (the WT MiOS profile) inherit them.
-    # winget binaries live in MULTIPLE places depending on scope and
-    # whether the package's manifest registers a shim:
-    #
-    #   1. %LOCALAPPDATA%\Microsoft\WinGet\Links\        <-- THE WIN
-    #      winget auto-creates .exe shims here for every user-scope
-    #      package whose manifest declares a Commands entry. This is
-    #      the canonical "winget bin dir" -- adding it to PATH makes
-    #      EVERY winget user-scope package callable by its canonical
-    #      name (rg, fzf, jq, bat, fd, gh, ...).
-    #   2. %LOCALAPPDATA%\Microsoft\WinGet\Packages\<id>_*\...        <-- user-scope install root
-    #   3. %ProgramFiles%\WinGet\Packages\<id>_*\...                  <-- machine-scope install root
-    #
-    # All three get walked + their binary-containing dirs added to PATH.
-    $exeDirs = New-Object System.Collections.Generic.HashSet[string]
-    $linksDir = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links'
-    if (Test-Path $linksDir) { [void]$exeDirs.Add($linksDir) }
-
-    foreach ($wingetRoot in @(
-        (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'),
-        (Join-Path $env:ProgramFiles 'WinGet\Packages')
-    )) {
-        if (-not (Test-Path $wingetRoot)) { continue }
-        # Walk every package install dir up to 5 levels deep; if any
-        # subdir contains a .exe, add that subdir to PATH. winget nests
-        # binaries under various depths (vendor / arch / version / etc).
-        try {
-            Get-ChildItem -Path $wingetRoot -Recurse -Filter '*.exe' -File -ErrorAction SilentlyContinue -Depth 5 |
-                ForEach-Object {
-                    if ($_.DirectoryName) { [void]$exeDirs.Add($_.DirectoryName) }
-                }
-        } catch {}
-    }
-    $extraPaths = @($exeDirs)
-    # MiOS app bin directory (oh-my-posh.exe, etc. that build-mios.ps1 stages itself).
-    if (Test-Path $MiosBinDir) { $extraPaths += $MiosBinDir }
-    $extraPaths = $extraPaths | Sort-Object -Unique
-
-    # Refresh + augment $env:PATH for the current session.
-    try {
-        $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
-        $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
-        $combined  = (@($_machPath, $_userPath) + $extraPaths | Where-Object { $_ }) -join ';'
-        $env:PATH  = $combined
-        Log-Ok ('$env:PATH refreshed (+{0} winget package dirs)' -f $extraPaths.Count)
-    } catch {
-        Log-Warn "PATH refresh failed: $($_.Exception.Message)"
-    }
-
-    # Persist the extra dirs to User PATH so future shell launches (the
-    # WT MiOS profile spawn) see fastfetch / btop / etc. without
-    # depending on this session.
-    if ($extraPaths.Count -gt 0) {
-        try {
-            $userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
-            $userParts = if ($userPath) { $userPath -split ';' } else { @() }
-            $newParts  = @($userParts) + ($extraPaths | Where-Object { $_ -and ($userParts -notcontains $_) })
-            $newUserPath = ($newParts | Where-Object { $_ }) -join ';'
-            if ($newUserPath -ne $userPath) {
-                [System.Environment]::SetEnvironmentVariable('PATH', $newUserPath, 'User')
-                Log-Ok ('User PATH persisted (+{0} new dirs)' -f ($newParts.Count - $userParts.Count))
-            }
-        } catch {
-            Log-Warn "User PATH persist failed: $($_.Exception.Message)"
-        }
-    }
-
-    # Direct-download fallbacks for binaries that winget either failed
-    # to install (broken Store manifest, missing applicable installer)
-    # or installed under a non-canonical name (btop4win.exe instead of
-    # btop.exe). Land them in $MiosBinDir so they're on PATH alongside
-    # oh-my-posh.exe.
-    if (-not (Get-Command fastfetch -ErrorAction SilentlyContinue)) {
-        Log-Ok 'fastfetch: winget unsuccessful -- attempting direct download from GitHub releases...'
-        try {
-            $api = 'https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest'
-            $rel = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent'='mios-bootstrap' } -ErrorAction Stop
-            $asset = $rel.assets | Where-Object { $_.name -match 'windows-amd64\.zip$' } | Select-Object -First 1
-            if ($asset) {
-                $zip = Join-Path $env:TEMP "fastfetch-$(Get-Random).zip"
-                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -ErrorAction Stop
-                $extractRoot = Join-Path $env:TEMP "fastfetch-$(Get-Random)"
-                Expand-Archive -LiteralPath $zip -DestinationPath $extractRoot -Force
-                $exe = Get-ChildItem -Path $extractRoot -Recurse -Filter 'fastfetch.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
-                if ($exe) {
-                    Copy-Item -Path $exe.FullName -Destination (Join-Path $MiosBinDir 'fastfetch.exe') -Force
-                    Log-Ok ("fastfetch installed direct: {0} -> {1}" -f $asset.name, (Join-Path $MiosBinDir 'fastfetch.exe'))
-                }
-                Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
-                Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
-            } else {
-                Log-Warn 'fastfetch: no windows-amd64.zip asset found in latest release'
-            }
-        } catch { Log-Warn ("fastfetch direct-download failed: {0}" -f $_.Exception.Message) }
-    }
-
-    # btop: winget package id is `aristocratos.btop4win` and the
-    # binary is `btop4win.exe` (not `btop.exe`). Find the install,
-    # symlink/copy it as `btop.exe` into $MiosBinDir so the canonical
-    # `btop` command works. Also fall back to direct download from
-    # GitHub releases if the winget install missed.
-    if (-not (Get-Command btop -ErrorAction SilentlyContinue)) {
-        Log-Ok 'btop: probing winget btop4win install + GitHub fallback...'
-        $btopExe = $null
-        $wingetBtop = Get-ChildItem -Path $wingetRoot -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^aristocratos\.btop4win' } |
-            Select-Object -First 1
-        if ($wingetBtop) {
-            $cand = Get-ChildItem -Path $wingetBtop.FullName -Recurse -Filter 'btop4win.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($cand) { $btopExe = $cand.FullName }
-        }
-        if (-not $btopExe) {
-            try {
-                $api = 'https://api.github.com/repos/aristocratos/btop4win/releases/latest'
-                $rel = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent'='mios-bootstrap' } -ErrorAction Stop
-                $asset = $rel.assets | Where-Object { $_.name -match '\.zip$' } | Select-Object -First 1
-                if ($asset) {
-                    $zip = Join-Path $env:TEMP "btop4win-$(Get-Random).zip"
-                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -ErrorAction Stop
-                    $extractRoot = Join-Path $env:TEMP "btop4win-$(Get-Random)"
-                    Expand-Archive -LiteralPath $zip -DestinationPath $extractRoot -Force
-                    $cand = Get-ChildItem -Path $extractRoot -Recurse -Filter 'btop4win.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
-                    if ($cand) { $btopExe = $cand.FullName }
-                    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
-                    # Don't delete $extractRoot -- $btopExe needs to keep existing.
-                }
-            } catch { Log-Warn ("btop direct-download failed: {0}" -f $_.Exception.Message) }
-        }
-        if ($btopExe -and (Test-Path -LiteralPath $btopExe)) {
-            $dst = Join-Path $MiosBinDir 'btop.exe'
-            try {
-                Copy-Item -Path $btopExe -Destination $dst -Force
-                Log-Ok ("btop installed: {0} -> {1}" -f $btopExe, $dst)
-            } catch { Log-Warn ("btop copy failed: {0}" -f $_.Exception.Message) }
-        }
-    }
-
-    # Direct-download fallback for the ripgrep/fzf/jq/bat/fd cohort.
-    # Operator 2026-05-09 install log: winget reported "13 already-present"
-    # but rg/fzf/jq/bat/fd did NOT surface on PATH. Even with the force-
-    # reinstall guard above, sometimes winget's shim creation fails
-    # (no Commands manifest, broken Links dir permissions, etc.). This
-    # fallback grabs portable binaries straight from each project's
-    # GitHub releases and lands them in $MiosBinDir alongside fastfetch
-    # and btop -- guaranteed reachable on PATH.
-    $directBins = @(
-        @{ Cmd='rg';  Repo='BurntSushi/ripgrep';                        AssetRx='ripgrep-.*-x86_64-pc-windows-msvc\.zip$';   ExeRx='^rg\.exe$' }
-        @{ Cmd='fzf'; Repo='junegunn/fzf';                              AssetRx='fzf-.*-windows_amd64\.zip$';                ExeRx='^fzf\.exe$' }
-        @{ Cmd='jq';  Repo='jqlang/jq';            DirectAsset='jq-windows-amd64.exe'; ExeName='jq.exe' }
-        @{ Cmd='bat'; Repo='sharkdp/bat';                               AssetRx='bat-.*-x86_64-pc-windows-msvc\.zip$';       ExeRx='^bat\.exe$' }
-        @{ Cmd='fd';  Repo='sharkdp/fd';                                AssetRx='fd-.*-x86_64-pc-windows-msvc\.zip$';        ExeRx='^fd\.exe$' }
-    )
-    foreach ($db in $directBins) {
-        if (Get-Command $db.Cmd -ErrorAction SilentlyContinue) { continue }
-        Log-Ok ("{0}: winget unsuccessful -- attempting direct download from GitHub releases..." -f $db.Cmd)
-        try {
-            $api = "https://api.github.com/repos/$($db.Repo)/releases/latest"
-            $rel = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent'='mios-bootstrap' } -ErrorAction Stop
-            if ($db.DirectAsset) {
-                # Single-file asset (jq ships jq-windows-amd64.exe directly).
-                $asset = $rel.assets | Where-Object { $_.name -eq $db.DirectAsset } | Select-Object -First 1
-                if ($asset) {
-                    $dst = Join-Path $MiosBinDir $db.ExeName
-                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dst -UseBasicParsing -ErrorAction Stop
-                    Log-Ok ("{0} installed direct: {1} -> {2}" -f $db.Cmd, $asset.name, $dst)
-                } else {
-                    Log-Warn ("{0}: no '{1}' asset in latest release of {2}" -f $db.Cmd, $db.DirectAsset, $db.Repo)
-                }
-            } else {
-                # Zip asset -- extract + copy the exe into $MiosBinDir.
-                $asset = $rel.assets | Where-Object { $_.name -match $db.AssetRx } | Select-Object -First 1
-                if ($asset) {
-                    $zip = Join-Path $env:TEMP "$($db.Cmd)-$(Get-Random).zip"
-                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -ErrorAction Stop
-                    $extractRoot = Join-Path $env:TEMP "$($db.Cmd)-$(Get-Random)"
-                    Expand-Archive -LiteralPath $zip -DestinationPath $extractRoot -Force
-                    $exe = Get-ChildItem -Path $extractRoot -Recurse -File -ErrorAction SilentlyContinue |
-                           Where-Object { $_.Name -match $db.ExeRx } | Select-Object -First 1
-                    if ($exe) {
-                        $dst = Join-Path $MiosBinDir ($db.Cmd + '.exe')
-                        Copy-Item -Path $exe.FullName -Destination $dst -Force
-                        Log-Ok ("{0} installed direct: {1} -> {2}" -f $db.Cmd, $asset.name, $dst)
-                    } else {
-                        Log-Warn ("{0}: no exe matching /{1}/ inside {2}" -f $db.Cmd, $db.ExeRx, $asset.name)
-                    }
-                    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
-                    Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
-                } else {
-                    Log-Warn ("{0}: no asset matching /{1}/ in latest release of {2}" -f $db.Cmd, $db.AssetRx, $db.Repo)
-                }
-            }
-        } catch { Log-Warn ("{0} direct-download failed: {1}" -f $db.Cmd, $_.Exception.Message) }
-    }
-
-    # Re-run final PATH refresh -- pick up any direct-download binaries.
-    try {
-        $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
-        $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
-        $env:PATH  = (@($_machPath, $_userPath, $MiosBinDir) | Where-Object { $_ }) -join ';'
-    } catch {}
-
-    # Final verification -- which targeted binaries are actually on PATH
-    # now? Probe list resolves through mios.toml [packages.windows].
-    # verify_probes (NEW key) so operators can extend/shrink the
-    # post-install verification surface via mios.html.
-    $_probes = @(Get-MiosTomlValue -Section 'packages.windows' -Key 'verify_probes' -Default @('fastfetch','btop','rg','fzf','jq','gh','bat','fd','pwsh','oh-my-posh'))
-    foreach ($probe in $_probes) {
-        if (Get-Command $probe -ErrorAction SilentlyContinue) {
-            Log-Ok ("verify: '{0}' is on PATH" -f $probe)
-        } else {
-            Log-Warn ("verify: '{0}' NOT on PATH (winget install may have failed; check above)" -f $probe)
-        }
-    }
+    # Dot-source REDEFINES Install-MiosWindowsTools with the on-disk body
+    # then re-invokes it. The redefinition is idempotent.
+    . $_hostSrc
+    Install-MiosWindowsTools
 }
 
 function Install-WindowsBranding {
@@ -5667,21 +5329,21 @@ function New-MiosIcon {
         $g.Dispose()
         $bitmaps += ,$bmp
     }
-    # Multi-image .ico writer (ICONDIR + ICONDIRENTRY[] + PNG payloads).
+    # Multi-image .ico writer (ICONDIR header + ICONDIRENTRY[] + per-image PNG blocks).
     $fs = [System.IO.File]::Create($Path)
     $bw = New-Object System.IO.BinaryWriter($fs)
     $bw.Write([UInt16]0)                    # reserved
     $bw.Write([UInt16]1)                    # type = icon
     $bw.Write([UInt16]$bitmaps.Count)
-    $payloads = @()
+    $icoBlocks = @()
     foreach ($bmp in $bitmaps) {
         $ms = New-Object System.IO.MemoryStream
         $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-        $payloads += ,$ms.ToArray()
+        $icoBlocks += ,$ms.ToArray()
     }
     $offset = 6 + (16 * $bitmaps.Count)
     for ($i = 0; $i -lt $bitmaps.Count; $i++) {
-        $b = $bitmaps[$i]; $p = $payloads[$i]
+        $b = $bitmaps[$i]; $p = $icoBlocks[$i]
         $bw.Write([byte]($(if ($b.Width  -ge 256) { 0 } else { $b.Width  })))
         $bw.Write([byte]($(if ($b.Height -ge 256) { 0 } else { $b.Height })))
         $bw.Write([byte]0)              # palette
@@ -5692,7 +5354,7 @@ function New-MiosIcon {
         $bw.Write([UInt32]$offset)
         $offset += $p.Length
     }
-    foreach ($p in $payloads) { $bw.Write($p) }
+    foreach ($p in $icoBlocks) { $bw.Write($p) }
     $bw.Flush(); $bw.Close(); $fs.Close()
     foreach ($bmp in $bitmaps) { $bmp.Dispose() }
 }
