@@ -5740,7 +5740,46 @@ if (`$args.Count -eq 0) {
 
     $pullPath = Join-Path $MiosBinDir 'mios-pull.ps1'
     Set-Content -Path $pullPath -Value @"
+# <MiOSRoot>\bin\mios-pull.ps1 -- refreshes BOTH the Windows-side M:\
+# overlay AND the dev VM root (/) from origin/main. Two distinct git
+# working trees:
+#   1. M:\ (Windows-side mios.git overlay) -- backs every M:\usr/share/mios
+#      lookup, M:\usr/share/mios/configurator/mios.html (MiOS Config
+#      shortcut), and what the dev VM sees at /mnt/m/.
+#   2. / inside MiOS-DEV (the dev VM's mios.git working tree per
+#      Architectural Law 3, ".git IS /") -- /usr/bin/mios-pull does the
+#      git fetch + reset --hard inside the dev distro.
+# Operator confirmed bug 2026-05-08: previous mios-pull.ps1 only did
+# step 2, leaving M:\ stale -> `mios build` rendered an old MiOS.
 $devResolveBlock
+`$ErrorActionPreference = 'Continue'
+
+# Step 1: Windows-side M:\ refresh.
+`$miosRoot = 'M:\'
+if ((Test-Path (Join-Path `$miosRoot '.git')) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Host '  [mios-pull] Windows-side: git fetch + reset --hard origin/main on M:\...' -ForegroundColor Cyan
+    try {
+        & git -C `$miosRoot fetch --depth=1 origin main 2>&1 | ForEach-Object { Write-Host ('    ' + `$_) -ForegroundColor DarkGray }
+        if (`$LASTEXITCODE -eq 0) {
+            & git -C `$miosRoot reset --hard origin/main 2>&1 | ForEach-Object { Write-Host ('    ' + `$_) -ForegroundColor DarkGray }
+            if (`$LASTEXITCODE -eq 0) {
+                `$_head = (& git -C `$miosRoot rev-parse --short HEAD 2>`$null)
+                Write-Host ('  [mios-pull] M:\ now at origin/main HEAD = ' + `$_head) -ForegroundColor Green
+            } else {
+                Write-Host '  [mios-pull] M:\ git reset --hard failed' -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host '  [mios-pull] M:\ git fetch failed (offline?)' -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host ('  [mios-pull] M:\ git refresh threw: ' + `$_.Exception.Message) -ForegroundColor Yellow
+    }
+} else {
+    Write-Host '  [mios-pull] M:\ is not a git working tree -- skipping Windows-side refresh' -ForegroundColor Yellow
+}
+
+# Step 2: dev VM root refresh.
+Write-Host '  [mios-pull] dev VM: syncing / overlay to origin/main...' -ForegroundColor Cyan
 wsl.exe -d (Resolve-MiosDevDistro) --user root sudo /usr/bin/mios-pull @args
 "@ -Encoding UTF8
 
@@ -6021,16 +6060,58 @@ if (-not `$promoted) {
     Write-Host '  [promote] no mios*.toml / *mios*.html in Downloads -- proceeding with current overlay' -ForegroundColor DarkGray
 }
 
-# Sync M:\ overlay to origin/main so the build inside MiOS-DEV picks up
-# both the operator's promoted edits AND the latest upstream. mios-pull.ps1
-# delegates to /usr/bin/mios-pull inside the dev distro for the actual
-# git fetch + reset --hard.
+# Sync M:\ overlay to origin/main BEFORE the dev VM handoff. Two
+# distinct git working trees need refreshing:
+#
+#   1. M:\ (the Windows-side mios.git overlay) -- THIS is what backs
+#      M:\usr\share\mios\configurator\mios.html (opened by MiOS Config),
+#      M:\usr\share\mios\mios.toml (read by every Get-MiosTomlValue),
+#      and what the dev VM sees at /mnt/m/. Without a Windows-side
+#      `git fetch + reset --hard origin/main` here, M:\ stays frozen
+#      to whatever was on origin at the LAST install run, so:
+#        - MiOS Config opens an OLD mios.html
+#        - mios.toml reads return OLD values
+#        - the dev VM's build-driver via /mnt/m/ uses OLD overlay
+#      Operator confirmed bug 2026-05-08: `mios build` rendered an
+#      "old MiOS build" because M:\ was stale.
+#   2. / inside MiOS-DEV (the dev VM's mios.git working tree -- Architectural
+#      Law 3, ".git IS /") -- mios-pull.ps1 delegates to
+#      /usr/bin/mios-pull inside the dev distro for this.
+#
+# Step 1 (M:\ Windows-side) MUST run BEFORE step 2 because the dev
+# distro's mios-build-driver reads from /mnt/m/ for some inputs (e.g.
+# mios.toml lookups via Get-MiosTomlValue). Refreshing M:\ first
+# guarantees the dev VM build sees the latest overlay.
+`$miosRoot = 'M:\'
+if ((Test-Path (Join-Path `$miosRoot '.git')) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Host '  [pull] Windows-side: git fetch + reset --hard origin/main on M:\...' -ForegroundColor Cyan
+    try {
+        & git -C `$miosRoot fetch --depth=1 origin main 2>&1 | ForEach-Object { Write-Host ('    ' + `$_) -ForegroundColor DarkGray }
+        if (`$LASTEXITCODE -eq 0) {
+            & git -C `$miosRoot reset --hard origin/main 2>&1 | ForEach-Object { Write-Host ('    ' + `$_) -ForegroundColor DarkGray }
+            if (`$LASTEXITCODE -eq 0) {
+                `$_head = (& git -C `$miosRoot rev-parse --short HEAD 2>`$null)
+                Write-Host ('  [pull] M:\ now at origin/main HEAD = ' + `$_head) -ForegroundColor Green
+            } else {
+                Write-Host '  [pull] M:\ git reset --hard failed -- build will run against possibly-stale overlay' -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host '  [pull] M:\ git fetch failed (offline?) -- build will run against possibly-stale overlay' -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host ('  [pull] M:\ git refresh threw: ' + `$_.Exception.Message) -ForegroundColor Yellow
+    }
+} else {
+    Write-Host '  [pull] M:\ is not a git working tree OR git is missing -- skipping Windows-side refresh' -ForegroundColor Yellow
+}
+
+# Now refresh the dev VM root (/) via mios-pull.ps1.
 `$pull = Join-Path `$PSScriptRoot 'mios-pull.ps1'
 if (Test-Path `$pull) {
-    Write-Host '  [pull] syncing M:\ overlay to origin/main...' -ForegroundColor Cyan
+    Write-Host '  [pull] dev VM: syncing / overlay to origin/main...' -ForegroundColor Cyan
     & pwsh.exe -NoProfile -File `$pull
 } else {
-    Write-Host '  [pull] mios-pull.ps1 not found -- skipping pull, build will run against staged tree' -ForegroundColor Yellow
+    Write-Host '  [pull] mios-pull.ps1 not found -- skipping dev VM pull, build will run against staged dev tree' -ForegroundColor Yellow
 }
 
 # SSH handoff into MiOS-DEV. mios-build-driver is THE build pipeline:
