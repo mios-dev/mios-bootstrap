@@ -2275,21 +2275,30 @@ if ($hwnd -ne [IntPtr]::Zero) {
     if ([string]::IsNullOrWhiteSpace($_winProfile)) { $_winProfile = 'MiOS-WIN' }
     if ([string]::IsNullOrWhiteSpace($_devProfile)) { $_devProfile = 'MiOS-DEV' }
 
+    # Prefer the compiled subsystem:Windows launcher (.exe -- zero pwsh
+    # flash, proper window centering loop). Fall back to pwsh + .ps1
+    # only if the .exe wasn't compiled (csc.exe missing on the host).
+    $_launcherExe = Join-Path $miosRoot 'bin\mios-launch.exe'
+    $_useExeLauncher = Test-Path -LiteralPath $_launcherExe
+
     $writeMiosLnk = {
-        param([string]$Path, [string]$Args, [string]$Description)
-        $sc = $shell.CreateShortcut($Path)
-        $sc.TargetPath       = $pwshExe
-        $sc.Arguments        = $Args
+        param([string]$LnkPath, [string]$LnkTarget, [string]$LnkArgs, [string]$LnkDesc)
+        $sc = $shell.CreateShortcut($LnkPath)
+        $sc.TargetPath       = $LnkTarget
+        $sc.Arguments        = $LnkArgs
         $sc.WorkingDirectory = $miosRoot
-        $sc.Description      = $Description
-        $sc.WindowStyle      = 7   # Minimized; -WindowStyle Hidden inside Args avoids flash
+        $sc.Description      = $LnkDesc
+        # WindowStyle Normal (1) -- the .exe is subsystem:Windows so
+        # there's no console to hide; the spawned wt.exe handles its
+        # own window state. Was 7 (Minimized) which on some shells
+        # propagated to wt.exe and hid the MiOS window.
+        $sc.WindowStyle      = 1
         if ($iconPath) { $sc.IconLocation = "$iconPath,0" }
         $sc.Save()
     }
 
     # SSOT shortcut catalog -- vendor defaults baked here, mios.toml
-    # [apps.shortcut.<key>] overrides any/all keys. The ORDER of the
-    # array is also the order they're created (and shown as Log lines).
+    # [apps.shortcut.<key>] overrides any/all keys.
     $_shortcutCatalog = @(
         @{ Key='mios';      DefName='MiOS';        DefProfile=$_devProfile; DefVerb='';     DefDesc="MiOS -- $_lnkTag" },
         @{ Key='mios_win';  DefName='MiOS-WIN';    DefProfile=$_winProfile; DefVerb='';     DefDesc='MiOS-WIN -- Windows-side terminal with MiOS theme + dashboard' },
@@ -2303,17 +2312,34 @@ if ($hwnd -ne [IntPtr]::Zero) {
         $_lnkDesc = Get-MiosTomlValue -Section $_section -Key 'description' -Default $_sc.DefDesc
         if ([string]::IsNullOrWhiteSpace($_lnkName)) { $_lnkName = $_sc.DefName }
         if ([string]::IsNullOrWhiteSpace($_lnkProf)) { $_lnkProf = $_sc.DefProfile }
-        # Build launcher args. Verb only when Profile is Windows-side
-        # (MiOS-DEV is bash login -- verb dispatch is a no-op).
-        $_lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_lnkProf`""
-        if ($_lnkVerb -and $_lnkProf -ne $_devProfile) {
-            $_lnkArgs += " -Verb `"$_lnkVerb`""
+        # Build (TargetExe, ArgString) pair. .exe form takes positional
+        # args ("<profile> <cols> <rows>") and is preferred. .ps1 fallback
+        # uses pwsh -File invocation.
+        if ($_useExeLauncher) {
+            $_lnkTarget = $_launcherExe
+            $_lnkArgStr = "$_lnkProf 80 20"
+            if ($_lnkVerb -and $_lnkProf -ne $_devProfile) {
+                # Verb dispatch -- the .exe doesn't currently parse -Verb,
+                # so route those (just MiOS Help today) through the .ps1.
+                $_lnkTarget = $pwshExe
+                $_lnkArgStr = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_lnkProf`" -Verb `"$_lnkVerb`""
+            }
+        } else {
+            $_lnkTarget = $pwshExe
+            $_lnkArgStr = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_lnkProf`""
+            if ($_lnkVerb -and $_lnkProf -ne $_devProfile) {
+                $_lnkArgStr += " -Verb `"$_lnkVerb`""
+            }
         }
-        & $writeMiosLnk (Join-Path $startMenuDir ($_lnkName + '.lnk')) $_lnkArgs $_lnkDesc
-        if ($desktopDir -and (Test-Path $desktopDir)) {
-            & $writeMiosLnk (Join-Path $desktopDir ($_lnkName + '.lnk')) $_lnkArgs $_lnkDesc
+        try {
+            & $writeMiosLnk (Join-Path $startMenuDir ($_lnkName + '.lnk')) $_lnkTarget $_lnkArgStr $_lnkDesc
+            if ($desktopDir -and (Test-Path $desktopDir)) {
+                & $writeMiosLnk (Join-Path $desktopDir ($_lnkName + '.lnk')) $_lnkTarget $_lnkArgStr $_lnkDesc
+            }
+            Write-Host "  [+] Shortcut: $_lnkName -> $_lnkTarget $_lnkArgStr" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "  [!] Shortcut creation failed for $_lnkName : $($_.Exception.Message)" -ForegroundColor Yellow
         }
-        Write-Host "  [+] Shortcut: $_lnkName -> WT $_lnkProf$(if ($_lnkVerb -and $_lnkProf -ne $_devProfile) { " + 'mios $_lnkVerb'" })" -ForegroundColor DarkGray
     }
 
     # The hub variable below is left as 'MiOS' so subsequent code that
