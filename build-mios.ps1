@@ -7017,11 +7017,15 @@ class MiOSLaunch {
     # against the new name+bin+icon set. Vendor fallback below mirrors
     # what mios.toml [apps] ships with for cold first-run before any
     # operator edit.
-    $verbShortcuts = @(
-        @{ Name = 'MiOS-DEV';    Bin = 'mios-dev.ps1';    Icon = 'mios-dev.ico';    Desc = 'Open MiOS-DEV (podman machine) directly to its themed dashboard' },
-        @{ Name = 'MiOS Config'; Bin = 'mios-config.ps1'; Icon = 'mios-config.ico'; Desc = 'Open mios.html (the HTML configurator) in your default browser to edit mios.toml' },
-        @{ Name = 'MiOS Help';   Bin = 'mios-help.ps1';   Icon = 'mios-help.ico';   Desc = 'Full verb + functionality reference (every MiOS command and where things live)' }
-    )
+    # Operator 2026-05-09 consolidation: ONE MiOS app + Uninstall.
+    # Per-verb shortcuts (MiOS-DEV / MiOS Config / MiOS Help) are
+    # NOT created -- those are typed verbs in the terminal
+    # (`mios dev`, `mios config`, `mios help`).  Get-MiOS.ps1 already
+    # collapsed its $miosVerbs to []; this duplicate creator in
+    # build-mios.ps1's Install-WindowsBranding was reseeding the
+    # per-verb .lnks every install, which is what the operator
+    # caught in the 2026-05-09 14:08 install log.  Empty list now.
+    $verbShortcuts = @()
     try {
         $_appsTomlText = $null
         foreach ($_cand in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $MiosBootstrapShadow 'mios.toml'))) {
