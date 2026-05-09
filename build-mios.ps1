@@ -6989,17 +6989,15 @@ class MiOSLaunch {
         $hubArgs   = "-NoExit -ExecutionPolicy Bypass -Command `"& { $hubResizePrelude; & '$hubPath' }`""
     }
 
-    # ── Hub MiOS.lnk + pin handled by Get-MiOS.ps1's Install-MiOSNativeApp ──
-    # build-mios.ps1 used to create a SECOND hub shortcut at
-    # C:\ProgramData\...\Start Menu\Programs\MiOS\MiOS.lnk (system-wide)
-    # while Get-MiOS.ps1 created the per-user one. Two creators racing
-    # on the same name produced inconsistent state and broken targets
-    # (operator caught in 2026-05-09 install screenshot). Removed:
-    # Get-MiOS.ps1 is now the single source of truth for the canonical
-    # 4-shortcut set. Per-user shortcuts only -- system-wide install
-    # would surface MiOS to other accounts that may not have M:\ access.
+    # ── Shortcut creation deferred to FINAL STEP of Get-MiOS.ps1 ────────────
+    # Operator 2026-05-09: "applications and icons should be installed AFTER
+    # everything--at the end!!!! LAST STEPS". The canonical 4-shortcut set
+    # (MiOS, MiOS-WIN, MiOS Help, Uninstall MiOS) is created by
+    # Get-MiOS.ps1's end-of-script block AFTER bootstrap.ps1 + build-mios.ps1
+    # succeed. build-mios.ps1's Install-WindowsBranding does NOT create
+    # shortcuts at all -- if it did, partial-install failures would leave
+    # broken shortcuts pointing at a half-built dev VM.
     $smLnk = Join-Path $StartMenuDir 'MiOS.lnk'
-    Log-Ok "Hub MiOS.lnk creation delegated to Get-MiOS.ps1 Install-MiOSNativeApp (per-user, canonical 4-set)"
 
     # ── Per-verb native-app shortcuts ────────────────────────────────
     # Per operator: every MiOS verb appears as its own native Windows
@@ -7090,7 +7088,7 @@ class MiOSLaunch {
         Log-Warn "$DevDistro distro not registered yet (Phase 3 should have provisioned it). The launcher's mios-dash will show 'not registered'; rerun this script or `podman machine init` to create it."
     }
 
-    Log-Ok "MiOS launcher installed (Desktop + Start Menu). Open it to enter an 80x32 pwsh window with the MiOS dashboard."
+    Log-Ok "MiOS launcher binaries staged at $MiosBinDir (mios-launch.ps1 + mios-launch.exe). Shortcut creation deferred to FINAL STEP of Get-MiOS.ps1 after bootstrap completes successfully."
 
     # ── 7. Re-run Get-MiOS.ps1's Install-MiOSPowerShellProfile +
     # Install-MiOSTerminalProfile so EVERY install path (irm|iex Get-MiOS,

@@ -4961,16 +4961,21 @@ if ($true) {
         Write-Host ('  ' + ($_msgThemeFail -f $_.Exception.Message)) -ForegroundColor Yellow
     }
 
-    # SSOT: Step 1/8..8/8 banners resolve through mios.toml [messages.steps].
-    # Numbering fixed at N/8 (was inconsistent 5/7 / 6/8 in prior code).
-    $_msgStep1     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_1_wt'           -Default '[*] Step 1/8: Installing Windows Terminal (base) via winget...'
-    $_msgStep2     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_2_pwsh7'        -Default '[*] Step 2/8: Installing PowerShell 7 (pwsh) BEFORE WT profile creation...'
-    $_msgStep3     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_3_wt_settings'  -Default '[*] Step 3/8: Patching WT settings.json with MiOS scheme + profiles...'
-    $_msgStep4     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_4_geist_font'   -Default '[*] Step 4/8: Installing GeistMono Nerd Font (per-user, HKCU)...'
-    $_msgStep5     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_5_fastfetch'    -Default '[*] Step 5/8: Installing fastfetch + staging MiOS-themed config...'
-    $_msgStep6     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_6_omp'          -Default '[*] Step 6/8: oh-my-posh + PSReadLine + mios.omp.json + profile wiring...'
-    $_msgStep7     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_7_extras'       -Default '[*] Step 7/8: Installing terminal completion / UX modules...'
-    $_msgStep8     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_8_native_app'   -Default '[*] Step 8/8: Registering MiOS as a native Windows app...'
+    # SSOT: Step 1/7..7/7 banners resolve through mios.toml [messages.steps].
+    # Operator 2026-05-09: "applications and icons should be installed AFTER
+    # everything--at the end!!!! LAST STEPS". Step 8 (Install-MiOSNativeApp)
+    # was relocated to the very end of Get-MiOS.ps1, AFTER bootstrap.ps1 +
+    # build-mios.ps1's full phase loop succeeds. If the dev VM build fails
+    # part-way, the failure-trap reap fires and NO shortcuts are ever
+    # created -- operator never sees broken icons pointing at a half-built
+    # dev VM. Steps 1-7 below stage the Windows-side basics ONLY.
+    $_msgStep1     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_1_wt'           -Default '[*] Step 1/7: Installing Windows Terminal (base) via winget...'
+    $_msgStep2     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_2_pwsh7'        -Default '[*] Step 2/7: Installing PowerShell 7 (pwsh) BEFORE WT profile creation...'
+    $_msgStep3     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_3_wt_settings'  -Default '[*] Step 3/7: Patching WT settings.json with MiOS scheme + profiles...'
+    $_msgStep4     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_4_geist_font'   -Default '[*] Step 4/7: Installing GeistMono Nerd Font (per-user, HKCU)...'
+    $_msgStep5     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_5_fastfetch'    -Default '[*] Step 5/7: Installing fastfetch + staging MiOS-themed config...'
+    $_msgStep6     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_6_omp'          -Default '[*] Step 6/7: oh-my-posh + PSReadLine + mios.omp.json + profile wiring...'
+    $_msgStep7     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_7_extras'       -Default '[*] Step 7/7: Installing terminal completion / UX modules...'
     $_msgWtFailed  = Get-MiosTomlValue -Section 'messages.steps' -Key 'wt_failed_error'     -Default '[!] WT install failed -- bootstrap cannot continue without a themed WT to launch into.'
     $_msgWtHint    = Get-MiosTomlValue -Section 'messages.steps' -Key 'wt_failed_hint'      -Default '    Install manually and re-run: winget install Microsoft.WindowsTerminal'
 
@@ -4995,8 +5000,9 @@ if ($true) {
     Install-MiOSPowerShellProfile   | Out-Null
     Write-Host "  $_msgStep7" -ForegroundColor Cyan
     Install-MiOSTerminalExtras      | Out-Null
-    Write-Host "  $_msgStep8" -ForegroundColor Cyan
-    Install-MiOSNativeApp           | Out-Null
+    # NOTE: Install-MiOSNativeApp (canonical 4-shortcut creation) used to
+    # run here as Step 8/8. Moved to the end-of-script "FINAL STEP"
+    # block (post-bootstrap.ps1 success) per operator directive.
 
     # Refresh $env:PATH from registry BEFORE dot-sourcing the profile.
     # winget just installed oh-my-posh / fastfetch / etc. and updated the
@@ -5400,4 +5406,20 @@ Push-Location $RepoDir
 try {
     & $entry @forwardArgs
 } finally { Pop-Location }
-exit $LASTEXITCODE
+$_bootstrapExit = $LASTEXITCODE
+
+# ── FINAL STEP: applications + icons (operator directive) ──────────────────
+# Operator 2026-05-09: "applications and icons should be installed AFTER
+# everything--at the end!!!! LAST STEPS". Only fires on bootstrap.ps1 +
+# build-mios.ps1 success ($_bootstrapExit==0). On failure the trap-on-
+# failure auto-reap above already wiped Windows clean -- no shortcuts
+# pointing at a half-broken dev VM.
+if ($_bootstrapExit -eq 0) {
+    $_msgFinalStep = Get-MiosTomlValue -Section 'messages.steps' -Key 'final_step_native_app' -Default '[*] Final step: Registering MiOS as a native Windows app + canonical 4 shortcuts...'
+    Write-Host ''
+    Write-Host "  $_msgFinalStep" -ForegroundColor Cyan
+    try { Install-MiOSNativeApp | Out-Null } catch {
+        Write-Host "  [!] Install-MiOSNativeApp failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+exit $_bootstrapExit
