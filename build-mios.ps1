@@ -2936,6 +2936,24 @@ function New-BuilderDistro([hashtable]$HW) {
                 & podman machine rm --force $BuilderDistro 2>&1 |
                     ForEach-Object { Write-Log "podman-recover-rm: $_" }
 
+                # Operator 2026-05-09 hit `getpwnam(root) failed 5` from
+                # the retry-init's internal `wsl.exe -u root -d
+                # podman-MiOS-DEV sh` because podman's `machine rm` left
+                # the WSL distro REGISTRATION behind in a half-broken
+                # state (no /etc/passwd populated yet).  Explicitly
+                # unregister `podman-<BuilderDistro>` here so the
+                # retry-init starts from a clean WSL slate.  Both
+                # name shapes are tried because podman 5.x sometimes
+                # uses bare BuilderDistro and sometimes podman-<name>.
+                foreach ($_wslName in @("podman-$BuilderDistro", $BuilderDistro)) {
+                    & wsl.exe --unregister $_wslName 2>&1 |
+                        ForEach-Object { Write-Log "podman-recover-wsl-unregister: $_" }
+                }
+                # Brief settle so WSL service finishes the unregister
+                # transaction before podman init creates a new distro
+                # with the same name.
+                Start-Sleep -Seconds 2
+
                 # Sweep ALL candidate podman-machine storage paths
                 # unconditionally. A previous run (admin or otherwise)
                 # may have left:
