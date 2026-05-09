@@ -3754,6 +3754,41 @@ $endMark
     Set-Content -Path $profilePath -Value $existing -Encoding UTF8 -NoNewline
     Write-Host "  [+] MiOS PS profile body: $miosProfileScript" -ForegroundColor Green
     Write-Host "  [+] Redirector at $profilePath" -ForegroundColor DarkGray
+
+    # Append a diagnostic block to M:\MiOS\powershell\profile.ps1 that
+    # writes [Console]::WindowWidth + BufferWidth + LASTEXITCODE-style
+    # context to M:\MiOS\diagnostics\window-width.txt at every profile
+    # load. Operators (and the AI agent debugging wrap issues) can read
+    # this file to know the EXACT cell count WT is reporting on the
+    # operator's hardware -- no more guessing right_margin values from
+    # screenshots. Re-runs append (with timestamp) so we get a history
+    # across MiOS WT launches. Per operator's 5-hour iteration spiral
+    # 2026-05-08: STOP guessing margin values, measure the actual width.
+    $diagBlock = @"
+
+# ── MiOS WindowWidth diagnostic (auto-appended by Install-MiOSPowerShellProfile) ──
+# Every MiOS pwsh launch appends one line to M:\MiOS\diagnostics\window-width.txt
+# capturing [Console]::WindowWidth + BufferWidth + WT_SESSION + timestamp.
+# This is the SOURCE OF TRUTH for the actual visible cell count on the
+# operator's hardware -- if WindowWidth != mios.toml [terminal].cols, the
+# delta is the WT chrome budget that right_margin must absorb.
+try {
+    `$_diagDir = 'M:\MiOS\diagnostics'
+    if (-not (Test-Path -LiteralPath `$_diagDir)) { New-Item -ItemType Directory -Path `$_diagDir -Force | Out-Null }
+    `$_diagFile = Join-Path `$_diagDir 'window-width.txt'
+    `$_ww = try { [Console]::WindowWidth } catch { '?' }
+    `$_bw = try { `$Host.UI.RawUI.BufferSize.Width } catch { '?' }
+    `$_wh = try { [Console]::WindowHeight } catch { '?' }
+    `$_wt = if (`$env:WT_SESSION) { 'WT' } else { 'conhost-or-other' }
+    `$_ts = (Get-Date).ToString('s')
+    Add-Content -LiteralPath `$_diagFile -Value ("{0} WindowWidth={1} BufferWidth={2} WindowHeight={3} host={4} pwsh={5}" -f `$_ts, `$_ww, `$_bw, `$_wh, `$_wt, `$PSVersionTable.PSVersion)
+} catch {}
+# ── end MiOS WindowWidth diagnostic ──
+"@
+    try {
+        Add-Content -LiteralPath $miosProfileScript -Value $diagBlock -Encoding UTF8
+        Write-Host "  [+] WindowWidth diagnostic appended to $miosProfileScript" -ForegroundColor DarkGray
+    } catch {}
 }
 
 # DPI-aware centered position for an 80x30 acrylic focus-mode window.
