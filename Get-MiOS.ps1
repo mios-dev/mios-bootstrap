@@ -4882,17 +4882,27 @@ trap {
     exit 1
 }
 
+# SSOT: every Step N banner resolves through mios.toml [messages.steps].
+# Per feedback_mios_messages_section_ssot: no Write-Host literals in code;
+# vendor defaults via -Default arg of Get-MiosTomlValue.
+$_msgStep0          = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_0_provision'      -Default '[*] Step 0: Provisioning M:\ partition + storage junctions...'
+$_msgStep0Failed    = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_0_failed_template' -Default '[!] Initialize-DataDisk failed: {0}'
+$_msgPodmanRedirect = Get-MiosTomlValue -Section 'messages.steps' -Key 'podman_storage_redirect' -Default 'Redirecting podman-machine storage to M:\\podman\\machine ...'
+$_msgPodmanFailed   = Get-MiosTomlValue -Section 'messages.steps' -Key 'podman_storage_failed_template' -Default '[!] Set-PodmanMachineStorageOnM failed: {0}'
+$_msgWingetRedirect = Get-MiosTomlValue -Section 'messages.steps' -Key 'winget_storage_redirect' -Default 'Redirecting winget package storage to M:\\winget\\* ...'
+$_msgWingetFailed   = Get-MiosTomlValue -Section 'messages.steps' -Key 'winget_storage_failed_template' -Default '[!] Set-WingetStorageOnM failed: {0}'
+
 Write-Host ''
-Write-Host '  [*] Step 0: Provisioning M:\ partition + storage junctions...' -ForegroundColor Cyan
-try { Initialize-DataDisk } catch { Write-Host "  [!] Initialize-DataDisk failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+Write-Host "  $_msgStep0" -ForegroundColor Cyan
+try { Initialize-DataDisk } catch { Write-Host ('  ' + ($_msgStep0Failed -f $_.Exception.Message)) -ForegroundColor Yellow }
 try {
-    Write-Info "Redirecting podman-machine storage to M:\\podman\\machine ..."
+    Write-Info $_msgPodmanRedirect
     Set-PodmanMachineStorageOnM
-} catch { Write-Host "  [!] Set-PodmanMachineStorageOnM failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+} catch { Write-Host ('  ' + ($_msgPodmanFailed -f $_.Exception.Message)) -ForegroundColor Yellow }
 try {
-    Write-Info "Redirecting winget package storage to M:\\winget\\* ..."
+    Write-Info $_msgWingetRedirect
     Set-WingetStorageOnM
-} catch { Write-Host "  [!] Set-WingetStorageOnM failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+} catch { Write-Host ('  ' + ($_msgWingetFailed -f $_.Exception.Message)) -ForegroundColor Yellow }
 
 if ($true) {
     $isAdmin = $_isAdmin
@@ -4943,33 +4953,49 @@ if ($true) {
         & reg.exe add $dwmKeyReg /v 'ColorizationColor'     /t REG_DWORD /d $accentHex /f *>$null
         & reg.exe add $dwmKeyReg /v 'ColorizationAfterglow' /t REG_DWORD /d $accentHex /f *>$null
         & reg.exe add $dwmKeyReg /v 'ColorPrevalence'       /t REG_DWORD /d '1'        /f *>$null
-        Write-Host "  [+] Windows global theme set to MiOS palette (dark mode + #1A407F accent + transparency)." -ForegroundColor DarkGray
+        # SSOT: theme-apply success/failure messages from [messages.theme_apply].
+        $_msgThemeOk     = Get-MiosTomlValue -Section 'messages.theme_apply' -Key 'applied'          -Default '[+] Windows global theme set to MiOS palette (dark mode + #1A407F accent + transparency).'
+        Write-Host "  $_msgThemeOk" -ForegroundColor DarkGray
     } catch {
-        Write-Host "  [!] Windows theme registry write failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        $_msgThemeFail = Get-MiosTomlValue -Section 'messages.theme_apply' -Key 'failed_template' -Default '[!] Windows theme registry write failed: {0}'
+        Write-Host ('  ' + ($_msgThemeFail -f $_.Exception.Message)) -ForegroundColor Yellow
     }
 
-    Write-Host "  [*] Step 1/7: Installing Windows Terminal (base) via winget..." -ForegroundColor Cyan
+    # SSOT: Step 1/8..8/8 banners resolve through mios.toml [messages.steps].
+    # Numbering fixed at N/8 (was inconsistent 5/7 / 6/8 in prior code).
+    $_msgStep1     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_1_wt'           -Default '[*] Step 1/8: Installing Windows Terminal (base) via winget...'
+    $_msgStep2     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_2_pwsh7'        -Default '[*] Step 2/8: Installing PowerShell 7 (pwsh) BEFORE WT profile creation...'
+    $_msgStep3     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_3_wt_settings'  -Default '[*] Step 3/8: Patching WT settings.json with MiOS scheme + profiles...'
+    $_msgStep4     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_4_geist_font'   -Default '[*] Step 4/8: Installing GeistMono Nerd Font (per-user, HKCU)...'
+    $_msgStep5     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_5_fastfetch'    -Default '[*] Step 5/8: Installing fastfetch + staging MiOS-themed config...'
+    $_msgStep6     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_6_omp'          -Default '[*] Step 6/8: oh-my-posh + PSReadLine + mios.omp.json + profile wiring...'
+    $_msgStep7     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_7_extras'       -Default '[*] Step 7/8: Installing terminal completion / UX modules...'
+    $_msgStep8     = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_8_native_app'   -Default '[*] Step 8/8: Registering MiOS as a native Windows app...'
+    $_msgWtFailed  = Get-MiosTomlValue -Section 'messages.steps' -Key 'wt_failed_error'     -Default '[!] WT install failed -- bootstrap cannot continue without a themed WT to launch into.'
+    $_msgWtHint    = Get-MiosTomlValue -Section 'messages.steps' -Key 'wt_failed_hint'      -Default '    Install manually and re-run: winget install Microsoft.WindowsTerminal'
+
+    Write-Host "  $_msgStep1" -ForegroundColor Cyan
     if (-not (Install-MiOSWindowsTerminal)) {
-        Write-Host "  [!] WT install failed -- bootstrap cannot continue without a themed WT to launch into." -ForegroundColor Red
-        Write-Host "      Install manually and re-run: winget install Microsoft.WindowsTerminal" -ForegroundColor DarkGray
+        Write-Host "  $_msgWtFailed" -ForegroundColor Red
+        Write-Host "  $_msgWtHint" -ForegroundColor DarkGray
         exit 1
     }
-    Write-Host "  [*] Step 2/7: Installing PowerShell 7 (pwsh) BEFORE WT profile creation..." -ForegroundColor Cyan
+    Write-Host "  $_msgStep2" -ForegroundColor Cyan
     Install-MiOSPwsh7               | Out-Null
-    Write-Host "  [*] Step 3/7: Patching WT settings.json with MiOS scheme + profiles..." -ForegroundColor Cyan
+    Write-Host "  $_msgStep3" -ForegroundColor Cyan
     Install-MiOSTerminalProfile     | Out-Null
-    Write-Host "  [*] Step 4/7: Installing GeistMono Nerd Font (per-user, HKCU)..." -ForegroundColor Cyan
+    Write-Host "  $_msgStep4" -ForegroundColor Cyan
     Install-MiOSGeistFont           | Out-Null
-    Write-Host "  [*] Step 5/7: Installing fastfetch + staging MiOS-themed config..." -ForegroundColor Cyan
+    Write-Host "  $_msgStep5" -ForegroundColor Cyan
     Install-MiOSFastfetch           | Out-Null
-    Write-Host "  [*] Step 6/8: oh-my-posh + PSReadLine + mios.omp.json + profile wiring..." -ForegroundColor Cyan
+    Write-Host "  $_msgStep6" -ForegroundColor Cyan
     Update-MiOSOhMyPosh             | Out-Null
     Update-MiOSPSReadLine           | Out-Null
     Install-MiOSOhMyPoshTheme       | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
-    Write-Host "  [*] Step 7/8: Installing terminal completion / UX modules..." -ForegroundColor Cyan
+    Write-Host "  $_msgStep7" -ForegroundColor Cyan
     Install-MiOSTerminalExtras      | Out-Null
-    Write-Host "  [*] Step 8/8: Registering MiOS as a native Windows app..." -ForegroundColor Cyan
+    Write-Host "  $_msgStep8" -ForegroundColor Cyan
     Install-MiOSNativeApp           | Out-Null
 
     # Refresh $env:PATH from registry BEFORE dot-sourcing the profile.
