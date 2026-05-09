@@ -1998,10 +1998,17 @@ function Install-MiOSNativeApp {
     #   * Best-effort programmatic Pin to Start (Win10 only -- Win11 hint)
     #
     # Target dir for the launcher script: M:\MiOS\bin\mios-launch.ps1
-    # (operator's M:\-everywhere invariant). Falls back to %LOCALAPPDATA%
-    # if M:\ isn't yet provisioned.
-
-    $miosRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path $env:LOCALAPPDATA 'MiOS' }
+    # (operator's M:\-everywhere invariant -- "irm|iex sets up M:\
+    # disk/partition installs EVERYTHING to M:\ EVERYTHING").  M:\
+    # is a HARD REQUIREMENT -- the bootstrap creates it in
+    # Initialize-DataDisk before this function runs.  No fallback
+    # to LOCALAPPDATA; if M:\ isn't there, something has wiped it
+    # mid-install and we should fail loudly rather than silently
+    # split the install across C:\ and M:\.
+    if (-not (Test-Path 'M:\')) {
+        throw "Install-MiosLauncher: M:\ not provisioned -- Initialize-DataDisk should have created it before this point. MiOS contract: every MiOS-managed file lives on M:\."
+    }
+    $miosRoot = 'M:\MiOS'
     $miosBin  = Join-Path $miosRoot 'bin'
     if (-not (Test-Path $miosBin)) { New-Item -ItemType Directory -Path $miosBin -Force | Out-Null }
 
@@ -2098,10 +2105,8 @@ if ([string]::IsNullOrWhiteSpace($Verb)) {
     # MiOS pwsh body that defines the `mios` function + dashboard +
     # mios-* aliases). Without dot-sourcing it the verb call fails
     # with "mios: command not found".
+    # M:\-everywhere invariant; no LOCALAPPDATA fallback.
     $miosProfile = 'M:\MiOS\powershell\profile.ps1'
-    if (-not (Test-Path -LiteralPath $miosProfile)) {
-        $miosProfile = Join-Path $env:LOCALAPPDATA 'MiOS\powershell\profile.ps1'
-    }
     # Resolve pwsh -- Stable WT's MiOS profile binds to PowerShell 7;
     # use the same here for parity. Fall back to system pwsh.exe on PATH.
     $pwshExe = $null
@@ -2864,8 +2869,13 @@ function Install-MiOSFastfetch {
         Write-Host "  [+] fastfetch already installed." -ForegroundColor DarkGray
     }
 
-    # Stage the config + logo on M:\ (or LOCALAPPDATA fallback).
-    $miosRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path $env:LOCALAPPDATA 'MiOS' }
+    # Stage the config + logo on M:\ (M:\-everywhere invariant -- no
+    # LOCALAPPDATA fallback; Initialize-DataDisk creates M:\ before
+    # any MiOS staging runs).
+    if (-not (Test-Path 'M:\')) {
+        throw "Install-MiOSFastfetch: M:\ not provisioned -- Initialize-DataDisk should have created it before this point."
+    }
+    $miosRoot = 'M:\MiOS'
     $ffDir = Join-Path $miosRoot 'fastfetch'
     if (-not (Test-Path $ffDir)) { New-Item -ItemType Directory -Path $ffDir -Force | Out-Null }
     $logoPath   = Join-Path $ffDir 'mios.txt'
@@ -2931,10 +2941,12 @@ function Install-MiOSFastfetch {
 }
 
 function Install-MiOSOhMyPoshTheme {
-    # Stage mios.omp.json at M:\MiOS\themes\ (or LOCALAPPDATA fallback)
-    # so the $PROFILE init block finds it on first launch -- prevents
-    # the "CONFIG NOT FOUND" prompt segment.
-    $miosRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path $env:LOCALAPPDATA 'MiOS' }
+    # Stage mios.omp.json at M:\MiOS\themes\ -- M:\-everywhere
+    # invariant; Initialize-DataDisk creates M:\ before this runs.
+    if (-not (Test-Path 'M:\')) {
+        throw "Install-MiOSOhMyPoshTheme: M:\ not provisioned -- Initialize-DataDisk should have created it before this point."
+    }
+    $miosRoot = 'M:\MiOS'
     $themesDir = Join-Path $miosRoot 'themes'
     if (-not (Test-Path $themesDir)) { New-Item -ItemType Directory -Path $themesDir -Force | Out-Null }
     $ompPath = Join-Path $themesDir 'mios.omp.json'
@@ -3206,7 +3218,16 @@ if (`$true) {
     } catch {}
 
     # ── Resolve / self-heal MiOS artifact paths ───────────────────
-    `$miosArtifactRoot = if (Test-Path 'M:\') { 'M:\MiOS' } else { Join-Path `$env:LOCALAPPDATA 'MiOS' }
+    # M:\-everywhere invariant (operator: "irm|iex sets up M:\
+    # disk/partition installs EVERYTHING to M:\ EVERYTHING").
+    # M:\ is created at install time and never removed at runtime;
+    # if it's missing, the install never completed and the operator
+    # needs to re-run irm|iex.  The profile body falls back to a
+    # warn rather than silently splitting state across drives.
+    `$miosArtifactRoot = 'M:\MiOS'
+    if (-not (Test-Path -LiteralPath `$miosArtifactRoot)) {
+        Write-Host "  [!] M:\MiOS not found -- re-run the irm|iex bootstrap to provision M:\." -ForegroundColor Yellow
+    }
     function _MiosSelfHeal {
         param([string]`$RelDir, [string]`$FileName, [string]`$Blob)
         `$dir = Join-Path `$miosArtifactRoot `$RelDir
@@ -3224,11 +3245,10 @@ if (`$true) {
     if (`$env:MIOS_OMP_JSON) { `$ompCands += `$env:MIOS_OMP_JSON }
     `$ompCands += @(
         'M:\MiOS\themes\mios.omp.json',
-        'M:\usr\share\mios\oh-my-posh\mios.omp.json',
-        (Join-Path `$env:LOCALAPPDATA 'MiOS\themes\mios.omp.json')
+        'M:\usr\share\mios\oh-my-posh\mios.omp.json'
     )
-    # C:\MiOS deliberately excluded -- it's a dev working tree, not a
-    # consumer install path.
+    # C:\* deliberately excluded -- M:\-everywhere invariant
+    # (operator: EVERYTHING to M:\, no LOCALAPPDATA / C:\MiOS leaks).
     foreach (`$c in `$ompCands) {
         if (`$c -and (Test-Path -LiteralPath `$c)) { `$miosOmp = `$c; break }
     }
