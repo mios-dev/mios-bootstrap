@@ -6275,9 +6275,16 @@ $endMark
         Log-Warn "mios-launch.ps1 source not found in repo (probed: $($_psSrcCandidates -join ', ')) -- launcher will not be staged"
     }
     if ($launcherSrc) {
+        # Substitute __MIOS_COLS__ / __MIOS_ROWS__ placeholders from mios.toml
+        # [terminal].cols / .rows (SSOT) -- operator 2026-05-09: "Toml is the
+        # total reference for all functions and calls".
+        $_lnchCols = [int](Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80)
+        $_lnchRows = [int](Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20)
+        $launcherSrc = $launcherSrc -replace '__MIOS_COLS__', [string]$_lnchCols
+        $launcherSrc = $launcherSrc -replace '__MIOS_ROWS__', [string]$_lnchRows
         if (-not (Test-Path $MiosBinDir)) { New-Item -ItemType Directory -Path $MiosBinDir -Force | Out-Null }
         Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
-        Log-Ok "MiOS native launcher staged: $miosLauncher (from src/mios-launch.ps1)"
+        Log-Ok "MiOS native launcher staged: $miosLauncher (cols=$_lnchCols rows=$_lnchRows from mios.toml [terminal])"
     }
 
     # Compile a tiny native .exe launcher with subsystem:Windows (no

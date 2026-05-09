@@ -36,16 +36,14 @@ try {
 
 Add-Type -AssemblyName System.Windows.Forms
 
-# Dims in CELLS only (mios.toml [terminal] -- 80x20 portal feel).
-# DON'T compute pixel dims from hardcoded cell metrics: at 100% DPI
-# Geist Mono 12pt is ~10x20 px but at 200% DPI it's ~20x40 px. The
-# previous `$winW = ($Cols * 10) + 20` hardcode produced a HALF-SIZE
-# pixel rect on 200% DPI hosts. WT auto-pixel-sizes the window
-# correctly for the active DPI when spawned with --size in cells; we
-# just need to wait for the window to surface and then read its
-# ACTUAL pixel dims via GetWindowRect for centering.
-$Cols   = 80
-$Rows   = 20
+# Dims in CELLS only -- placeholders __MIOS_COLS__ / __MIOS_ROWS__ are
+# substituted at install time by build-mios.ps1's Install-WindowsBranding
+# from mios.toml [terminal].cols / .rows (SSOT). Operator 2026-05-09:
+# "Toml is the total reference for all functions and calls -- scripts
+# are simply the core script and functions that refer to the contents
+# in the toml for all verbs GLOBALLY". Vendor defaults: 80x20.
+$Cols   = __MIOS_COLS__
+$Rows   = __MIOS_ROWS__
 
 $cur    = [System.Windows.Forms.Cursor]::Position
 $work   = [System.Windows.Forms.Screen]::FromPoint($cur).WorkingArea

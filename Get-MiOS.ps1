@@ -405,14 +405,15 @@ function Show-MiOSBanner {
     # frame char wrapped. inner = cols - right_margin - 2 always
     # leaves right_margin cells of slack on the right edge.
     $_bCols      = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols'         -Default (Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80)
-    # Default right_margin = 2 so the frame doesn't paint into cells
-    # WT reserves for its scrollbar (even with scrollbarState=hidden,
-    # WT pre-allocates the cells and the rightmost 1-2 columns can be
-    # eaten when the WT window is in non-focus mode). Operator 2026-05-09
-    # 17:57 install: image #9 showed dashboard rows wrapping in a 75-cell
-    # window because right_margin was 0 and WT reported WindowWidth=80
-    # while actual paintable was 78.
-    $_bRightMgn  = Get-MiosTomlValue -Section 'terminal'         -Key 'right_margin' -Default 2
+    # Operator 2026-05-09: "dashboards should be edge to edge globally!!
+    # 80x20 window is the Global benchmark!". right_margin=0 means the
+    # frame paints col 1..N where N = WindowWidth, edge-to-edge.
+    # Canonical launches use mios-launch.exe with --focus so WT runs in
+    # true 80x20 cells with no chrome reservation. Non-focus launches
+    # (operator opens WT profile directly) have chrome that eats cells
+    # -- in those cases the operator can override right_margin via
+    # mios.toml [terminal].right_margin.
+    $_bRightMgn  = Get-MiosTomlValue -Section 'terminal'         -Key 'right_margin' -Default 0
     $inner = [math]::Max(20, $_bCols - $_bRightMgn - 2)
     # Block-center: pad every art line by the SAME left-pad so internal
     # diagonal alignment is preserved.
@@ -2335,10 +2336,14 @@ if ($hwnd -ne [IntPtr]::Zero) {
         if ([string]::IsNullOrWhiteSpace($_lnkProf)) { $_lnkProf = $_sc.DefProfile }
         # Build (TargetExe, ArgString) pair. .exe form takes positional
         # args ("<profile> <cols> <rows>") and is preferred. .ps1 fallback
-        # uses pwsh -File invocation.
+        # uses pwsh -File invocation. Cell dims sourced from mios.toml
+        # [terminal] (SSOT) -- operator 2026-05-09: "TOML is THE TOTAL
+        # REFERENCE for all functions and calls".
+        $_shortcutCols = [int](Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80)
+        $_shortcutRows = [int](Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20)
         if ($_useExeLauncher) {
             $_lnkTarget = $_launcherExe
-            $_lnkArgStr = "$_lnkProf 80 20"
+            $_lnkArgStr = "$_lnkProf $_shortcutCols $_shortcutRows"
             if ($_lnkVerb -and $_lnkProf -ne $_devProfile) {
                 # Verb dispatch -- the .exe doesn't currently parse -Verb,
                 # so route those (just MiOS Help today) through the .ps1.
@@ -3107,7 +3112,7 @@ function Install-MiOSPowerShellProfile {
     # paintable cell count during the first paint (before the
     # scrollbarState='hidden' setting and its scrollbar-reservation
     # release have taken effect). cols-2 always avoids wrap.
-    $_miosRightMargin = Get-MiosTomlValue -Section 'terminal' -Key 'right_margin' -Default 2
+    $_miosRightMargin = Get-MiosTomlValue -Section 'terminal' -Key 'right_margin' -Default 0
     # Font family + size sourced from mios.toml [theme.font] -- baked
     # as the install-time default for the dashboard's "font" field
     # (Show-MiosDashboard re-reads at runtime so configurator edits
@@ -3346,29 +3351,27 @@ if (`$true) {
     # properly in WT (conhost / VS Code embedded shell mangles it).
     function Show-MiosDashboard {
         param([string]`$ConfigPath, [string]`$LogoPath)
-        # Width adapts to LIVE terminal width every render so the
-        # dashboard always fits natively. Operator 2026-05-09 (image #9):
-        # "fix the dash to always fit the width natively". Strategy:
-        #   1. Read [Console]::WindowWidth at THIS render call (NOT
-        #      cached at install) so a resized WT window adapts.
-        #   2. Subtract right_margin (default 2) so the frame doesn't
-        #      paint into cells WT reserves for its (hidden) scrollbar.
-        #   3. Cap at mios.toml [terminal].frame_width so dashboards
-        #      don't span 200 cols on ultrawide monitors.
-        #   4. Floor at 20 so the math doesn't produce a negative width
-        #      on a tiny / detached console.
-        # Use BOTH [Console]::WindowWidth AND $Host.UI.RawUI.WindowSize.Width
-        # and pick the SMALLER -- some PS hosts expose one accurately
-        # while the other lies. PSReadLine, Win32 conhost, and WT each
-        # handle the two paths differently; min() is the safest bet.
+        # Width adapts to LIVE terminal width every render so the dashboard
+        # always renders edge-to-edge. Operator 2026-05-09: "dashboards
+        # should be edge to edge globally!! 80x20 window is the Global
+        # benchmark!". Strategy:
+        #   1. Read live WindowWidth at THIS render (not cached at install).
+        #      Use BOTH [Console]::WindowWidth and $Host.UI.RawUI.WindowSize.Width
+        #      and pick the smaller -- different PS hosts lie differently.
+        #   2. Subtract right_margin (default 0 = full edge-to-edge in
+        #      canonical --focus launches; operator can bump in mios.toml
+        #      for non-focus chrome budgets).
+        #   3. NO frame_width cap -- in a 80x20 window paint 80 cells; in
+        #      a 100x30 resized window paint 100 cells; always edge-to-edge.
+        #   4. Floor at 20 so the math doesn't produce a negative width.
         `$_winC = try { [Console]::WindowWidth } catch { 0 }
         `$_winR = try { `$Host.UI.RawUI.WindowSize.Width } catch { 0 }
         `$_winWNow = if (`$_winC -gt 0 -and `$_winR -gt 0) { [math]::Min(`$_winC, `$_winR) }
                     elseif (`$_winC -gt 0) { `$_winC }
                     elseif (`$_winR -gt 0) { `$_winR }
                     else { $_miosFrameW }
-        `$WIDTH = [math]::Min((`$_winWNow - $_miosRightMargin), $_miosFrameW)
-        if (`$WIDTH -lt 20) { `$WIDTH = [math]::Max(20, `$_winWNow - 1) }
+        `$WIDTH = `$_winWNow - $_miosRightMargin
+        if (`$WIDTH -lt 20) { `$WIDTH = [math]::Max(20, `$_winWNow) }
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
 
