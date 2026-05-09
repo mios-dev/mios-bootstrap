@@ -809,11 +809,15 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     # the inner-cmd heredoc below.  Single-quote the values + escape
     # single-quotes so the heredoc-substituted text is a valid PS
     # literal regardless of operator-supplied content.
-    $_p2ExitedPrefix = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'exited_code_prefix' -Default '  [!] Bootstrap exited with code ') -replace "'", "''"
-    $_p2FailureDtl   = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'failure_detail'     -Default '      Output above is the failure detail (Pass-1 has no separate log).') -replace "'", "''"
-    $_p2BuildLogHnt  = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'build_log_hint'     -Default "      build-mios.ps1's own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.") -replace "'", "''"
-    $_p2FetchFailed  = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'fetch_run_failed'   -Default '  [!] Bootstrap fetch/run failed: ') -replace "'", "''"
-    $_p2PressEnter   = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'press_enter_close'  -Default '  Press Enter to close this elevated bootstrap window...') -replace "'", "''"
+    $_p2ExitedPrefix     = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'exited_code_prefix'   -Default '  [!] Bootstrap exited with code ') -replace "'", "''"
+    $_p2FailureDtl       = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'failure_detail'       -Default '      Output above is the failure detail (Pass-1 has no separate log).') -replace "'", "''"
+    $_p2BuildLogHnt      = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'build_log_hint'       -Default "      build-mios.ps1's own log at M:\MiOS\logs\mios-install-*.log only kicks in on Pass-2 success.") -replace "'", "''"
+    $_p2FetchFailed      = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'fetch_run_failed'     -Default '  [!] Bootstrap fetch/run failed: ') -replace "'", "''"
+    $_p2PressEnter       = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'press_enter_close'    -Default '  Press Enter to close this elevated bootstrap window...') -replace "'", "''"
+    $_p2SuccessTrans     = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'success_transition'   -Default '  [+] Bootstrap complete. Loading MiOS terminal in this window...') -replace "'", "''"
+    $_p2ProfileFailed    = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'profile_load_failed'  -Default '  [!] MiOS profile load failed: ') -replace "'", "''"
+    $_p2ProfileFailedHnt = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'profile_load_hint'    -Default '      Open a fresh MiOS shortcut to retry.') -replace "'", "''"
+    $_p2ProfileMissing   = (Get-MiosTomlValue -Section 'messages.pass2_exit' -Key 'profile_missing'      -Default '  [!] M:\MiOS\powershell\profile.ps1 not found -- open the MiOS shortcut to launch the app window.') -replace "'", "''"
     $_innerCmd = @"
 `$env:MIOS_GETMIOS_RELAUNCHED='1'
 `$env:MIOS_CACHE_BUSTED='1'
@@ -1025,7 +1029,7 @@ try {
         # directly in this same window; no new WT spawn, no shortcut
         # click, no third window.
         Write-Host ''
-        Write-Host '  [+] Bootstrap complete. Loading MiOS terminal in this window...' -ForegroundColor Green
+        Write-Host '$_p2SuccessTrans' -ForegroundColor Green
         Write-Host ''
         Start-Sleep -Milliseconds 800
         try { Clear-Host } catch {}
@@ -1039,11 +1043,11 @@ try {
         `$_miosProfile = 'M:\MiOS\powershell\profile.ps1'
         if (Test-Path -LiteralPath `$_miosProfile) {
             try { . `$_miosProfile } catch {
-                Write-Host ('  [!] MiOS profile load failed: ' + `$_.Exception.Message) -ForegroundColor Yellow
-                Write-Host '      Open a fresh MiOS shortcut to retry.' -ForegroundColor DarkGray
+                Write-Host ('$_p2ProfileFailed' + `$_.Exception.Message) -ForegroundColor Yellow
+                Write-Host '$_p2ProfileFailedHnt' -ForegroundColor DarkGray
             }
         } else {
-            Write-Host '  [!] M:\MiOS\powershell\profile.ps1 not found -- open the MiOS shortcut to launch the app window.' -ForegroundColor Yellow
+            Write-Host '$_p2ProfileMissing' -ForegroundColor Yellow
         }
         # SUCCESS path returns here -- the dot-sourced profile owns
         # the prompt from this point.  No press-Enter close; the
