@@ -6813,77 +6813,57 @@ class MiOSLaunch {
             }
         }
     } catch {}
+    # UNIFIED launcher path: every per-verb shortcut goes through
+    # mios-launch.ps1 -Verb <name> -- same dims, same focus mode, same
+    # centering on cursor monitor, same WT MiOS profile chrome (acrylic
+    # 50% opacity, scrollbar hidden, padding=0, no titlebar/tab-row).
+    # Per operator 2026-05-08: "MiOS apps windows aren't the unified
+    # MiOS terminal apps at all!! no center launching--broken--EVERYTHING".
+    # Each verb opens its OWN named window (MiOS-<verb>) so a verb click
+    # doesn't pile a tab into the hub MiOS window OR onto the operator's
+    # most-recently-focused WT window (which `-w 0` does -- the prior
+    # behaviour that broke center-launching).
+    #
+    # Special case: MiOS Config opens mios.html directly in the default
+    # browser (zero terminal needed) -- operator-pinned design from
+    # earlier turn. All other verbs route through the launcher.
+    $miosLaunchPs1 = Join-Path $MiosBinDir 'mios-launch.ps1'
     foreach ($v in $verbShortcuts) {
         $vBin  = Join-Path $MiosBinDir $v.Bin
         $vIcon = Join-Path $MiosIconsDir $v.Icon
         $vLnk  = Join-Path $StartMenuDir ("{0}.lnk" -f $v.Name)
-        # Eliminate the pwsh.exe pre-flash. Per operator: "opening apps
-        # shouldn't open a regular windows terminal/powershell window
-        # before launching the MiOS app ecosystem(s)". Each app picks the
-        # right target executable so there's NO intermediate console:
-        #   MiOS-DEV     -> wt.exe -p MiOS-DEV (windowed app, zero flash)
-        #   MiOS Config  -> the mios.html file directly (default browser
-        #                   opens, zero console)
-        #   MiOS Help    -> wt.exe spawning pwsh + the help script
-        #                   (windowed; pwsh runs INSIDE WT, no separate
-        #                    conhost flash)
         $vTarget = $pwshExe
         $vArgs   = $null
-        switch ($v.Name) {
-            'MiOS-DEV' {
-                if ($miosLauncherExe -and (Test-Path -LiteralPath $miosLauncherExe)) {
-                    # Native launcher + MiOS-DEV profile = no flash + centering.
-                    $vTarget = $miosLauncherExe
-                    $vArgs   = "MiOS-DEV $($script:MiosAppCols) $($script:MiosAppRows)"
-                } elseif ($wtExe) {
-                    $vTarget = $wtExe
-                    $vArgs   = "-w MiOS-DEV --size $($script:MiosAppCols),$($script:MiosAppRows) --focus -p MiOS-DEV"
-                } else {
-                    $vArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
-                }
+        # MiOS Config short-circuits to the browser (no WT/pwsh needed).
+        if ($v.Name -eq 'MiOS Config') {
+            $_cfgCandidates = @(
+                'M:\usr\share\mios\configurator\mios.html',
+                (Join-Path $MiosBootstrapShadow 'usr\share\mios\configurator\mios.html'),
+                (Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\mios.html')
+            )
+            $_cfgHtml = $null
+            foreach ($_cand in $_cfgCandidates) {
+                if ($_cand -and (Test-Path -LiteralPath $_cand)) { $_cfgHtml = $_cand; break }
             }
-            'MiOS Config' {
-                # Operator: "have the MiOS config link open the webpage
-                # directly in the local browser (opens the mios.html
-                # directly installed on the newly created M:\
-                # directories)". Resolve the mios.html that was overlaid
-                # at M:\ root by the mios.git Phase-2 overlay -- THAT's
-                # the canonical operator-edit copy. Fall back to the
-                # mios-bootstrap shadow copy then to the launcher script
-                # as last-ditch.
-                $_cfgCandidates = @(
-                    'M:\usr\share\mios\configurator\mios.html',         # canonical mios.git overlay (Phase 2)
-                    (Join-Path $MiosBootstrapShadow 'usr\share\mios\configurator\mios.html'),  # bootstrap shadow
-                    (Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\mios.html')      # legacy share-dir layout
-                )
-                $_cfgHtml = $null
-                foreach ($_cand in $_cfgCandidates) {
-                    if ($_cand -and (Test-Path -LiteralPath $_cand)) { $_cfgHtml = $_cand; break }
-                }
-                if ($_cfgHtml) {
-                    # .lnk targets the .html directly. Windows shell-
-                    # execute opens it in the default browser, ZERO
-                    # console flash. Operator can edit form fields,
-                    # browser saves a copy to %USERPROFILE%\Downloads,
-                    # `mios build` step 2 promotes it back to M:\.
-                    $vTarget = $_cfgHtml
-                    $vArgs   = ''
-                } else {
-                    Log-Warn "MiOS Config: mios.html not found at any candidate -- shortcut falls back to mios-config.ps1"
-                    $vTarget = $pwshExe
-                    $vArgs   = "-NoProfile -ExecutionPolicy Bypass -File `"$vBin`""
-                }
+            if ($_cfgHtml) {
+                $vTarget = $_cfgHtml
+                $vArgs   = ''
+            } else {
+                Log-Warn "MiOS Config: mios.html not found at any candidate -- shortcut falls back to mios-config.ps1 via launcher"
+                $vTarget = $pwshExe
+                $vArgs   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$miosLaunchPs1`" -Verb config"
             }
-            default {
-                # MiOS Help (and any future verbs) -- run inside WT so the
-                # help text renders themed, no pwsh pre-flash.
-                if ($wtExe) {
-                    $vTarget = $wtExe
-                    $vArgs   = "-w 0 --size $($script:MiosAppCols),$($script:MiosAppRows) --focus -p MiOS pwsh.exe -NoProfile -NoExit -ExecutionPolicy Bypass -File `"$vBin`""
-                } else {
-                    $vArgs = "-NoProfile -NoExit -ExecutionPolicy Bypass -File `"$vBin`""
-                }
-            }
+        }
+        # All other verbs (MiOS-DEV, MiOS Help, and any future verbs)
+        # route through mios-launch.ps1 -Verb. The launcher itself
+        # handles centering, focus mode, MiOS profile selection, and
+        # spawning a new WT window (NOT a tab in the existing one).
+        else {
+            # Verb token: derive from .Bin (e.g. mios-help.ps1 -> 'help').
+            $verbToken = ($v.Bin -replace '^mios-' -replace '\.ps1$').Trim().ToLower()
+            if ([string]::IsNullOrWhiteSpace($verbToken)) { $verbToken = $v.Name.ToLower() }
+            $vTarget = $pwshExe
+            $vArgs   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$miosLaunchPs1`" -Verb $verbToken"
         }
         # Start Menu (admin-installed all-users path).
         New-MiosShortcut -LnkPath $vLnk -TargetExe $vTarget -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
@@ -7855,6 +7835,59 @@ if [ -d /mnt/m/usr/libexec/mios ] && [ ! -e /usr/libexec/mios ]; then
 fi
 if [ -d /mnt/m/usr/share/mios ] && [ ! -e /usr/share/mios ]; then
     ln -snf /mnt/m/usr/share/mios /usr/share/mios
+fi
+# ── Ensure the `mios` user exists (idempotent) ────────────────────────
+# Per operator 2026-05-08 (`getpwnam(mios) failed 17 / User not found`):
+# in BootstrapOnly mode, the OCI build's quadlet-overlay step (which
+# runs systemd-sysusers and creates uid 1000=mios) is DEFERRED and
+# never executes. Without the mios user, /etc/wsl.conf default=mios
+# fails on the next `wsl -d podman-MiOS-DEV` invocation (the prior
+# behaviour log message "[Phase 3] -- next entry uses mios as default"
+# was a lie -- the user didn't exist yet). Create it here so every
+# verb that enters the dev distro (mios dev, mios-dev.lnk, the
+# mios-launch.ps1 -Verb dev path) lands as a real user.
+if ! id mios >/dev/null 2>&1; then
+    set +e
+    useradd -m -s /bin/bash -G wheel mios 2>/dev/null || \
+        useradd -m -s /bin/bash mios 2>/dev/null
+    _useradd_rc=$?
+    set -e
+    if id mios >/dev/null 2>&1; then
+        # Set a known password so Cockpit PAM and operator-typed sudo
+        # prompts work. Operator can change it any time inside the dev
+        # VM with `passwd`. The MiOS canonical default is `mios`.
+        echo 'mios:mios' | chpasswd 2>/dev/null || true
+        # Passwordless sudo for mios so build-mios.ps1's later steps
+        # (smoke test, container-host setup) don't prompt.
+        if [ -d /etc/sudoers.d ]; then
+            printf 'mios ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/10-mios-nopasswd
+            chmod 0440 /etc/sudoers.d/10-mios-nopasswd
+        fi
+        echo "[mios-seed] mios user created (uid=$(id -u mios), groups=$(id -Gn mios))"
+    else
+        echo "[mios-seed] WARN: useradd mios failed (rc=$_useradd_rc) -- wsl.conf default=mios will fail until the user exists"
+    fi
+fi
+# ── /etc/wsl.conf [user].default=mios ─────────────────────────────────
+# So `wsl -d podman-MiOS-DEV` (no --user flag) and `wsl -d MiOS-DEV`
+# both land in the mios user shell. Only write if mios user actually
+# exists -- writing default=<missing-user> bricks the distro entry.
+if id mios >/dev/null 2>&1; then
+    if [ ! -f /etc/wsl.conf ]; then
+        printf '[user]\ndefault=mios\n' > /etc/wsl.conf
+        echo "[mios-seed] /etc/wsl.conf created with [user].default=mios"
+    elif ! grep -q '^\[user\]' /etc/wsl.conf 2>/dev/null; then
+        printf '\n[user]\ndefault=mios\n' >> /etc/wsl.conf
+        echo "[mios-seed] /etc/wsl.conf: appended [user].default=mios"
+    elif ! grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then
+        sed -i '/^\[user\]/a default=mios' /etc/wsl.conf
+        echo "[mios-seed] /etc/wsl.conf: inserted default=mios under existing [user]"
+    elif ! grep -qE '^[[:space:]]*default[[:space:]]*=[[:space:]]*mios[[:space:]]*$' /etc/wsl.conf 2>/dev/null; then
+        sed -i 's|^[[:space:]]*default[[:space:]]*=.*|default=mios|' /etc/wsl.conf
+        echo "[mios-seed] /etc/wsl.conf: rewrote default=<other> to default=mios"
+    else
+        echo "[mios-seed] /etc/wsl.conf: default=mios already set"
+    fi
 fi
 # Pre-bootc bridge: source mios.git profile.d scripts from /mnt/m/ on
 # every interactive bash login, IF the canonical /etc/profile.d/mios-*

@@ -3251,6 +3251,23 @@ if (`$true) {
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
 
+        # Uniform frame color -- per operator 2026-05-08: "make the
+        # entire frame 1 uniform colour--make it a complimenting colour
+        # to the windows colour that's sourced from the toml fields that
+        # are relevant to MiOS's color palette colours". MiOS canonical
+        # accent (mios.toml [colors].accent + [branding.dashboard].frame_color)
+        # is operator-blue (#1A407F = ANSI 34 = [ConsoleColor]::Blue).
+        # Embed ANSI 34 around every `$V` border so the per-content rows
+        # render their borders in the SAME color as the standalone
+        # top/divider/bottom Write-Host calls (which use
+        # -ForegroundColor Blue). Without this, _Frame/_Center returned
+        # a plain string that Write-Host emitted in the inherited
+        # foreground (often cream from the MiOS scheme), making per-row
+        # borders visually different from top/divider/bottom borders.
+        `$_esc      = [char]27
+        `$_FrameC   = "`$_esc[34m"
+        `$_FrameR   = "`$_esc[0m"
+
         function _Strip { param(`$s) `$s -replace '\x1b\[[0-9;]*m','' }
         function _Frame {
             param([string]`$Line)
@@ -3261,7 +3278,7 @@ if (`$true) {
                 `$visible = _Strip `$Line
             }
             `$pad = ' ' * [math]::Max(0, `$INNER - `$visible.Length)
-            "`$V `$Line`$pad `$V"
+            "`$_FrameC`$V`$_FrameR `$Line`$pad`$_FrameC `$V`$_FrameR"
         }
         function _Center {
             param([string]`$Line)
@@ -3269,7 +3286,7 @@ if (`$true) {
             `$totalPad = [math]::Max(0, `$INNER - `$visible.Length)
             `$lpad = ' ' * [math]::Floor(`$totalPad / 2)
             `$rpad = ' ' * (`$totalPad - [math]::Floor(`$totalPad / 2))
-            "`$V `$lpad`$Line`$rpad `$V"
+            "`$_FrameC`$V`$_FrameR `$lpad`$Line`$rpad`$_FrameC `$V`$_FrameR"
         }
 
         # Total budget: frame_height rows total. Layout:
