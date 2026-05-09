@@ -2248,20 +2248,16 @@ if ($hwnd -ne [IntPtr]::Zero) {
     }
 
     # ── Canonical 4-shortcut set (operator 2026-05-09) ──────────────────
-    # "MiOS app opens MiOS-DEV machine to the GLOBAL unified dash,
-    #  MiOS-WIN does the windows side of the same things at M:\ with
-    #  the dash theme--EVERYTHING!!!, MiOS Help and Uninstall MiOS are
-    #  the ONLY installed shortcuts/links system wide!!!"
+    # SSOT: each shortcut's metadata (name, profile, verb, description)
+    # resolves through mios.toml [apps.shortcut.<key>]. PS-code defaults
+    # below are vendor fallbacks per feedback_mios_defaults_baseline.
+    # Operator can rename/relabel via mios.html -> mios.toml without
+    # touching code. Per feedback_mios_toml_is_ssot_for_code: no
+    # hardcoded user-facing strings.
     #
-    # Exactly FOUR shortcuts (Start Menu + Desktop, both):
-    #   1. MiOS         -> launcher -Profile MiOS-DEV  (dev VM dashboard)
-    #   2. MiOS-WIN     -> launcher -Profile MiOS-WIN  (Windows pwsh + dash)
-    #   3. MiOS Help    -> launcher -Profile MiOS-WIN -Verb help
-    #   4. Uninstall MiOS -> uninstall.ps1
-    #
-    # No MiOS-DEV.lnk (the MiOS.lnk IS the dev launcher).
-    # No MiOS Config.lnk (typed verb: `mios config`).
-    # No MiOS Build.lnk / Setup.lnk / Configurator.lnk / etc.
+    # Operator directive: "MiOS app opens MiOS-DEV machine to the GLOBAL
+    # unified dash, MiOS-WIN does the windows side ... MiOS Help and
+    # Uninstall MiOS are the ONLY installed shortcuts/links system wide!!!"
     $_smFolder = Get-MiosTomlValue -Section 'apps' -Key 'start_menu_folder' -Default 'MiOS'
     if ([string]::IsNullOrWhiteSpace($_smFolder)) { $_smFolder = 'MiOS' }
     $startMenuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$_smFolder"
@@ -2287,26 +2283,34 @@ if ($hwnd -ne [IntPtr]::Zero) {
         $sc.Save()
     }
 
-    # 1. MiOS.lnk -- the canonical app icon. Launches dev VM (MiOS-DEV WT profile).
-    $argsMiOS  = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_devProfile`""
-    $descMiOS  = "MiOS -- $_lnkTag"
-    & $writeMiosLnk (Join-Path $startMenuDir 'MiOS.lnk') $argsMiOS $descMiOS
-    if ($desktopDir -and (Test-Path $desktopDir)) { & $writeMiosLnk (Join-Path $desktopDir 'MiOS.lnk') $argsMiOS $descMiOS }
-    Write-Host "  [+] Shortcut: MiOS -> WT $_devProfile (dev VM)" -ForegroundColor DarkGray
-
-    # 2. MiOS-WIN.lnk -- Windows-side themed pwsh (MiOS-WIN WT profile + dash theme).
-    $argsWin   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_winProfile`""
-    $descWin   = "MiOS-WIN -- Windows-side terminal with MiOS theme + dashboard"
-    & $writeMiosLnk (Join-Path $startMenuDir 'MiOS-WIN.lnk') $argsWin $descWin
-    if ($desktopDir -and (Test-Path $desktopDir)) { & $writeMiosLnk (Join-Path $desktopDir 'MiOS-WIN.lnk') $argsWin $descWin }
-    Write-Host "  [+] Shortcut: MiOS-WIN -> WT $_winProfile (Windows pwsh + theme)" -ForegroundColor DarkGray
-
-    # 3. MiOS Help.lnk -- opens MiOS-WIN profile and runs `mios help` inside it.
-    $argsHelp  = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_winProfile`" -Verb help"
-    $descHelp  = "MiOS Help -- verb + functionality reference"
-    & $writeMiosLnk (Join-Path $startMenuDir 'MiOS Help.lnk') $argsHelp $descHelp
-    if ($desktopDir -and (Test-Path $desktopDir)) { & $writeMiosLnk (Join-Path $desktopDir 'MiOS Help.lnk') $argsHelp $descHelp }
-    Write-Host "  [+] Shortcut: MiOS Help -> mios help" -ForegroundColor DarkGray
+    # SSOT shortcut catalog -- vendor defaults baked here, mios.toml
+    # [apps.shortcut.<key>] overrides any/all keys. The ORDER of the
+    # array is also the order they're created (and shown as Log lines).
+    $_shortcutCatalog = @(
+        @{ Key='mios';      DefName='MiOS';        DefProfile=$_devProfile; DefVerb='';     DefDesc="MiOS -- $_lnkTag" },
+        @{ Key='mios_win';  DefName='MiOS-WIN';    DefProfile=$_winProfile; DefVerb='';     DefDesc='MiOS-WIN -- Windows-side terminal with MiOS theme + dashboard' },
+        @{ Key='mios_help'; DefName='MiOS Help';   DefProfile=$_winProfile; DefVerb='help'; DefDesc='MiOS Help -- verb + functionality reference' }
+    )
+    foreach ($_sc in $_shortcutCatalog) {
+        $_section = 'apps.shortcut.' + $_sc.Key
+        $_lnkName = Get-MiosTomlValue -Section $_section -Key 'name'        -Default $_sc.DefName
+        $_lnkProf = Get-MiosTomlValue -Section $_section -Key 'profile'     -Default $_sc.DefProfile
+        $_lnkVerb = Get-MiosTomlValue -Section $_section -Key 'verb'        -Default $_sc.DefVerb
+        $_lnkDesc = Get-MiosTomlValue -Section $_section -Key 'description' -Default $_sc.DefDesc
+        if ([string]::IsNullOrWhiteSpace($_lnkName)) { $_lnkName = $_sc.DefName }
+        if ([string]::IsNullOrWhiteSpace($_lnkProf)) { $_lnkProf = $_sc.DefProfile }
+        # Build launcher args. Verb only when Profile is Windows-side
+        # (MiOS-DEV is bash login -- verb dispatch is a no-op).
+        $_lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_lnkProf`""
+        if ($_lnkVerb -and $_lnkProf -ne $_devProfile) {
+            $_lnkArgs += " -Verb `"$_lnkVerb`""
+        }
+        & $writeMiosLnk (Join-Path $startMenuDir ($_lnkName + '.lnk')) $_lnkArgs $_lnkDesc
+        if ($desktopDir -and (Test-Path $desktopDir)) {
+            & $writeMiosLnk (Join-Path $desktopDir ($_lnkName + '.lnk')) $_lnkArgs $_lnkDesc
+        }
+        Write-Host "  [+] Shortcut: $_lnkName -> WT $_lnkProf$(if ($_lnkVerb -and $_lnkProf -ne $_devProfile) { " + 'mios $_lnkVerb'" })" -ForegroundColor DarkGray
+    }
 
     # The hub variable below is left as 'MiOS' so subsequent code that
     # references $_hubLnkName (e.g. AumID stamping, registry uninstall
@@ -4370,6 +4374,18 @@ function Invoke-MiOSFullReap {
     $reapEAP = $ErrorActionPreference
     $ErrorActionPreference = 'SilentlyContinue'
 
+    # SSOT: every operator-visible reap string resolves through
+    # mios.toml [messages.reap].* with the hardcoded fallback as Default.
+    # Per feedback_mios_messages_section_ssot: no Write-Host literals.
+    $_msgBanner   = Get-MiosTomlValue -Section 'messages.reap' -Key 'banner'   -Default '[*] Phase 0: Reaping all prior MiOS state (zero-carry-over contract)...'
+    $_msgComplete = Get-MiosTomlValue -Section 'messages.reap' -Key 'complete' -Default '[+] Phase 0 reap complete -- proceeding with fresh install.'
+    $_lookupReap = {
+        param([string]$Key, [string]$Default)
+        $v = Get-MiosTomlValue -Section 'messages.reap' -Key $Key -Default $Default
+        if ([string]::IsNullOrWhiteSpace($v)) { return $Default }
+        return $v
+    }
+
     $_log = {
         param([string]$msg, [string]$color = 'DarkGray')
         if (-not $Quiet) { Write-Host "    $msg" -ForegroundColor $color }
@@ -4377,11 +4393,11 @@ function Invoke-MiOSFullReap {
 
     if (-not $Quiet) {
         Write-Host ''
-        Write-Host '  [*] Phase 0: Reaping all prior MiOS state (zero-carry-over contract)...' -ForegroundColor Cyan
+        Write-Host "  $_msgBanner" -ForegroundColor Cyan
     }
 
     # 1. Podman machines
-    & $_log '[1/13] podman machine stop + rm (MiOS-DEV, MiOS-BUILDER) ...'
+    & $_log (& $_lookupReap 'category_1' '[1/13] podman machine stop + rm (MiOS-DEV, MiOS-BUILDER) ...')
     foreach ($mch in @('MiOS-DEV','MiOS-BUILDER','podman-MiOS-DEV','podman-MiOS-BUILDER')) {
         try { & podman machine stop $mch *>$null } catch {}
         try { & podman machine rm -f $mch *>$null } catch {}
@@ -4389,14 +4405,14 @@ function Invoke-MiOSFullReap {
     try { & podman system reset --force *>$null } catch {}
 
     # 2. WSL distros (every variant the install pipeline has used)
-    & $_log '[2/13] wsl --unregister (MiOS, MiOS-DEV, podman-MiOS-*, MiOS-BUILDER) ...'
+    & $_log (& $_lookupReap 'category_2' '[2/13] wsl --unregister (MiOS, MiOS-DEV, podman-MiOS-*, MiOS-BUILDER) ...')
     foreach ($d in @('MiOS','MiOS-DEV','podman-MiOS-DEV','MiOS-BUILDER','podman-MiOS-BUILDER')) {
         try { & wsl.exe --unregister $d 2>$null | Out-Null } catch {}
     }
     try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
 
     # 3. Hyper-V VMs matching MiOS-*
-    & $_log '[3/13] Hyper-V VMs (MiOS-*) ...'
+    & $_log (& $_lookupReap 'category_3' '[3/13] Hyper-V VMs (MiOS-*) ...')
     try {
         if (Get-Command Get-VM -ErrorAction SilentlyContinue) {
             Get-VM -Name 'MiOS-*' -ErrorAction SilentlyContinue | ForEach-Object {
@@ -4407,7 +4423,7 @@ function Invoke-MiOSFullReap {
     } catch {}
 
     # 4. Install dirs (NEVER touches C:\mios-bootstrap -- operator dev clone)
-    & $_log '[4/13] Install dirs (M:\ contents, C:\MiOS, %PROGRAMDATA%\MiOS, %LOCALAPPDATA%\MiOS) ...'
+    & $_log (& $_lookupReap 'category_4' '[4/13] Install dirs (M:\ contents, C:\MiOS, %PROGRAMDATA%\MiOS, %LOCALAPPDATA%\MiOS) ...')
     foreach ($p in @(
         'C:\MiOS',
         (Join-Path $env:ProgramData    'MiOS'),
@@ -4433,7 +4449,7 @@ function Invoke-MiOSFullReap {
     }
 
     # 5. WT settings.json -- remove only MiOS-set keys, preserve everything else
-    & $_log '[5/13] Windows Terminal settings.json (MiOS scheme + profiles + defaults) ...'
+    & $_log (& $_lookupReap 'category_5' '[5/13] Windows Terminal settings.json (MiOS scheme + profiles + defaults) ...')
     foreach ($wtPath in @(
         (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
         (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json')
@@ -4473,7 +4489,7 @@ function Invoke-MiOSFullReap {
     }
 
     # 6. PowerShell profile redirector blocks (marker-delimited removal)
-    & $_log '[6/13] PowerShell profile redirector blocks (MiOS markers) ...'
+    & $_log (& $_lookupReap 'category_6' '[6/13] PowerShell profile redirector blocks (MiOS markers) ...')
     function script:Remove-MiosMarkerBlock {
         param([string]$Text, [string]$StartMarker, [string]$EndMarker)
         while ($true) {
@@ -4513,7 +4529,7 @@ function Invoke-MiOSFullReap {
     }
 
     # 7. Fonts (Geist + Symbols-Only Nerd Font + matching HKCU reg entries)
-    & $_log '[7/13] Fonts (Geist*, *NerdFont*, SymbolsOnly*) + HKCU font reg ...'
+    & $_log (& $_lookupReap 'category_7' '[7/13] Fonts (Geist*, *NerdFont*, SymbolsOnly*) + HKCU font reg ...')
     $fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
     $fontReg = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
     if (Test-Path -LiteralPath $fontDir) {
@@ -4533,7 +4549,7 @@ function Invoke-MiOSFullReap {
     }
 
     # 8. PATH env (HKCU + HKLM if admin) -- strip M:\MiOS\bin entries
-    & $_log '[8/13] PATH env entries (M:\MiOS\bin from HKCU + HKLM) ...'
+    & $_log (& $_lookupReap 'category_8' '[8/13] PATH env entries (M:\MiOS\bin from HKCU + HKLM) ...')
     foreach ($scope in @('User','Machine')) {
         try {
             $cur = [Environment]::GetEnvironmentVariable('Path', $scope)
@@ -4549,14 +4565,14 @@ function Invoke-MiOSFullReap {
     }
 
     # 9. HKCU uninstall reg key
-    & $_log '[9/13] HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MiOS ...'
+    & $_log (& $_lookupReap 'category_9' '[9/13] HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MiOS ...')
     $uninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS'
     if (Test-Path -LiteralPath $uninstKey) {
         try { Remove-Item -LiteralPath $uninstKey -Recurse -Force -ErrorAction SilentlyContinue } catch {}
     }
 
     # 10. Start Menu folder + Desktop .lnk shortcuts (every legacy name)
-    & $_log '[10/13] Start Menu folder + Desktop .lnk shortcuts ...'
+    & $_log (& $_lookupReap 'category_10' '[10/13] Start Menu folder + Desktop .lnk shortcuts ...')
     $lnkNames = @(
         'MiOS.lnk','MiOS-WIN.lnk','MiOS-DEV.lnk','MiOS Config.lnk','MiOS Help.lnk','Uninstall MiOS.lnk',
         'MiOS Setup.lnk','Build MiOS.lnk','MiOS Configurator.lnk','MiOS Terminal.lnk',
@@ -4584,7 +4600,7 @@ function Invoke-MiOSFullReap {
     }
 
     # 11. AppUserModelID HKCU/HKLM registrations
-    & $_log '[11/13] AppUserModelID (MiOS.Workstation) HKCU + HKLM ...'
+    & $_log (& $_lookupReap 'category_11' '[11/13] AppUserModelID (MiOS.Workstation) HKCU + HKLM ...')
     foreach ($aumKey in @(
         'HKCU:\Software\Classes\AppUserModelId\MiOS.Workstation',
         'HKLM:\Software\Classes\AppUserModelId\MiOS.Workstation'
@@ -4595,7 +4611,7 @@ function Invoke-MiOSFullReap {
     }
 
     # 12. podman-machine state symlinks (3 candidate paths)
-    & $_log '[12/13] podman-machine state symlinks (LOCALAPPDATA / .local\\share / ProgramData) ...'
+    & $_log (& $_lookupReap 'category_12' '[12/13] podman-machine state symlinks (LOCALAPPDATA / .local\\share / ProgramData) ...')
     foreach ($pmLink in @(
         (Join-Path $env:LOCALAPPDATA 'containers\podman\machine'),
         (Join-Path $env:USERPROFILE  '.local\share\containers\podman\machine'),
@@ -4614,7 +4630,7 @@ function Invoke-MiOSFullReap {
     }
 
     # 13. MIOS_*/MiOS_* environment variables (HKCU + HKLM)
-    & $_log '[13/13] MIOS_* environment variables (HKCU + HKLM) ...'
+    & $_log (& $_lookupReap 'category_13' '[13/13] MIOS_* environment variables (HKCU + HKLM) ...')
     foreach ($scope in @('User','Machine')) {
         try {
             $envKey = if ($scope -eq 'User') { 'HKCU:\Environment' }
@@ -4627,7 +4643,7 @@ function Invoke-MiOSFullReap {
     }
 
     if (-not $Quiet) {
-        Write-Host '  [+] Phase 0 reap complete -- proceeding with fresh install.' -ForegroundColor Green
+        Write-Host "  $_msgComplete" -ForegroundColor Green
         Write-Host ''
     }
     $ErrorActionPreference = $reapEAP
@@ -4843,14 +4859,21 @@ try { Invoke-MiOSFullReap } catch { Write-Host "  [!] Invoke-MiOSFullReap failed
 # fails mid-way" case -- terminating errors here trigger a final reap so
 # Windows is left in zero-state immediately on failure (operator never sees
 # half-broken state). Runs in addition to (not replacing) Phase 0.
+#
+# SSOT: every operator-visible string resolves through mios.toml
+# [messages.failure_trap].* with the hardcoded fallback as Default.
+$_trapFmtFailed = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'install_failed_template' -Default '[!!] Install failed: {0}'
+$_trapAutoReap  = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'auto_reaping' -Default '[*]  Auto-reaping all MiOS state to leave Windows zero-state...'
+$_trapReapDone  = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'reap_complete' -Default '[+]  Reap complete -- re-run irm|iex one-liner to retry from clean state.'
+$_trapReapFail  = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'reap_on_failure_failed_template' -Default '[!] Reap-on-failure also failed: {0}'
 trap {
     Write-Host ''
-    Write-Host "  [!!] Install failed: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host '  [*]  Auto-reaping all MiOS state to leave Windows zero-state...' -ForegroundColor Yellow
+    Write-Host ('  ' + ($_trapFmtFailed -f $_.Exception.Message)) -ForegroundColor Red
+    Write-Host "  $_trapAutoReap" -ForegroundColor Yellow
     try { Invoke-MiOSFullReap } catch {
-        Write-Host "  [!] Reap-on-failure also failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host ('  ' + ($_trapReapFail -f $_.Exception.Message)) -ForegroundColor Yellow
     }
-    Write-Host '  [+]  Reap complete -- re-run irm|iex one-liner to retry from clean state.' -ForegroundColor Green
+    Write-Host "  $_trapReapDone" -ForegroundColor Green
     Write-Host ''
     exit 1
 }
