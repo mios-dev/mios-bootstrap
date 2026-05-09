@@ -935,7 +935,26 @@ function Write-Log {
 }
 
 # ── Dashboard state ───────────────────────────────────────────────────────────
-$script:DW         = [math]::Max(60, [math]::Min(([Console]::WindowWidth - 6), 72))
+# UNIFIED width formula -- ONE function (Get-MiosFrameWidth) used by
+# every framed surface in build-mios.ps1 + Show-MiosDashboard +
+# mios-dashboard.sh.  Operator 2026-05-09: "ALL dashboards render to
+# the edge of the MiOS app window size constraints!! ... mios.toml
+# unifying the variables for all GLOBAL dashboards".  No second site
+# computing the formula independently.
+#
+# Sources (mios.toml [terminal] SSOT):
+#   right_margin -- cells reserved at the right edge for WT chrome
+#   frame_width  -- absolute upper-cap for the frame
+#
+# Returns: max(60, min(WindowWidth - right_margin, frame_width)).
+$script:_dwFrameW   = (Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'  -Default 75)
+$script:_dwRightMgn = (Get-MiosTomlValue -Section 'terminal' -Key 'right_margin' -Default 5)
+if (-not ($script:_dwFrameW   -is [int]) -or $script:_dwFrameW   -lt 20) { $script:_dwFrameW   = 75 }
+if (-not ($script:_dwRightMgn -is [int]) -or $script:_dwRightMgn -lt 0)  { $script:_dwRightMgn = 5  }
+function Get-MiosFrameWidth {
+    [math]::Max(60, [math]::Min(([Console]::WindowWidth - $script:_dwRightMgn), $script:_dwFrameW))
+}
+$script:DW = Get-MiosFrameWidth
 # Per the self-replication architecture, the Windows side (BootstrapOnly,
 # the default for irm | iex entry) does ONLY:
 #   ack -> hardware/env probe -> minimal mios-bootstrap clone ->
@@ -7309,11 +7328,9 @@ try {
     [Console]::SetBufferSize($script:MiosCols, $script:MiosScroll)
 } catch {}
 
-# Force-recompute $DW now that the window is definitely 80 wide. If the
-# load-time resize failed but THIS one succeeded, the original $DW (set
-# from a wider parent terminal) would still drive the dashboard at the
-# wrong width. Re-reading WindowWidth here closes that gap.
-$script:DW = [math]::Max(60, [math]::Min(([Console]::WindowWidth - 6), 72))
+# Re-call the SAME Get-MiosFrameWidth helper so post-resize $DW is
+# computed by ONE function (operator: "I said Unified!!!").
+$script:DW = Get-MiosFrameWidth
 
 Show-Dashboard -Force   # draw initial (all phases pending)
 
@@ -8466,7 +8483,12 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
         if (-not $_fc -or $_fc.Length -lt 6) { $_fc = '╭─╮│╰╯' }
         $_TL = $_fc[0]; $_TH = $_fc[1]; $_TR = $_fc[2]
         $_TV = $_fc[3]; $_BL = $_fc[4]; $_BR = $_fc[5]
-        $_inner = 76
+        # Frame width comes from the SAME Get-MiosFrameWidth helper that
+        # drives every other framed surface in this script -- one
+        # formula, one source.  Subtract 2 for the 2-cell left-indent
+        # the install-complete banner uses ('  ╭...╯').
+        $_inner = (Get-MiosFrameWidth) - 2
+        if ($_inner -lt 40) { $_inner = 40 }
         $_titlePadded = '  ' + $_TV + ' ' + $_completeTitle.PadRight($_inner - 1) + ' ' + $_TV
         Write-Host ''
         Write-Host ('  ' + $_TL + ([string]$_TH * $_inner) + $_TR) -ForegroundColor DarkCyan
