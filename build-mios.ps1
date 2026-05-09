@@ -4613,7 +4613,7 @@ function Test-MiosDevDistroHealthy {
     # whether to abort the rename or warn-and-continue). Errors bubble
     # up as warnings -- does NOT throw, so a partial-overlay state
     # doesn't kill the bootstrap.
-    Set-Step "Smoke-testing $DevDistro before rename..."
+    Set-Step ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_header_template' -Default "Smoke-testing {distro} before rename...") -replace '\{distro\}', $DevDistro)
 
     # The pre-rename distro is "podman-$DevDistro"; post-rename it's
     # just "$DevDistro". This function is called pre-rename so we
@@ -4634,7 +4634,7 @@ function Test-MiosDevDistroHealthy {
         Log-Warn "smoke: $name did not respond to 'echo ready' (got: '$echoOut')"
         return $false
     }
-    Log-Ok "smoke 1/4: $name is responsive"
+    Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_responsive_template' -Default "smoke 1/4: {name} is responsive") -replace '\{name\}', $name)
 
     # 2. systemd up.
     $sysOut = ""
@@ -4646,7 +4646,7 @@ function Test-MiosDevDistroHealthy {
         Log-Warn "smoke: systemd not reachable in $name (state: '$sysOut')"
         # Non-fatal -- some build flows skip systemd. Continue.
     } else {
-        Log-Ok "smoke 2/4: systemd state '$($sysOut.Trim())' in $name"
+        Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_systemd_template' -Default "smoke 2/4: systemd state '{state}' in {name}") -replace '\{state\}', $sysOut.Trim() -replace '\{name\}', $name)
     }
 
     # 3. MiOS overlay present.
@@ -4658,7 +4658,7 @@ function Test-MiosDevDistroHealthy {
         # bootstrap. The dev distro's Fedora rootfs is the only thing
         # we need pre-build.
     } else {
-        Log-Ok "smoke 3/4: /usr/share/mios overlay present in $name"
+        Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_overlay_template' -Default "smoke 3/4: /usr/share/mios overlay present in {name}") -replace '\{name\}', $name)
     }
 
     # 4. Podman API reachable. Skipped post-rename (podman client
@@ -4678,7 +4678,7 @@ function Test-MiosDevDistroHealthy {
             if ($i -lt $attempts) { Start-Sleep -Seconds 2 }
         }
         if ($podOut -match $okFmt) {
-            Log-Ok "smoke 4/4: podman API server v$($podOut.Trim())"
+            Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_podman_api_template' -Default "smoke 4/4: podman API server v{version}") -replace '\{version\}', $podOut.Trim())
         } else {
             Log-Warn "smoke: podman API not responding after $attempts attempts (got: '$podOut')"
             # Non-fatal -- machine may still be warming up; first
