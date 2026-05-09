@@ -6558,12 +6558,24 @@ namespace MiOS.Native {
     $launcherSrc = @'
 # mios-launch.ps1 -- native-app launcher for MiOS / MiOS-DEV WT profiles.
 # Spawns wt.exe with the requested profile in focus mode (borderless,
-# no titlebar, no tab row), 80 cols x 30 rows, screen-centered on
-# whichever monitor the cursor is currently on. Re-centers post-launch
-# via Win32 SetWindowPos to defeat WT's --pos-ignored-in-focus
-# regression. Runs invisibly (parent shortcut uses -WindowStyle Hidden).
+# no titlebar, no tab row), screen-centered on whichever monitor the
+# cursor is currently on, and re-centers continuously via Win32
+# SetWindowPos to defeat WT's --pos-ignored-in-focus regression.
+# Runs invisibly (parent shortcut uses -WindowStyle Hidden).
+#
+# Parameters:
+#   -Profile <name>  WT profile to launch.  'MiOS' (hub, default) or
+#                    'MiOS-DEV' (wsl.exe -d podman-MiOS-DEV --user mios).
+#   -Verb <name>     Optional. If set AND Profile=MiOS, the launched
+#                    pwsh runs `mios <verb>` after the dashboard so
+#                    the operator lands inside the verb's output (e.g.
+#                    `mios help` for the MiOS Help.lnk shortcut).
+#                    For Profile=MiOS-DEV, -Verb is currently ignored
+#                    -- the dev profile drops the operator straight
+#                    into the dev VM bash shell.
 param(
-    [string]$Profile = 'MiOS'
+    [string]$Profile = 'MiOS',
+    [string]$Verb    = ''
 )
 $ErrorActionPreference = 'SilentlyContinue'
 
@@ -6626,12 +6638,25 @@ if (-not $wtExe) {
     exit 1
 }
 
-# `-w MiOS` (NOT -1) names the window so it matches the post-bootstrap
-# spawn AND the Win+Space global summon binding can target it.
-# No `nt` subcommand -- empty subcommand uses the profile's bound
-# commandline (Windows pwsh + MiOS PS profile body with dashboard +
-# `mios <verb>` dispatcher).
+# `-w MiOS` names the window so it matches the post-bootstrap spawn
+# AND the Win+Space global summon binding can target it.
+# When -Verb is set on the MiOS hub profile, append the verb to the
+# wt.exe commandline so the spawned pwsh runs `mios <verb>` after
+# loading the profile body.  For MiOS-DEV (or no verb), the profile's
+# bound commandline runs unchanged.
 $wtArgs = @('-w','MiOS','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile)
+if ($Verb -and $Profile -eq 'MiOS') {
+    # `--` separates wt.exe args from the COMMANDLINE that the spawned
+    # tab runs.  Override the profile commandline by passing pwsh.exe
+    # explicitly with the MiOS profile body dot-sourced and the verb
+    # dispatched.  The mios-launch.exe / mios-launch.ps1 has already
+    # resolved $defaultPwsh so we re-resolve here for the same value.
+    $_pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+    if (-not $_pwsh) { $_pwsh = "$env:ProgramFiles\PowerShell\7\pwsh.exe" }
+    $_profileBody = 'M:\MiOS\powershell\profile.ps1'
+    $_inner = "if (Test-Path '$_profileBody') { . '$_profileBody' }; mios $Verb"
+    $wtArgs += @('--', $_pwsh, '-NoLogo', '-NoExit', '-NoProfile', '-Command', $_inner)
+}
 Start-Process -FilePath $wtExe -ArgumentList $wtArgs
 
 # Post-launch re-center: WT in focus mode often ignores --pos. Wait
@@ -8395,11 +8420,23 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
         # Substitute {disk_gb} placeholder if the operator templated it
         # in a custom mios.toml entry.
         $_completeBullets = @($_completeBullets | ForEach-Object { $_ -replace '\{disk_gb\}', $_dispGb })
-        $_titlePadded = '  |  ' + $_completeTitle.PadRight(76) + '|'
+        # Frame chars come from mios.toml [branding.dashboard].frame_chars
+        # so the install-complete banner matches every other framed surface
+        # (Show-MiosDashboard, mios-dashboard.sh, agreement gate, etc.).
+        # Per operator 2026-05-09: "headers and dashboards and framing/
+        # piping are all scattered and not fitting because they aren't
+        # TRULY based off the toml code as source for everything".
+        # Vendor default '╭─╮│╰╯' if mios.toml is unreachable.
+        $_fc = Get-MiosTomlValue -Section 'branding.dashboard' -Key 'frame_chars' -Default '╭─╮│╰╯'
+        if (-not $_fc -or $_fc.Length -lt 6) { $_fc = '╭─╮│╰╯' }
+        $_TL = $_fc[0]; $_TH = $_fc[1]; $_TR = $_fc[2]
+        $_TV = $_fc[3]; $_BL = $_fc[4]; $_BR = $_fc[5]
+        $_inner = 76
+        $_titlePadded = '  ' + $_TV + ' ' + $_completeTitle.PadRight($_inner - 1) + ' ' + $_TV
         Write-Host ''
-        Write-Host '  +' ('-' * 76) '+' -ForegroundColor DarkCyan
+        Write-Host ('  ' + $_TL + ([string]$_TH * $_inner) + $_TR) -ForegroundColor DarkCyan
         Write-Host $_titlePadded -ForegroundColor Cyan
-        Write-Host '  +' ('-' * 76) '+' -ForegroundColor DarkCyan
+        Write-Host ('  ' + $_BL + ([string]$_TH * $_inner) + $_BR) -ForegroundColor DarkCyan
         Write-Host ''
         Write-Host '    Installed ...............................................................' -ForegroundColor DarkGray
         foreach ($_b in $_completeBullets) {

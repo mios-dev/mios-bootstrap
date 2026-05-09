@@ -2180,32 +2180,38 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # MiOS Help (verb reference), Uninstall MiOS (Add/Remove). The
     # build / dash / config / update / pull verbs are operator-typed
     # commands INSIDE the MiOS terminal, NOT separate native apps.
+    # Per-verb shortcuts.  Each entry maps to:
+    #   * Profile  -- WT profile name to launch ('MiOS' = hub,
+    #                 'MiOS-DEV' = wsl.exe -d podman-MiOS-DEV --user mios)
+    #   * Verb     -- mios verb to run inside the launched window
+    #                 (empty = just open the profile, no dispatch)
+    #   * Icon     -- per-verb .ico under M:\MiOS\icons (fallback: mios.ico)
+    # Operator 2026-05-09: "launching MiOS-DEV doesn't launch in to
+    # the podman-MiOS-DEV machine still" -- root cause was that the
+    # MiOS-DEV.lnk was passing `-Verb dev` to mios-launch.ps1 which
+    # only accepted -Profile, so the dev launcher silently fell back
+    # to Profile='MiOS' (the hub) and the dev verb was never used.
+    # The Profile field below routes to the right WT profile so
+    # MiOS-DEV.lnk now lands in the actual dev VM.
     $miosVerbs = @(
-        @{ File='MiOS-DEV.lnk';  Verb='dev';   Icon='mios-dev.ico';    Desc='Open MiOS-DEV (podman machine) directly to its themed dashboard (banner + fastfetch + framing)' },
-        @{ File='MiOS Help.lnk'; Verb='help';  Icon='mios-help.ico';   Desc='Full verb + functionality reference (every MiOS command and where things live)' }
+        @{ File='MiOS-DEV.lnk';  Profile='MiOS-DEV'; Verb='';     Icon='mios-dev.ico';  Desc='Open MiOS-DEV (podman-MiOS-DEV WSL distro) directly to its themed dashboard (banner + fastfetch + framing)' },
+        @{ File='MiOS Help.lnk'; Profile='MiOS';     Verb='help'; Icon='mios-help.ico'; Desc='Full verb + functionality reference (every MiOS command and where things live)' }
     )
     $writeVerbLnk = {
-        param([string]$Path, [string]$Verb, [string]$Desc, [string]$IconFile)
+        param([string]$Path, [string]$ProfileName, [string]$Verb, [string]$Desc, [string]$IconFile)
         $sc = $shell.CreateShortcut($Path)
         $sc.TargetPath       = $pwshExe
-        # UNIFIED launch path: every per-verb shortcut goes through
-        # mios-launch.ps1 -Verb <name>. Same dims, same focus mode,
-        # same centering, same WT profile, same chrome as the bare
-        # MiOS hub. The launcher spawns wt.exe with `-w MiOS-<verb>`
-        # (own window per verb -- no tab-pile in the hub window) and
-        # an inline pwsh command that dot-sources the MiOS profile
-        # body THEN runs `mios <verb>`. Operator: "UNIFY all MiOS app
-        # windows/themed windows terminal windows to use the same
-        # profile and launch params GLOBALLY!!!"
-        $sc.Arguments        = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Verb $Verb"
+        # mios-launch.ps1 -Profile <name> [-Verb <name>] -- the
+        # launcher opens the requested WT profile, centers it, then
+        # if -Verb is non-empty dispatches `mios <verb>` inside.
+        # Empty -Verb = just open the profile (used for MiOS-DEV.lnk
+        # which lands the operator directly in the dev VM shell).
+        $_lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$ProfileName`""
+        if ($Verb) { $_lnkArgs += " -Verb `"$Verb`"" }
+        $sc.Arguments        = $_lnkArgs
         $sc.WorkingDirectory = $miosRoot
         $sc.Description      = $Desc
         $sc.WindowStyle      = 7
-        # Per-verb icon if Install-MiosLauncherIcons has staged it
-        # under M:\MiOS\icons\<verb>.ico, else fall back to the hub
-        # mios.ico so every shortcut still carries MiOS branding.
-        # Per operator 2026-05-09: "MiOS should have an icon for all
-        # shortcuts and applications OS-wide on windows".
         $_verbIcon = if ($IconFile) { Join-Path $miosRoot "icons\$IconFile" } else { '' }
         if ($_verbIcon -and (Test-Path -LiteralPath $_verbIcon)) {
             $sc.IconLocation = "$_verbIcon,0"
@@ -2216,10 +2222,10 @@ if ($hwnd -ne [IntPtr]::Zero) {
     }
     foreach ($v in $miosVerbs) {
         $smPath = Join-Path $startMenuDir $v.File
-        & $writeVerbLnk $smPath $v.Verb $v.Desc $v.Icon
+        & $writeVerbLnk $smPath $v.Profile $v.Verb $v.Desc $v.Icon
         if ($desktopDir -and (Test-Path $desktopDir)) {
             $dskPath = Join-Path $desktopDir $v.File
-            & $writeVerbLnk $dskPath $v.Verb $v.Desc $v.Icon
+            & $writeVerbLnk $dskPath $v.Profile $v.Verb $v.Desc $v.Icon
         }
     }
     Write-Host "  [+] Per-verb shortcuts: $($miosVerbs.Count) Start Menu + $($miosVerbs.Count) Desktop entries staged." -ForegroundColor DarkGray
