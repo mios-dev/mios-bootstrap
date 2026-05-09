@@ -6972,7 +6972,19 @@ class MiOSLaunch {
     if ($_getMios) {
         try {
             $env:MIOS_GETMIOS_FUNCTIONS_ONLY = '1'
-            . $_getMios
+            # CRITICAL: do NOT use `. $path` -- PowerShell's parser
+            # default encoding is cp1252 in many host configs (PS 5.1
+            # always; pwsh 7 only when launched from a non-UTF8
+            # console), and Get-MiOS.ps1 contains UTF-8 box-drawing
+            # chars (│ ╭ ╮ ╰ ╯ ─). cp1252 reads `│` (UTF-8 E2 94 82)
+            # as `â”‚` (mojibake) which crashes the parser with
+            # "Unexpected token 'â”‚'". Read the file as explicit
+            # UTF-8 and create a scriptblock from the string. dot-
+            # sourcing the scriptblock runs in caller scope so all
+            # function defs land here (build-mios.ps1's scope).
+            $_gmSrc = [System.IO.File]::ReadAllText($_getMios, [System.Text.UTF8Encoding]::new($false))
+            $_gmBlock = [scriptblock]::Create($_gmSrc)
+            . $_gmBlock
             Remove-Item env:\MIOS_GETMIOS_FUNCTIONS_ONLY -ErrorAction SilentlyContinue
             if (Get-Command Install-MiOSPowerShellProfile -ErrorAction SilentlyContinue) {
                 Install-MiOSPowerShellProfile | Out-Null
