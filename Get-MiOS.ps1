@@ -405,7 +405,14 @@ function Show-MiOSBanner {
     # frame char wrapped. inner = cols - right_margin - 2 always
     # leaves right_margin cells of slack on the right edge.
     $_bCols      = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols'         -Default (Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80)
-    $_bRightMgn  = Get-MiosTomlValue -Section 'terminal'         -Key 'right_margin' -Default 0
+    # Default right_margin = 2 so the frame doesn't paint into cells
+    # WT reserves for its scrollbar (even with scrollbarState=hidden,
+    # WT pre-allocates the cells and the rightmost 1-2 columns can be
+    # eaten when the WT window is in non-focus mode). Operator 2026-05-09
+    # 17:57 install: image #9 showed dashboard rows wrapping in a 75-cell
+    # window because right_margin was 0 and WT reported WindowWidth=80
+    # while actual paintable was 78.
+    $_bRightMgn  = Get-MiosTomlValue -Section 'terminal'         -Key 'right_margin' -Default 2
     $inner = [math]::Max(20, $_bCols - $_bRightMgn - 2)
     # Block-center: pad every art line by the SAME left-pad so internal
     # diagonal alignment is preserved.
@@ -3100,7 +3107,7 @@ function Install-MiOSPowerShellProfile {
     # paintable cell count during the first paint (before the
     # scrollbarState='hidden' setting and its scrollbar-reservation
     # release have taken effect). cols-2 always avoids wrap.
-    $_miosRightMargin = Get-MiosTomlValue -Section 'terminal' -Key 'right_margin' -Default 0
+    $_miosRightMargin = Get-MiosTomlValue -Section 'terminal' -Key 'right_margin' -Default 2
     # Font family + size sourced from mios.toml [theme.font] -- baked
     # as the install-time default for the dashboard's "font" field
     # (Show-MiosDashboard re-reads at runtime so configurator edits
@@ -3339,34 +3346,29 @@ if (`$true) {
     # properly in WT (conhost / VS Code embedded shell mangles it).
     function Show-MiosDashboard {
         param([string]`$ConfigPath, [string]`$LogoPath)
-        # Frame width: hardcoded to 78 so EVERY rendered frame visibly
-        # leaves a 1-2 col margin on the right edge. Reading
-        # Frame width sourced from mios.toml [terminal].frame_width
-        # (default cols-1, see Get-MiOS.ps1 install-time substitution).
-        # Per operator: "GLOBAL framing -1 width and height for fitting
-        # piping/framing within the borderless and scrollbar-less MiOS
-        # themed terminal window". cols-1 leaves 1 char of slack at the
-        # right edge so the box-drawing border doesn't touch the
-        # line-wrap boundary on hosts that lie about their width.
-        # Frame width = MIN(live conhost width - 1, mios.toml frame_width).
-        # Per operator's repeated regression "still line wraps framing AND
-        # powerlines STILL" -- WT's pseudo-console pads the visible cell
-        # count by 1-2 cells beyond what's actually paintable (scrollbar
-        # reservation lingers from before profiles.defaults takes effect,
-        # or the cell rounding when the WT window pixel size doesn't
-        # divide evenly by the active DPI cell width). Always leaving 1
-        # cell of slack BELOW the live conhost width guarantees no wrap
-        # regardless of WT version / DPI quirks. The TOML frame_width
-        # remains the upper cap so operators can pin a narrower frame.
-        `$_winWNow = try { [Console]::WindowWidth } catch { $_miosFrameW }
-        # WIDTH = MIN(live conhost width - right_margin, mios.toml frame_width).
-        # right_margin from mios.toml [terminal].right_margin (default 2) --
-        # the operator reported "framing too wide STILL" with margin=1
-        # because WT's pseudo-console reports the window width 1 cell
-        # over the visible cells before scrollbarState='hidden' takes
-        # effect. margin=2 guarantees no wrap regardless of WT timing.
+        # Width adapts to LIVE terminal width every render so the
+        # dashboard always fits natively. Operator 2026-05-09 (image #9):
+        # "fix the dash to always fit the width natively". Strategy:
+        #   1. Read [Console]::WindowWidth at THIS render call (NOT
+        #      cached at install) so a resized WT window adapts.
+        #   2. Subtract right_margin (default 2) so the frame doesn't
+        #      paint into cells WT reserves for its (hidden) scrollbar.
+        #   3. Cap at mios.toml [terminal].frame_width so dashboards
+        #      don't span 200 cols on ultrawide monitors.
+        #   4. Floor at 20 so the math doesn't produce a negative width
+        #      on a tiny / detached console.
+        # Use BOTH [Console]::WindowWidth AND $Host.UI.RawUI.WindowSize.Width
+        # and pick the SMALLER -- some PS hosts expose one accurately
+        # while the other lies. PSReadLine, Win32 conhost, and WT each
+        # handle the two paths differently; min() is the safest bet.
+        `$_winC = try { [Console]::WindowWidth } catch { 0 }
+        `$_winR = try { `$Host.UI.RawUI.WindowSize.Width } catch { 0 }
+        `$_winWNow = if (`$_winC -gt 0 -and `$_winR -gt 0) { [math]::Min(`$_winC, `$_winR) }
+                    elseif (`$_winC -gt 0) { `$_winC }
+                    elseif (`$_winR -gt 0) { `$_winR }
+                    else { $_miosFrameW }
         `$WIDTH = [math]::Min((`$_winWNow - $_miosRightMargin), $_miosFrameW)
-        if (`$WIDTH -lt 20) { `$WIDTH = $_miosFrameW }   # safety floor
+        if (`$WIDTH -lt 20) { `$WIDTH = [math]::Max(20, `$_winWNow - 1) }
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
 
