@@ -3199,7 +3199,7 @@ if (`$true) {
             # ("MiOS  --  Immutable Fedora AI Workstation"); operators who
             # want the friendly "My Personal Operating System" face on the
             # dashboard subtitle override [dashboard].title via mios.html.
-            `$title = 'MiOS  --  Immutable Fedora AI Workstation'
+            `$title = 'MiOS  --  My Personal Operating System'
             if (`$_dashTomlText) {
                 `$_titleM = [regex]::Match(`$_dashTomlText, '(?ms)^\[dashboard\]\s*\r?\n.*?^\s*title\s*=\s*"([^"]+)"')
                 if (`$_titleM.Success) { `$title = `$_titleM.Groups[1].Value }
@@ -3386,14 +3386,32 @@ if (`$true) {
             if (`$_colW -lt 8) { `$_colW = 8 }
             `$_cells = @()
             foreach (`$_fk in `$_row) {
-                `$_val = & `$_DashGetField `$_fk `$_dashFontF `$_dashFontS
+                # Try/catch per-field so a single broken renderer
+                # (e.g. Get-Volume not available, lspci missing) doesn't
+                # kill the whole loop -- operator 2026-05-09 saw the
+                # dashboard render only the first 3 rows and bail because
+                # the disk_c renderer's Get-Volume call raised in a
+                # context where the Storage module wasn't loaded.
+                `$_val = ''
+                try {
+                    `$_val = & `$_DashGetField `$_fk `$_dashFontF `$_dashFontS
+                } catch {
+                    `$_val = "`$_fk : err"
+                }
                 if (-not `$_val) { `$_val = '' }
                 if (`$_val.Length -gt `$_colW) {
                     `$_val = `$_val.Substring(0, [math]::Max(1, `$_colW - 1)) + '…'
                 }
                 `$_cells += `$_val.PadRight(`$_colW)
             }
-            Write-Host (_Frame ((`$_cells -join '  ').TrimEnd()))
+            try {
+                Write-Host (_Frame ((`$_cells -join '  ').TrimEnd()))
+            } catch {
+                # Frame helper failed (rare -- ANSI strip or PadRight
+                # overflow); print a placeholder so the render flow
+                # continues and the divider/hints/bottom frame land.
+                Write-Host (_Frame "  [dashboard row render failed]")
+            }
         }
         # ── Command hints rows ───────────────────────────────────
         # Verb list resolves through mios.toml [verbs] at RUNTIME (SSOT).

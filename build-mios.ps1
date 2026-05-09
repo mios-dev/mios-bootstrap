@@ -7979,8 +7979,16 @@ if ($activeDistro) {
                 # resolve. Insert the repos section if it's not already first.
                 if ($_secList -notcontains 'repos') { $_secList = @('repos') + $_secList }
                 # Process each section. Read [packages.<section>].pkgs.
+                # NOTE: build the regex via SINGLE-QUOTED concat so `$`
+                # inside the pattern stays a literal `$` for PS-string-eval
+                # then resolves to the regex line-end anchor.  The previous
+                # double-quoted `"...\$..."` form had PowerShell collapse
+                # `\$` to `$` which the regex engine then treated correctly
+                # -- BUT the `$` mid-string was being seen as a sub-expr
+                # opener by some PS hosts (operator's run hit zero matches
+                # on every section), so single-quoted is the safer shape.
                 foreach ($_sec in $_secList) {
-                    $_rxSec = "(?ms)^\[packages\.$([regex]::Escape($_sec))\]\s*\$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*\$"
+                    $_rxSec = '(?ms)^\[packages\.' + [regex]::Escape($_sec) + '\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
                     $_secM  = [regex]::Match($_devOverlayTomlText2, $_rxSec)
                     if (-not $_secM.Success) { continue }
                     $_stripped = ($_secM.Groups['list'].Value -split "`n" |
