@@ -1963,12 +1963,20 @@ function Install-MiOSTerminalProfile {
         $profileNames = @()
         if ($vJson.profiles -and $vJson.profiles.list) { $profileNames = @($vJson.profiles.list | ForEach-Object { $_.name }) }
 
-        if ($schemeNames -contains 'MiOS' -and $profileNames -contains 'MiOS') {
-            Write-Host "  [+] MiOS scheme + MiOS/MiOS-DEV profiles upserted." -ForegroundColor Green
+        # Verify against the ACTUAL renamed profile names from
+        # mios.toml [theme.terminal] (operator 2026-05-09: "MiOS app
+        # itself should be defined as MiOS-WIN").  Was hardcoded to
+        # 'MiOS' which always failed post-rename and dropped through
+        # to the raw-JSON-injection fallback that wrote a degraded
+        # settings.json (schemes/profiles arrays partly-stripped),
+        # leaving WT without the proper MiOS chrome -> Nerd Font
+        # PUA glyphs (U+E0B4 / U+E0B6) rendered as `?` placeholders.
+        if ($schemeNames -contains 'MiOS' -and $profileNames -contains $_miosProfileName -and $profileNames -contains $_miosDevProfileName) {
+            Write-Host "  [+] MiOS scheme + $_miosProfileName + $_miosDevProfileName profiles upserted." -ForegroundColor Green
             Write-Host "      schemes:  $($schemeNames -join ', ')" -ForegroundColor DarkGray
             Write-Host "      profiles: $($profileNames -join ', ')" -ForegroundColor DarkGray
         } else {
-            Write-Host "  [!] settings.json verify FAILED -- scheme or profile didn't round-trip!" -ForegroundColor Red
+            Write-Host "  [!] settings.json verify FAILED -- expected schemes contains 'MiOS' AND profiles contains '$_miosProfileName' + '$_miosDevProfileName'." -ForegroundColor Red
             Write-Host "      schemes:  $($schemeNames -join ', ')" -ForegroundColor DarkGray
             Write-Host "      profiles: $($profileNames -join ', ')" -ForegroundColor DarkGray
             # Fallback: hand-write the schemes + profiles arrays as raw
