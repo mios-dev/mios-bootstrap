@@ -405,7 +405,7 @@ function Show-MiOSBanner {
     # frame char wrapped. inner = cols - right_margin - 2 always
     # leaves right_margin cells of slack on the right edge.
     $_bCols      = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols'         -Default (Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80)
-    $_bRightMgn  = Get-MiosTomlValue -Section 'terminal'         -Key 'right_margin' -Default 2
+    $_bRightMgn  = Get-MiosTomlValue -Section 'terminal'         -Key 'right_margin' -Default 0
     $inner = [math]::Max(20, $_bCols - $_bRightMgn - 2)
     # Block-center: pad every art line by the SAME left-pad so internal
     # diagonal alignment is preserved.
@@ -2043,14 +2043,19 @@ function Install-MiOSNativeApp {
 # on whichever monitor the cursor is currently on, always-on-top.
 # Runs invisibly (parent shortcut uses -WindowStyle Hidden).
 #
-# Optional `-Verb <name>` runs `mios <name>` inside the spawned MiOS
-# window after the profile body loads. Used by the per-verb shortcuts
-# (MiOS-DEV.lnk, MiOS Help.lnk, MiOS Config.lnk, etc.) to UNIFY all
-# MiOS native-app surfaces under the SAME launch path: same dims, same
-# focus mode, same centering, same WT profile, same chrome. Operator:
-# "UNIFY all MiOS app windows/themed windows terminal windows to use
-# the same profile and launch params GLOBALLY!!!"
-param([string]$Verb = '')
+# -Profile <name>  WT profile to launch.  Canonical names:
+#                  'MiOS-DEV' (= dev VM via wsl.exe -d podman-MiOS-DEV)
+#                  'MiOS-WIN' (= Windows pwsh + MiOS profile body)
+# -Verb <name>     Optional. Runs `mios <verb>` inside the launched
+#                  Windows-side window after the profile body loads.
+#                  Ignored for MiOS-DEV (the dev VM is a bash login).
+#
+# Operator 2026-05-09: "UNIFY all MiOS app windows/themed windows
+# terminal windows to use the same profile and launch params GLOBALLY!!!"
+param(
+    [string]$Profile = 'MiOS-DEV',
+    [string]$Verb    = ''
+)
 $ErrorActionPreference = 'SilentlyContinue'
 
 try {
@@ -2106,28 +2111,25 @@ if (-not $wtExe) {
 # profile body explicitly THEN runs `mios <verb>` -- otherwise wt.exe's
 # subcommand replaces the profile commandline and we lose the dashboard
 # render + the `mios` function definition.
-if ([string]::IsNullOrWhiteSpace($Verb)) {
-    $wtArgs = @('-w',$winName,'--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p','MiOS')
+if ([string]::IsNullOrWhiteSpace($Verb) -or $Profile -eq 'MiOS-DEV') {
+    # Bare profile launch (or dev VM -- bash login takes no verb).
+    # The WT profile's bound commandline runs as-is.
+    $wtArgs = @('-w',$winName,'--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile)
 } else {
-    # Profile body path: M:\MiOS\powershell\profile.ps1 (the canonical
-    # MiOS pwsh body that defines the `mios` function + dashboard +
-    # mios-* aliases). Without dot-sourcing it the verb call fails
-    # with "mios: command not found".
-    # M:\-everywhere invariant; no LOCALAPPDATA fallback.
+    # Verb dispatch on a Windows-side profile (MiOS-WIN, or legacy 'MiOS').
+    # Override the WT profile commandline with pwsh.exe loading the MiOS
+    # profile body explicitly + running `mios <verb>` after.
     $miosProfile = 'M:\MiOS\powershell\profile.ps1'
-    # Resolve pwsh -- Stable WT's MiOS profile binds to PowerShell 7;
-    # use the same here for parity. Fall back to system pwsh.exe on PATH.
     $pwshExe = $null
     try {
         $pwshPkg = Get-Command pwsh.exe -ErrorAction SilentlyContinue
         if ($pwshPkg) { $pwshExe = $pwshPkg.Source }
     } catch {}
     if (-not $pwshExe) { $pwshExe = 'pwsh.exe' }
-    # Build the inline command. Escape single quotes for embedding.
     $verbSafe = $Verb -replace "'","''"
     $miosProfileSafe = $miosProfile -replace "'","''"
     $cmd = "`$env:MIOS_APP_CONTEXT='1'; if (Test-Path '$miosProfileSafe') { . '$miosProfileSafe' }; mios $verbSafe"
-    $wtArgs = @('-w',$winName,'--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p','MiOS',$pwshExe,'-NoLogo','-NoExit','-NoProfile','-Command',$cmd)
+    $wtArgs = @('-w',$winName,'--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile,$pwshExe,'-NoLogo','-NoExit','-NoProfile','-Command',$cmd)
 }
 $spawnedAt = Get-Date
 Start-Process -FilePath $wtExe -ArgumentList $wtArgs
@@ -2245,38 +2247,72 @@ if ($hwnd -ne [IntPtr]::Zero) {
         $sc.Save()
     }
 
-    # Start Menu (per-user; survives on non-admin runs).
-    # Folder = [apps].start_menu_folder (project umbrella, "MiOS").
-    # Shortcut filename = [apps].hub_shortcut_name + ".lnk"
-    # ("MiOS-WIN.lnk" by default per operator 2026-05-09 rename).
-    $_smFolder    = Get-MiosTomlValue -Section 'apps' -Key 'start_menu_folder' -Default 'MiOS'
-    $_hubLnkName  = Get-MiosTomlValue -Section 'apps' -Key 'hub_shortcut_name' -Default 'MiOS-WIN'
-    if ([string]::IsNullOrWhiteSpace($_smFolder))   { $_smFolder   = 'MiOS' }
-    if ([string]::IsNullOrWhiteSpace($_hubLnkName)) { $_hubLnkName = 'MiOS-WIN' }
+    # ── Canonical 4-shortcut set (operator 2026-05-09) ──────────────────
+    # "MiOS app opens MiOS-DEV machine to the GLOBAL unified dash,
+    #  MiOS-WIN does the windows side of the same things at M:\ with
+    #  the dash theme--EVERYTHING!!!, MiOS Help and Uninstall MiOS are
+    #  the ONLY installed shortcuts/links system wide!!!"
+    #
+    # Exactly FOUR shortcuts (Start Menu + Desktop, both):
+    #   1. MiOS         -> launcher -Profile MiOS-DEV  (dev VM dashboard)
+    #   2. MiOS-WIN     -> launcher -Profile MiOS-WIN  (Windows pwsh + dash)
+    #   3. MiOS Help    -> launcher -Profile MiOS-WIN -Verb help
+    #   4. Uninstall MiOS -> uninstall.ps1
+    #
+    # No MiOS-DEV.lnk (the MiOS.lnk IS the dev launcher).
+    # No MiOS Config.lnk (typed verb: `mios config`).
+    # No MiOS Build.lnk / Setup.lnk / Configurator.lnk / etc.
+    $_smFolder = Get-MiosTomlValue -Section 'apps' -Key 'start_menu_folder' -Default 'MiOS'
+    if ([string]::IsNullOrWhiteSpace($_smFolder)) { $_smFolder = 'MiOS' }
     $startMenuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$_smFolder"
     if (-not (Test-Path $startMenuDir)) { New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null }
-    $smLnk = Join-Path $startMenuDir ($_hubLnkName + '.lnk')
-    & $writeLnk $smLnk
-    Write-Host "  [+] Start Menu: $smLnk" -ForegroundColor DarkGray
-
-    # Desktop.
     $desktopDir = [Environment]::GetFolderPath('Desktop')
-    if ($desktopDir -and (Test-Path $desktopDir)) {
-        $deskLnk = Join-Path $desktopDir ($_hubLnkName + '.lnk')
-        & $writeLnk $deskLnk
-        Write-Host "  [+] Desktop: $deskLnk" -ForegroundColor DarkGray
+
+    # Resolve WT profile names from mios.toml [theme.terminal] (SSOT) so
+    # a mios.toml rename (e.g. MiOS-WIN -> something else) flows through.
+    $_winProfile = Get-MiosTomlValue -Section 'theme.terminal' -Key 'profile_name'     -Default 'MiOS-WIN'
+    $_devProfile = Get-MiosTomlValue -Section 'theme.terminal' -Key 'dev_profile_name' -Default 'MiOS-DEV'
+    if ([string]::IsNullOrWhiteSpace($_winProfile)) { $_winProfile = 'MiOS-WIN' }
+    if ([string]::IsNullOrWhiteSpace($_devProfile)) { $_devProfile = 'MiOS-DEV' }
+
+    $writeMiosLnk = {
+        param([string]$Path, [string]$Args, [string]$Description)
+        $sc = $shell.CreateShortcut($Path)
+        $sc.TargetPath       = $pwshExe
+        $sc.Arguments        = $Args
+        $sc.WorkingDirectory = $miosRoot
+        $sc.Description      = $Description
+        $sc.WindowStyle      = 7   # Minimized; -WindowStyle Hidden inside Args avoids flash
+        if ($iconPath) { $sc.IconLocation = "$iconPath,0" }
+        $sc.Save()
     }
-    # Reap pre-rename "MiOS.lnk" so operators upgrading from before
-    # the 2026-05-09 MiOS->MiOS-WIN rename don't end up with both
-    # the old "MiOS.lnk" and the new "MiOS-WIN.lnk".
-    if ($_hubLnkName -ne 'MiOS') {
-        foreach ($_oldLnk in @((Join-Path $startMenuDir 'MiOS.lnk'),
-                               (Join-Path $desktopDir   'MiOS.lnk'))) {
-            if ($_oldLnk -and (Test-Path -LiteralPath $_oldLnk)) {
-                try { Remove-Item -LiteralPath $_oldLnk -Force -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-    }
+
+    # 1. MiOS.lnk -- the canonical app icon. Launches dev VM (MiOS-DEV WT profile).
+    $argsMiOS  = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_devProfile`""
+    $descMiOS  = "MiOS -- $_lnkTag"
+    & $writeMiosLnk (Join-Path $startMenuDir 'MiOS.lnk') $argsMiOS $descMiOS
+    if ($desktopDir -and (Test-Path $desktopDir)) { & $writeMiosLnk (Join-Path $desktopDir 'MiOS.lnk') $argsMiOS $descMiOS }
+    Write-Host "  [+] Shortcut: MiOS -> WT $_devProfile (dev VM)" -ForegroundColor DarkGray
+
+    # 2. MiOS-WIN.lnk -- Windows-side themed pwsh (MiOS-WIN WT profile + dash theme).
+    $argsWin   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_winProfile`""
+    $descWin   = "MiOS-WIN -- Windows-side terminal with MiOS theme + dashboard"
+    & $writeMiosLnk (Join-Path $startMenuDir 'MiOS-WIN.lnk') $argsWin $descWin
+    if ($desktopDir -and (Test-Path $desktopDir)) { & $writeMiosLnk (Join-Path $desktopDir 'MiOS-WIN.lnk') $argsWin $descWin }
+    Write-Host "  [+] Shortcut: MiOS-WIN -> WT $_winProfile (Windows pwsh + theme)" -ForegroundColor DarkGray
+
+    # 3. MiOS Help.lnk -- opens MiOS-WIN profile and runs `mios help` inside it.
+    $argsHelp  = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_winProfile`" -Verb help"
+    $descHelp  = "MiOS Help -- verb + functionality reference"
+    & $writeMiosLnk (Join-Path $startMenuDir 'MiOS Help.lnk') $argsHelp $descHelp
+    if ($desktopDir -and (Test-Path $desktopDir)) { & $writeMiosLnk (Join-Path $desktopDir 'MiOS Help.lnk') $argsHelp $descHelp }
+    Write-Host "  [+] Shortcut: MiOS Help -> mios help" -ForegroundColor DarkGray
+
+    # The hub variable below is left as 'MiOS' so subsequent code that
+    # references $_hubLnkName (e.g. AumID stamping, registry uninstall
+    # entries) targets the canonical MiOS.lnk.
+    $_hubLnkName = 'MiOS'
+    $smLnk = Join-Path $startMenuDir 'MiOS.lnk'
 
     # ── Per-verb shortcuts (MiOS-DEV / MiOS Build / MiOS Dashboard / etc.) ──
     # Per the canonical e2e contract: native-app surface is the MiOS hub +
@@ -2356,27 +2392,21 @@ if ($hwnd -ne [IntPtr]::Zero) {
         Write-Host "  [+] Desktop: $uninstDeskLnk" -ForegroundColor DarkGray
     }
 
-    # Stale-shortcut cleanup -- earlier revisions created MiOS Build /
-    # Dashboard / Configurator / Update / Pull as separate native apps.
-    # The 4-app set is now MiOS, MiOS-DEV, MiOS Help, Uninstall MiOS;
-    # the rest are operator-typed verbs INSIDE the terminal. Reap any
-    # leftover .lnk's so a re-run of Get-MiOS.ps1 normalizes the menu.
-    # Operator 2026-05-09 consolidation: ONLY MiOS.lnk + Uninstall MiOS.lnk
-    # belong in Start Menu/Desktop.  Reap every other historical .lnk
-    # name we've ever shipped (incl. the recent MiOS-WIN.lnk +
-    # per-verb MiOS-DEV.lnk/MiOS Help.lnk/MiOS Config.lnk/MiOS Build.lnk
-    # variants) so re-running Get-MiOS.ps1 normalizes the menu down to
-    # the canonical 2 shortcuts.
+    # Stale-shortcut cleanup -- canonical 4-shortcut set is
+    # MiOS / MiOS-WIN / MiOS Help / Uninstall MiOS (created above).
+    # Every OTHER variant a prior revision shipped gets reaped so
+    # re-running Get-MiOS.ps1 normalizes the menu. NOTE: MiOS-DEV.lnk
+    # is reaped because the canonical "MiOS.lnk" already targets the
+    # dev VM (no second shortcut for the same target). MiOS Config.lnk
+    # is reaped because `mios config` is a typed verb inside the terminal.
     foreach ($legacy in @(
-        # Original Show-MiosApp era one-per-verb variants:
+        # Per-verb shortcuts no longer in the canonical set (typed verbs):
         'MiOS Build.lnk','MiOS Dashboard.lnk','MiOS Configurator.lnk',
         'MiOS Update.lnk','MiOS Pull.lnk','MiOS Setup.lnk',
         'MiOS Terminal.lnk','MiOS Dev Shell.lnk','MiOS Podman Shell.lnk',
         'Build MiOS.lnk',
-        # Recent per-verb wave (commit 9055547 era):
-        'MiOS-DEV.lnk','MiOS Help.lnk','MiOS Config.lnk',
-        # Renamed-then-reverted hub from 0273d29:
-        'MiOS-WIN.lnk'
+        # Redundant-with-MiOS.lnk + typed-verb apps:
+        'MiOS-DEV.lnk','MiOS Config.lnk'
     )) {
         foreach ($dir in @($startMenuDir, $desktopDir)) {
             if (-not $dir) { continue }
@@ -2427,26 +2457,17 @@ namespace MiOS.NativeApp {
     if ('MiOS.NativeApp.Aumid' -as [type]) {
         try {
             $_aumid = Get-MiosTomlValue -Section 'apps' -Key 'aumid' -Default 'MiOS.Workstation'
-            # Stamp AumID on the hub shortcut + every per-verb shortcut.
-            # All MiOS app windows then group under one taskbar / Start
-            # tile (so pinning the hub also covers the verbs).
-            $_allShortcuts = @($smLnk)
-            if ($desktopDir -and (Test-Path "$desktopDir\MiOS.lnk")) {
-                $_allShortcuts += "$desktopDir\MiOS.lnk"
-            }
-            foreach ($v in $miosVerbs) {
-                $_smv = Join-Path $startMenuDir $v.File
-                if (Test-Path -LiteralPath $_smv) { $_allShortcuts += $_smv }
-                if ($desktopDir -and (Test-Path -LiteralPath (Join-Path $desktopDir $v.File))) {
-                    $_allShortcuts += (Join-Path $desktopDir $v.File)
+            # Stamp AumID on every canonical shortcut (4-set: MiOS,
+            # MiOS-WIN, MiOS Help, Uninstall MiOS) so all MiOS app
+            # windows group under one taskbar / Start tile.
+            $_allShortcuts = @()
+            foreach ($lnkName in @('MiOS.lnk','MiOS-WIN.lnk','MiOS Help.lnk','Uninstall MiOS.lnk')) {
+                $_smPath = Join-Path $startMenuDir $lnkName
+                if (Test-Path -LiteralPath $_smPath) { $_allShortcuts += $_smPath }
+                if ($desktopDir) {
+                    $_dkPath = Join-Path $desktopDir $lnkName
+                    if (Test-Path -LiteralPath $_dkPath) { $_allShortcuts += $_dkPath }
                 }
-            }
-            # Uninstall MiOS.lnk also gets the AumID + icon so it
-            # taskbar-groups under the same MiOS hub tile.
-            $_uninstSm = Join-Path $startMenuDir 'Uninstall MiOS.lnk'
-            if (Test-Path -LiteralPath $_uninstSm) { $_allShortcuts += $_uninstSm }
-            if ($desktopDir -and (Test-Path -LiteralPath (Join-Path $desktopDir 'Uninstall MiOS.lnk'))) {
-                $_allShortcuts += (Join-Path $desktopDir 'Uninstall MiOS.lnk')
             }
             foreach ($lnk in $_allShortcuts) {
                 try { [MiOS.NativeApp.Aumid]::Set($lnk, $_aumid) } catch {}
@@ -3021,7 +3042,7 @@ function Install-MiOSPowerShellProfile {
     # visible. mios.toml [terminal].frame_width is the SSOT; the
     # configurator HTML exposes this for operator override.
     # frame_height stays rows-1 so one row is reserved for the prompt.
-    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default ($_miosCols - 2)
+    $_miosFrameW  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default $_miosCols
     $_miosFrameH  = Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default ($_miosRows - 1)
     # right_margin: cells of slack between the rightmost paintable cell
     # and the rightmost cell the dashboard frame / right-aligned prompt
@@ -3031,7 +3052,7 @@ function Install-MiOSPowerShellProfile {
     # paintable cell count during the first paint (before the
     # scrollbarState='hidden' setting and its scrollbar-reservation
     # release have taken effect). cols-2 always avoids wrap.
-    $_miosRightMargin = Get-MiosTomlValue -Section 'terminal' -Key 'right_margin' -Default 2
+    $_miosRightMargin = Get-MiosTomlValue -Section 'terminal' -Key 'right_margin' -Default 0
     # Font family + size sourced from mios.toml [theme.font] -- baked
     # as the install-time default for the dashboard's "font" field
     # (Show-MiosDashboard re-reads at runtime so configurator edits

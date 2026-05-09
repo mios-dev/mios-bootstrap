@@ -963,9 +963,9 @@ function Initialize-MiosGlobals {
     # doesn't touch them to avoid clobbering the install dims with
     # the app dims.  Frame width / height / right_margin ARE
     # loaded here because they're identical for both contexts.
-    $script:MiosFrameW     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default 79)
+    $script:MiosFrameW     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default 80)
     $script:MiosFrameH     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default 19)
-    $script:MiosRightMgn   = [int](Get-MiosTomlValue -Section 'terminal' -Key 'right_margin'    -Default 1)
+    $script:MiosRightMgn   = [int](Get-MiosTomlValue -Section 'terminal' -Key 'right_margin'    -Default 0)
     if ($script:MiosFrameW   -lt 20) { $script:MiosFrameW   = 79 }
     if ($script:MiosFrameH   -lt 5)  { $script:MiosFrameH   = 19 }
     if ($script:MiosRightMgn -lt 0)  { $script:MiosRightMgn = 1  }
@@ -6720,17 +6720,17 @@ if (-not $wtExe) {
 
 # `-w MiOS` names the window so it matches the post-bootstrap spawn
 # AND the Win+Space global summon binding can target it.
-# When -Verb is set on the MiOS hub profile, append the verb to the
-# wt.exe commandline so the spawned pwsh runs `mios <verb>` after
-# loading the profile body.  For MiOS-DEV (or no verb), the profile's
-# bound commandline runs unchanged.
+# When -Verb is set on a Windows-side profile (MiOS or MiOS-WIN),
+# append the verb to the wt.exe commandline so the spawned pwsh runs
+# `mios <verb>` after loading the profile body.  For MiOS-DEV (the
+# Linux dev VM profile) or no verb, the profile's bound commandline
+# runs unchanged.
 $wtArgs = @('-w','MiOS','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile)
-if ($Verb -and $Profile -eq 'MiOS') {
+if ($Verb -and ($Profile -eq 'MiOS' -or $Profile -eq 'MiOS-WIN')) {
     # `--` separates wt.exe args from the COMMANDLINE that the spawned
     # tab runs.  Override the profile commandline by passing pwsh.exe
     # explicitly with the MiOS profile body dot-sourced and the verb
-    # dispatched.  The mios-launch.exe / mios-launch.ps1 has already
-    # resolved $defaultPwsh so we re-resolve here for the same value.
+    # dispatched.
     $_pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
     if (-not $_pwsh) { $_pwsh = "$env:ProgramFiles\PowerShell\7\pwsh.exe" }
     $_profileBody = 'M:\MiOS\powershell\profile.ps1'
@@ -7050,108 +7050,26 @@ class MiOSLaunch {
     # against the new name+bin+icon set. Vendor fallback below mirrors
     # what mios.toml [apps] ships with for cold first-run before any
     # operator edit.
-    # Operator 2026-05-09 consolidation: ONE MiOS app + Uninstall.
-    # Per-verb shortcuts (MiOS-DEV / MiOS Config / MiOS Help) are
-    # NOT created -- those are typed verbs in the terminal
-    # (`mios dev`, `mios config`, `mios help`).  Get-MiOS.ps1 already
-    # collapsed its $miosVerbs to []; this duplicate creator in
-    # build-mios.ps1's Install-WindowsBranding was reseeding the
-    # per-verb .lnks every install, which is what the operator
-    # caught in the 2026-05-09 14:08 install log.  Empty list now.
+    # Operator 2026-05-09 canonical 4-shortcut set: MiOS / MiOS-WIN /
+    # MiOS Help / Uninstall MiOS, all created in Get-MiOS.ps1's
+    # Install-MiOSNativeApp. NO per-verb shortcut creator here -- the
+    # entire [apps.shortcuts] toml-driven loader was a duplicate creator
+    # that re-seeded MiOS-DEV.lnk / MiOS Config.lnk / MiOS Help.lnk on
+    # every install (caught in the 2026-05-09 15:27 install screenshot).
+    # The previous "$verbShortcuts = @()" guard was racy: any operator
+    # mios.toml [apps.shortcuts] section would re-populate it. Removed
+    # entirely. Per operator: "JUST FUCKING LISTEN".
     $verbShortcuts = @()
-    try {
-        $_appsTomlText = $null
-        foreach ($_cand in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $MiosBootstrapShadow 'mios.toml'))) {
-            # C:\MiOS deliberately excluded -- dev working tree, not consumer path
-            if (Test-Path -LiteralPath $_cand) { try { $_appsTomlText = [IO.File]::ReadAllText($_cand, (New-Object System.Text.UTF8Encoding($false))); break } catch {} }
-        }
-        if ($_appsTomlText) {
-            # Source of truth: [apps.shortcuts] -- not [apps] (which holds
-            # hub-app metadata: aumid, start_menu_folder, hub_shortcut_name).
-            $_appsBlock = [regex]::Match($_appsTomlText, '(?ms)^\[apps\.shortcuts\]\s*\r?\n(.*?)(?=^\[|\z)')
-            if ($_appsBlock.Success) {
-                $_resolvedApps = @()
-                foreach ($_ln in ($_appsBlock.Groups[1].Value -split "`n")) {
-                    $_am = [regex]::Match($_ln, '^\s*[a-z0-9_-]+\s*=\s*\{[^}]*name\s*=\s*"([^"]+)"[^}]*bin\s*=\s*"([^"]+)"[^}]*icon\s*=\s*"([^"]+)"[^}]*description\s*=\s*"([^"]+)"')
-                    if ($_am.Success) {
-                        $_resolvedApps += @{ Name = $_am.Groups[1].Value; Bin = $_am.Groups[2].Value; Icon = $_am.Groups[3].Value; Desc = $_am.Groups[4].Value }
-                    }
-                }
-                if ($_resolvedApps.Count -gt 0) { $verbShortcuts = $_resolvedApps }
-            }
-        }
-    } catch {}
-    # UNIFIED launcher path: every per-verb shortcut goes through
-    # mios-launch.ps1 -Verb <name> -- same dims, same focus mode, same
-    # centering on cursor monitor, same WT MiOS profile chrome (acrylic
-    # 50% opacity, scrollbar hidden, padding=0, no titlebar/tab-row).
-    # Per operator 2026-05-08: "MiOS apps windows aren't the unified
-    # MiOS terminal apps at all!! no center launching--broken--EVERYTHING".
-    # Each verb opens its OWN named window (MiOS-<verb>) so a verb click
-    # doesn't pile a tab into the hub MiOS window OR onto the operator's
-    # most-recently-focused WT window (which `-w 0` does -- the prior
-    # behaviour that broke center-launching).
-    #
-    # Special case: MiOS Config opens mios.html directly in the default
-    # browser (zero terminal needed) -- operator-pinned design from
-    # earlier turn. All other verbs route through the launcher.
     $miosLaunchPs1 = Join-Path $MiosBinDir 'mios-launch.ps1'
-    foreach ($v in $verbShortcuts) {
-        $vBin  = Join-Path $MiosBinDir $v.Bin
-        $vIcon = Join-Path $MiosIconsDir $v.Icon
-        $vLnk  = Join-Path $StartMenuDir ("{0}.lnk" -f $v.Name)
-        $vTarget = $pwshExe
-        $vArgs   = $null
-        # MiOS Config short-circuits to the browser (no WT/pwsh needed).
-        if ($v.Name -eq 'MiOS Config') {
-            $_cfgCandidates = @(
-                'M:\usr\share\mios\configurator\mios.html',
-                (Join-Path $MiosBootstrapShadow 'usr\share\mios\configurator\mios.html'),
-                (Join-Path $MiosShareDir 'mios\usr\share\mios\configurator\mios.html')
-            )
-            $_cfgHtml = $null
-            foreach ($_cand in $_cfgCandidates) {
-                if ($_cand -and (Test-Path -LiteralPath $_cand)) { $_cfgHtml = $_cand; break }
-            }
-            if ($_cfgHtml) {
-                $vTarget = $_cfgHtml
-                $vArgs   = ''
-            } else {
-                Log-Warn "MiOS Config: mios.html not found at any candidate -- shortcut falls back to mios-config.ps1 via launcher"
-                $vTarget = $pwshExe
-                $vArgs   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$miosLaunchPs1`" -Verb config"
-            }
-        }
-        # All other verbs (MiOS-DEV, MiOS Help, and any future verbs)
-        # route through mios-launch.ps1 -Verb. The launcher itself
-        # handles centering, focus mode, MiOS profile selection, and
-        # spawning a new WT window (NOT a tab in the existing one).
-        else {
-            # Verb token: derive from .Bin (e.g. mios-help.ps1 -> 'help').
-            $verbToken = ($v.Bin -replace '^mios-' -replace '\.ps1$').Trim().ToLower()
-            if ([string]::IsNullOrWhiteSpace($verbToken)) { $verbToken = $v.Name.ToLower() }
-            $vTarget = $pwshExe
-            $vArgs   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$miosLaunchPs1`" -Verb $verbToken"
-        }
-        # Start Menu (admin-installed all-users path).
-        New-MiosShortcut -LnkPath $vLnk -TargetExe $vTarget -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
-        # Desktop -- so the verb is also one click from the desktop.
-        if ($desktopDir -and (Test-Path $desktopDir)) {
-            $vDesk = Join-Path $desktopDir ("{0}.lnk" -f $v.Name)
-            New-MiosShortcut -LnkPath $vDesk -TargetExe $vTarget -ArgsString $vArgs -IconFile $vIcon -Description $v.Desc | Out-Null
-        }
-        Log-Ok ("Per-verb Start Menu + Desktop shortcut: {0} -> {1}" -f $v.Name, $v.Bin)
-    }
 
-    # Garbage-collect any stale shortcuts from earlier revisions whose
-    # names don't match the current 5-app set (MiOS, MiOS-DEV, MiOS
-    # Config, MiOS Help, Uninstall MiOS). Idempotent: if absent, skip.
-    # Cleans up both the per-verb shortcuts that were created in
-    # earlier revisions AND legacy-named shortcuts.
-    # NOTE: 'MiOS Configurator.lnk' is the older long-form name for
-    # what is now 'MiOS Config.lnk' -- listed here so an upgrade from
-    # a prior install doesn't leave both shortcuts visible.
+    # Garbage-collect every shortcut OUTSIDE the canonical 4-set
+    # (MiOS / MiOS-WIN / MiOS Help / Uninstall MiOS). Per operator
+    # 2026-05-09: MiOS-DEV.lnk and MiOS Config.lnk are NOT canonical --
+    # the MiOS shortcut already targets the dev VM, and `mios config`
+    # is a typed verb. Idempotent: if absent, skip.
     $staleLnks = @(
+        # Redundant-with-MiOS.lnk + typed-verb apps:
+        'MiOS-DEV.lnk', 'MiOS Config.lnk',
         # Removed verbs (now operator-typed inside the MiOS terminal):
         'MiOS Build.lnk', 'MiOS Configurator.lnk', 'MiOS Dashboard.lnk',
         'MiOS Update.lnk', 'MiOS Pull.lnk',
