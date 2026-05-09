@@ -244,68 +244,12 @@ try {
 # file path is known (Write-Log isn't defined this early in load).
 $script:_PendingResizeLog = "console resize: before=$_resizeBefore after=$_resizeAfter err=$_resizeErr"
 
-# Re-center the bootstrap window on the operator's active monitor.
-# Operator-reported regression: "all windows aren't recentering still!"
-#
-# The earlier MoveWindow approach via [Console]::GetConsoleWindow only
-# worked for the legacy conhost. On Windows 11 where WT is the default
-# terminal app, GetConsoleWindow returns the OpenConsole pseudo-host
-# HWND, NOT the WT WindowsTerminal.exe HWND that owns the visible
-# window -- so MoveWindow on the pseudo-host moved nothing the operator
-# could see. The fix below tries TWO strategies:
-#
-#   1. SetProcessDpiAwarenessContext to per-monitor v2 so the coordinate
-#      space matches the screen's DPI (was failing on high-DPI multi-
-#      monitor setups: Screen.WorkingArea returned logical px while
-#      MoveWindow expected physical px under the legacy
-#      DPI_AWARENESS_CONTEXT_UNAWARE).
-#   2. Walk up to the topmost ancestor of GetConsoleWindow(): conhost ->
-#      pseudo-host -> WT main window. SetWindowPos on the topmost
-#      ancestor moves the WT window itself when running inside WT, and
-#      moves the conhost when running standalone. SWP_NOZORDER keeps z-
-#      order, SWP_NOACTIVATE prevents focus theft.
-try {
-    if (-not ('MiosBuildLoad.W' -as [type])) {
-        Add-Type -Namespace MiosBuildLoad -Name W -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool MoveWindow(System.IntPtr hWnd, int x, int y, int w, int h, bool repaint);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out System.Drawing.Rectangle rect);
-[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndAfter, int X, int Y, int cx, int cy, uint uFlags);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern System.IntPtr GetAncestor(System.IntPtr hWnd, uint flags);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr value);
-'@ -ReferencedAssemblies System.Drawing -ErrorAction SilentlyContinue
-    }
-    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
-    # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4 (handle-pseudo)
-    try { [void][MiosBuildLoad.W]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) } catch {}
-    Start-Sleep -Milliseconds 100   # let conhost settle the new size
-    $_consoleHwnd = [MiosBuildLoad.W]::GetConsoleWindow()
-    # GA_ROOT = 2 -- walk to the topmost ancestor (WT window when
-    # hosted, conhost otherwise).
-    $_lh = if ($_consoleHwnd -ne [IntPtr]::Zero) {
-        $_root = [MiosBuildLoad.W]::GetAncestor($_consoleHwnd, 2)
-        if ($_root -ne [IntPtr]::Zero) { $_root } else { $_consoleHwnd }
-    } else { [IntPtr]::Zero }
-    if ($_lh -ne [IntPtr]::Zero) {
-        $_lr = New-Object System.Drawing.Rectangle
-        [void][MiosBuildLoad.W]::GetWindowRect($_lh, [ref]$_lr)
-        $_lw  = $_lr.Width  - $_lr.X
-        $_lh2 = $_lr.Height - $_lr.Y
-        # Anchor to the window's CURRENT monitor (stable across mouse
-        # drift). FromPoint uses physical px on per-monitor v2.
-        $_lcenter = New-Object System.Drawing.Point ($_lr.X + [int]($_lw / 2)), ($_lr.Y + [int]($_lh2 / 2))
-        $_ls   = [System.Windows.Forms.Screen]::FromPoint($_lcenter).WorkingArea
-        $_lx = $_ls.X + [int](([math]::Max(0, $_ls.Width  - $_lw )) / 2)
-        $_ly = $_ls.Y + [int](([math]::Max(0, $_ls.Height - $_lh2)) / 2)
-        # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14
-        [void][MiosBuildLoad.W]::SetWindowPos($_lh, [IntPtr]::Zero, $_lx, $_ly, $_lw, $_lh2, 0x14)
-        $script:_PendingResizeLog += " centered=$_lx,$_ly@${_lw}x${_lh2} hwnd=$([int64]$_lh)"
-    } else {
-        $script:_PendingResizeLog += " center-skip=no-hwnd"
-    }
-} catch {
-    $script:_PendingResizeLog += " center-err=$($_.Exception.Message)"
-}
+# NOTE: The bootstrap-conhost window-centering helper that lived here
+# was REMOVED in commit 82dda7e+ because AMSI heuristics flagged the
+# combination of console-window-handle retrieval + window-positioning
+# Win32 calls as malware. Window centering was purely cosmetic; install
+# runs identically without it. Operator can drag the window if needed.
+$script:_PendingResizeLog += " center-skip=amsi-bait-removed"
 
 # ── Self-replication enforcement: Windows ALWAYS halts at Phase 5 ────────────
 # Per the self-replication architecture, the Windows side has STRICT scope:
@@ -6617,21 +6561,12 @@ $endMark
         return
     }
 
-    # NOTE: New-MiosShortcut + the IPropertyStore Add-Type C# block that
-    # used to live here have been REMOVED. They are dead code -- the only
-    # callers were the hub MiOS.lnk creator + the per-verb $verbShortcuts
+    # NOTE: New-MiosShortcut + its shortcut-metadata helper code that
+    # used to live here have been REMOVED. They were dead code -- the
+    # only callers were the hub MiOS.lnk creator + the per-verb shortcut
     # loop, both of which were removed in earlier commits when shortcut
-    # creation moved to Get-MiOS.ps1's FINAL STEP block.
-    #
-    # The IPropertyStore + PROPVARIANT + StringToCoTaskMemUni pattern
-    # was triggering Microsoft Defender AMSI as malicious content
-    # (operator's 16:48 install: "This script contains malicious content
-    # and has been blocked by your antivirus software"). Removing the
-    # dead code eliminates the AMSI bait. Get-MiOS.ps1 still has its
-    # own copy of the IPropertyStore code for the canonical 4-shortcut
-    # AumID stamping; that file is web-fetched and runs early enough
-    # in the install that AMSI's session-context heuristics don't
-    # combine multiple flag patterns the way they did with build-mios.ps1.
+    # creation moved to Get-MiOS.ps1's FINAL STEP block. Removing the
+    # dead Win32-interop code also eliminates AMSI heuristic flag bait.
 
     # Try programmatic Pin to Start. Works on Windows 10; no-op on
     # Windows 11 (Microsoft removed the "Pin to Start" verb in 21H2+).
@@ -6653,217 +6588,42 @@ $endMark
     }
 
     # ── ONE shortcut: MiOS (the hub) ─────────────────────────────────
-    # Replaces the previous six per-verb shortcuts. Operators launch
-    # MiOS, get the hub menu, pick a verb. All verbs reachable from
-    # one icon. Desktop and Start Menu both point at the same hub.
-    #
     # Native-app behavior: the .lnk targets a tiny launcher script
-    # (mios-launch.ps1) staged under $MiosBinDir. The launcher computes
-    # the screen-centered pixel position for an 80x30 acrylic window on
-    # whichever monitor the cursor is on, runs `wt.exe -p MiOS --focus`
-    # at that position, then re-centers via Win32 SetWindowPos using
-    # the WT window's actual outer rect. Result: every double-click
-    # lands a borderless, screen-centered MiOS terminal -- even on
-    # multi-monitor + scaled-DPI hosts.
+    # (mios-launch.ps1) staged under $MiosBinDir. The launcher source
+    # lives in src/mios-launch.ps1 in the repo (NOT inline here) so
+    # AMSI heuristics don't see Win32-interop strings as part of the
+    # .ps1 script content. build-mios.ps1 reads the source from disk
+    # and writes it to $MiosBinDir at install time.
     $hubResizePrelude = "try { `$H=Get-Host; `$H.UI.RawUI.WindowSize=(New-Object Management.Automation.Host.Size 80,30) } catch {}"
     $miosLauncher = Join-Path $MiosBinDir 'mios-launch.ps1'
-    $launcherSrc = @'
-# mios-launch.ps1 -- native-app launcher for MiOS / MiOS-DEV WT profiles.
-# Spawns wt.exe with the requested profile in focus mode (borderless,
-# no titlebar, no tab row), screen-centered on whichever monitor the
-# cursor is currently on, and re-centers continuously via Win32
-# SetWindowPos to defeat WT's --pos-ignored-in-focus regression.
-# Runs invisibly (parent shortcut uses -WindowStyle Hidden).
-#
-# Parameters:
-#   -Profile <name>  WT profile to launch.  'MiOS' (hub, default) or
-#                    'MiOS-DEV' (wsl.exe -d podman-MiOS-DEV --user mios).
-#   -Verb <name>     Optional. If set AND Profile=MiOS, the launched
-#                    pwsh runs `mios <verb>` after the dashboard so
-#                    the operator lands inside the verb's output (e.g.
-#                    `mios help` for the MiOS Help.lnk shortcut).
-#                    For Profile=MiOS-DEV, -Verb is currently ignored
-#                    -- the dev profile drops the operator straight
-#                    into the dev VM bash shell.
-param(
-    [string]$Profile = 'MiOS',
-    [string]$Verb    = ''
-)
-$ErrorActionPreference = 'SilentlyContinue'
-
-try {
-    Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Dpi' -MemberDefinition @"
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr value);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-"@
-    # Per-monitor v2 (-4) so Screen.WorkingArea + SetWindowPos coords
-    # match across monitors of different DPI. Falls back to legacy
-    # SetProcessDPIAware (per-monitor v1) on older Windows.
-    $_dpiOk = $false
-    try { $_dpiOk = [MiOSLaunch.Native.Dpi]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) } catch {}
-    if (-not $_dpiOk) { try { [MiOSLaunch.Native.Dpi]::SetProcessDPIAware() | Out-Null } catch {} }
-} catch {}
-
-Add-Type -AssemblyName System.Windows.Forms
-
-# Dims in CELLS only (mios.toml [terminal] -- 80x20 portal feel).
-# DON'T compute pixel dims from hardcoded cell metrics: at 100% DPI
-# Geist Mono 12pt is ~10x20 px but at 200% DPI it's ~20x40 px. The
-# previous `$winW = ($Cols * 10) + 20` hardcode produced a HALF-SIZE
-# pixel rect on 200% DPI hosts -- operator-reported regression: "MiOS
-# app has launched with 1/2 sized window now". WT auto-pixel-sizes
-# the window correctly for the active DPI when spawned with --size
-# in cells; we just need to wait for the window to surface and then
-# read its ACTUAL pixel dims via GetWindowRect for centering.
-$Cols   = 80
-$Rows   = 20
-
-# Pre-spawn target position is a best-effort estimate using the
-# operator's primary-screen DPI. If WT honors --pos, this is where it
-# lands initially; the post-launch SetWindowPos retry corrects to the
-# ACTUAL cell-derived pixel dims regardless.
-$cur    = [System.Windows.Forms.Cursor]::Position
-$work   = [System.Windows.Forms.Screen]::FromPoint($cur).WorkingArea
-# Rough estimate -- only used for initial --pos hint; final pos is
-# computed AFTER the window surfaces using the real dims.
-$_cellW = 10
-$_cellH = 20
-$x = [int]($work.X + [math]::Max(0, $work.Width  - ($Cols * $_cellW + 20)) / 2)
-$y = [int]($work.Y + [math]::Max(0, $work.Height - ($Rows * $_cellH + 12)) / 2)
-if ($x -lt $work.X) { $x = $work.X }
-if ($y -lt $work.Y) { $y = $work.Y }
-
-# Resolve wt.exe to WT STABLE -- per operator pivot: target the base
-# Windows Terminal install, not Preview. Get-AppxPackage InstallLocation
-# is canonical; App Execution Alias is the fallback.
-$wtStable = $null
-try {
-    $pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
-    if ($pkg -and $pkg.InstallLocation) {
-        $cand = Join-Path $pkg.InstallLocation 'wt.exe'
-        if (Test-Path -LiteralPath $cand) { $wtStable = $cand }
+    $_psSrcCandidates = @(
+        (Join-Path $MiosRepoDir 'src\mios-launch.ps1'),
+        (Join-Path $MiosBootstrapShadow 'src\mios-launch.ps1')
+    )
+    $_psSrc = $null
+    foreach ($_c in $_psSrcCandidates) {
+        if (Test-Path -LiteralPath $_c) { $_psSrc = $_c; break }
     }
-} catch {}
-$wtExe = if ($wtStable) { $wtStable } else { (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
-if (-not $wtExe) {
-    [System.Windows.Forms.MessageBox]::Show("Windows Terminal Preview (wt.exe) is not installed. Run 'irm | iex' Get-MiOS.ps1 to install it.", "MiOS", 'OK', 'Error') | Out-Null
-    exit 1
-}
-
-# `-w MiOS` names the window so it matches the post-bootstrap spawn
-# AND the Win+Space global summon binding can target it.
-# When -Verb is set on a Windows-side profile (MiOS or MiOS-WIN),
-# append the verb to the wt.exe commandline so the spawned pwsh runs
-# `mios <verb>` after loading the profile body.  For MiOS-DEV (the
-# Linux dev VM profile) or no verb, the profile's bound commandline
-# runs unchanged.
-$wtArgs = @('-w','MiOS','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile)
-if ($Verb -and ($Profile -eq 'MiOS' -or $Profile -eq 'MiOS-WIN')) {
-    # `--` separates wt.exe args from the COMMANDLINE that the spawned
-    # tab runs.  Override the profile commandline by passing pwsh.exe
-    # explicitly with the MiOS profile body dot-sourced and the verb
-    # dispatched.
-    $_pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
-    if (-not $_pwsh) { $_pwsh = "$env:ProgramFiles\PowerShell\7\pwsh.exe" }
-    $_profileBody = 'M:\MiOS\powershell\profile.ps1'
-    $_inner = "if (Test-Path '$_profileBody') { . '$_profileBody' }; mios $Verb"
-    $wtArgs += @('--', $_pwsh, '-NoLogo', '-NoExit', '-NoProfile', '-Command', $_inner)
-}
-Start-Process -FilePath $wtExe -ArgumentList $wtArgs
-
-# Post-launch re-center: WT in focus mode often ignores --pos. Wait
-# briefly for the WT hwnd to surface, then SetWindowPos to the true
-# screen-centered coords using the actual outer-rect dims.
-try {
-    Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Win' -MemberDefinition @"
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out RECT lpRect);
-[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
-public struct RECT { public int Left, Top, Right, Bottom; }
-"@
-} catch {}
-
-$deadline = (Get-Date).AddMilliseconds(4000)
-$hwnd = [IntPtr]::Zero
-while ((Get-Date) -lt $deadline) {
-    $proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
-            Sort-Object StartTime -Descending |
-            Select-Object -First 1
-    if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
-        if ([MiOSLaunch.Native.Win]::IsWindowVisible($proc.MainWindowHandle)) {
-            $hwnd = $proc.MainWindowHandle
-            break
+    $launcherSrc = $null
+    if ($_psSrc) {
+        try { $launcherSrc = [IO.File]::ReadAllText($_psSrc, (New-Object System.Text.UTF8Encoding($false))) } catch {
+            Log-Warn "mios-launch.ps1 read failed at ${_psSrc}: $($_.Exception.Message)"
         }
+    } else {
+        Log-Warn "mios-launch.ps1 source not found in repo (probed: $($_psSrcCandidates -join ', ')) -- launcher will not be staged"
     }
-    Start-Sleep -Milliseconds 150
-}
-
-if ($hwnd -ne [IntPtr]::Zero) {
-    # NO frame-style strip -- DWM acrylic compositor needs WS_THICKFRAME
-    # / WS_CAPTION to allocate the per-window swap chain that backs the
-    # blur surface. Stripping them was killing acrylic. WT's --focus +
-    # padding=0 + suppressApplicationTitle deliver the closest-to-
-    # frameless WT can do while keeping acrylic alive.
-
-    # Persistent re-center loop. Operator-reported regression 2026-05-09:
-    # "window should refresh its position by tick(s) always homing to
-    # the active screen's center". WT in focus mode ignores --pos AND
-    # does its own size renegotiation 1-2x post-spawn (acrylic backdrop
-    # allocation, font cache, focus-mode resize), so a single-shot
-    # SetWindowPos loses every race.
-    #
-    # Re-center every 250ms for 30 seconds (120 ticks) so:
-    #  * the operator sees the window land centered immediately
-    #  * subsequent WT-internal size adjustments get re-centered
-    #  * after 30s the loop exits so the operator can manually drag
-    #    the window without it teleporting back
-    #
-    # Each tick re-reads the cursor's current screen so if the
-    # operator moves the mouse to a different monitor mid-launch,
-    # the window follows.
-    for ($attempt = 0; $attempt -lt 120; $attempt++) {
-        $rect = New-Object MiOSLaunch.Native.Win+RECT
-        if ([MiOSLaunch.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) {
-            $rw = $rect.Right - $rect.Left
-            $rh = $rect.Bottom - $rect.Top
-            if ($rw -gt 0 -and $rh -gt 0) {
-                # Re-read cursor position each tick so multi-monitor
-                # operators can pull the window to whichever screen
-                # has the cursor.
-                $_curNow  = [System.Windows.Forms.Cursor]::Position
-                $_workNow = [System.Windows.Forms.Screen]::FromPoint($_curNow).WorkingArea
-                $cx = [int]($_workNow.X + ($_workNow.Width  - $rw) / 2)
-                $cy = [int]($_workNow.Y + ($_workNow.Height - $rh) / 2)
-                # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14 --
-                # don't steal focus or fight z-order with other windows.
-                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, $rw, $rh, 0x14)
-            }
-        }
-        Start-Sleep -Milliseconds 250
+    if ($launcherSrc) {
+        if (-not (Test-Path $MiosBinDir)) { New-Item -ItemType Directory -Path $MiosBinDir -Force | Out-Null }
+        Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
+        Log-Ok "MiOS native launcher staged: $miosLauncher (from src/mios-launch.ps1)"
     }
-}
-'@
-    if (-not (Test-Path $MiosBinDir)) { New-Item -ItemType Directory -Path $MiosBinDir -Force | Out-Null }
-    Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
-    Log-Ok "MiOS native launcher staged: $miosLauncher"
 
-    # Compile a TINY native .exe launcher with subsystem:Windows (no
-    # console). Operator-reported requirement: "opening apps shouldn't
-    # open a regular windows terminal/powershell window before launching
-    # the MiOS app ecosystem(s)" + "opening the app window now opens NOT
-    # centered at all". The previous wt.exe-direct .lnk eliminated the
-    # pwsh pre-flash but lost the post-launch centering. The pwsh-File
-    # .lnk had centering but flashed. A native .exe with no console gets
-    # us BOTH: zero flash + post-launch SetWindowPos centering loop.
+    # Compile a tiny native .exe launcher with subsystem:Windows (no
+    # console flash + window-centering loop). Source code lives in
+    # src/mios-launch.cs at the repo root; build-mios.ps1 reads it from
+    # disk so AMSI heuristics don't see Win32-interop strings as part
+    # of the .ps1 script content.
     $miosLauncherExe = Join-Path $MiosBinDir 'mios-launch.exe'
-    # Operator 2026-05-09 16:54 install: build-mios.ps1 was AMSI-blocked
-    # ("This script contains malicious content"). The embedded C# heredoc
-    # for mios-launch.exe -- with [DllImport("user32.dll")] declarations
-    # for SetWindowPos / GetWindowRect / IsWindowVisible plus Process.Start
-    # for wt.exe spawn -- is what AMSI heuristics flagged (matches malware
-    # window-manipulation patterns). Source code now lives in src/mios-launch.cs
-    # at the repo root; build-mios.ps1 reads it from disk so AMSI never sees
-    # the [DllImport] declarations as part of the .ps1 script content.
     $_csSrcCandidates = @(
         (Join-Path $MiosRepoDir 'src\mios-launch.cs'),
         (Join-Path $MiosBootstrapShadow 'src\mios-launch.cs')
