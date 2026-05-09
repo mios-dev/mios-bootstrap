@@ -6668,31 +6668,41 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # padding=0 + suppressApplicationTitle deliver the closest-to-
     # frameless WT can do while keeping acrylic alive.
 
-    # Persistent re-center loop. Operator-reported regression: "window
-    # also doesn't launch centered still -- should re-center every few
-    # ticks". Single-shot SetWindowPos was losing races against WT's
-    # post-spawn layout work (acrylic backdrop allocation, font cache,
-    # focus-mode size renegotiation) which trigger 1-2 size adjustments
-    # AFTER the initial paint. 12 ticks at 500ms = 6 seconds total --
-    # long enough for WT to settle, short enough that operator can
-    # manually drag the window after the loop exits if they want.
-    $topmost = [IntPtr]::new(-1)
-    for ($attempt = 0; $attempt -lt 12; $attempt++) {
+    # Persistent re-center loop. Operator-reported regression 2026-05-09:
+    # "window should refresh its position by tick(s) always homing to
+    # the active screen's center". WT in focus mode ignores --pos AND
+    # does its own size renegotiation 1-2x post-spawn (acrylic backdrop
+    # allocation, font cache, focus-mode resize), so a single-shot
+    # SetWindowPos loses every race.
+    #
+    # Re-center every 250ms for 30 seconds (120 ticks) so:
+    #  * the operator sees the window land centered immediately
+    #  * subsequent WT-internal size adjustments get re-centered
+    #  * after 30s the loop exits so the operator can manually drag
+    #    the window without it teleporting back
+    #
+    # Each tick re-reads the cursor's current screen so if the
+    # operator moves the mouse to a different monitor mid-launch,
+    # the window follows.
+    for ($attempt = 0; $attempt -lt 120; $attempt++) {
         $rect = New-Object MiOSLaunch.Native.Win+RECT
         if ([MiOSLaunch.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) {
             $rw = $rect.Right - $rect.Left
             $rh = $rect.Bottom - $rect.Top
             if ($rw -gt 0 -and $rh -gt 0) {
-                $cx = [int]($work.X + ($work.Width  - $rw) / 2)
-                $cy = [int]($work.Y + ($work.Height - $rh) / 2)
+                # Re-read cursor position each tick so multi-monitor
+                # operators can pull the window to whichever screen
+                # has the cursor.
+                $_curNow  = [System.Windows.Forms.Cursor]::Position
+                $_workNow = [System.Windows.Forms.Screen]::FromPoint($_curNow).WorkingArea
+                $cx = [int]($_workNow.X + ($_workNow.Width  - $rw) / 2)
+                $cy = [int]($_workNow.Y + ($_workNow.Height - $rh) / 2)
                 # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14 --
                 # don't steal focus or fight z-order with other windows.
-                # Dropped the prior HWND_TOPMOST pass to avoid pinning
-                # MiOS above other windows (wasn't operator-requested).
                 [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, $rw, $rh, 0x14)
             }
         }
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds 250
     }
 }
 '@

@@ -3311,7 +3311,13 @@ if (`$true) {
                     return "Swap `${_use} / `${_tot}GiB (`${_pct}%)"
                 }
                 {`$_ -match '^disk_([a-zA-Z])$'} {
-                    `$_dl = `$Matches[1].ToUpper()
+                    # PowerShell switch with regex condition matches but
+                    # does NOT reliably populate `$Matches in the action
+                    # block scope -- operator 2026-05-09 saw `disk_c : err`
+                    # in the dashboard because `$Matches[1]` was \$null and
+                    # `$_dl` came back empty.  Parse the letter from `$_
+                    # directly via Substring instead.
+                    `$_dl = `$_.Substring(5,1).ToUpper()
                     `$_v  = try { Get-Volume -DriveLetter `$_dl -ErrorAction Stop } catch { `$null }
                     if (-not `$_v) { return "`${_dl}: --" }
                     `$_tot = [math]::Round(`$_v.Size / 1GB, 1)
