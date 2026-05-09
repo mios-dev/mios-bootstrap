@@ -4829,45 +4829,46 @@ function Install-MiosWindowsTools {
 
     Set-Step "Installing [packages.windows] CLI tools via winget (SSOT: mios.toml)..."
 
-    # Resolve the [packages.windows].pkgs list from mios.toml. Try the
-    # operator-overlay path first, then vendor.
-    $tomlText = $null
-    foreach ($cand in @('M:\etc\mios\mios.toml', 'M:\usr\share\mios\mios.toml', (Join-Path $MiosBootstrapShadow 'mios.toml'))) {
-        if (Test-Path -LiteralPath $cand) {
-            try {
-                $tomlText = [IO.File]::ReadAllText($cand, (New-Object System.Text.UTF8Encoding($false)))
-                Log-Ok "[packages.windows] sourced from: $cand"
-                break
-            } catch {}
+    # Resolve [packages.windows].pkgs from mios.toml.  Layered overlay:
+    # operator host override > vendor on M:\ > bootstrap shadow.  Each
+    # candidate is read AND its [packages.windows].pkgs section is
+    # checked -- the FIRST candidate that yields a non-empty list wins.
+    # A host override at M:\etc\mios\mios.toml that lacks [packages.windows]
+    # falls through to the vendor copy (the previous bug: the first
+    # `Test-Path` hit broke the loop, then the regex failed against a
+    # partial overlay, then the hardcoded fallback fired -- which the
+    # operator flagged 2026-05-09 as "you are hardcoding mios build to
+    # build a smaller version of itself").
+    $rx        = '(?ms)^\[packages\.windows\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
+    $pkgs      = @()
+    $sourceOk  = ''
+    $candidates = @('M:\etc\mios\mios.toml', 'M:\usr\share\mios\mios.toml', (Join-Path $MiosBootstrapShadow 'mios.toml'))
+    foreach ($cand in $candidates) {
+        if (-not (Test-Path -LiteralPath $cand)) { continue }
+        try {
+            $tomlText = [IO.File]::ReadAllText($cand, (New-Object System.Text.UTF8Encoding($false)))
+        } catch { continue }
+        $m = [regex]::Match($tomlText, $rx)
+        if (-not $m.Success) { continue }
+        $stripped = ($m.Groups['list'].Value -split "`n" |
+                     ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -join ' '
+        $tryPkgs = @(
+            $stripped -split ',' |
+            ForEach-Object {
+                $s = $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
+                if ($s) { $s }
+            }
+        )
+        if ($tryPkgs.Count -gt 0) {
+            $pkgs     = $tryPkgs
+            $sourceOk = $cand
+            break
         }
     }
-    if (-not $tomlText) {
-        Log-Warn "Could not locate mios.toml for [packages.windows] resolution -- using minimal hardcoded fallback"
-        $pkgs = @('Git.Git','Microsoft.PowerShell','Microsoft.WindowsTerminal','7zip.7zip','fastfetch-cli.fastfetch','aristocratos.btop4win')
-    } else {
-        # Regex-extract `[packages.windows] ... pkgs = [ ... ]` (DOTALL
-        # across the section, terminating at the next [section] header).
-        $rx  = '(?ms)^\[packages\.windows\]\s*$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*$'
-        $m   = [regex]::Match($tomlText, $rx)
-        $pkgs = @()
-        if ($m.Success) {
-            $stripped = ($m.Groups['list'].Value -split "`n" |
-                         ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -join ' '
-            $pkgs = @(
-                $stripped -split ',' |
-                ForEach-Object {
-                    $s = $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n")
-                    if ($s) { $s }
-                }
-            )
-        }
-        if ($pkgs.Count -eq 0) {
-            Log-Warn "[packages.windows].pkgs unparseable -- using minimal hardcoded fallback"
-            $pkgs = @('Git.Git','Microsoft.PowerShell','Microsoft.WindowsTerminal','7zip.7zip','fastfetch-cli.fastfetch','aristocratos.btop4win')
-        } else {
-            Log-Ok "[packages.windows] resolved $($pkgs.Count) package(s) from TOML SSOT"
-        }
+    if ($pkgs.Count -eq 0) {
+        throw "Cannot resolve [packages.windows].pkgs from any of: $($candidates -join ', '). Per operator SSOT directive 'ALL values source from the toml' there is no hardcoded fallback. Verify [packages.windows] section is intact in mios.toml (vendor copy at M:\usr\share\mios\mios.toml is canonical -- run 'mios pull' to refresh, or clone mios.git to C:\MiOS)."
     }
+    Log-Ok "[packages.windows] resolved $($pkgs.Count) package(s) from $sourceOk"
 
     $installed = 0
     $skipped   = 0

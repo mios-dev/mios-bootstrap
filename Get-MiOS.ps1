@@ -2347,312 +2347,66 @@ namespace MiOS.NativeApp {
     Write-Host "  [+] MiOS installed as a native Windows app." -ForegroundColor Green
 }
 
-# Canonical MiOS branding ASCII art (also at /usr/share/mios/branding/mios.txt
-# inside the deployed MiOS Linux image). Used by fastfetch as the
-# "logo" via raw-source mode.
-$Script:MiosBrandingTxt = @'
-      ___                       ___           ___
-     /\__\          ___        /\  \         /\  \
-    /::|  |        /\  \      /::\  \       /::\  \
-   /:|:|  |        \:\  \    /:/\:\  \     /:/\ \  \
-  /:/|:|__|__      /::\__\  /:/  \:\  \   _\:\~\ \  \
- /:/ |::::\__\  __/:/\/__/ /:/__/ \:\__\ /\ \:\ \ \__\
- \/__/~~/:/  / /\/:/  /    \:\  \ /:/  / \:\ \:\ \/__/
-       /:/  /  \::/__/      \:\  /:/  /   \:\ \:\__\
-      /:/  /    \:\__\       \:\/:/  /     \:\/:/  /
-     /:/  /      \/__/        \::/  /       \::/  /
-     \/__/                     \/__/         \/__/
-'@
-
-# Canonical MiOS fastfetch config -- Windows variant of mios.git's
-# /usr/share/mios/fastfetch/config.jsonc. MiOS palette colors (Hokusai)
-# applied to title/keys/separator. Modules trimmed to Windows-relevant
-# ones (no Linux-side packages/locale/swap noise). Logo source is a
-# placeholder __MIOS_LOGO__ that Install-MiOSFastfetch / the profile
-# script's self-heal substitute with the actual mios.txt path.
-$Script:MiosFastfetchConfig = @'
-{
-  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
-  "logo": { "type": "none" },
-  "display": {
-    "separator": ": ",
-    "color": {
-      "keys": "#F35C15",
-      "title": "#E7DFD3",
-      "output": "#B7C9D7"
+# ========================================================================
+# Vendor content blobs (branding ASCII / fastfetch config / oh-my-posh
+# theme) USED to be embedded as heredocs in this script.  They drifted
+# from upstream mios.git on every iteration and produced stale
+# powerline glyphs / ASCII art / fastfetch logos at install time --
+# operator 2026-05-09: "you are hardcoding mios build to build a
+# smaller version of itself that you've embedded in the actual codebase
+# and THAT's where it's sourcing from!! MiOS is completely self
+# developing, self building, self hosted... ALL values source from the
+# toml".
+#
+# Get-MiosVendorContent below resolves vendor content from mios.git
+# origin (with M:\ + C:\MiOS overlay shortcuts) -- NO embedded
+# snapshots in this script.  Self-replication contract: if origin is
+# unreachable AND no on-disk overlay exists, the install hard-fails
+# with a clear error rather than falling back to a stale snapshot.
+#
+# Read order:
+#   1. M:\usr\share\mios\<rel>      -- vendor copy on M:\ (Phase 2)
+#   2. C:\MiOS\usr\share\mios\<rel> -- mios.git clone on C:\
+#   3. raw.githubusercontent.com mios.git origin/main
+#
+# All on-disk reads use explicit UTF-8 ([IO.File]::ReadAllText with
+# UTF8Encoding(false)) per feedback_mios_toml_read_utf8 -- bare
+# Get-Content -Raw on PS 5.1 decodes UTF-8 PUA glyphs as cp1252 and
+# permanently mojibakes the powerline.
+# ========================================================================
+function Get-MiosVendorContent {
+    [CmdletBinding()] param(
+        [Parameter(Mandatory)] [string] $RelPath
+    )
+    $rel  = $RelPath -replace '/', '\'
+    $cands = @(
+        "M:\usr\share\mios\$rel",
+        "C:\MiOS\usr\share\mios\$rel"
+    )
+    foreach ($p in $cands) {
+        if (Test-Path -LiteralPath $p) {
+            try {
+                return [IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false)))
+            } catch {}
+        }
     }
-  },
-  "modules": [
-    "title",
-    { "type": "os",       "key": "OS"     },
-    { "type": "host",     "key": "Host"   },
-    { "type": "uptime",   "key": "Up"     },
-    { "type": "shell",    "key": "Shell"  },
-    { "type": "cpu",      "key": "CPU"    },
-    { "type": "gpu",      "key": "GPU",     "format": "{name}", "hideType": "integrated" },
-    { "type": "memory",   "key": "Mem"    },
-    { "type": "disk",     "key": "C",       "folders": "C:\\", "format": "{size-used} / {size-total}" },
-    { "type": "disk",     "key": "M",       "folders": "M:\\", "format": "{size-used} / {size-total}" },
-    { "type": "datetime", "key": "Time"   }
-  ]
-}
-'@
-
-# Canonical MiOS oh-my-posh theme content. Hoisted to script scope so
-# both Install-MiOSOhMyPoshTheme (writes the file at install time) and
-# Install-MiOSPowerShellProfile (embeds it as a self-heal blob in the
-# M:\ profile script) reference the same source. KEEP IN SYNC with
-# mios.git:usr/share/mios/oh-my-posh/mios.omp.json.
-$Script:MiosOmpJson = @'
-{
-  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
-  "version": 4,
-  "//": "final_space=false: don't reserve a trailing column after the prompt -- the right-aligned time segment now uses trailing_diamond U+E0B4 to reach col 79 of the frameless 80-col terminal.",
-  "final_space": false,
-  "//": [
-    "MiOS Oh-My-Posh theme.",
-    "All Nerd Font private-use-area glyphs are encoded as JSON \\uXXXX",
-    "escape sequences (json.dump ensure_ascii=True) so the file roundtrips",
-    "through any editor/git/sync layer without losing the U+E000..F8FF",
-    "code points -- write-tool sanitizers strip raw PUA chars on save.",
-    "Palette: mios.toml [colors] (Hokusai + operator neutrals).",
-    "MiOS-owned segments use the MiOS palette; language segments keep",
-    "brand colors so Node-green / Python-blue+yellow / Rust-orange stay",
-    "instantly recognizable. Rounded powerline caps (U+E0B4 right,",
-    "U+E0B6 left) for soft, full-radius segment ends."
-  ],
-  "blocks": [
-    {
-      "type": "prompt",
-      "alignment": "left",
-      "segments": [
-        {
-          "//": "Leading rounded cap (U+E0B6) so the colored powerline starts at col 0 of the frameless MiOS terminal -- replaces the previous plain '\u256d\u2500' text prefix that left cols 0-2 uncolored. The shell segment merges into this leading cap because both share the #1A407F background.",
-          "type": "text",
-          "style": "diamond",
-          "leading_diamond": "\ue0b6",
-          "trailing_diamond": "",
-          "background": "#1A407F",
-          "foreground": "#E7DFD3",
-          "template": ""
-        },
-        {
-          "type": "shell",
-          "style": "powerline",
-          "powerline_symbol": "\ue0b4",
-          "background": "#1A407F",
-          "foreground": "#E7DFD3",
-          "template": " \uf120 {{ .Name }} "
-        },
-        {
-          "type": "root",
-          "style": "powerline",
-          "powerline_symbol": "\ue0b4",
-          "background": "#DC271B",
-          "foreground": "#F35C15",
-          "template": " \uf292 "
-        },
-        {
-          "type": "path",
-          "style": "powerline",
-          "powerline_symbol": "\ue0b4",
-          "background": "#F35C15",
-          "foreground": "#282262",
-          "properties": {
-            "folder_icon": " \uf07b ",
-            "home_icon": "\uf015",
-            "style": "agnoster_short",
-            "max_depth": 3
-          },
-          "template": " \uf07b {{ .Path }} "
-        },
-        {
-          "type": "git",
-          "style": "powerline",
-          "powerline_symbol": "\ue0b4",
-          "background": "#3E7765",
-          "background_templates": [
-            "{{ if or (.Working.Changed) (.Staging.Changed) }}#F35C15{{ end }}",
-            "{{ if and (gt .Ahead 0) (gt .Behind 0) }}#DC271B{{ end }}",
-            "{{ if gt .Ahead 0 }}#1A407F{{ end }}",
-            "{{ if gt .Behind 0 }}#734F39{{ end }}"
-          ],
-          "foreground": "#282262",
-          "properties": {
-            "branch_icon": "\ue0a0 ",
-            "fetch_status": true,
-            "fetch_upstream_icon": true
-          },
-          "template": " \ue702 {{ .UpstreamIcon }}{{ .HEAD }}{{ if .BranchStatus }} {{ .BranchStatus }}{{ end }}{{ if .Working.Changed }} \u270e{{ .Working.String }}{{ end }}{{ if and (.Working.Changed) (.Staging.Changed) }} |{{ end }}{{ if .Staging.Changed }}<#DC271B> +{{ .Staging.String }}</>{{ end }} "
-        },
-        {
-          "type": "executiontime",
-          "style": "powerline",
-          "powerline_symbol": "\ue0b4",
-          "background": "#948E8E",
-          "foreground": "#282262",
-          "properties": {
-            "style": "roundrock",
-            "threshold": 0
-          },
-          "template": " \ueba2 {{ .FormattedMs }} "
-        }
-      ]
-    },
-    {
-      "type": "prompt",
-      "alignment": "right",
-      "segments": [
-        {
-          "type": "node",
-          "style": "powerline",
-          "invert_powerline": true,
-          "powerline_symbol": "\ue0b6",
-          "background": "#303030",
-          "foreground": "#3C873A",
-          "properties": {
-            "fetch_package_manager": true,
-            "npm_icon": " <#cc3a3a>\ue5fa</> ",
-            "yarn_icon": " <#348cba>\ue6a7</>"
-          },
-          "template": " \ue718 {{ if .PackageManagerIcon }}{{ .PackageManagerIcon }} {{ end }}{{ .Full }} "
-        },
-        {
-          "type": "python",
-          "style": "powerline",
-          "invert_powerline": true,
-          "powerline_symbol": "\ue0b6",
-          "background": "#306998",
-          "foreground": "#FFE873",
-          "template": " \ue235 {{ if .Error }}{{ .Error }}{{ else }}{{ if .Venv }}{{ .Venv }} {{ end }}{{ .Full }}{{ end }} "
-        },
-        {
-          "type": "go",
-          "style": "powerline",
-          "invert_powerline": true,
-          "powerline_symbol": "\ue0b6",
-          "background": "#E7DFD3",
-          "foreground": "#06aad5",
-          "template": " \ue626 {{ if .Error }}{{ .Error }}{{ else }}{{ .Full }}{{ end }} "
-        },
-        {
-          "type": "rust",
-          "style": "powerline",
-          "invert_powerline": true,
-          "powerline_symbol": "\ue0b6",
-          "background": "#E7DFD3",
-          "foreground": "#925837",
-          "template": " \ue7a8 {{ if .Error }}{{ .Error }}{{ else }}{{ .Full }}{{ end }} "
-        },
-        {
-          "type": "dotnet",
-          "style": "powerline",
-          "invert_powerline": true,
-          "powerline_symbol": "\ue0b6",
-          "background": "#0e0e0e",
-          "foreground": "#0d6da8",
-          "template": " \ue77f {{ if .Unsupported }}\uf071{{ else }}{{ .Full }}{{ end }} "
-        },
-        {
-          "type": "kubectl",
-          "style": "powerline",
-          "invert_powerline": true,
-          "powerline_symbol": "\ue0b6",
-          "background": "#1A407F",
-          "foreground": "#E7DFD3",
-          "template": " \uf308 {{ .Context }}{{ if .Namespace }} :: {{ .Namespace }}{{ end }} "
-        },
-        {
-          "type": "aws",
-          "style": "powerline",
-          "invert_powerline": true,
-          "powerline_symbol": "\ue0b6",
-          "background": "#565656",
-          "foreground": "#F35C15",
-          "template": " \ue7ad {{ .Profile }}{{ if .Region }}@{{ .Region }}{{ end }} "
-        },
-        {
-          "type": "os",
-          "style": "powerline",
-          "invert_powerline": true,
-          "powerline_symbol": "\ue0b6",
-          "background": "#B7C9D7",
-          "foreground": "#282262",
-          "properties": {
-            "linux": "\ue712",
-            "macos": "\ue711",
-            "windows": "\ue70f"
-          },
-          "template": " {{ if .WSL }}WSL at {{ end }}{{ .Icon }} "
-        },
-        {
-          "type": "battery",
-          "style": "powerline",
-          "invert_powerline": true,
-          "powerline_symbol": "\ue0b6",
-          "background": "#F35C15",
-          "background_templates": [
-            "{{ if eq \"Charging\" .State.String }}#3E7765{{ end }}",
-            "{{ if eq \"Discharging\" .State.String }}#F35C15{{ end }}",
-            "{{ if eq \"Full\" .State.String }}#3E7765{{ end }}"
-          ],
-          "foreground": "#282262",
-          "properties": {
-            "charged_icon": "\uf240 ",
-            "charging_icon": "\uf1e6 ",
-            "discharging_icon": "\ue234 "
-          },
-          "template": " {{ if not .Error }}{{ .Icon }}{{ .Percentage }}{{ end }}{{ .Error }} \uf295 "
-        },
-        {
-          "//": "Trailing rounded cap (U+E0B4) so the right-aligned powerline reaches col 79 of the frameless terminal -- without trailing_diamond, oh-my-posh ends the segment at the text and leaves the last 1-2 cells uncolored. Operator-reported regression: 'powerline actually doesn't reach the RIGHT side'.",
-          "type": "time",
-          "style": "diamond",
-          "leading_diamond": "\ue0b6",
-          "trailing_diamond": "\ue0b4",
-          "background": "#1A407F",
-          "foreground": "#E7DFD3",
-          "properties": {
-            "time_format": "_2,15:04"
-          },
-          "template": " \uf073 {{ .CurrentDate | date .Format }} "
-        }
-      ]
-    },
-    {
-      "type": "prompt",
-      "alignment": "left",
-      "newline": true,
-      "segments": [
-        {
-          "//": "Second-line leading rounded cap matches the first line so the colored powerline reaches col 0. Status segment is plain (no background) so the cap renders alone.",
-          "type": "text",
-          "style": "diamond",
-          "leading_diamond": "",
-          "trailing_diamond": "",
-          "background": "#3E7765",
-          "foreground": "#E7DFD3",
-          "template": ""
-        },
-        {
-          "type": "status",
-          "style": "powerline",
-          "powerline_symbol": "",
-          "background": "#3E7765",
-          "background_templates": [
-            "{{ if gt .Code 0 }}#DC271B{{ end }}"
-          ],
-          "foreground": "#E7DFD3",
-          "properties": {
-            "always_enabled": true
-          },
-          "template": " \u276f "
-        }
-      ]
+    try {
+        $cb  = [int][double]::Parse((Get-Date -UFormat %s))
+        $url = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/$RelPath" + "?cb=$cb"
+        $headers = @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' }
+        return Invoke-RestMethod -Uri $url -Headers $headers -ErrorAction Stop
+    } catch {
+        throw "Get-MiosVendorContent: cannot resolve '$RelPath' from M:\usr\share\mios, C:\MiOS, or raw.githubusercontent.com mios.git origin/main. MiOS self-replication requires reachable origin -- there are no embedded fallback snapshots in this script. Underlying: $($_.Exception.Message)"
     }
-  ]
 }
-'@
+
+# Resolved at script-load time so downstream functions
+# (Install-MiOSFastfetch, Install-MiOSPowerShellProfile, the self-heal
+# base64-encoders below) see them in $Script: scope.  All three pull
+# fresh from mios.git so the install ALWAYS reflects current upstream.
+$Script:MiosBrandingTxt     = Get-MiosVendorContent 'branding/mios.txt'
+$Script:MiosFastfetchConfig = Get-MiosVendorContent 'fastfetch/config.jsonc'
+$Script:MiosOmpJson         = Get-MiosVendorContent 'oh-my-posh/mios.omp.json'
 
 function Install-MiOSTerminalExtras {
     # Open-source terminal-completion + UX enhancers. PowerShell
@@ -2780,7 +2534,7 @@ foreach ($mod in $psModules) {
     )) {
         if (Test-Path -LiteralPath $cand.Path) {
             try {
-                $tomlText   = Get-Content -LiteralPath $cand.Path -Raw -ErrorAction Stop
+                $tomlText   = [IO.File]::ReadAllText($cand.Path, (New-Object System.Text.UTF8Encoding($false)))
                 $tomlSource = $cand.Source
                 break
             } catch {}
