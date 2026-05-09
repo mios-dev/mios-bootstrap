@@ -8443,12 +8443,17 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
         Write-Host $_titlePadded -ForegroundColor Cyan
         Write-Host ('  ' + $_BL + ([string]$_TH * $_inner) + $_BR) -ForegroundColor DarkCyan
         Write-Host ''
-        Write-Host '    Installed ...............................................................' -ForegroundColor DarkGray
+        # Section labels resolve through mios.toml [messages.install_complete]
+        # (SSOT). Operators rebrand the installer's end-of-flow narrative via
+        # mios.html without touching code.
+        $_lblInstalled = Get-MiosTomlValue -Section 'messages.install_complete' -Key 'installed_lead' -Default '    Installed ...............................................................'
+        $_lblNextSteps = Get-MiosTomlValue -Section 'messages.install_complete' -Key 'next_steps'     -Default "    What's next? Type any of these in the MiOS terminal:"
+        Write-Host $_lblInstalled -ForegroundColor DarkGray
         foreach ($_b in $_completeBullets) {
             Write-Host ('      [+] ' + $_b) -ForegroundColor Green
         }
         Write-Host ''
-        Write-Host '    What''s next? Type any of these in the MiOS terminal:' -ForegroundColor White
+        Write-Host $_lblNextSteps -ForegroundColor White
         # Verb list resolves through mios.toml [verbs] (SSOT). Operator
         # edits mios.html -> mios.toml -> this banner regenerates on the
         # next install. No hardcoded verb names. Per operator: "toml is
@@ -8485,7 +8490,8 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
             Write-Host ("      mios {0}{1}-- {2}" -f $_v.name, $_pad, $_v.desc) -ForegroundColor Cyan
         }
         Write-Host ''
-        Write-Host '    The MiOS hub shortcut is in your Start Menu / Desktop / Win+Search.' -ForegroundColor DarkGray
+        $_lblHubHint = Get-MiosTomlValue -Section 'messages.install_complete' -Key 'hub_hint' -Default '    The MiOS hub shortcut is in your Start Menu / Desktop / Win+Search.'
+        Write-Host $_lblHubHint -ForegroundColor DarkGray
         Write-Host ''
         try { [Console]::Out.Flush() } catch {}
         return
