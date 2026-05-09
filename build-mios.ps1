@@ -5242,8 +5242,37 @@ function Install-WindowsBranding {
             if ($_eTD -and $_eTD -ne '') {
                 $_omp = $_omp -replace '("trailing_diamond"\s*:\s*")\\u[0-9a-fA-F]{4}', ('${1}' + $_eTD)
             }
+            # ── Color substitution from mios.toml [colors] (SSOT) ───
+            # Per operator 2026-05-09: "oh my posh and other settings
+            # should source from the same toml sections for all
+            # platform for theme/branding to be truly unified in code."
+            # The on-disk omp.json ships with vendor-default Hokusai
+            # palette hex codes that EXACTLY match the [colors] vendor
+            # defaults; substituting by literal hex lets operator
+            # palette overrides via mios.html flow into every MiOS
+            # terminal without touching this script.  Brand colors
+            # (Python yellow, Node green, Rust orange, Go cyan) stay
+            # hardcoded -- they're universal language identity, not
+            # MiOS palette.
+            $_palette = @(
+                @{ Token='accent';  VendorHex='#1A407F' }
+                @{ Token='fg';      VendorHex='#E7DFD3' }
+                @{ Token='bg';      VendorHex='#282262' }
+                @{ Token='cursor';  VendorHex='#F35C15' }
+                @{ Token='success'; VendorHex='#3E7765' }
+                @{ Token='error';   VendorHex='#DC271B' }
+                @{ Token='muted';   VendorHex='#948E8E' }
+                @{ Token='subtle';  VendorHex='#B7C9D7' }
+                @{ Token='earth';   VendorHex='#734F39' }
+            )
+            foreach ($_pe in $_palette) {
+                $_resolved = Get-MiosTomlValue -Section 'colors' -Key $_pe.Token -Default $_pe.VendorHex
+                if ($_resolved -and $_resolved -ne $_pe.VendorHex -and $_resolved -match '^#[0-9A-Fa-f]{3,8}$') {
+                    $_omp = [regex]::Replace($_omp, [regex]::Escape($_pe.VendorHex), $_resolved, 'IgnoreCase')
+                }
+            }
             Set-Content -LiteralPath $themeDst -Value $_omp -Encoding UTF8 -NoNewline
-            Log-Ok "omp.json glyphs synced from mios.toml [theme.prompt]"
+            Log-Ok "omp.json glyphs + palette synced from mios.toml [theme.prompt] + [colors]"
         } catch {
             Log-Warn "omp.json [theme.prompt] substitution failed: $($_.Exception.Message) -- shipped defaults retained"
         }
