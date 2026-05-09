@@ -8167,8 +8167,32 @@ if ($activeDistro) {
                                 Log-Ok "[overlay] flatpak install OK: $_fp"
                                 $_fpOk++
                             } else {
-                                Log-Warn "[overlay] flatpak install FAILED (exit $($script:_fpLastRc)): $_fp"
-                                $_fpFail++
+                                # Operator 2026-05-09: org.gnome.Software
+                                # consistently fails on first pass.  Retry
+                                # with explicit `flatpak install --system
+                                # --arch=x86_64 -v` for full diagnostic +
+                                # a fresh remote-ls round-trip in case the
+                                # original failure was a transient flathub
+                                # cache miss.  --system is the default for
+                                # uid=0 but explicit avoids confusion with
+                                # any --user defaults flatpak picks up.
+                                Log-Warn "[overlay] flatpak install attempt 1 failed (exit $($script:_fpLastRc)): $_fp -- retrying with --arch=x86_64 -v"
+                                & {
+                                    $ErrorActionPreference = 'Continue'
+                                    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                                        $PSNativeCommandUseErrorActionPreference = $false
+                                    }
+                                    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update --system --arch=x86_64 -v flathub $_fp" 2>&1 |
+                                        ForEach-Object { Write-Log "mios-flatpak-retry: $_" }
+                                    $script:_fpRetryRc = $LASTEXITCODE
+                                }
+                                if ($script:_fpRetryRc -eq 0) {
+                                    Log-Ok "[overlay] flatpak install OK on retry: $_fp"
+                                    $_fpOk++
+                                } else {
+                                    Log-Warn "[overlay] flatpak install FAILED both attempts (last exit $($script:_fpRetryRc)): $_fp -- check log for verbose flatpak output. The OCI image build (mios build -> automation/40-flatpak-bake.sh) will retry at bake time; first-boot service mios-flatpak-install also retries on every host boot."
+                                    $_fpFail++
+                                }
                             }
                         }
                         Log-Ok "[desktop].flatpaks install pass: $_fpOk OK / $_fpFail failed (of $($_flatpaks.Count) total)"
