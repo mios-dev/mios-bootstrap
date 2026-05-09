@@ -2198,7 +2198,16 @@ if ($hwnd -ne [IntPtr]::Zero) {
     if (-not $pwshExe) { $pwshExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source }
     if (-not $pwshExe) { Write-Host "  [!] No pwsh.exe found; cannot create launcher .lnk." -ForegroundColor Yellow; return }
 
-    $lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
+    # Hub .lnk targets the MiOS-DEV WT profile (mios.toml
+    # [theme.terminal].hub_target_profile, default "MiOS-DEV") --
+    # operator 2026-05-09: "MiOS app opens direct to ... podman-MiOS-DEV".
+    # The launcher receives -Profile <name>; mios-launch.ps1 spawns
+    # `wt.exe ... -p <name>` which lands the operator straight in the
+    # dev VM shell.  No Verb -- the dev VM commandline is a bash
+    # login, not a `mios <verb>` dispatcher.
+    $_hubTargetProfile = Get-MiosTomlValue -Section 'theme.terminal' -Key 'hub_target_profile' -Default 'MiOS-DEV'
+    if ([string]::IsNullOrWhiteSpace($_hubTargetProfile)) { $_hubTargetProfile = 'MiOS-DEV' }
+    $lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_hubTargetProfile`""
     # .lnk Description = mios.toml [branding].tagline_app (preferred)
     # or .tagline. Per operator 2026-05-09: 'the Applications
     # tag/description ... should be defined as My Personal Operating
@@ -2287,43 +2296,18 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # to Profile='MiOS' (the hub) and the dev verb was never used.
     # The Profile field below routes to the right WT profile so
     # MiOS-DEV.lnk now lands in the actual dev VM.
-    $miosVerbs = @(
-        @{ File='MiOS-DEV.lnk';  Profile='MiOS-DEV'; Verb='';     Icon='mios-dev.ico';  Desc='Open MiOS-DEV (podman-MiOS-DEV WSL distro) directly to its themed dashboard (banner + fastfetch + framing)' },
-        @{ File='MiOS Help.lnk'; Profile='MiOS';     Verb='help'; Icon='mios-help.ico'; Desc='Full verb + functionality reference (every MiOS command and where things live)' }
-    )
-    $writeVerbLnk = {
-        param([string]$Path, [string]$ProfileName, [string]$Verb, [string]$Desc, [string]$IconFile)
-        $sc = $shell.CreateShortcut($Path)
-        $sc.TargetPath       = $pwshExe
-        # mios-launch.ps1 -Profile <name> [-Verb <name>] -- the
-        # launcher opens the requested WT profile, centers it, then
-        # if -Verb is non-empty dispatches `mios <verb>` inside.
-        # Empty -Verb = just open the profile (used for MiOS-DEV.lnk
-        # which lands the operator directly in the dev VM shell).
-        $_lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$ProfileName`""
-        if ($Verb) { $_lnkArgs += " -Verb `"$Verb`"" }
-        $sc.Arguments        = $_lnkArgs
-        $sc.WorkingDirectory = $miosRoot
-        $sc.Description      = $Desc
-        $sc.WindowStyle      = 7
-        $_verbIcon = if ($IconFile) { Join-Path $miosRoot "icons\$IconFile" } else { '' }
-        if ($_verbIcon -and (Test-Path -LiteralPath $_verbIcon)) {
-            $sc.IconLocation = "$_verbIcon,0"
-        } elseif ($iconPath) {
-            $sc.IconLocation = "$iconPath,0"
-        }
-        $sc.Save()
-    }
-    foreach ($v in $miosVerbs) {
-        $smPath = Join-Path $startMenuDir $v.File
-        & $writeVerbLnk $smPath $v.Profile $v.Verb $v.Desc $v.Icon
-        if ($desktopDir -and (Test-Path $desktopDir)) {
-            $dskPath = Join-Path $desktopDir $v.File
-            & $writeVerbLnk $dskPath $v.Profile $v.Verb $v.Desc $v.Icon
-        }
-    }
-    Write-Host "  [+] Per-verb shortcuts: $($miosVerbs.Count) Start Menu + $($miosVerbs.Count) Desktop entries staged." -ForegroundColor DarkGray
-    Write-Host "      Right-click any of them in Start to Pin to Start / Pin to Taskbar (Win11 dropped programmatic pinning)." -ForegroundColor DarkGray
+    # Operator 2026-05-09 consolidation: "TOO MANY APPS!! I SAID
+    # UNIFY MiOS APPS in a way that makes sense and is minimal --
+    # MiOS app opens direct to ... podman-MiOS-DEV!!!".  The hub
+    # MiOS.lnk written above is the ONE user-facing app.  Per-verb
+    # shortcuts (MiOS Help / MiOS Config / MiOS-DEV / MiOS-WIN)
+    # are NOT created -- those are typed verbs in the terminal
+    # (`mios help`, `mios config`, `mios dev`, etc.), not separate
+    # native apps.  Only the Uninstall MiOS shortcut sibling lives
+    # alongside the hub.  $miosVerbs is left as an empty array so
+    # downstream loops (AumID stamping, .lnk reaping) iterate
+    # zero entries instead of crashing on $null.
+    $miosVerbs = @()
 
     # ── Uninstall MiOS shortcut (Start Menu + Desktop) ──────────────
     # Per operator 2026-05-09: "MiOS should ... Install as a Native
@@ -2369,7 +2353,23 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # The 4-app set is now MiOS, MiOS-DEV, MiOS Help, Uninstall MiOS;
     # the rest are operator-typed verbs INSIDE the terminal. Reap any
     # leftover .lnk's so a re-run of Get-MiOS.ps1 normalizes the menu.
-    foreach ($legacy in @('MiOS Build.lnk','MiOS Dashboard.lnk','MiOS Configurator.lnk','MiOS Update.lnk','MiOS Pull.lnk','MiOS Setup.lnk','MiOS Terminal.lnk','MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','Build MiOS.lnk')) {
+    # Operator 2026-05-09 consolidation: ONLY MiOS.lnk + Uninstall MiOS.lnk
+    # belong in Start Menu/Desktop.  Reap every other historical .lnk
+    # name we've ever shipped (incl. the recent MiOS-WIN.lnk +
+    # per-verb MiOS-DEV.lnk/MiOS Help.lnk/MiOS Config.lnk/MiOS Build.lnk
+    # variants) so re-running Get-MiOS.ps1 normalizes the menu down to
+    # the canonical 2 shortcuts.
+    foreach ($legacy in @(
+        # Original Show-MiosApp era one-per-verb variants:
+        'MiOS Build.lnk','MiOS Dashboard.lnk','MiOS Configurator.lnk',
+        'MiOS Update.lnk','MiOS Pull.lnk','MiOS Setup.lnk',
+        'MiOS Terminal.lnk','MiOS Dev Shell.lnk','MiOS Podman Shell.lnk',
+        'Build MiOS.lnk',
+        # Recent per-verb wave (commit 9055547 era):
+        'MiOS-DEV.lnk','MiOS Help.lnk','MiOS Config.lnk',
+        # Renamed-then-reverted hub from 0273d29:
+        'MiOS-WIN.lnk'
+    )) {
         foreach ($dir in @($startMenuDir, $desktopDir)) {
             if (-not $dir) { continue }
             $stale = Join-Path $dir $legacy
