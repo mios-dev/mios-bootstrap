@@ -221,8 +221,12 @@ if (-not $env:MIOS_CACHE_BUSTED -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
 #   1. ~/.config/mios/mios.toml        (per-user override)
 #   2. M:\etc\mios\mios.toml           (host override; configurator-saved)
 #   3. M:\usr\share\mios\mios.toml     (vendor copy on M:\)
-#   4. C:\MiOS\usr\share\mios\mios.toml (vendor copy in C:\MiOS, dev path)
-#   5. origin/main raw GitHub          (cold first-run, no M:\ yet)
+#   4. origin/main raw GitHub          (cold first-run, no M:\ yet)
+#
+# C:\MiOS is INTENTIONALLY excluded -- it's a developer working tree
+# for the MiOS project, not a consumer-facing install path. End
+# consumers never have C:\MiOS; falling through to it would silently
+# succeed on developer machines and silently fail everywhere else.
 #
 # Vendor defaults are sufficient (per feedback_mios_defaults_baseline): the
 # stack works with no user toml present. Get-MiosTomlValue returns its
@@ -236,8 +240,7 @@ function Resolve-MiosTomlText {
     $candidates = @(
         (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
         'M:\etc\mios\mios.toml',
-        'M:\usr\share\mios\mios.toml',
-        'C:\MiOS\usr\share\mios\mios.toml'
+        'M:\usr\share\mios\mios.toml'
     )
     foreach ($p in $candidates) {
         if ($p -and (Test-Path -LiteralPath $p)) {
@@ -2359,15 +2362,23 @@ namespace MiOS.NativeApp {
 # toml".
 #
 # Get-MiosVendorContent below resolves vendor content from mios.git
-# origin (with M:\ + C:\MiOS overlay shortcuts) -- NO embedded
-# snapshots in this script.  Self-replication contract: if origin is
-# unreachable AND no on-disk overlay exists, the install hard-fails
-# with a clear error rather than falling back to a stale snapshot.
+# origin (with M:\ overlay shortcut) -- NO embedded snapshots in this
+# script.  Self-replication contract: if origin is unreachable AND
+# no on-disk overlay exists, the install hard-fails with a clear
+# error rather than falling back to a stale snapshot.
 #
 # Read order:
 #   1. M:\usr\share\mios\<rel>      -- vendor copy on M:\ (Phase 2)
-#   2. C:\MiOS\usr\share\mios\<rel> -- mios.git clone on C:\
-#   3. raw.githubusercontent.com mios.git origin/main
+#   2. raw.githubusercontent.com mios.git origin/main
+#
+# C:\MiOS is INTENTIONALLY NOT in this list -- it's a developer
+# working directory for the MiOS project (where mios-dev/mios.git is
+# cloned for committing), NOT a consumer-facing path.  End consumers
+# never have C:\MiOS; falling back to it would silently succeed on
+# developer machines and silently fail everywhere else, masking the
+# self-replication contract.  Operator 2026-05-09: "C:\ is just
+# developer working directories for the MiOS project -- NOT for end
+# consumers at all".
 #
 # All on-disk reads use explicit UTF-8 ([IO.File]::ReadAllText with
 # UTF8Encoding(false)) per feedback_mios_toml_read_utf8 -- bare
@@ -2379,16 +2390,11 @@ function Get-MiosVendorContent {
         [Parameter(Mandatory)] [string] $RelPath
     )
     $rel  = $RelPath -replace '/', '\'
-    $cands = @(
-        "M:\usr\share\mios\$rel",
-        "C:\MiOS\usr\share\mios\$rel"
-    )
-    foreach ($p in $cands) {
-        if (Test-Path -LiteralPath $p) {
-            try {
-                return [IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false)))
-            } catch {}
-        }
+    $cand = "M:\usr\share\mios\$rel"
+    if (Test-Path -LiteralPath $cand) {
+        try {
+            return [IO.File]::ReadAllText($cand, (New-Object System.Text.UTF8Encoding($false)))
+        } catch {}
     }
     try {
         $cb  = [int][double]::Parse((Get-Date -UFormat %s))
@@ -2396,7 +2402,7 @@ function Get-MiosVendorContent {
         $headers = @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' }
         return Invoke-RestMethod -Uri $url -Headers $headers -ErrorAction Stop
     } catch {
-        throw "Get-MiosVendorContent: cannot resolve '$RelPath' from M:\usr\share\mios, C:\MiOS, or raw.githubusercontent.com mios.git origin/main. MiOS self-replication requires reachable origin -- there are no embedded fallback snapshots in this script. Underlying: $($_.Exception.Message)"
+        throw "Get-MiosVendorContent: cannot resolve '$RelPath' from M:\usr\share\mios or raw.githubusercontent.com mios.git origin/main. MiOS self-replication requires reachable origin -- there are no embedded fallback snapshots in this script. Underlying: $($_.Exception.Message)"
     }
 }
 
@@ -2957,10 +2963,10 @@ if (`$true) {
     `$ompCands += @(
         'M:\MiOS\themes\mios.omp.json',
         'M:\usr\share\mios\oh-my-posh\mios.omp.json',
-        'C:\MiOS\themes\mios.omp.json',
-        'C:\MiOS\usr\share\mios\oh-my-posh\mios.omp.json',
         (Join-Path `$env:LOCALAPPDATA 'MiOS\themes\mios.omp.json')
     )
+    # C:\MiOS deliberately excluded -- it's a dev working tree, not a
+    # consumer install path.
     foreach (`$c in `$ompCands) {
         if (`$c -and (Test-Path -LiteralPath `$c)) { `$miosOmp = `$c; break }
     }
@@ -3155,8 +3161,7 @@ if (`$true) {
             `$_tomlCands = @(
                 (Join-Path `$env:USERPROFILE '.config\mios\mios.toml'),
                 'M:\etc\mios\mios.toml',
-                'M:\usr\share\mios\mios.toml',
-                'C:\MiOS\usr\share\mios\mios.toml'
+                'M:\usr\share\mios\mios.toml'
             )
             foreach (`$_tc in `$_tomlCands) {
                 if (`$_tc -and (Test-Path -LiteralPath `$_tc)) {
@@ -3310,8 +3315,7 @@ function mios-build {
         `$cfgHtml = `$null
         foreach (`$c in @(
             'M:\usr\share\mios\configurator\mios.html',
-            'M:\MiOS\usr\share\mios\configurator\mios.html',
-            'C:\MiOS\usr\share\mios\configurator\mios.html'
+            'M:\MiOS\usr\share\mios\configurator\mios.html'
         )) { if (Test-Path -LiteralPath `$c) { `$cfgHtml = `$c; break } }
         if (`$cfgHtml) {
             # Capture mtime BEFORE opening so we can tell if the operator
@@ -3329,7 +3333,7 @@ function mios-build {
             Write-Host '  Press Enter when you''ve saved the configurator (or to skip the edit pass)...' -ForegroundColor Yellow -NoNewline
             `$null = Read-Host
         } else {
-            Write-Host '  [!] Configurator HTML not found on M:\ or C:\MiOS -- skipping edit pass.' -ForegroundColor Yellow
+            Write-Host '  [!] Configurator HTML not found on M:\ -- skipping edit pass.' -ForegroundColor Yellow
             Write-Host '      Run `mios pull` first to seed the overlay.' -ForegroundColor DarkGray
         }
 
@@ -3441,7 +3445,6 @@ function mios-pull {
 
 function mios-config {
     `$cfg = if (Test-Path 'M:\usr\share\mios\configurator\mios.html') { 'M:\usr\share\mios\configurator\mios.html' }
-           elseif (Test-Path 'C:\MiOS\usr\share\mios\configurator\mios.html') { 'C:\MiOS\usr\share\mios\configurator\mios.html' }
            else { `$null }
     if (`$cfg) {
         Start-Process `$cfg
@@ -3466,7 +3469,6 @@ function mios-dash {
     # fastfetch + service health. Wraps the bin script that
     # build-mios.ps1 stages at M:\MiOS\bin\mios-dash.ps1.
     `$dash = if (Test-Path 'M:\MiOS\bin\mios-dash.ps1') { 'M:\MiOS\bin\mios-dash.ps1' }
-            elseif (Test-Path 'C:\MiOS\bin\mios-dash.ps1') { 'C:\MiOS\bin\mios-dash.ps1' }
             else { `$null }
     if (`$dash) {
         & `$dash

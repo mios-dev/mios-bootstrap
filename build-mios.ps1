@@ -71,8 +71,8 @@ function Resolve-MiosTomlText {
     foreach ($p in @(
         (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
         'M:\etc\mios\mios.toml',
-        'M:\usr\share\mios\mios.toml',
-        'C:\MiOS\usr\share\mios\mios.toml'
+        'M:\usr\share\mios\mios.toml'
+        # C:\MiOS deliberately excluded -- dev working tree, not a consumer install path
     )) {
         if ($p -and (Test-Path -LiteralPath $p)) {
             try {
@@ -4866,7 +4866,7 @@ function Install-MiosWindowsTools {
         }
     }
     if ($pkgs.Count -eq 0) {
-        throw "Cannot resolve [packages.windows].pkgs from any of: $($candidates -join ', '). Per operator SSOT directive 'ALL values source from the toml' there is no hardcoded fallback. Verify [packages.windows] section is intact in mios.toml (vendor copy at M:\usr\share\mios\mios.toml is canonical -- run 'mios pull' to refresh, or clone mios.git to C:\MiOS)."
+        throw "Cannot resolve [packages.windows].pkgs from any of: $($candidates -join ', '). Per operator SSOT directive 'ALL values source from the toml' there is no hardcoded fallback. Verify [packages.windows] section is intact in mios.toml (vendor copy at M:\usr\share\mios\mios.toml is canonical -- run 'mios pull' to refresh, or re-run the irm|iex one-liner)."
     }
     Log-Ok "[packages.windows] resolved $($pkgs.Count) package(s) from $sourceOk"
 
@@ -5924,10 +5924,11 @@ Write-Host '  │                   MiOS  --  Help / Verb Reference             
 # Tagline resolves through mios.toml [branding].tagline_long at runtime
 # (SSOT). No hardcoding -- per operator: "no hardcoding ANYWHERE".
 $_helpTagline = 'Immutable Fedora AI Workstation  --  Self-replicating bootc OS'
-foreach ($_tcand in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml','C:\MiOS\usr\share\mios\mios.toml')) {
+foreach ($_tcand in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+    # C:\MiOS deliberately excluded -- dev working tree, not consumer path
     if (Test-Path -LiteralPath $_tcand) {
         try {
-            $_tt = Get-Content -LiteralPath $_tcand -Raw -ErrorAction Stop
+            $_tt = [IO.File]::ReadAllText($_tcand, (New-Object System.Text.UTF8Encoding($false)))
             $_m = [regex]::Match($_tt, '(?ms)^\[branding\].*?^\s*tagline_long\s*=\s*"([^"]+)"')
             if ($_m.Success) { $_helpTagline = $_m.Groups[1].Value; break }
         } catch {}
@@ -6912,7 +6913,8 @@ class MiOSLaunch {
     )
     try {
         $_appsTomlText = $null
-        foreach ($_cand in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $MiosBootstrapShadow 'mios.toml'),'C:\MiOS\usr\share\mios\mios.toml')) {
+        foreach ($_cand in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $MiosBootstrapShadow 'mios.toml'))) {
+            # C:\MiOS deliberately excluded -- dev working tree, not consumer path
             if (Test-Path -LiteralPath $_cand) { try { $_appsTomlText = [IO.File]::ReadAllText($_cand, (New-Object System.Text.UTF8Encoding($false))); break } catch {} }
         }
         if ($_appsTomlText) {
