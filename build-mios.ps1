@@ -7927,6 +7927,127 @@ if ($activeDistro) {
         Log-Warn "MiOS build essentials partial: missing [$($missing -join ', ')] -- driver may fail when it tries to use those"
     }
 
+    # ── Full MiOS OCI image parity at overlay time ──────────────────
+    # Operator 2026-05-09: "podman-MiOS-DEV machine doesn't have the
+    # full packages list and flatpaks installed at overlay time --
+    # ALL sourced from the toml embeds ... podman-MiOS-DEV = full
+    # MiOS OCI image(s) parity".  This step iterates
+    # [packages.dev_overlay].sections (22 sections by default --
+    # base/security/utils/build-toolchain/containers/cockpit/storage/
+    # virt/gpu-*/gnome-flatpak-runtime/ai/sbom-tools/self-build/
+    # network-discovery/updater/cockpit-plugins-build/k3s-selinux-build/
+    # uki) and layers every [packages.<section>].pkgs into the dev VM.
+    # Then installs every ref in [desktop].flatpaks.
+    #
+    # Toggle via mios.toml [bootstrap].dev_overlay_full = false for a
+    # minimal overlay (essentials only).  Default = full parity per
+    # operator directive.  The trade-off is bootstrap time -- full
+    # parity adds 20-40 min of dnf + flatpak network/disk work on
+    # first install.  The reward: every layered RPM and flatpak the
+    # MiOS OCI image carries is already present in podman-MiOS-DEV
+    # without a `bootc switch` reboot.
+    $_doFull = $true
+    if ($_devOverlayTomlText -or ($miosEssentials -and (Test-Path -LiteralPath ($devVmTomlCands | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1)))) {
+        try {
+            $_topPath = $devVmTomlCands | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+            if ($_topPath) {
+                $_topToml = [IO.File]::ReadAllText($_topPath, (New-Object System.Text.UTF8Encoding($false)))
+                $_bsM = [regex]::Match($_topToml, '(?ms)^\[bootstrap\]\s*$.*?^\s*dev_overlay_full\s*=\s*(?<v>true|false)\s*$')
+                if ($_bsM.Success -and $_bsM.Groups['v'].Value -eq 'false') { $_doFull = $false }
+            }
+        } catch {}
+    }
+    if (-not $_doFull) {
+        Log-Ok "[packages.dev_overlay] full layer SKIPPED ([bootstrap].dev_overlay_full=false)"
+    } else {
+        $_devOverlayTomlText2 = $null
+        foreach ($p in $devVmTomlCands) {
+            if (-not (Test-Path -LiteralPath $p)) { continue }
+            try { $_devOverlayTomlText2 = [IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false))); break } catch {}
+        }
+        if ($_devOverlayTomlText2) {
+            # Pull section list from [packages.dev_overlay].sections
+            $_doSec = [regex]::Match($_devOverlayTomlText2, '(?ms)^\[packages\.dev_overlay\]\s*$.*?^\s*sections\s*=\s*\[(?<arr>.*?)\]\s*$')
+            $_allOverlayPkgs = @()
+            $_secList = @()
+            if ($_doSec.Success) {
+                $_secStripped = ($_doSec.Groups['arr'].Value -split "`n" |
+                                ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -join ' '
+                $_secList = @($_secStripped -split ',' | ForEach-Object { $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n") } | Where-Object { $_ })
+                Log-Ok "[packages.dev_overlay].sections -> $($_secList -join ', ')"
+                # Enable repos FIRST so packages from rpmfusion / fedora-workstation
+                # resolve. Insert the repos section if it's not already first.
+                if ($_secList -notcontains 'repos') { $_secList = @('repos') + $_secList }
+                # Process each section. Read [packages.<section>].pkgs.
+                foreach ($_sec in $_secList) {
+                    $_rxSec = "(?ms)^\[packages\.$([regex]::Escape($_sec))\]\s*\$.*?^\s*pkgs\s*=\s*\[(?<list>.*?)\]\s*\$"
+                    $_secM  = [regex]::Match($_devOverlayTomlText2, $_rxSec)
+                    if (-not $_secM.Success) { continue }
+                    $_stripped = ($_secM.Groups['list'].Value -split "`n" |
+                                  ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -join ' '
+                    $_secPkgs = @($_stripped -split ',' | ForEach-Object { $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n") } | Where-Object { $_ })
+                    if ($_secPkgs.Count -gt 0) {
+                        $_allOverlayPkgs += $_secPkgs
+                    }
+                }
+            }
+            $_allOverlayPkgs = @($_allOverlayPkgs | Select-Object -Unique)
+            if ($_allOverlayPkgs.Count -gt 0) {
+                Log-Ok "Layering $($_allOverlayPkgs.Count) packages from [packages.dev_overlay].sections (full MiOS OCI parity, est. 20-40 min)..."
+                # Chunk to keep wsl.exe argv under Windows' command-line cap.
+                $_chunkSize = 60
+                $_chunkN = 0
+                $_chunkTotal = [math]::Ceiling($_allOverlayPkgs.Count / $_chunkSize)
+                for ($i = 0; $i -lt $_allOverlayPkgs.Count; $i += $_chunkSize) {
+                    $_chunkN++
+                    $_endIdx = [math]::Min($i + $_chunkSize - 1, $_allOverlayPkgs.Count - 1)
+                    $_chunk = $_allOverlayPkgs[$i..$_endIdx]
+                    Set-Step ("[overlay] dnf chunk {0}/{1} ({2} pkgs)..." -f $_chunkN, $_chunkTotal, $_chunk.Count)
+                    & {
+                        $ErrorActionPreference = 'Continue'
+                        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                            $PSNativeCommandUseErrorActionPreference = $false
+                        }
+                        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dnf install -y --skip-unavailable --skip-broken --quiet $($_chunk -join ' ')" 2>&1 |
+                            ForEach-Object { Write-Log "mios-overlay: $_" }
+                    }
+                }
+                Log-Ok "[packages.dev_overlay] full layer complete ($($_allOverlayPkgs.Count) requested)"
+            }
+            # Flatpaks from [desktop].flatpaks
+            $_fpSec = [regex]::Match($_devOverlayTomlText2, '(?ms)^\[desktop\]\s*$.*?^\s*flatpaks\s*=\s*\[(?<arr>.*?)\]\s*$')
+            if ($_fpSec.Success) {
+                $_fpStripped = ($_fpSec.Groups['arr'].Value -split "`n" |
+                                ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -join ' '
+                $_flatpaks = @($_fpStripped -split ',' | ForEach-Object { $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n") } | Where-Object { $_ })
+                if ($_flatpaks.Count -gt 0) {
+                    Log-Ok "Installing $($_flatpaks.Count) flatpak refs from [desktop].flatpaks..."
+                    # Add flathub remote first (idempotent).
+                    & {
+                        $ErrorActionPreference = 'Continue'
+                        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                            $PSNativeCommandUseErrorActionPreference = $false
+                        }
+                        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "command -v flatpak >/dev/null 2>&1 && flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo 2>&1 || echo 'flatpak not installed -- skipping flathub remote'" 2>&1 |
+                            ForEach-Object { Write-Log "mios-flatpak: $_" }
+                    }
+                    foreach ($_fp in $_flatpaks) {
+                        Set-Step ("[overlay] flatpak install {0}..." -f $_fp)
+                        & {
+                            $ErrorActionPreference = 'Continue'
+                            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                                $PSNativeCommandUseErrorActionPreference = $false
+                            }
+                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "command -v flatpak >/dev/null 2>&1 && flatpak install -y --noninteractive --or-update flathub $_fp 2>&1 || echo 'flatpak unavailable -- $_fp deferred to bootc-switch'" 2>&1 |
+                                ForEach-Object { Write-Log "mios-flatpak: $_" }
+                        }
+                    }
+                    Log-Ok "[desktop].flatpaks install pass complete"
+                }
+            }
+        }
+    }
+
     # Disable netavark's firewall management. WSL2's kernel doesn't ship
     # the iptables/nf_tables netfilter modules that netavark expects, so
     # even with the iptables BINARY present (whois package above) the
