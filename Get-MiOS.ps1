@@ -4589,7 +4589,22 @@ function Invoke-MiOSFullReap {
         'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\MiOS',
         (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\MiOS')
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Sort-Object -Unique
+    # Desktop folders also collect Windows scratch artifacts like
+    # `.tmp.driveu...` from disk-shrink/format operations. These aren't
+    # MiOS-managed but they appear during the Initialize-DataDisk shrink
+    # and confuse the operator (they look like leftover MiOS junk).
+    # Reap any .tmp.* item from desktop dirs only (NOT Start Menu --
+    # those are the actual install targets for MiOS shortcuts).
     foreach ($dir in $shortcutDirs) {
+        if ($dir -match 'Desktop$') {
+            try {
+                Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -like '.tmp.*' -or $_.Name -like '*.tmp.driveu*' } |
+                    ForEach-Object {
+                        try { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+                    }
+            } catch {}
+        }
         foreach ($ln in $lnkNames) {
             $lp = Join-Path $dir $ln
             if (Test-Path -LiteralPath $lp) {

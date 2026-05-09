@@ -4656,14 +4656,20 @@ function Test-MiosDevDistroHealthy {
     }
     Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_responsive_template' -Default "smoke 1/4: {name} is responsive") -replace '\{name\}', $name)
 
-    # 2. systemd up.
+    # 2. systemd up. Retried with backoff: Phase 3's wsl --terminate
+    # restarts the distro right before this smoke check runs, so systemd
+    # is warming up. Without retry, `systemctl is-system-running` returns
+    # 'offline' before pid1 has finished switch-root. 15 attempts x 2s =
+    # 30s total which covers cold-start on a typical bootstrap run.
     $sysOut = ""
-    try { $sysOut = (& wsl.exe -d $name --user root -- /bin/sh -c 'systemctl is-system-running 2>&1 || true' 2>&1) -join "" } catch {}
-    # `running` (clean), `degraded` (some failed but functional), or
-    # `starting` (still booting) are all acceptable -- only `offline`
-    # / `unknown` (no systemd PID) blocks the rename.
+    $sysAttempts = 15
+    for ($i = 1; $i -le $sysAttempts; $i++) {
+        try { $sysOut = (& wsl.exe -d $name --user root -- /bin/sh -c 'systemctl is-system-running 2>&1 || true' 2>&1) -join "" } catch {}
+        if ($sysOut.Trim() -notmatch '^(offline|unknown)\s*$' -and -not [string]::IsNullOrWhiteSpace($sysOut)) { break }
+        if ($i -lt $sysAttempts) { Start-Sleep -Seconds 2 }
+    }
     if ($sysOut.Trim() -match '^(offline|unknown)\s*$' -or [string]::IsNullOrWhiteSpace($sysOut)) {
-        Log-Warn "smoke: systemd not reachable in $name (state: '$sysOut')"
+        Log-Warn "smoke: systemd not reachable in $name after $sysAttempts attempts (state: '$sysOut')"
         # Non-fatal -- some build flows skip systemd. Continue.
     } else {
         Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_systemd_template' -Default "smoke 2/4: systemd state '{state}' in {name}") -replace '\{state\}', $sysOut.Trim() -replace '\{name\}', $name)
@@ -4691,7 +4697,10 @@ function Test-MiosDevDistroHealthy {
     if ($name -eq "podman-$DevDistro") {
         $podOut = ""
         $okFmt = '^[0-9]+\.[0-9]+'
-        $attempts = 5
+        # 15 x 2s = 30s. Same reason as systemd retry above: podman
+        # machine takes 15-30s to warm up after wsl --terminate.
+        # Operator's 16:01 install showed 5x2s=10s wasn't enough.
+        $attempts = 15
         for ($i = 1; $i -le $attempts; $i++) {
             try { $podOut = (& podman --connection "${DevDistro}-root" version --format '{{.Server.Version}}' 2>&1) -join "" } catch { $podOut = "$_" }
             if ($podOut -match $okFmt) { break }
@@ -4998,20 +5007,52 @@ function Install-MiosWindowsTools {
     }
     Log-Ok "[packages.windows] resolved $($pkgs.Count) package(s) from $sourceOk"
 
+    # Package-ID -> expected-bin map. winget says "already-present" when
+    # its database knows the package, but the actual binary / shim may
+    # have been deleted (manual cleanup, broken uninstall, etc.). We
+    # probe Get-Command for the expected bin AFTER the winget list
+    # check; missing binary -> force reinstall instead of skipping.
+    # Operator 2026-05-09 install log: "13 already-present / 1 failed"
+    # but rg/fzf/jq/bat/fd not on PATH. This map closes that gap.
+    $pkgBinMap = @{
+        'BurntSushi.ripgrep.MSI' = 'rg'
+        'junegunn.fzf'           = 'fzf'
+        'jqlang.jq'              = 'jq'
+        'sharkdp.bat'            = 'bat'
+        'sharkdp.fd'             = 'fd'
+        'GitHub.cli'             = 'gh'
+        'fastfetch-cli.fastfetch'= 'fastfetch'
+        'aristocratos.btop4win'  = 'btop4win'
+        'Microsoft.PowerShell'   = 'pwsh'
+        'JanDeDobbeleer.OhMyPosh'= 'oh-my-posh'
+    }
     $installed = 0
     $skipped   = 0
     $failed    = 0
     foreach ($pkg in $pkgs) {
         try {
             $probe = & winget list --id $pkg --exact 2>$null
-            if ($LASTEXITCODE -eq 0 -and (($probe -join "`n") -match [regex]::Escape($pkg))) {
+            $wingetSeesIt = ($LASTEXITCODE -eq 0 -and (($probe -join "`n") -match [regex]::Escape($pkg)))
+            $expectedBin  = $pkgBinMap[$pkg]
+            $binOnPath    = $null
+            if ($expectedBin) {
+                $binOnPath = (Get-Command $expectedBin -ErrorAction SilentlyContinue) -ne $null
+            }
+            if ($wingetSeesIt -and (-not $expectedBin -or $binOnPath)) {
+                # winget knows it AND (no expected bin OR bin is reachable)
                 Log-Ok ("winget already-present: {0}" -f $pkg)
                 $skipped++
                 continue
             }
-            Log-Ok ("winget installing: {0}..." -f $pkg)
+            if ($wingetSeesIt -and $expectedBin -and -not $binOnPath) {
+                Log-Warn ("winget claims {0} present but '{1}' not on PATH -- forcing reinstall" -f $pkg, $expectedBin)
+            } else {
+                Log-Ok ("winget installing: {0}..." -f $pkg)
+            }
             # NOT silenced -- visible output so failures are diagnosable.
-            & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget --scope user 2>&1 |
+            # --force when reinstalling so winget overrides its cached state.
+            $forceArgs = if ($wingetSeesIt) { @('--force') } else { @() }
+            & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget --scope user @forceArgs 2>&1 |
                 ForEach-Object { Write-Log ("winget[{0}]: {1}" -f $pkg, $_) }
             if ($LASTEXITCODE -eq 0) {
                 Log-Ok "winget install: $pkg [OK]"
@@ -5020,7 +5061,7 @@ function Install-MiosWindowsTools {
                 # Retry without --scope user (machine scope -- some packages
                 # like Microsoft.PowerShell don't accept user scope).
                 Log-Warn ("winget install: {0} user-scope exit {1} -- retrying without --scope" -f $pkg, $LASTEXITCODE)
-                & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 |
+                & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget @forceArgs 2>&1 |
                     ForEach-Object { Write-Log ("winget[{0}-retry]: {1}" -f $pkg, $_) }
                 if ($LASTEXITCODE -eq 0) {
                     Log-Ok "winget install (retry): $pkg [OK]"
@@ -5177,6 +5218,63 @@ function Install-MiosWindowsTools {
                 Log-Ok ("btop installed: {0} -> {1}" -f $btopExe, $dst)
             } catch { Log-Warn ("btop copy failed: {0}" -f $_.Exception.Message) }
         }
+    }
+
+    # Direct-download fallback for the ripgrep/fzf/jq/bat/fd cohort.
+    # Operator 2026-05-09 install log: winget reported "13 already-present"
+    # but rg/fzf/jq/bat/fd did NOT surface on PATH. Even with the force-
+    # reinstall guard above, sometimes winget's shim creation fails
+    # (no Commands manifest, broken Links dir permissions, etc.). This
+    # fallback grabs portable binaries straight from each project's
+    # GitHub releases and lands them in $MiosBinDir alongside fastfetch
+    # and btop -- guaranteed reachable on PATH.
+    $directBins = @(
+        @{ Cmd='rg';  Repo='BurntSushi/ripgrep';                        AssetRx='ripgrep-.*-x86_64-pc-windows-msvc\.zip$';   ExeRx='^rg\.exe$' }
+        @{ Cmd='fzf'; Repo='junegunn/fzf';                              AssetRx='fzf-.*-windows_amd64\.zip$';                ExeRx='^fzf\.exe$' }
+        @{ Cmd='jq';  Repo='jqlang/jq';            DirectAsset='jq-windows-amd64.exe'; ExeName='jq.exe' }
+        @{ Cmd='bat'; Repo='sharkdp/bat';                               AssetRx='bat-.*-x86_64-pc-windows-msvc\.zip$';       ExeRx='^bat\.exe$' }
+        @{ Cmd='fd';  Repo='sharkdp/fd';                                AssetRx='fd-.*-x86_64-pc-windows-msvc\.zip$';        ExeRx='^fd\.exe$' }
+    )
+    foreach ($db in $directBins) {
+        if (Get-Command $db.Cmd -ErrorAction SilentlyContinue) { continue }
+        Log-Ok ("{0}: winget unsuccessful -- attempting direct download from GitHub releases..." -f $db.Cmd)
+        try {
+            $api = "https://api.github.com/repos/$($db.Repo)/releases/latest"
+            $rel = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent'='mios-bootstrap' } -ErrorAction Stop
+            if ($db.DirectAsset) {
+                # Single-file asset (jq ships jq-windows-amd64.exe directly).
+                $asset = $rel.assets | Where-Object { $_.name -eq $db.DirectAsset } | Select-Object -First 1
+                if ($asset) {
+                    $dst = Join-Path $MiosBinDir $db.ExeName
+                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dst -UseBasicParsing -ErrorAction Stop
+                    Log-Ok ("{0} installed direct: {1} -> {2}" -f $db.Cmd, $asset.name, $dst)
+                } else {
+                    Log-Warn ("{0}: no '{1}' asset in latest release of {2}" -f $db.Cmd, $db.DirectAsset, $db.Repo)
+                }
+            } else {
+                # Zip asset -- extract + copy the exe into $MiosBinDir.
+                $asset = $rel.assets | Where-Object { $_.name -match $db.AssetRx } | Select-Object -First 1
+                if ($asset) {
+                    $zip = Join-Path $env:TEMP "$($db.Cmd)-$(Get-Random).zip"
+                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -ErrorAction Stop
+                    $extractRoot = Join-Path $env:TEMP "$($db.Cmd)-$(Get-Random)"
+                    Expand-Archive -LiteralPath $zip -DestinationPath $extractRoot -Force
+                    $exe = Get-ChildItem -Path $extractRoot -Recurse -File -ErrorAction SilentlyContinue |
+                           Where-Object { $_.Name -match $db.ExeRx } | Select-Object -First 1
+                    if ($exe) {
+                        $dst = Join-Path $MiosBinDir ($db.Cmd + '.exe')
+                        Copy-Item -Path $exe.FullName -Destination $dst -Force
+                        Log-Ok ("{0} installed direct: {1} -> {2}" -f $db.Cmd, $asset.name, $dst)
+                    } else {
+                        Log-Warn ("{0}: no exe matching /{1}/ inside {2}" -f $db.Cmd, $db.ExeRx, $asset.name)
+                    }
+                    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+                    Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+                } else {
+                    Log-Warn ("{0}: no asset matching /{1}/ in latest release of {2}" -f $db.Cmd, $db.AssetRx, $db.Repo)
+                }
+            }
+        } catch { Log-Warn ("{0} direct-download failed: {1}" -f $db.Cmd, $_.Exception.Message) }
     }
 
     # Re-run final PATH refresh -- pick up any direct-download binaries.
@@ -8089,17 +8187,32 @@ if ($activeDistro) {
                     if (-not $script:_flatpakInstalledRef) {
                         Log-Warn "flatpak binary not present in $_wslDistroForTerm -- all $($_flatpaks.Count) [desktop].flatpaks deferred to bootc-switch (full MiOS OCI image has flatpak baked in)"
                     } else {
+                        # Pre-install GNOME runtime + SDK ONCE before the
+                        # per-app loop. org.gnome.Software (and other GNOME
+                        # apps) fail with "no compatible runtime" if the
+                        # platform isn't already pulled. Running this here
+                        # avoids 6x parallel runtime resolution in the
+                        # per-ref loop. Errors are non-fatal -- if the
+                        # GNOME apps don't need it, this is a no-op.
+                        & {
+                            $ErrorActionPreference = 'Continue'
+                            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                                $PSNativeCommandUseErrorActionPreference = $false
+                            }
+                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update --system flathub org.gnome.Platform//master org.gnome.Sdk//master 2>&1 | tail -20" 2>&1 |
+                                ForEach-Object { Write-Log "mios-flatpak-runtime: $_" }
+                        }
                         $_fpOk = 0; $_fpFail = 0
                         foreach ($_fp in $_flatpaks) {
                             Set-Step ("[overlay] flatpak install {0}..." -f $_fp)
-                            $_fpRc = -1
+                            $_fpStderrLog = New-Object System.Collections.Generic.List[string]
                             & {
                                 $ErrorActionPreference = 'Continue'
                                 if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                     $PSNativeCommandUseErrorActionPreference = $false
                                 }
-                                & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update flathub $_fp" 2>&1 |
-                                    ForEach-Object { Write-Log "mios-flatpak: $_" }
+                                & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update flathub $_fp 2>&1" 2>&1 |
+                                    ForEach-Object { Write-Log "mios-flatpak: $_"; [void]$_fpStderrLog.Add($_) }
                                 $script:_fpLastRc = $LASTEXITCODE
                             }
                             if ($script:_fpLastRc -eq 0) {
@@ -8107,29 +8220,39 @@ if ($activeDistro) {
                                 $_fpOk++
                             } else {
                                 # Operator 2026-05-09: org.gnome.Software
-                                # consistently fails on first pass.  Retry
-                                # with explicit `flatpak install --system
-                                # --arch=x86_64 -v` for full diagnostic +
-                                # a fresh remote-ls round-trip in case the
-                                # original failure was a transient flathub
-                                # cache miss.  --system is the default for
-                                # uid=0 but explicit avoids confusion with
-                                # any --user defaults flatpak picks up.
+                                # consistently fails on first pass with a
+                                # sub-200ms retry that captured no diagnostic.
+                                # Retry with verbose + write the FULL output
+                                # to its own log file, AND surface the last
+                                # 5 stderr lines inline so the operator
+                                # doesn't have to grep the 443 KB main log.
+                                $_fpRetryLog = New-Object System.Collections.Generic.List[string]
                                 Log-Warn "[overlay] flatpak install attempt 1 failed (exit $($script:_fpLastRc)): $_fp -- retrying with --arch=x86_64 -v"
                                 & {
                                     $ErrorActionPreference = 'Continue'
                                     if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                         $PSNativeCommandUseErrorActionPreference = $false
                                     }
-                                    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update --system --arch=x86_64 -v flathub $_fp" 2>&1 |
-                                        ForEach-Object { Write-Log "mios-flatpak-retry: $_" }
+                                    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update --system --arch=x86_64 -v flathub $_fp 2>&1" 2>&1 |
+                                        ForEach-Object { Write-Log "mios-flatpak-retry: $_"; [void]$_fpRetryLog.Add($_) }
                                     $script:_fpRetryRc = $LASTEXITCODE
                                 }
                                 if ($script:_fpRetryRc -eq 0) {
                                     Log-Ok "[overlay] flatpak install OK on retry: $_fp"
                                     $_fpOk++
                                 } else {
-                                    Log-Warn "[overlay] flatpak install FAILED both attempts (last exit $($script:_fpRetryRc)): $_fp -- check log for verbose flatpak output. The OCI image build (mios build -> automation/40-flatpak-bake.sh) will retry at bake time; first-boot service mios-flatpak-install also retries on every host boot."
+                                    # Dump verbose output to its own log file
+                                    # for grep-friendly diagnostic.
+                                    $_fpFailLog = Join-Path $MiosLogDir ("flatpak-fail-$($_fp -replace '[^A-Za-z0-9._-]','_')-$LogStamp.log")
+                                    try {
+                                        $_fpAllLines = @($_fpStderrLog) + @('---retry---') + @($_fpRetryLog)
+                                        Set-Content -LiteralPath $_fpFailLog -Value ($_fpAllLines -join "`n") -Encoding UTF8
+                                    } catch {}
+                                    $_fpTail = ($_fpRetryLog | Select-Object -Last 5) -join ' | '
+                                    Log-Warn "[overlay] flatpak install FAILED both attempts (last exit $($script:_fpRetryRc)): $_fp"
+                                    Log-Warn "  diagnostic tail: $_fpTail"
+                                    Log-Warn "  full verbose log: $_fpFailLog"
+                                    Log-Warn "  OCI image build (mios build -> automation/40-flatpak-bake.sh) retries at bake time; first-boot service mios-flatpak-install also retries on every host boot."
                                     $_fpFail++
                                 }
                             }
