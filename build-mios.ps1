@@ -159,13 +159,15 @@ function Get-MiosTomlValue {
     if ($raw.Length -ge 2) {
         $first = $raw[0]; $last = $raw[$raw.Length - 1]
         if ($first -eq '"' -and $last -eq '"') {
+            # PS 5.1-safe sentinel ([char]0x01); `` `u{0001} `` is PS 7-only.
+            $_bs = [string][char]0x01 + 'BS' + [string][char]0x01
             $inner = $raw.Substring(1, $raw.Length - 2)
-            $inner = $inner -replace '\\\\', "`u{0001}BS`u{0001}"
+            $inner = $inner -replace '\\\\', $_bs
             $inner = $inner -replace '\\"', '"'
             $inner = $inner -replace '\\n', "`n"
             $inner = $inner -replace '\\t', "`t"
             $inner = $inner -replace '\\r', "`r"
-            $inner = $inner -replace "`u{0001}BS`u{0001}", '\'
+            $inner = $inner -replace [regex]::Escape($_bs), '\'
             return $inner
         }
         if ($first -eq "'" -and $last -eq "'") {

@@ -344,13 +344,20 @@ function Get-MiosTomlValue {
         $first = $raw[0]; $last = $raw[$raw.Length - 1]
         if ($first -eq '"' -and $last -eq '"') {
             # Basic string: strip and unescape \\, \", \n, \t, \r.
+            # Sentinel uses [char]0x01 (literal SOH byte) instead of the
+            # PS 7-only `` `u{0001} `` syntax -- PS 5.1 treats `` `u ``
+            # as just literal "u", which leaked the placeholder
+            # `u{0001}BS` (visible) into rendered strings.  Operator
+            # 2026-05-09: "Initializing mios.git as the M:u{0001}BSu{0001}
+            # working tree".  [char]0x01 works in both PS 5.1 and PS 7+.
+            $_bs = [string][char]0x01 + 'BS' + [string][char]0x01
             $inner = $raw.Substring(1, $raw.Length - 2)
-            $inner = $inner -replace '\\\\', "`u{0001}BS`u{0001}"   # placeholder for literal backslash
+            $inner = $inner -replace '\\\\', $_bs   # placeholder for literal backslash
             $inner = $inner -replace '\\"', '"'
             $inner = $inner -replace '\\n', "`n"
             $inner = $inner -replace '\\t', "`t"
             $inner = $inner -replace '\\r', "`r"
-            $inner = $inner -replace "`u{0001}BS`u{0001}", '\'
+            $inner = $inner -replace [regex]::Escape($_bs), '\'
             return $inner
         }
         if ($first -eq "'" -and $last -eq "'") {
@@ -1699,6 +1706,15 @@ function Install-MiOSTerminalProfile {
     if (-not ($_miosWtCols -is [int]) -or $_miosWtCols -lt 40 -or $_miosWtCols -gt 240) { $_miosWtCols = 80 }
     $_miosWtRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20
     if (-not ($_miosWtRows -is [int]) -or $_miosWtRows -lt 10 -or $_miosWtRows -gt 120) { $_miosWtRows = 20 }
+    # WT profile names sourced from mios.toml [theme.terminal] (SSOT).
+    # Operator 2026-05-09: "MiOS-DEV is the main application the end
+    # user uses, MiOS app itself should be defined as MiOS-WIN from
+    # here on out".  Linux dev VM = MiOS-DEV (canonical MiOS surface);
+    # Windows-side launcher app = MiOS-WIN (renamed from "MiOS").
+    $_miosProfileName    = Get-MiosTomlValue -Section 'theme.terminal' -Key 'profile_name'     -Default 'MiOS-WIN'
+    $_miosDevProfileName = Get-MiosTomlValue -Section 'theme.terminal' -Key 'dev_profile_name' -Default 'MiOS-DEV'
+    if ([string]::IsNullOrWhiteSpace($_miosProfileName))    { $_miosProfileName    = 'MiOS-WIN' }
+    if ([string]::IsNullOrWhiteSpace($_miosDevProfileName)) { $_miosDevProfileName = 'MiOS-DEV' }
 
     $commonProfileProps = [ordered]@{
         colorScheme              = (Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
@@ -1728,7 +1744,7 @@ function Install-MiOSTerminalProfile {
 
     $miosProfile = [ordered]@{
         guid              = $miosGuid
-        name              = 'MiOS'
+        name              = $_miosProfileName
         commandline       = $profileCmdline
         startingDirectory = 'M:\\'
     }
@@ -1897,12 +1913,19 @@ function Install-MiOSTerminalProfile {
     # (podman-MiOS-DEV, podman-MiOS-BUILDER, etc.) -- WT auto-creates one
     # per `podman machine init` call and they accumulate without dedup.
     # Our branded MiOS-DEV profile already covers that distro.
+    # Strip prior MiOS-related entries.  "MiOS" name kept in the strip
+    # list so re-runs after the 2026-05-09 rename ("MiOS app itself
+    # should be defined as MiOS-WIN") clean up the old "MiOS" profile
+    # left behind.  Also strips current "MiOS-WIN" by name in case the
+    # GUID changed.
     $existingList = @($wtJson.profiles.list | Where-Object {
         $_.guid -ne $miosGuid -and
         $_.guid -ne $miosDevGuid -and
-        $_.name -ne 'MiOS' -and
-        $_.name -ne 'MiOS-DEV' -and
-        $_.name -ne 'MiOS-Bootstrap' -and
+        $_.name -ne 'MiOS'                     -and
+        $_.name -ne $_miosProfileName          -and
+        $_.name -ne $_miosDevProfileName       -and
+        $_.name -ne 'MiOS-DEV'                 -and
+        $_.name -ne 'MiOS-Bootstrap'           -and
         $_.name -notmatch '^podman-MiOS-'
     })
     $miosProfileObj    = [PSCustomObject]$miosProfile
@@ -2201,18 +2224,36 @@ if ($hwnd -ne [IntPtr]::Zero) {
     }
 
     # Start Menu (per-user; survives on non-admin runs).
-    $startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\MiOS'
+    # Folder = [apps].start_menu_folder (project umbrella, "MiOS").
+    # Shortcut filename = [apps].hub_shortcut_name + ".lnk"
+    # ("MiOS-WIN.lnk" by default per operator 2026-05-09 rename).
+    $_smFolder    = Get-MiosTomlValue -Section 'apps' -Key 'start_menu_folder' -Default 'MiOS'
+    $_hubLnkName  = Get-MiosTomlValue -Section 'apps' -Key 'hub_shortcut_name' -Default 'MiOS-WIN'
+    if ([string]::IsNullOrWhiteSpace($_smFolder))   { $_smFolder   = 'MiOS' }
+    if ([string]::IsNullOrWhiteSpace($_hubLnkName)) { $_hubLnkName = 'MiOS-WIN' }
+    $startMenuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$_smFolder"
     if (-not (Test-Path $startMenuDir)) { New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null }
-    $smLnk = Join-Path $startMenuDir 'MiOS.lnk'
+    $smLnk = Join-Path $startMenuDir ($_hubLnkName + '.lnk')
     & $writeLnk $smLnk
     Write-Host "  [+] Start Menu: $smLnk" -ForegroundColor DarkGray
 
     # Desktop.
     $desktopDir = [Environment]::GetFolderPath('Desktop')
     if ($desktopDir -and (Test-Path $desktopDir)) {
-        $deskLnk = Join-Path $desktopDir 'MiOS.lnk'
+        $deskLnk = Join-Path $desktopDir ($_hubLnkName + '.lnk')
         & $writeLnk $deskLnk
         Write-Host "  [+] Desktop: $deskLnk" -ForegroundColor DarkGray
+    }
+    # Reap pre-rename "MiOS.lnk" so operators upgrading from before
+    # the 2026-05-09 MiOS->MiOS-WIN rename don't end up with both
+    # the old "MiOS.lnk" and the new "MiOS-WIN.lnk".
+    if ($_hubLnkName -ne 'MiOS') {
+        foreach ($_oldLnk in @((Join-Path $startMenuDir 'MiOS.lnk'),
+                               (Join-Path $desktopDir   'MiOS.lnk'))) {
+            if ($_oldLnk -and (Test-Path -LiteralPath $_oldLnk)) {
+                try { Remove-Item -LiteralPath $_oldLnk -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
     }
 
     # ── Per-verb shortcuts (MiOS-DEV / MiOS Build / MiOS Dashboard / etc.) ──
@@ -3011,15 +3052,19 @@ function Install-MiOSPowerShellProfile {
             if ($_msM.Success) { $_eulaDisplayMs = [int]$_msM.Groups[1].Value }
             $_lnsM = [regex]::Match($_euBody, '(?ms)^\s*lines\s*=\s*\[(?<arr>.*?)^\]')
             if ($_lnsM.Success) {
+                # PS 5.1-safe sentinel ([char]0x01) for \\ -- the
+                # `` `u{0001} `` form is PS 7-only and leaks the literal
+                # placeholder when the bootstrap runs in PS 5.1.
+                $_eulaBs = [string][char]0x01 + 'BS' + [string][char]0x01
                 $_parsed = @()
                 foreach ($_lm in [regex]::Matches($_lnsM.Groups['arr'].Value, '"((?:[^"\\]|\\.)*)"')) {
                     # Unescape JSON-style \" \\ \n \t in the toml string
                     $_v = $_lm.Groups[1].Value
-                    $_v = $_v -replace '\\\\', "`u{0001}BS`u{0001}"
+                    $_v = $_v -replace '\\\\', $_eulaBs
                     $_v = $_v -replace '\\"',   '"'
                     $_v = $_v -replace '\\n',   "`n"
                     $_v = $_v -replace '\\t',   "`t"
-                    $_v = $_v -replace "`u{0001}BS`u{0001}", '\'
+                    $_v = $_v -replace [regex]::Escape($_eulaBs), '\'
                     $_parsed += $_v
                 }
                 if ($_parsed.Count -gt 0) { $_eulaLines = $_parsed }
