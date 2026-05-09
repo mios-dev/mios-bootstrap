@@ -3446,6 +3446,44 @@ if (`$true) {
     # installed" placeholder row, so the operator sees the MiOS banner
     # even on a half-bootstrapped host.
     if (`$Host.UI.RawUI -and (-not `$env:MIOS_SKIP_MOTD)) {
+        # ── EULA pre-print (operator request 2026-05-08) ─────────────
+        # "We should print the EULA when the app opens -- and THEN starts
+        # the dashboards!!! (make sure that the EULA scrolls out of view
+        # so that the dash is still top and center!!"
+        # Approach: print a condensed EULA banner, then Clear-Host (which
+        # blanks the visible viewport but preserves the WT scrollback so
+        # the EULA stays scroll-up-readable), then render the dashboard
+        # at the top of the fresh viewport. Operator can opt out via
+        # `$env:MIOS_SKIP_EULA=1.
+        if (-not `$env:MIOS_SKIP_EULA) {
+            try {
+                `$_eulaLines = @(
+                    '',
+                    '  MiOS -- Immutable Fedora AI Workstation',
+                    '  My OS / My Operating System (pronounced "MyOS")',
+                    '',
+                    '  By invoking any MiOS entry point you acknowledge:',
+                    '    * MiOS is provided AS IS, NO WARRANTY (MIT license).',
+                    '    * Build/install scripts can modify your system globally',
+                    '      (registry, env vars, fonts, WT settings, WSL distros, M:\ partition).',
+                    '    * Telemetry: NONE (no data leaves the host without explicit operator action).',
+                    '    * Full text: M:\AGREEMENTS.md  +  M:\LICENSE',
+                    '',
+                    '  Continued use of this terminal is treated as acknowledgment.',
+                    ''
+                )
+                foreach (`$_l in `$_eulaLines) { Write-Host `$_l -ForegroundColor DarkGray }
+                # Tiny pause so the operator can register that the EULA
+                # was shown before it scrolls out of the viewport on
+                # Clear-Host. 600ms is short enough to not annoy on
+                # repeat opens but long enough for visual confirmation.
+                Start-Sleep -Milliseconds 600
+                # Clear visible viewport (preserves scrollback in WT).
+                # Cursor moves to row 0 col 0 so the dashboard renders
+                # at the top of the fresh viewport.
+                try { Clear-Host } catch { try { [Console]::Clear() } catch {} }
+            } catch {}
+        }
         `$miosLogo   = _MiosSelfHeal 'fastfetch' 'mios.txt'      '$ffLogoBase64'
         `$miosFFCfg  = _MiosSelfHeal 'fastfetch' 'config.jsonc'  '$ffConfigBase64'
         if (`$miosLogo -and `$miosFFCfg) {
