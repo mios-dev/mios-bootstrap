@@ -188,11 +188,25 @@ function Get-MiosTomlValue {
 # install conhost mid-flight, which the operator reports as "windows
 # still shrink to 80x20 and are also off-center". The post-install
 # wt --size spawn uses script:MiosAppCols / script:MiosAppRows.
-$script:MiosCols    = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols'            -Default 80
-$script:MiosRows    = Get-MiosTomlValue -Section 'terminal.install' -Key 'rows'            -Default 40
-$script:MiosScroll  = Get-MiosTomlValue -Section 'terminal'         -Key 'scrollback_rows' -Default 9000
-# MiOS-APP dims (80x20 portal feel) -- used by the post-install wt
-# launch only, NEVER by the install conhost.
+# [terminal.install] dims (80x40 install conhost, taller for log
+# room).  Renamed to $script:MiosInst{Cols,Rows} to avoid colliding
+# with Initialize-MiosGlobals which loads $script:Mios{Cols,Rows}
+# from [terminal] (the app dims).  Operator: "I said Unified!!! ...
+# extracted to ONE function used by every".
+$script:MiosInstCols = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols' -Default 80
+$script:MiosInstRows = Get-MiosTomlValue -Section 'terminal.install' -Key 'rows' -Default 40
+# Initialize-MiosGlobals (defined further down, called once at
+# script load) writes $script:MiosCols / $script:MiosRows from
+# the [terminal] section.  Shadow with the install dims here so
+# any sizing-dependent code BEFORE Initialize-MiosGlobals fires
+# uses the install conhost dims; after that point the app dims
+# from Initialize-MiosGlobals take over.  $script:MiosScroll +
+# $script:MiosAppCols / $script:MiosAppRows are kept inline (not
+# overwritten by Initialize-MiosGlobals) for any legacy site that
+# referenced the App-prefixed names.
+$script:MiosCols    = $script:MiosInstCols
+$script:MiosRows    = $script:MiosInstRows
+$script:MiosScroll  = Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000
 $script:MiosAppCols = Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80
 $script:MiosAppRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20
 
@@ -941,18 +955,20 @@ function Write-Log {
 # downstream code instead of each site re-calling Get-MiosTomlValue.
 # Single source-of-truth catalog -- one call site for each toml key.
 function Initialize-MiosGlobals {
-    # ── [terminal] -- dims + framing ─────────────────────────
-    $script:MiosCols       = [int](Get-MiosTomlValue -Section 'terminal' -Key 'cols'            -Default 80)
-    $script:MiosRows       = [int](Get-MiosTomlValue -Section 'terminal' -Key 'rows'            -Default 20)
-    $script:MiosScroll     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'scrollback_rows' -Default 9000)
-    $script:MiosFrameW     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default 75)
+    # ── [terminal] -- framing only ───────────────────────────
+    # cols / rows / scrollback are loaded at top-of-script into
+    # $script:MiosInst{Cols,Rows} (install conhost) + $script:MiosApp{
+    # Cols,Rows} (post-install MiOS app) -- DIFFERENT toml sections
+    # ([terminal.install] vs [terminal]) -- so Initialize-MiosGlobals
+    # doesn't touch them to avoid clobbering the install dims with
+    # the app dims.  Frame width / height / right_margin ARE
+    # loaded here because they're identical for both contexts.
+    $script:MiosFrameW     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default 79)
     $script:MiosFrameH     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default 19)
-    $script:MiosRightMgn   = [int](Get-MiosTomlValue -Section 'terminal' -Key 'right_margin'    -Default 5)
-    if ($script:MiosCols     -lt 40) { $script:MiosCols     = 80 }
-    if ($script:MiosRows     -lt 10) { $script:MiosRows     = 20 }
-    if ($script:MiosFrameW   -lt 20) { $script:MiosFrameW   = 75 }
+    $script:MiosRightMgn   = [int](Get-MiosTomlValue -Section 'terminal' -Key 'right_margin'    -Default 1)
+    if ($script:MiosFrameW   -lt 20) { $script:MiosFrameW   = 79 }
     if ($script:MiosFrameH   -lt 5)  { $script:MiosFrameH   = 19 }
-    if ($script:MiosRightMgn -lt 0)  { $script:MiosRightMgn = 5  }
+    if ($script:MiosRightMgn -lt 0)  { $script:MiosRightMgn = 1  }
     # ── [theme.font] -- font + cell metrics ──────────────────
     $script:MiosFontFamily = [string](Get-MiosTomlValue -Section 'theme.font' -Key 'family'      -Default 'GeistMono Nerd Font Mono')
     $script:MiosFontSize   = [int]   (Get-MiosTomlValue -Section 'theme.font' -Key 'size'        -Default 12)
