@@ -5423,154 +5423,51 @@ function Install-MiosLauncher {
     else          { Log-Warn "icon generation failed -- shortcuts will use default WT icon"; $icoPath = "" }
 
     # ── 2. Bin scripts: mios-dash + mios-dev + mios-pull + mios-update ──
+    # Operator 2026-05-09: "the dashboards are still too big!!! ... but
+    # if I open a new tab in MiOS apps' terminal window--I get a perfectly
+    # fitting dashboard and piping!!!".
+    #
+    # The "too big" dashboard was THIS file's previous contents -- a
+    # verbose Show-MiosDashboard with full ASCII logo + Self-replication
+    # endpoint probes + dev-VM state + build-pipeline arrow. The new-tab
+    # "perfectly fitting" dashboard is the Show-MiosDashboard inside
+    # M:\MiOS\powershell\profile.ps1 (auto-runs on each tab open).
+    #
+    # Unify: mios-dash.ps1 is now a thin wrapper that dot-sources the
+    # profile body and calls the SAME Show-MiosDashboard. One canonical
+    # dashboard rendered everywhere -- typing `mios dash` is identical
+    # to opening a new tab. SSOT: profile body comes from Get-MiOS.ps1's
+    # Install-MiOSPowerShellProfile (which reads mios.toml [dashboard]
+    # rows + [terminal] dims + [theme] palette).
     $dashPath = Join-Path $MiosBinDir 'mios-dash.ps1'
     $dashScript = @'
 # <MiOSRoot>\bin\mios-dash.ps1
-# Windows-side dashboard. Mirrors /usr/libexec/mios/mios-dashboard.sh
-# layout: 80-col frame, centered MiOS ASCII art, services probe, hint.
-# Auto-installed by mios-bootstrap (Install-MiosLauncher).
+# `mios dash` verb -- delegates to the canonical Show-MiosDashboard
+# defined in M:\MiOS\powershell\profile.ps1 so the dashboard rendered
+# here is byte-identical to the one that auto-renders on each MiOS
+# terminal tab open. Operator's directive 2026-05-09: ONE dashboard
+# globally, dictated by mios.toml.
 $ErrorActionPreference = 'SilentlyContinue'
-
-# Self-locate the MiOS install root (this script is at <root>\bin\mios-dash.ps1).
-$Script:MiOSRoot = Split-Path -Parent $PSScriptRoot
-
-# Frame width: read [terminal].cols + [terminal].right_margin from
-# mios.toml at runtime so the operator's mios.html edits flow through
-# without rebuilding. Vendor defaults: cols=80, right_margin=2 -> total
-# frame width 78 (matches Get-MiOS.ps1's Show-MiOSBanner). Operator
-# reported "framing too wide STILL" with the previous hardcoded 80 ->
-# the previous setting consumed the entire 80-col terminal width with
-# no slack and WT's pseudo-console reported width 1 cell over visible
-# during first paint, so the right frame char wrapped.
-$_dashCols = 80; $_dashRightMargin = 2
-foreach ($_dashTomlPath in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',(Join-Path $Script:MiOSRoot 'usr\share\mios\mios.toml'))) {
-    if (Test-Path -LiteralPath $_dashTomlPath) {
-        try {
-            $_dashTomlText = [IO.File]::ReadAllText($_dashTomlPath, (New-Object System.Text.UTF8Encoding($false)))
-            $_dashTermSection = [regex]::Match($_dashTomlText, '(?ms)^\[terminal\]\s*$(?<body>.*?)(?=^\[|\z)')
-            if ($_dashTermSection.Success) {
-                $_dashBody = $_dashTermSection.Groups['body'].Value
-                $_dashColsM = [regex]::Match($_dashBody, '(?m)^\s*cols\s*=\s*(?<v>\d+)')
-                if ($_dashColsM.Success) { $_dashCols = [int]$_dashColsM.Groups['v'].Value }
-                $_dashRMM = [regex]::Match($_dashBody, '(?m)^\s*right_margin\s*=\s*(?<v>\d+)')
-                if ($_dashRMM.Success) { $_dashRightMargin = [int]$_dashRMM.Groups['v'].Value }
-            }
-            break
-        } catch {}
+$_miosProfile = 'M:\MiOS\powershell\profile.ps1'
+if (Test-Path -LiteralPath $_miosProfile) {
+    . $_miosProfile
+    if (Get-Command Show-MiosDashboard -ErrorAction SilentlyContinue) {
+        Show-MiosDashboard
+        return
     }
 }
-$WIDTH = [math]::Max(20, $_dashCols - $_dashRightMargin)
-$INNER = $WIDTH - 4
-$F_TL = [char]0x256D; $F_TR = [char]0x256E
-$F_BL = [char]0x2570; $F_BR = [char]0x256F
-$F_LT = [char]0x251C; $F_RT = [char]0x2524
-$F_V  = [char]0x2502; $HR   = [char]0x2500
-$DOT_UP = [char]0x25CF; $DOT_DOWN = [char]0x25CB
-
-function Repeat-Char([char]$c, [int]$n) { return ([string]$c) * [math]::Max(0, $n) }
-function Frame-Top    { Write-Host ($F_TL + (Repeat-Char $HR ($WIDTH - 2)) + $F_TR) -ForegroundColor DarkCyan }
-function Frame-Bot    { Write-Host ($F_BL + (Repeat-Char $HR ($WIDTH - 2)) + $F_BR) -ForegroundColor DarkCyan }
-function Frame-Divide { Write-Host ($F_LT + (Repeat-Char $HR ($WIDTH - 2)) + $F_RT) -ForegroundColor DarkCyan }
-
-function Frame-Line([string]$content, [ConsoleColor]$color = 'Gray') {
-    $vis = $content
-    if ($vis.Length -gt $INNER) { $vis = $vis.Substring(0, $INNER - 1) + [char]0x2026 }
-    $pad = $INNER - $vis.Length
-    if ($pad -lt 0) { $pad = 0 }
-    Write-Host -NoNewline $F_V        -ForegroundColor DarkCyan
-    Write-Host -NoNewline " "
-    Write-Host -NoNewline $vis        -ForegroundColor $color
-    Write-Host -NoNewline (' ' * $pad)
-    Write-Host -NoNewline " "
-    Write-Host           $F_V         -ForegroundColor DarkCyan
-}
-
-function Probe-Endpoint([string]$url) {
-    try {
-        $iwrParams = @{ Uri = $url; UseBasicParsing = $true; TimeoutSec = 2 }
-        $r = Invoke-WebRequest @iwrParams -ErrorAction Stop
-        return $true
-    } catch { return $false }
-}
-
-function Show-MiosDashboard {
-    Clear-Host
-    Frame-Top
-
-    # Centered ASCII art header. Width 54, art lines as-is.
-    $art = @(
-        '      ___                       ___           ___',
-        '     /\__\          ___        /\  \         /\  \',
-        '    /::|  |        /\  \      /::\  \       /::\  \',
-        '   /:|:|  |        \:\  \    /:/\:\  \     /:/\ \  \',
-        '  /:/|:|__|__      /::\__\  /:/  \:\  \   _\:\~\ \  \',
-        ' /:/ |::::\__\  __/:/\/__/ /:/__/ \:\__\ /\ \:\ \ \__\',
-        ' \/__/~~/:/  / /\/:/  /    \:\  \ /:/  / \:\ \:\ \/__/',
-        '       /:/  /  \::/__/      \:\  /:/  /   \:\ \:\__\',
-        '      /:/  /    \:\__\       \:\/:/  /     \:\/:/  /',
-        '     /:/  /      \/__/        \::/  /       \::/  /',
-        '     \/__/                     \/__/         \/__/'
-    )
-    $maxw = ($art | Measure-Object -Property Length -Maximum).Maximum
-    $padL = [math]::Max(0, [int](($INNER - $maxw) / 2))
-    foreach ($line in $art) {
-        Frame-Line ((' ' * $padL) + $line) 'Cyan'
-    }
-    Frame-Divide
-
-    # Title + version row. VERSION lives at <MiOSRoot>\VERSION.
-    $verFile = Join-Path $Script:MiOSRoot 'VERSION'
-    $ver = if (Test-Path $verFile) { (Get-Content $verFile -Raw).Trim() } else { '0.2.2' }
-    $left = " MiOS v$ver  --  Windows Launcher"
-    $right = " $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion) "
-    $gap = $INNER - $left.Length - $right.Length
-    if ($gap -lt 1) { $gap = 1 }
-    Frame-Line ($left + (' ' * $gap) + $right) 'White'
-    Frame-Divide
-
-    # Self-replication endpoints (probe each host).
-    Frame-Line "  Self-replication loop" 'Cyan'
-    $endpoints = @(
-        @{ Name = 'Forge   '; Url = 'http://localhost:3000/'   ; Probe = 'http://localhost:3000/api/v1/version' },
-        @{ Name = 'AI      '; Url = 'http://localhost:8080/v1'; Probe = 'http://localhost:8080/v1/models'      },
-        @{ Name = 'Cockpit '; Url = 'https://localhost:9090/' ; Probe = 'https://localhost:9090/'              },
-        @{ Name = 'Ollama  '; Url = 'http://localhost:11434'  ; Probe = 'http://localhost:11434/'              }
-    )
-    foreach ($ep in $endpoints) {
-        $up  = Probe-Endpoint $ep.Probe
-        $dot = if ($up) { $DOT_UP } else { $DOT_DOWN }
-        Frame-Line ("    $dot  $($ep.Name)   $($ep.Url)") (if ($up) { 'Green' } else { 'DarkGray' })
-    }
-    Frame-Divide
-
-    # MiOS-DEV distro state. After build-mios.ps1's Rename-PodmanDevDistro
-    # pass the WSL distro is just "MiOS-DEV"; before the rename (or in
-    # partial-install states) it shows up as "podman-MiOS-DEV". Probe
-    # both, canonical-first, plus the legacy MiOS-BUILDER names from
-    # earlier project versions for full backwards-compat.
-    Frame-Line "  MiOS-DEV (WSL2 dev VM)" 'Cyan'
-    $wslList = @()
-    try { $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" | ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ } } catch {}
-    $devCandidates = @('MiOS-DEV', 'podman-MiOS-DEV', 'MiOS-BUILDER', 'podman-MiOS-BUILDER')
-    $matched = $wslList | Where-Object { $devCandidates -contains $_ } | Select-Object -First 1
-    if ($matched) {
-        Frame-Line "    $DOT_UP  registered : $matched" 'Green'
-        Frame-Line "    enter      : wsl -d $matched"   'Gray'
-    } else {
-        Frame-Line "    $DOT_DOWN  not registered yet"            'DarkGray'
-        Frame-Line "    setup      : run build-mios.ps1 to provision" 'Gray'
-    }
-    Frame-Divide
-
-    Frame-Line "  Edit /  ->  git commit  ->  git push  ->  Forgejo runner  ->  bootc switch" 'DarkGray'
-    Frame-Bot
-    Write-Host ""
-}
-
-Show-MiosDashboard
+Write-Host "  [!] M:\MiOS\powershell\profile.ps1 missing or Show-MiosDashboard not defined." -ForegroundColor Yellow
+Write-Host "      Re-run irm | iex Get-MiOS.ps1 to refresh the profile." -ForegroundColor DarkGray
+return
 '@
     Set-Content -Path $dashPath -Value $dashScript -Encoding UTF8
-    Log-Ok "Windows mios-dash staged at $dashPath"
+    Log-Ok "Windows mios-dash staged at $dashPath (delegates to profile Show-MiosDashboard for unified compact rendering)"
+
+    # The original verbose mios-dash body (full ASCII logo + Self-replication
+    # endpoint probes + WSL distro state + build pipeline arrow) was
+    # operator-rejected 2026-05-09: too tall for the 80x20 portal. The
+    # block below is dead code retained as a textual marker only -- the
+    # heredoc above is what gets staged.
 
     # mios-dev.ps1 / mios-pull.ps1 -- self-resolving wrappers.
     # The Rename-PodmanDevDistro pass at the end of build-mios.ps1
