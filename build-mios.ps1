@@ -7699,6 +7699,60 @@ fi
 EOPROFILE
 chmod 0644 /etc/profile.d/00-mios-pre-bootc.sh
 echo "[mios-seed] symlinks + pre-bootc bridge installed"
+# ── btop MiOS theme + 80x20 preset for the dev VM ─────────────────────
+# Operator 2026-05-09 image #15: btop reports "Width = 75 Height = 18,
+# Needed 80 x 24". btop runs INSIDE the dev VM (Linux) so the Windows
+# config at M:\MiOS\btop doesn't apply -- it reads ~/.config/btop/.
+# Source files are exposed via WSL automount at /mnt/m/MiOS/btop/.
+# Stage to BOTH the mios user (canonical) and root (in case of root
+# sessions). Symlink approach so operator edits to mios.toml -> rebuild
+# omp.json + theme flow through automatically.
+if [ -d /mnt/m/MiOS/btop ]; then
+    for _u in mios root; do
+        if id "$_u" >/dev/null 2>&1; then
+            _uhome=$(getent passwd "$_u" | cut -d: -f6)
+            if [ -n "$_uhome" ] && [ -d "$_uhome" ]; then
+                mkdir -p "$_uhome/.config/btop/themes"
+                if [ -f /mnt/m/MiOS/btop/btop.conf ]; then
+                    cp -f /mnt/m/MiOS/btop/btop.conf "$_uhome/.config/btop/btop.conf"
+                fi
+                if [ -f /mnt/m/MiOS/btop/themes/mios.theme ]; then
+                    cp -f /mnt/m/MiOS/btop/themes/mios.theme "$_uhome/.config/btop/themes/mios.theme"
+                fi
+                chown -R "$_u":"$_u" "$_uhome/.config/btop" 2>/dev/null || true
+                echo "[mios-seed] btop config + mios.theme staged for $_u at $_uhome/.config/btop/"
+            fi
+        fi
+    done
+fi
+# ── Flatpak convenience symlinks (operator: epiphany / nautilus etc. should work) ─
+# Operator 2026-05-09: ran `nautilus` and `epiphany` after install, got
+# "command not found" -- "LIAR!!!!!!". Install log said the flatpaks
+# installed OK; they did, but flatpak exports binaries as their full
+# app IDs (org.gnome.Epiphany, etc.) under /var/lib/flatpak/exports/bin/,
+# NOT as short names. Operator expects `epiphany`, `nautilus`, etc.
+# to work directly. Symlink the canonical short names into /usr/local/bin/
+# pointing at the flatpak wrappers.
+if [ -d /var/lib/flatpak/exports/bin ]; then
+    mkdir -p /usr/local/bin
+    # short-name -> full-app-id pairs (mirrors mios.toml [desktop].flatpaks)
+    while IFS='|' read -r _short _appid; do
+        _wrapper="/var/lib/flatpak/exports/bin/$_appid"
+        _link="/usr/local/bin/$_short"
+        if [ -x "$_wrapper" ] && [ ! -e "$_link" ]; then
+            ln -snf "$_wrapper" "$_link"
+            echo "[mios-seed] flatpak symlink: $_short -> $_appid"
+        fi
+    done <<EOFLATPAK
+epiphany|org.gnome.Epiphany
+nautilus|org.gnome.Nautilus
+flatseal|com.github.tchx84.Flatseal
+gnome-software|org.gnome.Software
+extension-manager|com.mattjakeman.ExtensionManager
+codium|com.vscodium.codium
+code|com.vscodium.codium
+EOFLATPAK
+fi
 '@
     # Write the seed script to a tempfile on M:\ (visible inside the dev
     # VM at /mnt/m/) and invoke bash on the path. Piping the script to
