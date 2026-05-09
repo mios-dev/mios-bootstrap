@@ -2400,7 +2400,26 @@ function Get-MiosVendorContent {
         $cb  = [int][double]::Parse((Get-Date -UFormat %s))
         $url = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/$RelPath" + "?cb=$cb"
         $headers = @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' }
-        return Invoke-RestMethod -Uri $url -Headers $headers -ErrorAction Stop
+        # CRITICAL: use Invoke-WebRequest, not Invoke-RestMethod.  IRM
+        # auto-deserializes any JSON response into a PSCustomObject; for
+        # vendor content that's a .json file (mios.omp.json) we want the
+        # RAW TEXT, not a parsed object.  IRM produced an 867-byte
+        # Set-Content stringification of a PSCustomObject (instead of
+        # the 10.9 kb omp.json source) and broke the downstream
+        # [System.Text.Encoding]::UTF8.GetBytes($Script:MiosOmpJson)
+        # call with "Cannot find an overload for GetBytes and the
+        # argument count 1" -- because the argument was an object, not a
+        # string.  IWR returns a BasicHtmlWebResponseObject whose
+        # .Content is the raw response body as a string.
+        $resp = Invoke-WebRequest -Uri $url -Headers $headers -UseBasicParsing -ErrorAction Stop
+        # IWR's .Content is a string for text/* responses, byte[] for
+        # binary.  raw.githubusercontent.com sometimes serves .json as
+        # application/octet-stream; decode bytes as UTF-8 explicitly so
+        # PUA glyphs in mios.omp.json (U+E0B4 / U+E0B6) survive.
+        if ($resp.Content -is [byte[]]) {
+            return [System.Text.Encoding]::UTF8.GetString($resp.Content)
+        }
+        return [string]$resp.Content
     } catch {
         throw "Get-MiosVendorContent: cannot resolve '$RelPath' from M:\usr\share\mios or raw.githubusercontent.com mios.git origin/main. MiOS self-replication requires reachable origin -- there are no embedded fallback snapshots in this script. Underlying: $($_.Exception.Message)"
     }
