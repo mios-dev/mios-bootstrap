@@ -2934,21 +2934,18 @@ function New-BuilderDistro([hashtable]$HW) {
                 Log-Warn "$BuilderDistro start failed after init-already-exists (exit $LASTEXITCODE) -- force-removing and retrying init"
                 Write-Log "podman-recover-rm-output: $startJoined"
 
-                # Operator 2026-05-09 v2: re-ordered the recovery so WSL
-                # unregister fires BEFORE `podman machine rm`, not after.
-                # When the half-broken distro has no /etc/passwd, podman's
-                # internal `wsl.exe -u root -d podman-MiOS-DEV sh` cleanup
-                # call inside `podman machine rm` itself throws
-                # `getpwnam(root) failed 5` and propagates as a non-zero
-                # exit -- which under PS 7.4+'s default
-                # PSNativeCommandUseErrorActionPreference=$true throws
-                # straight to the outer FATAL handler before any of our
-                # post-rm cleanup runs.  Solution: unregister the WSL
-                # distro first (cheap, doesn't touch /etc/passwd), THEN
-                # podman rm, both wrapped in EAP=Continue so non-zero
-                # exits drop to log entries instead of fatal throws.
-                # podman 5.x uses bare BuilderDistro AND `podman-<name>`
-                # depending on the flow -- try both.
+                # Operator 2026-05-09 v3: WSL unregister chain + final
+                # `wsl --shutdown` to fully reset the WSL2 service state
+                # before retry-init.  Previous v2 (commit c434302) got
+                # past the getpwnam crash but the retry-init then hit
+                # `Wsl/Service/RegisterDistro/E_FAIL ... Error code: 6,
+                # failure step: 2` (= WSL_E_VM_MODE_INVALID_STATE) --
+                # the WSL service was in a transient bad state from
+                # the unregister + reparse-point-removal cycle, and
+                # `wsl --import` to the M:\ path failed.  `wsl
+                # --shutdown` forces a clean lifebooot of the WSL2
+                # subsystem so import lands cleanly.  Whole block in
+                # EAP=Continue so non-zero exits don't throw to FATAL.
                 & {
                     $ErrorActionPreference = 'Continue'
                     if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
@@ -2958,19 +2955,18 @@ function New-BuilderDistro([hashtable]$HW) {
                         & wsl.exe --unregister $_wslName 2>&1 |
                             ForEach-Object { Write-Log "podman-recover-wsl-unregister-pre: $_" }
                     }
-                    # Brief settle so WSL service finishes the unregister
-                    # transaction before podman touches the same name.
                     Start-Sleep -Seconds 2
                     & podman machine rm --force $BuilderDistro 2>&1 |
                         ForEach-Object { Write-Log "podman-recover-rm: $_" }
-                    # Second-pass unregister in case `podman machine rm`
-                    # left a fresh registration behind (rare, but seen on
-                    # podman 5.x's machine init crash path).
                     foreach ($_wslName in @("podman-$BuilderDistro", $BuilderDistro)) {
                         & wsl.exe --unregister $_wslName 2>&1 |
                             ForEach-Object { Write-Log "podman-recover-wsl-unregister-post: $_" }
                     }
-                    Start-Sleep -Seconds 2
+                    # Shut down the WSL2 lifeboot so retry-init's
+                    # `wsl --import` lands on a clean service state.
+                    & wsl.exe --shutdown 2>&1 |
+                        ForEach-Object { Write-Log "podman-recover-wsl-shutdown: $_" }
+                    Start-Sleep -Seconds 4
                 }
 
                 # Sweep ALL candidate podman-machine storage paths

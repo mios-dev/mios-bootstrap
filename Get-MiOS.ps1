@@ -1013,26 +1013,50 @@ try {
         Write-Host '$_p2BuildLogHnt' -ForegroundColor DarkGray
         Write-Host ''
     } else {
-        # Per operator: "irm|iex invocation(s) should pre-condition
-        # everything ... THEN spawns only 1 other window for the bulk
-        # installation steps (this should be unified and not spawn
-        # multiple other windows that inherently breaks the center
-        # spawning anyways) ... LIKE an App!!!". So Pass-2 is the ONE
-        # bulk-install window. When it's done, NO new MiOS-app spawn --
-        # the operator clicks the MiOS Start Menu / Desktop shortcut
-        # from here on. This collapses the install to exactly two
-        # windows total: Pass-1 small box (closes immediately after
-        # spawning Pass-2) + Pass-2 elevated bootstrap (closes when the
-        # operator presses Enter at the prompt below). No third window,
-        # no off-center respawn, no juggling.
+        # Operator 2026-05-09: "irm|iex invocation and install processes
+        # spawn too many powershell windows and should be performed
+        # in-line in one promoted Powershell window after bootstrap".
+        # On success, transition THIS elevated conhost into the MiOS
+        # terminal experience instead of asking the operator to press
+        # Enter and click a shortcut.  Dot-source M:\MiOS\powershell\
+        # profile.ps1 -- it self-renders the framed dashboard and
+        # exposes the `mios <verb>` dispatcher (build / dash / dev /
+        # config / pull / update / help).  Operator types verbs
+        # directly in this same window; no new WT spawn, no shortcut
+        # click, no third window.
         Write-Host ''
-        Write-Host '  [+] Bootstrap complete. Open the MiOS shortcut (Start Menu / Desktop) when ready.' -ForegroundColor Green
+        Write-Host '  [+] Bootstrap complete. Loading MiOS terminal in this window...' -ForegroundColor Green
+        Write-Host ''
+        Start-Sleep -Milliseconds 800
+        try { Clear-Host } catch {}
+        # The MiOS profile body sources the dashboard, oh-my-posh,
+        # the mios.toml resolvers, AND defines `mios <verb>` plus the
+        # per-verb function aliases.  After this dot-source the
+        # operator is at the MiOS prompt in this same elevated
+        # conhost.  pwsh -NoExit (set in the spawn args) keeps the
+        # interactive prompt alive; no Read-Host below for the
+        # success path.
+        `$_miosProfile = 'M:\MiOS\powershell\profile.ps1'
+        if (Test-Path -LiteralPath `$_miosProfile) {
+            try { . `$_miosProfile } catch {
+                Write-Host ('  [!] MiOS profile load failed: ' + `$_.Exception.Message) -ForegroundColor Yellow
+                Write-Host '      Open a fresh MiOS shortcut to retry.' -ForegroundColor DarkGray
+            }
+        } else {
+            Write-Host '  [!] M:\MiOS\powershell\profile.ps1 not found -- open the MiOS shortcut to launch the app window.' -ForegroundColor Yellow
+        }
+        # SUCCESS path returns here -- the dot-sourced profile owns
+        # the prompt from this point.  No press-Enter close; the
+        # operator quits the window naturally (`exit` / Ctrl-D / `q`).
+        return
     }
 } catch {
     Write-Host ''
     Write-Host ('$_p2FetchFailed' + `$_.Exception.Message) -ForegroundColor Red
     Write-Host ''
 }
+# FAILURE path falls through to the press-Enter close so the operator
+# has time to read the error before the elevated window closes.
 Write-Host ''
 Write-Host '$_p2PressEnter' -ForegroundColor DarkGray -NoNewline
 `$null = Read-Host
