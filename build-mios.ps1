@@ -8424,10 +8424,12 @@ chmod 0640 /etc/mios/install.env
     if (-not (Test-Path $UninstallRegKey)) { New-Item -Path $UninstallRegKey -Force | Out-Null }
     # DisplayName / Publisher / URLInfoAbout all resolve through mios.toml
     # so operators rebrand the Add/Remove Programs entry via mios.html.
-    # Per operator: "MiOS 'My Personalized OS' as the description for the
-    # installed app" -- which is precisely what [branding].tagline now
-    # carries (single-source change in 1ab6748 / b669460).
-    $_arDisplayTagline = Get-MiosTomlValue -Section 'branding' -Key 'tagline'   -Default 'My Personalized OS'
+    # Per operator 2026-05-09: "the Applications tag/description when
+    # installed 'MiOS - Immutable Fedora AI Workstation' should be
+    # defined as My Personal Operating System or similar".
+    # Prefer [branding].tagline_app (the explicit Application-tag value);
+    # fall back to .tagline; final fallback to the literal default.
+    $_arDisplayTagline = Get-MiosTomlValue -Section 'branding' -Key 'tagline_app' -Default (Get-MiosTomlValue -Section 'branding' -Key 'tagline' -Default 'My Personal Operating System')
     $_arPublisher      = Get-MiosTomlValue -Section 'branding' -Key 'publisher' -Default 'MiOS-DEV'
     $_arAboutUrl       = Get-MiosTomlValue -Section 'branding' -Key 'about_url' -Default 'https://github.com/mios-dev/mios'
     @{

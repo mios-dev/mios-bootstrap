@@ -389,7 +389,7 @@ function Show-MiOSBanner {
         '     /:/  /      \/__/        \::/  /       \::/  /',
         '     \/__/                     \/__/         \/__/'
     )
-    $sub = if ($Subtitle) { $Subtitle } else { Get-MiosTomlValue -Section 'branding' -Key 'tagline' -Default 'Immutable Fedora AI Workstation' }
+    $sub = if ($Subtitle) { $Subtitle } else { Get-MiosTomlValue -Section 'branding' -Key 'tagline_app' -Default (Get-MiosTomlValue -Section 'branding' -Key 'tagline' -Default 'My Personal Operating System') }
     # Width: cols - right_margin - 2 frame chars. SSOT from mios.toml.
     # Operator reported "framing too wide STILL" at the previous hard-
     # coded inner=78 (total=80) -- that totaled the entire 80-col
@@ -2123,10 +2123,12 @@ if ($hwnd -ne [IntPtr]::Zero) {
     if (-not $pwshExe) { Write-Host "  [!] No pwsh.exe found; cannot create launcher .lnk." -ForegroundColor Yellow; return }
 
     $lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
-    # .lnk Description = mios.toml [branding].tagline + a short
-    # technical sub-line. SSOT lift per "no hardcoding ANYWHERE".
-    $_lnkTag = Get-MiosTomlValue -Section 'branding' -Key 'tagline' -Default 'My Personalized OS'
-    $lnkDesc = "MiOS -- $_lnkTag. Borderless 80x30 acrylic terminal."
+    # .lnk Description = mios.toml [branding].tagline_app (preferred)
+    # or .tagline. Per operator 2026-05-09: 'the Applications
+    # tag/description ... should be defined as My Personal Operating
+    # System or similar'.  SSOT lift per "no hardcoding ANYWHERE".
+    $_lnkTag = Get-MiosTomlValue -Section 'branding' -Key 'tagline_app' -Default (Get-MiosTomlValue -Section 'branding' -Key 'tagline' -Default 'My Personal Operating System')
+    $lnkDesc = "MiOS -- $_lnkTag"
 
     # Resolve an icon: prefer M:\MiOS\icons\mios.ico if present, else
     # fall back to wt.exe's embedded icon (still better than the
@@ -2179,11 +2181,11 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # build / dash / config / update / pull verbs are operator-typed
     # commands INSIDE the MiOS terminal, NOT separate native apps.
     $miosVerbs = @(
-        @{ File='MiOS-DEV.lnk';  Verb='dev';   Desc='Open MiOS-DEV (podman machine) directly to its themed dashboard (banner + fastfetch + framing)' },
-        @{ File='MiOS Help.lnk'; Verb='help';  Desc='Full verb + functionality reference (every MiOS command and where things live)' }
+        @{ File='MiOS-DEV.lnk';  Verb='dev';   Icon='mios-dev.ico';    Desc='Open MiOS-DEV (podman machine) directly to its themed dashboard (banner + fastfetch + framing)' },
+        @{ File='MiOS Help.lnk'; Verb='help';  Icon='mios-help.ico';   Desc='Full verb + functionality reference (every MiOS command and where things live)' }
     )
     $writeVerbLnk = {
-        param([string]$Path, [string]$Verb, [string]$Desc)
+        param([string]$Path, [string]$Verb, [string]$Desc, [string]$IconFile)
         $sc = $shell.CreateShortcut($Path)
         $sc.TargetPath       = $pwshExe
         # UNIFIED launch path: every per-verb shortcut goes through
@@ -2199,19 +2201,68 @@ if ($hwnd -ne [IntPtr]::Zero) {
         $sc.WorkingDirectory = $miosRoot
         $sc.Description      = $Desc
         $sc.WindowStyle      = 7
-        if ($iconPath) { $sc.IconLocation = "$iconPath,0" }
+        # Per-verb icon if Install-MiosLauncherIcons has staged it
+        # under M:\MiOS\icons\<verb>.ico, else fall back to the hub
+        # mios.ico so every shortcut still carries MiOS branding.
+        # Per operator 2026-05-09: "MiOS should have an icon for all
+        # shortcuts and applications OS-wide on windows".
+        $_verbIcon = if ($IconFile) { Join-Path $miosRoot "icons\$IconFile" } else { '' }
+        if ($_verbIcon -and (Test-Path -LiteralPath $_verbIcon)) {
+            $sc.IconLocation = "$_verbIcon,0"
+        } elseif ($iconPath) {
+            $sc.IconLocation = "$iconPath,0"
+        }
         $sc.Save()
     }
     foreach ($v in $miosVerbs) {
         $smPath = Join-Path $startMenuDir $v.File
-        & $writeVerbLnk $smPath $v.Verb $v.Desc
+        & $writeVerbLnk $smPath $v.Verb $v.Desc $v.Icon
         if ($desktopDir -and (Test-Path $desktopDir)) {
             $dskPath = Join-Path $desktopDir $v.File
-            & $writeVerbLnk $dskPath $v.Verb $v.Desc
+            & $writeVerbLnk $dskPath $v.Verb $v.Desc $v.Icon
         }
     }
     Write-Host "  [+] Per-verb shortcuts: $($miosVerbs.Count) Start Menu + $($miosVerbs.Count) Desktop entries staged." -ForegroundColor DarkGray
     Write-Host "      Right-click any of them in Start to Pin to Start / Pin to Taskbar (Win11 dropped programmatic pinning)." -ForegroundColor DarkGray
+
+    # ── Uninstall MiOS shortcut (Start Menu + Desktop) ──────────────
+    # Per operator 2026-05-09: "MiOS should ... Install as a Native
+    # Windows Application with a bundled uninstaller being a
+    # shortcut/link as well".  The hub already registers in
+    # Add/Remove Programs (line 2294+); this gives the operator a
+    # direct desktop / Start-Menu shortcut to the uninstaller without
+    # opening Settings -> Apps.  The .lnk targets M:\MiOS\bin\uninstall.ps1
+    # which build-mios.ps1's Install-WindowsBranding stages -- it does
+    # the full reap (WSL distros, podman machines, registry keys, M:\
+    # overlay, .lnk cleanup).  Falls back to the inline UninstallString
+    # registered above if the full uninstall.ps1 isn't on disk yet
+    # (e.g. on a half-bootstrapped host).
+    $_uninstScript = Join-Path $miosRoot 'bin\uninstall.ps1'
+    $writeUninstLnk = {
+        param([string]$Path)
+        $sc = $shell.CreateShortcut($Path)
+        $sc.TargetPath       = $pwshExe
+        if (Test-Path -LiteralPath $_uninstScript) {
+            $sc.Arguments    = "-NoProfile -ExecutionPolicy Bypass -File `"$_uninstScript`""
+        } else {
+            # Inline minimum-viable uninstaller (matches the registry
+            # UninstallString value -- removes hub .lnks + uninstall key).
+            $sc.Arguments    = "-NoProfile -ExecutionPolicy Bypass -Command `"Remove-Item -LiteralPath '$smLnk','$desktopDir\MiOS.lnk' -Force -EA SilentlyContinue; Remove-Item -LiteralPath '$uninstKey' -Recurse -Force -EA SilentlyContinue`""
+        }
+        $sc.WorkingDirectory = $miosRoot
+        $sc.Description      = 'Uninstall MiOS (removes WT profiles, WSL distros, M:\ overlay, registry keys, shortcuts)'
+        $sc.WindowStyle      = 1   # 1 = Normal -- operator should SEE the uninstall progress
+        if ($iconPath) { $sc.IconLocation = "$iconPath,0" }
+        $sc.Save()
+    }
+    $uninstSmLnk = Join-Path $startMenuDir 'Uninstall MiOS.lnk'
+    & $writeUninstLnk $uninstSmLnk
+    Write-Host "  [+] Start Menu: $uninstSmLnk" -ForegroundColor DarkGray
+    if ($desktopDir -and (Test-Path $desktopDir)) {
+        $uninstDeskLnk = Join-Path $desktopDir 'Uninstall MiOS.lnk'
+        & $writeUninstLnk $uninstDeskLnk
+        Write-Host "  [+] Desktop: $uninstDeskLnk" -ForegroundColor DarkGray
+    }
 
     # Stale-shortcut cleanup -- earlier revisions created MiOS Build /
     # Dashboard / Configurator / Update / Pull as separate native apps.
@@ -2282,6 +2333,13 @@ namespace MiOS.NativeApp {
                     $_allShortcuts += (Join-Path $desktopDir $v.File)
                 }
             }
+            # Uninstall MiOS.lnk also gets the AumID + icon so it
+            # taskbar-groups under the same MiOS hub tile.
+            $_uninstSm = Join-Path $startMenuDir 'Uninstall MiOS.lnk'
+            if (Test-Path -LiteralPath $_uninstSm) { $_allShortcuts += $_uninstSm }
+            if ($desktopDir -and (Test-Path -LiteralPath (Join-Path $desktopDir 'Uninstall MiOS.lnk'))) {
+                $_allShortcuts += (Join-Path $desktopDir 'Uninstall MiOS.lnk')
+            }
             foreach ($lnk in $_allShortcuts) {
                 try { [MiOS.NativeApp.Aumid]::Set($lnk, $_aumid) } catch {}
             }
@@ -2295,7 +2353,16 @@ namespace MiOS.NativeApp {
     try {
         $uninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS'
         if (-not (Test-Path $uninstKey)) { New-Item -Path $uninstKey -Force | Out-Null }
-        Set-ItemProperty -Path $uninstKey -Name 'DisplayName'     -Value 'MiOS - Immutable Fedora AI Workstation' -Force
+        # DisplayName resolves through mios.toml [branding].tagline_app
+        # (per operator 2026-05-09: 'the Applications tag/description
+        # when installed "MiOS - Immutable Fedora AI Workstation"
+        # should be defined as My Personal Operating System or similar').
+        # The technical descriptor "Immutable Fedora AI Workstation"
+        # remains in the dashboard subtitle for in-terminal context;
+        # the OS-wide app face (this DisplayName, .lnk descriptions,
+        # AppX manifest) uses the operator-friendly tagline.
+        $_arTag = Get-MiosTomlValue -Section 'branding' -Key 'tagline_app' -Default (Get-MiosTomlValue -Section 'branding' -Key 'tagline' -Default 'My Personal Operating System')
+        Set-ItemProperty -Path $uninstKey -Name 'DisplayName'     -Value ('MiOS - ' + $_arTag) -Force
         Set-ItemProperty -Path $uninstKey -Name 'DisplayVersion'  -Value 'v0.2.4' -Force
         Set-ItemProperty -Path $uninstKey -Name 'Publisher'       -Value 'mios-dev' -Force
         Set-ItemProperty -Path $uninstKey -Name 'InstallLocation' -Value $miosRoot -Force
@@ -2303,11 +2370,17 @@ namespace MiOS.NativeApp {
         if ($iconPath) { Set-ItemProperty -Path $uninstKey -Name 'DisplayIcon' -Value $iconPath -Force }
         Set-ItemProperty -Path $uninstKey -Name 'NoModify' -Value 1 -Type DWord -Force
         Set-ItemProperty -Path $uninstKey -Name 'NoRepair' -Value 1 -Type DWord -Force
-        # UninstallString: a one-line PS that removes the shortcuts +
-        # uninstall key + launcher. The full-fat uninstaller comes
-        # later from build-mios.ps1 (handles WSL distros etc.); this
-        # is the minimum viable for "Settings > Apps > Uninstall".
-        $uninstCmd = "$pwshExe -NoProfile -ExecutionPolicy Bypass -Command `"Remove-Item -LiteralPath '$smLnk','$desktopDir\MiOS.lnk' -Force -EA SilentlyContinue; Remove-Item -LiteralPath '$uninstKey' -Recurse -Force -EA SilentlyContinue`""
+        # UninstallString: prefer the full M:\MiOS\bin\uninstall.ps1 if
+        # build-mios.ps1's Install-WindowsBranding has staged it; falls
+        # back to a minimum-viable inline removal of the hub + uninstall
+        # entry .lnks + registry key when the full uninstaller isn't on
+        # disk yet (e.g. half-bootstrapped host).
+        $_fullUninst = Join-Path $miosRoot 'bin\uninstall.ps1'
+        if (Test-Path -LiteralPath $_fullUninst) {
+            $uninstCmd = "$pwshExe -NoProfile -ExecutionPolicy Bypass -File `"$_fullUninst`""
+        } else {
+            $uninstCmd = "$pwshExe -NoProfile -ExecutionPolicy Bypass -Command `"Remove-Item -LiteralPath '$smLnk','$desktopDir\MiOS.lnk','$startMenuDir\Uninstall MiOS.lnk','$desktopDir\Uninstall MiOS.lnk' -Force -EA SilentlyContinue; Remove-Item -LiteralPath '$uninstKey' -Recurse -Force -EA SilentlyContinue`""
+        }
         Set-ItemProperty -Path $uninstKey -Name 'UninstallString' -Value $uninstCmd -Force
         Write-Host "  [+] Add/Remove Programs entry registered (HKCU\...\Uninstall\MiOS)." -ForegroundColor DarkGray
     } catch {
@@ -3070,11 +3143,32 @@ if (`$true) {
         `$_logoBudget = if (`$_compact) { 1 } else { [math]::Min(11, [math]::Floor(`$_contentBudget / 2)) }
         `$_ffBudget   = `$_contentBudget - `$_logoBudget
 
+        # Read mios.toml ONCE up-front so [dashboard].title (here),
+        # [dashboard].rows + [theme.font] (further down) all read from
+        # the same in-memory copy.  No fallback to other paths -- the
+        # canonical layout is M:\etc\mios (host overlay) > M:\usr\share
+        # (vendor on M:\).
+        `$_dashTomlText = `$null
+        foreach (`$_tc in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+            if (Test-Path -LiteralPath `$_tc) {
+                try { `$_dashTomlText = [IO.File]::ReadAllText(`$_tc, (New-Object System.Text.UTF8Encoding(`$false))); break } catch {}
+            }
+        }
+
         # Top frame.
         Write-Host (`$TL + (`$H * (`$WIDTH - 2)) + `$TR) -ForegroundColor Blue
         if (`$_compact) {
-            # 1-line title band: "MiOS  --  Immutable Fedora AI Workstation"
+            # 1-line title band -- resolves through mios.toml [dashboard].title
+            # at runtime so the configurator HTML edits flow through to the
+            # next render.  Vendor default is the technical descriptor
+            # ("MiOS  --  Immutable Fedora AI Workstation"); operators who
+            # want the friendly "My Personal Operating System" face on the
+            # dashboard subtitle override [dashboard].title via mios.html.
             `$title = 'MiOS  --  Immutable Fedora AI Workstation'
+            if (`$_dashTomlText) {
+                `$_titleM = [regex]::Match(`$_dashTomlText, '(?ms)^\[dashboard\]\s*\r?\n.*?^\s*title\s*=\s*"([^"]+)"')
+                if (`$_titleM.Success) { `$title = `$_titleM.Groups[1].Value }
+            }
             Write-Host (_Center `$title) -ForegroundColor Blue
         }
         elseif (Test-Path -LiteralPath `$LogoPath) {
@@ -3213,19 +3307,13 @@ if (`$true) {
             }
         }
 
-        # Read [dashboard].rows + [theme.font] from mios.toml at RUNTIME so
-        # operator edits via mios.html flow into the next dashboard render
-        # without re-running install.  Vendor defaults baked in below if
-        # parsing fails (cold first-run before M:\ overlay is staged).
+        # Parse [dashboard].rows + [theme.font] from the mios.toml text
+        # we already loaded above for [dashboard].title.  Vendor defaults
+        # baked in below if parsing fails (cold first-run before M:\
+        # overlay is staged).
         `$_dashRows  = `$null
         `$_dashFontF = '$_themeFontFace'
         `$_dashFontS = $_themeFontSize
-        `$_dashTomlText = `$null
-        foreach (`$_tc in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
-            if (Test-Path -LiteralPath `$_tc) {
-                try { `$_dashTomlText = [IO.File]::ReadAllText(`$_tc, (New-Object System.Text.UTF8Encoding(`$false))); break } catch {}
-            }
-        }
         if (`$_dashTomlText) {
             `$_dashSec = [regex]::Match(`$_dashTomlText, '(?ms)^\[dashboard\]\s*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)')
             if (`$_dashSec.Success) {
@@ -3348,8 +3436,8 @@ if (`$true) {
             try {
                 `$_eulaLines = @(
                     '',
-                    '  MiOS -- Immutable Fedora AI Workstation',
-                    '  My OS / My Operating System (pronounced "MyOS")',
+                    '  MiOS -- My Personal Operating System',
+                    '  Immutable Fedora AI Workstation (pronounced "MyOS")',
                     '',
                     '  By invoking any MiOS entry point you acknowledge:',
                     '    * MiOS is provided AS IS, NO WARRANTY (MIT license).',
