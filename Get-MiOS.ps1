@@ -4876,26 +4876,32 @@ if ($env:MIOS_GETMIOS_FUNCTIONS_ONLY) {
 # refactor in build-mios.ps1 should keep most installs unblocked).
 function Add-MiosDefenderExclusions {
     if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) { return }
-    $excPaths = @(
+    # SSOT: exclusion paths + processes resolve through mios.toml
+    # [security.defender_exclusions].* with vendor defaults baked here.
+    # Operator can add their own paths via mios.html -> mios.toml.
+    $_defaultPaths = @(
         'M:\',
         'M:\MiOS',
         'M:\MiOS\bin',
         'M:\MiOS\repo',
-        (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet')
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet'),
+        $env:TEMP
     )
-    $excProcs = @('M:\MiOS\bin\mios-launch.exe','M:\MiOS\bin\fastfetch.exe','M:\MiOS\bin\btop.exe')
+    $_defaultProcs = @(
+        'M:\MiOS\bin\mios-launch.exe',
+        'M:\MiOS\bin\fastfetch.exe',
+        'M:\MiOS\bin\btop.exe'
+    )
+    $excPaths = @(Get-MiosTomlValue -Section 'security.defender_exclusions' -Key 'paths'     -Default $_defaultPaths)
+    $excProcs = @(Get-MiosTomlValue -Section 'security.defender_exclusions' -Key 'processes' -Default $_defaultProcs)
     foreach ($p in $excPaths) {
         if ([string]::IsNullOrWhiteSpace($p)) { continue }
         try { Add-MpPreference -ExclusionPath $p -ErrorAction SilentlyContinue } catch {}
     }
     foreach ($p in $excProcs) {
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
         try { Add-MpPreference -ExclusionProcess $p -ErrorAction SilentlyContinue } catch {}
     }
-    # %TEMP%\mios-elev-<rand>.ps1 -- the Pass-2 inner-cmd script. Wildcard
-    # exclusion isn't supported via Add-MpPreference, so exclude %TEMP%
-    # as a path. Operator's TEMP often has unrelated content but the AMSI
-    # impact only matters during install runs (minutes, not hours).
-    try { Add-MpPreference -ExclusionPath $env:TEMP -ErrorAction SilentlyContinue } catch {}
 }
 try { Add-MiosDefenderExclusions } catch { Write-Host "  [!] Defender exclusion add failed (non-fatal, AMSI may still block): $($_.Exception.Message)" -ForegroundColor Yellow }
 

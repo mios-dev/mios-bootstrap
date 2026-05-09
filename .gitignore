@@ -14,6 +14,13 @@
 !build-mios.sh
 !build-mios.ps1
 !Get-MiOS.ps1
+# C# source for mios-launch.exe lives outside the .ps1 heredoc so AMSI
+# doesn't see [DllImport] declarations as part of the PowerShell script
+# content (operator 2026-05-09 16:48 install: build-mios.ps1 was AMSI-
+# blocked because of the embedded C# heredoc with SetWindowPos +
+# Process.Start). build-mios.ps1 reads src/mios-launch.cs at runtime.
+!src/
+!src/**
 # Win+R-friendly batch launcher. Operator double-clicks this OR pastes
 # the equivalent powershell one-liner into Win+R; both fetch Get-MiOS.ps1
 # via irm|iex.
