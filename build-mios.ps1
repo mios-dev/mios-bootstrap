@@ -3129,18 +3129,35 @@ function New-BuilderDistro([hashtable]$HW) {
 
     # ── Force the podman-MiOS-DEV WSL distro onto M:\ ────────────────────
     # Operator: "podman-MiOS-DEV MUST also be located on M:\". XDG_DATA_HOME=
-    # M:\podman + Set-PodmanMachineStorageOnM's junctions are SUPPOSED to make
-    # podman init create the distro under M:\, but on some podman versions
-    # the WSL2 VHDX still ends up under %LOCALAPPDATA%\Packages\<guid>\
-    # LocalState (WSL2 ignores XDG_DATA_HOME -- it only respects the path
-    # passed to `wsl --import`). Detect the actual BasePath via registry
-    # and, if not on M:\, do export + unregister + import to force it.
-    if (Test-Path 'M:\') {
+    # Operator 2026-05-09 (4th time): "I have told you the broken
+    # MiOS-DEV machine is due to relocation and renaming breaking
+    # the connections!!!".  Move-PodmanWslDistroToM does a
+    # wsl --export + unregister + import which breaks podman's
+    # internal machine state (podman's config files reference the
+    # old VHDX path; after import the distro has the same name but
+    # podman doesn't recognize it as the same machine -- subsequent
+    # `podman machine` commands fail with "machine not found" /
+    # `wsl ... getpwnam(root) failed 5`).
+    #
+    # Per memory feedback_mios_distro_name_locked +
+    # feedback_mios_dev_on_m_drive: junctions ONLY, never re-import.
+    # The XDG_DATA_HOME=M:\podman set at the top of New-BuilderDistro
+    # + the reparse-point junctions on every podman-machine candidate
+    # path (Set-PodmanMachineStorageOnM, called from Initialize-DataDisk)
+    # already redirect new VHDX writes to M:\ at podman init time --
+    # no migration needed.
+    #
+    # Gated behind $env:MIOS_FORCE_VHDX_MIGRATE=1 for the rare case
+    # where the junction approach fails on a host (e.g., admin denied
+    # symlink creation).  Default is to SKIP the migration entirely.
+    if ((Test-Path 'M:\') -and ($env:MIOS_FORCE_VHDX_MIGRATE -in @('1','true','TRUE','yes'))) {
         try {
             Move-PodmanWslDistroToM -DistroName $BuilderDistro
         } catch {
             Log-Warn "podman-WSL distro M:\ migration: $_"
         }
+    } else {
+        Log-Ok "podman-WSL distro $BuilderDistro left in-place (junction redirect handles M:\ placement; set MIOS_FORCE_VHDX_MIGRATE=1 to force export-unregister-import)"
     }
 
     # Rootful machine-os distros are not accessible via wsl.exe or podman machine ssh.
