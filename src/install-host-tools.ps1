@@ -306,4 +306,43 @@ function Install-MiosWindowsTools {
             Log-Warn ("verify: '{0}' NOT on PATH (winget install may have failed; check above)" -f $probe)
         }
     }
+
+    # btop config + MiOS theme. Operator 2026-05-09: "btop can run if a
+    # preset can fit the dimensions provided--just need a profile preset
+    # (make it match the entire MiOS themes and color palette)". Source
+    # at src/btop/btop.conf + src/btop/mios.theme. Target M:\MiOS\btop\
+    # via BTOP_CONFIG_DIR env var so config lives on the MiOS-owned
+    # drive (per feedback_mios_m_drive_everything) rather than %APPDATA%.
+    $_btopDst = 'M:\MiOS\btop'
+    $_btopThemesDst = Join-Path $_btopDst 'themes'
+    foreach ($_d in @($_btopDst, $_btopThemesDst)) {
+        if (-not (Test-Path -LiteralPath $_d)) {
+            New-Item -ItemType Directory -Path $_d -Force | Out-Null
+        }
+    }
+    $_btopSrcCandidates = @(
+        (Join-Path $MiosRepoDir 'src\btop'),
+        (Join-Path $MiosBootstrapShadow 'src\btop')
+    )
+    $_btopSrc = $null
+    foreach ($_c in $_btopSrcCandidates) {
+        if (Test-Path -LiteralPath $_c) { $_btopSrc = $_c; break }
+    }
+    if ($_btopSrc) {
+        $_confSrc  = Join-Path $_btopSrc 'btop.conf'
+        $_themeSrc = Join-Path $_btopSrc 'mios.theme'
+        if (Test-Path -LiteralPath $_confSrc)  { Copy-Item -LiteralPath $_confSrc  -Destination (Join-Path $_btopDst 'btop.conf') -Force }
+        if (Test-Path -LiteralPath $_themeSrc) { Copy-Item -LiteralPath $_themeSrc -Destination (Join-Path $_btopThemesDst 'mios.theme') -Force }
+        Log-Ok "btop config + mios.theme staged at $_btopDst"
+        # BTOP_CONFIG_DIR tells btop where to find config + themes.
+        try {
+            [Environment]::SetEnvironmentVariable('BTOP_CONFIG_DIR', $_btopDst, 'User')
+            $env:BTOP_CONFIG_DIR = $_btopDst
+            Log-Ok "BTOP_CONFIG_DIR=$_btopDst set in User env"
+        } catch {
+            Log-Warn "BTOP_CONFIG_DIR set failed: $($_.Exception.Message)"
+        }
+    } else {
+        Log-Warn "btop config source not found (probed: $($_btopSrcCandidates -join ', ')) -- skipping btop theme stage"
+    }
 }

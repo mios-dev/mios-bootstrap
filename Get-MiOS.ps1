@@ -2208,7 +2208,21 @@ if ($hwnd -ne [IntPtr]::Zero) {
     Write-Host "  [+] MiOS launcher staged: $launcherPath" -ForegroundColor DarkGray
 
     # Resolve a pwsh.exe for the .lnk target.
-    $pwshExe = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+    # IMPORTANT: probe canonical install locations FIRST. Get-Command
+    # pwsh.exe on Windows 11 returns the WindowsApps reparse-point stub
+    # (%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe) which ShellExecute
+    # rejects with 0x80070002 (operator 17:57 install: clicking MiOS
+    # Help.lnk produced "[error 2147942402 (0x80070002) when launching
+    # `mios help`] The system cannot find the file specified.")
+    $pwshExe = $null
+    foreach ($_pcand in @(
+        "$env:ProgramFiles\PowerShell\7\pwsh.exe",
+        "$env:ProgramW6432\PowerShell\7\pwsh.exe",
+        "${env:ProgramFiles(x86)}\PowerShell\7\pwsh.exe"
+    )) {
+        if ($_pcand -and (Test-Path -LiteralPath $_pcand)) { $pwshExe = $_pcand; break }
+    }
+    if (-not $pwshExe) { $pwshExe = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source }
     if (-not $pwshExe) { $pwshExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source }
     if (-not $pwshExe) { Write-Host "  [!] No pwsh.exe found; cannot create launcher .lnk." -ForegroundColor Yellow; return }
 
