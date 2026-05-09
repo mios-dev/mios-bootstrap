@@ -4299,6 +4299,319 @@ function Ensure-PodmanDesktop {
     }
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Invoke-MiOSFullReap -- Phase 0 reap of every prior MiOS artifact
+# ─────────────────────────────────────────────────────────────────────────────
+# Per feedback_mios_entry_full_reset memory:
+#   "every irm|iex must reap ALL prior MiOS state: temp clones, persistent
+#   clones, WSL distros (MiOS / MiOS-DEV / podman-MiOS-DEV / MiOS-BUILDER),
+#   podman machines, Hyper-V VMs (MiOS-*), install dirs (M:\MiOS / C:\MiOS /
+#   %PROGRAMDATA%\MiOS), Start Menu shortcuts, registry uninstall key. No
+#   partial state; no carry-over."
+#
+# AND per operator 2026-05-09: "If the uninstaller actually uninstalled
+# things automatically every time; I wouldn't have to Manually uninstall
+# anything EVERY TIME it fails!!!!"
+#
+# Two callers:
+#   1. Phase 0 of the irm|iex main flow -- runs BEFORE Initialize-DataDisk
+#      so every install starts from zero state regardless of prior runs.
+#   2. The top-level failure trap -- runs on any unhandled exception so a
+#      half-broken install never leaves stale state behind.
+#
+# Idempotent: every block is wrapped in EAP=SilentlyContinue + try/catch so
+# missing artifacts are no-ops. Logs each category's outcome to stdout in
+# DarkGray so the operator sees what's being reaped without noise.
+#
+# Scope (matches uninstall.ps1's 12-category contract + Hyper-V + persistent
+# clones):
+#   1. Podman machines (MiOS-DEV, MiOS-BUILDER, plus any podman-MiOS-* WSL distro)
+#   2. WSL distros (MiOS, MiOS-DEV, podman-MiOS-DEV, MiOS-BUILDER, podman-MiOS-BUILDER)
+#   3. Hyper-V VMs matching MiOS-*
+#   4. Install dirs: M:\ contents (everything except drive root metadata),
+#      C:\MiOS, %PROGRAMDATA%\MiOS, %LOCALAPPDATA%\MiOS, %APPDATA%\MiOS
+#   5. WT settings.json -- launchMode, profiles.defaults MiOS keys, MiOS scheme,
+#      MiOS / MiOS-WIN / MiOS-DEV / podman-MiOS-* profiles
+#   6. PowerShell profile redirector blocks (10 candidate paths, marker-delimited)
+#   7. Fonts: Geist + symbols-only Nerd Font + matching HKCU font reg entries
+#   8. PATH env entries pointing into M:\MiOS\bin (HKCU + HKLM)
+#   9. HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS
+#  10. Start Menu folder + Desktop .lnk shortcuts (every legacy variant)
+#  11. AppUserModelID HKCU/HKLM\Software\Classes\AppUserModelId\MiOS.Workstation
+#  12. podman-machine state symlinks (3 candidate paths)
+#  13. MIOS_*/MiOS_* environment variables (HKCU + HKLM)
+#
+# Non-destructive: NEVER touches C:\mios-bootstrap (operator dev clone -- may
+# have uncommitted work), the operator's pwsh profile body outside the
+# >>> MiOS ... >>> markers, or any non-MiOS WT profiles / schemes / fonts.
+function Invoke-MiOSFullReap {
+    param([switch]$Quiet)
+    $reapEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+
+    $_log = {
+        param([string]$msg, [string]$color = 'DarkGray')
+        if (-not $Quiet) { Write-Host "    $msg" -ForegroundColor $color }
+    }
+
+    if (-not $Quiet) {
+        Write-Host ''
+        Write-Host '  [*] Phase 0: Reaping all prior MiOS state (zero-carry-over contract)...' -ForegroundColor Cyan
+    }
+
+    # 1. Podman machines
+    & $_log '[1/13] podman machine stop + rm (MiOS-DEV, MiOS-BUILDER) ...'
+    foreach ($mch in @('MiOS-DEV','MiOS-BUILDER','podman-MiOS-DEV','podman-MiOS-BUILDER')) {
+        try { & podman machine stop $mch *>$null } catch {}
+        try { & podman machine rm -f $mch *>$null } catch {}
+    }
+    try { & podman system reset --force *>$null } catch {}
+
+    # 2. WSL distros (every variant the install pipeline has used)
+    & $_log '[2/13] wsl --unregister (MiOS, MiOS-DEV, podman-MiOS-*, MiOS-BUILDER) ...'
+    foreach ($d in @('MiOS','MiOS-DEV','podman-MiOS-DEV','MiOS-BUILDER','podman-MiOS-BUILDER')) {
+        try { & wsl.exe --unregister $d 2>$null | Out-Null } catch {}
+    }
+    try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
+
+    # 3. Hyper-V VMs matching MiOS-*
+    & $_log '[3/13] Hyper-V VMs (MiOS-*) ...'
+    try {
+        if (Get-Command Get-VM -ErrorAction SilentlyContinue) {
+            Get-VM -Name 'MiOS-*' -ErrorAction SilentlyContinue | ForEach-Object {
+                try { Stop-VM -Name $_.Name -TurnOff -Force -ErrorAction SilentlyContinue } catch {}
+                try { Remove-VM -Name $_.Name -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
+    } catch {}
+
+    # 4. Install dirs (NEVER touches C:\mios-bootstrap -- operator dev clone)
+    & $_log '[4/13] Install dirs (M:\ contents, C:\MiOS, %PROGRAMDATA%\MiOS, %LOCALAPPDATA%\MiOS) ...'
+    foreach ($p in @(
+        'C:\MiOS',
+        (Join-Path $env:ProgramData    'MiOS'),
+        (Join-Path $env:LOCALAPPDATA   'MiOS'),
+        (Join-Path $env:APPDATA        'MiOS')
+    )) {
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        if (Test-Path -LiteralPath $p) {
+            try { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    # M:\ contents -- wipe everything at the drive root (the partition itself
+    # stays; Initialize-DataDisk's idempotent check sees M:\ exists with
+    # label=MIOS-DEV and skips re-creation). MiOS owns this entire volume.
+    if (Test-Path -LiteralPath 'M:\') {
+        try {
+            Get-ChildItem -LiteralPath 'M:\' -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -ne 'System Volume Information' -and $_.Name -ne '$RECYCLE.BIN' } |
+                ForEach-Object {
+                    try { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+                }
+        } catch {}
+    }
+
+    # 5. WT settings.json -- remove only MiOS-set keys, preserve everything else
+    & $_log '[5/13] Windows Terminal settings.json (MiOS scheme + profiles + defaults) ...'
+    foreach ($wtPath in @(
+        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
+        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json')
+    )) {
+        if (-not (Test-Path -LiteralPath $wtPath)) { continue }
+        try {
+            $raw = Get-Content -LiteralPath $wtPath -Raw
+            $stripped = [regex]::Replace($raw, '(?ms)/\*.*?\*/', '')
+            $stripped = [regex]::Replace($stripped, '(?m)^\s*//.*$', '')
+            $stripped = [regex]::Replace($stripped, ',(\s*[\}\]])', '$1')
+            $j = $stripped | ConvertFrom-Json -ErrorAction Stop
+            $changed = $false
+            if ($j.PSObject.Properties['launchMode'] -and $j.launchMode -in @('focus','maximizedFocus','focusFullscreen')) {
+                $j.PSObject.Properties.Remove('launchMode'); $changed = $true
+            }
+            if ($j.profiles -and $j.profiles.defaults) {
+                foreach ($k in @('scrollbarState','padding','useAcrylic','opacity','systemBackdrop','suppressApplicationTitle','disableAnimations','useAtlasEngine','experimental.detectURLs','experimental.input.forceVT','experimental.rendering.forceFullRepaint')) {
+                    if ($j.profiles.defaults.PSObject.Properties[$k]) {
+                        $j.profiles.defaults.PSObject.Properties.Remove($k); $changed = $true
+                    }
+                }
+            }
+            if ($j.schemes) {
+                $keepSchemes = @($j.schemes | Where-Object { $_.name -ne 'MiOS' })
+                if ($keepSchemes.Count -ne $j.schemes.Count) { $j.schemes = [object[]]$keepSchemes; $changed = $true }
+            }
+            if ($j.profiles -and $j.profiles.list) {
+                $keepProfiles = @($j.profiles.list | Where-Object {
+                    $_.name -ne 'MiOS' -and $_.name -ne 'MiOS-WIN' -and $_.name -ne 'MiOS-DEV' -and $_.name -ne 'MiOS-Bootstrap' -and $_.name -notmatch '^podman-MiOS-' -and $_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}' -and $_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456790}'
+                })
+                if ($keepProfiles.Count -ne $j.profiles.list.Count) { $j.profiles.list = [object[]]$keepProfiles; $changed = $true }
+            }
+            if ($changed) {
+                ($j | ConvertTo-Json -Depth 32) | Set-Content -LiteralPath $wtPath -Encoding UTF8
+            }
+        } catch {}
+    }
+
+    # 6. PowerShell profile redirector blocks (marker-delimited removal)
+    & $_log '[6/13] PowerShell profile redirector blocks (MiOS markers) ...'
+    function script:Remove-MiosMarkerBlock {
+        param([string]$Text, [string]$StartMarker, [string]$EndMarker)
+        while ($true) {
+            $si = $Text.IndexOf($StartMarker)
+            if ($si -lt 0) { return $Text }
+            $ei = $Text.IndexOf($EndMarker, $si)
+            if ($ei -lt 0) { return $Text }
+            $endPos = $ei + $EndMarker.Length
+            if ($endPos -lt $Text.Length -and $Text[$endPos] -eq "`r") { $endPos++ }
+            if ($endPos -lt $Text.Length -and $Text[$endPos] -eq "`n") { $endPos++ }
+            $Text = $Text.Substring(0, $si) + $Text.Substring($endPos)
+        }
+    }
+    $pwshProfileCandidates = @(
+        (Join-Path $env:USERPROFILE 'Documents\PowerShell\profile.ps1'),
+        (Join-Path $env:USERPROFILE 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
+        (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\profile.ps1'),
+        (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+        (Join-Path $env:USERPROFILE 'OneDrive\Documents\PowerShell\profile.ps1'),
+        (Join-Path $env:USERPROFILE 'OneDrive\Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
+        (Join-Path $env:USERPROFILE 'OneDrive\Documents\WindowsPowerShell\profile.ps1'),
+        (Join-Path $env:USERPROFILE 'OneDrive\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
+    ) | Where-Object { $_ } | Sort-Object -Unique
+    foreach ($pp in $pwshProfileCandidates) {
+        if (-not (Test-Path -LiteralPath $pp)) { continue }
+        try {
+            $body = Get-Content -LiteralPath $pp -Raw
+            $body = Remove-MiosMarkerBlock -Text $body -StartMarker '# >>> MiOS oh-my-posh init >>>' -EndMarker '# <<< MiOS oh-my-posh init <<<'
+            $body = Remove-MiosMarkerBlock -Text $body -StartMarker '# >>> MiOS dash function >>>'   -EndMarker '# <<< MiOS dash function <<<'
+            $body = $body.Trim()
+            if ([string]::IsNullOrWhiteSpace($body)) {
+                Remove-Item -LiteralPath $pp -Force -ErrorAction SilentlyContinue
+            } else {
+                Set-Content -LiteralPath $pp -Value $body -Encoding UTF8 -NoNewline
+            }
+        } catch {}
+    }
+
+    # 7. Fonts (Geist + Symbols-Only Nerd Font + matching HKCU reg entries)
+    & $_log '[7/13] Fonts (Geist*, *NerdFont*, SymbolsOnly*) + HKCU font reg ...'
+    $fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+    $fontReg = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+    if (Test-Path -LiteralPath $fontDir) {
+        Get-ChildItem -LiteralPath $fontDir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(Geist|.*NerdFontMono|.*NerdFontPropo|.*NerdFont|SymbolsOnly|.*Symbols.*)' } |
+            ForEach-Object {
+                $fname = $_.Name
+                try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+                if (Test-Path -LiteralPath $fontReg) {
+                    $face = [System.IO.Path]::GetFileNameWithoutExtension($fname)
+                    foreach ($suffix in @(' (TrueType)',' (OpenType)')) {
+                        $regName = "$face$suffix"
+                        try { Remove-ItemProperty -LiteralPath $fontReg -Name $regName -ErrorAction SilentlyContinue } catch {}
+                    }
+                }
+            }
+    }
+
+    # 8. PATH env (HKCU + HKLM if admin) -- strip M:\MiOS\bin entries
+    & $_log '[8/13] PATH env entries (M:\MiOS\bin from HKCU + HKLM) ...'
+    foreach ($scope in @('User','Machine')) {
+        try {
+            $cur = [Environment]::GetEnvironmentVariable('Path', $scope)
+            if (-not $cur) { continue }
+            $parts = $cur -split ';' | Where-Object {
+                $_ -and ($_ -notmatch '[Mm]:\\\\?MiOS\\\\bin') -and ($_ -notmatch '[Mm]:\\MiOS\\bin')
+            }
+            $new = ($parts -join ';')
+            if ($new -ne $cur) {
+                [Environment]::SetEnvironmentVariable('Path', $new, $scope)
+            }
+        } catch {}
+    }
+
+    # 9. HKCU uninstall reg key
+    & $_log '[9/13] HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MiOS ...'
+    $uninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS'
+    if (Test-Path -LiteralPath $uninstKey) {
+        try { Remove-Item -LiteralPath $uninstKey -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+    }
+
+    # 10. Start Menu folder + Desktop .lnk shortcuts (every legacy name)
+    & $_log '[10/13] Start Menu folder + Desktop .lnk shortcuts ...'
+    $lnkNames = @(
+        'MiOS.lnk','MiOS-WIN.lnk','MiOS-DEV.lnk','MiOS Config.lnk','MiOS Help.lnk','Uninstall MiOS.lnk',
+        'MiOS Setup.lnk','Build MiOS.lnk','MiOS Configurator.lnk','MiOS Terminal.lnk',
+        'MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','MiOS Build.lnk','MiOS Dashboard.lnk',
+        'MiOS Update.lnk','MiOS Pull.lnk'
+    )
+    $shortcutDirs = @(
+        [Environment]::GetFolderPath('Desktop'),
+        (Join-Path $env:USERPROFILE 'OneDrive\Desktop'),
+        'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\MiOS',
+        (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\MiOS')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Sort-Object -Unique
+    foreach ($dir in $shortcutDirs) {
+        foreach ($ln in $lnkNames) {
+            $lp = Join-Path $dir $ln
+            if (Test-Path -LiteralPath $lp) {
+                try { Remove-Item -LiteralPath $lp -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
+        if ($dir -match 'Start Menu\\Programs\\MiOS$') {
+            if ((Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) {
+                try { Remove-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
+    }
+
+    # 11. AppUserModelID HKCU/HKLM registrations
+    & $_log '[11/13] AppUserModelID (MiOS.Workstation) HKCU + HKLM ...'
+    foreach ($aumKey in @(
+        'HKCU:\Software\Classes\AppUserModelId\MiOS.Workstation',
+        'HKLM:\Software\Classes\AppUserModelId\MiOS.Workstation'
+    )) {
+        if (Test-Path -LiteralPath $aumKey) {
+            try { Remove-Item -LiteralPath $aumKey -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+
+    # 12. podman-machine state symlinks (3 candidate paths)
+    & $_log '[12/13] podman-machine state symlinks (LOCALAPPDATA / .local\\share / ProgramData) ...'
+    foreach ($pmLink in @(
+        (Join-Path $env:LOCALAPPDATA 'containers\podman\machine'),
+        (Join-Path $env:USERPROFILE  '.local\share\containers\podman\machine'),
+        'C:\ProgramData\containers\podman\machine'
+    )) {
+        if (Test-Path -LiteralPath $pmLink) {
+            try {
+                $item = Get-Item -LiteralPath $pmLink -Force -ErrorAction SilentlyContinue
+                if ($item -and ($item.LinkType -eq 'SymbolicLink' -or $item.LinkType -eq 'Junction' -or $item.Target)) {
+                    Remove-Item -LiteralPath $pmLink -Force -ErrorAction SilentlyContinue
+                } elseif ($item) {
+                    Remove-Item -LiteralPath $pmLink -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            } catch {}
+        }
+    }
+
+    # 13. MIOS_*/MiOS_* environment variables (HKCU + HKLM)
+    & $_log '[13/13] MIOS_* environment variables (HKCU + HKLM) ...'
+    foreach ($scope in @('User','Machine')) {
+        try {
+            $envKey = if ($scope -eq 'User') { 'HKCU:\Environment' }
+                       else { 'HKLM:\System\CurrentControlSet\Control\Session Manager\Environment' }
+            if (Test-Path -LiteralPath $envKey) {
+                (Get-Item -LiteralPath $envKey).Property | Where-Object { $_ -match '^(MIOS_|MiOS_)' } |
+                    ForEach-Object { try { Remove-ItemProperty -LiteralPath $envKey -Name $_ -ErrorAction SilentlyContinue } catch {} }
+            }
+        } catch {}
+    }
+
+    if (-not $Quiet) {
+        Write-Host '  [+] Phase 0 reap complete -- proceeding with fresh install.' -ForegroundColor Green
+        Write-Host ''
+    }
+    $ErrorActionPreference = $reapEAP
+}
+
 function Initialize-DataDisk {
     param(
         [int]$ShrinkMB     = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'shrink_mb'    -Default 262656),
@@ -4492,6 +4805,35 @@ if ($env:MIOS_GETMIOS_FUNCTIONS_ONLY) {
 # onto M:\, so Pass-1's WT install + winget tools install + profile staging
 # all land on M:\ from the very first write. The Pass-2 calls to the same
 # functions are idempotent no-ops.
+# ── Phase 0: Reap ALL prior MiOS state BEFORE anything else ─────────────────
+# Per feedback_mios_entry_full_reset memory: "every irm|iex must reap ALL
+# prior MiOS state... No partial state; no carry-over." AND operator
+# 2026-05-09: "If the uninstaller actually uninstalled things automatically
+# every time; I wouldn't have to Manually uninstall anything EVERY TIME it
+# fails!!!!". Runs UNCONDITIONALLY on every irm|iex invocation -- even if
+# nothing prior is installed (idempotent no-op).
+try { Invoke-MiOSFullReap } catch { Write-Host "  [!] Invoke-MiOSFullReap failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+
+# ── Failure-trap auto-reap ──────────────────────────────────────────────────
+# Operator contract 2026-05-09: "If the uninstaller actually uninstalled
+# things automatically every time; I wouldn't have to Manually uninstall
+# anything EVERY TIME it fails!!!!". Phase 0 reap above already handled the
+# "next irm|iex starts clean" case. This trap handles the "current install
+# fails mid-way" case -- terminating errors here trigger a final reap so
+# Windows is left in zero-state immediately on failure (operator never sees
+# half-broken state). Runs in addition to (not replacing) Phase 0.
+trap {
+    Write-Host ''
+    Write-Host "  [!!] Install failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host '  [*]  Auto-reaping all MiOS state to leave Windows zero-state...' -ForegroundColor Yellow
+    try { Invoke-MiOSFullReap } catch {
+        Write-Host "  [!] Reap-on-failure also failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    Write-Host '  [+]  Reap complete -- re-run irm|iex one-liner to retry from clean state.' -ForegroundColor Green
+    Write-Host ''
+    exit 1
+}
+
 Write-Host ''
 Write-Host '  [*] Step 0: Provisioning M:\ partition + storage junctions...' -ForegroundColor Cyan
 try { Initialize-DataDisk } catch { Write-Host "  [!] Initialize-DataDisk failed: $($_.Exception.Message)" -ForegroundColor Yellow }
@@ -4835,22 +5177,21 @@ Write-Good "Prerequisites OK (git, podman)"
 # AFTER winget has already created the dirs, we'd need to move the
 # contents over -- doable but racy. Idempotent: re-runs are no-ops if
 # the symlinks already point at M:\.
-# NOTE: this script does NOT delete anything on the operator's
-# filesystem -- not C:\MiOS, not M:\MiOS, not %USERPROFILE%, not
-# %PROGRAMDATA%, NOTHING. A previous version of this script had a
-# "full reset" block that nuked C:\MiOS and M:\MiOS unconditionally.
-# That was wrong: a fresh-install operator has no MiOS dirs to reset
-# in the first place (so the block did nothing useful in the
-# canonical use case), and a returning operator has uncommitted work
-# in those dirs that wasn't ours to touch. The block destroyed
-# operator work and is permanently removed.
+# NOTE: Phase 0 above (Invoke-MiOSFullReap, called BEFORE Initialize-
+# DataDisk on every irm|iex run) has already nuked every prior MiOS
+# artifact on this machine: WSL distros, podman machines, Hyper-V VMs,
+# install dirs (M:\ contents / C:\MiOS / %PROGRAMDATA%\MiOS), WT MiOS
+# scheme + profiles, Start Menu folder + Desktop .lnks, HKCU uninstall
+# reg key, AppUserModelID regs, podman-machine state symlinks, MIOS_*
+# env vars, fonts, PATH entries.
 #
-# WSL distros, podman machines, and Hyper-V VMs aren't touched
-# either -- those are operator-managed VM artifacts, even when their
-# names are MiOS-flavored. If a stale registration is in the way of
-# a new install, the script's later phases will detect that
-# situation and surface an actionable error so the operator can
-# decide what to do, rather than silently destroying state.
+# Per feedback_mios_entry_full_reset memory + operator 2026-05-09:
+# "every irm|iex must reap ALL prior MiOS state... No partial state;
+# no carry-over." A previous revision deleted the reset block out of
+# excessive caution about operator dev work -- but operator dev work
+# lives in C:\mios-bootstrap (operator's git clone), which Phase 0
+# explicitly does NOT touch. M:\ is a MiOS-owned 256 GB partition;
+# C:\MiOS is the legacy install dir; neither contains operator work.
 
 # Step 0 above (before Pass-1) ALREADY provisioned M:\ + symlinked
 # podman-machine + winget package storage onto M:\. Pass-1's winget

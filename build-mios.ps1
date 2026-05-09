@@ -8926,7 +8926,9 @@ param([switch]`$Quiet, [switch]`$Purge)
 if (-not `$Quiet) {
     Write-Host ''; Write-Host '  ''MiOS'' Uninstaller' -ForegroundColor Red; Write-Host ''
     Write-Host "  Removes:"
-    Write-Host "    - Podman machine + WSL distros (`$B, `$M, podman-MiOS-*)"
+    Write-Host "    - Podman machines (MiOS-DEV, MiOS-BUILDER, podman-MiOS-*) + podman system reset"
+    Write-Host "    - WSL distros (MiOS, MiOS-DEV, podman-MiOS-*, MiOS-BUILDER, podman-MiOS-BUILDER)"
+    Write-Host "    - Hyper-V VMs matching MiOS-*"
     Write-Host "    - M:\\MiOS install dir + overlay files + ProgramData (`$I, `$P, `$D)"
     Write-Host "    - Start Menu folder + Desktop shortcuts"
     Write-Host "    - WT settings.json: launchMode, profiles.defaults, MiOS scheme + profiles"
@@ -8945,20 +8947,36 @@ if (-not `$Quiet) {
     if ((Read-Host "  Type 'yes' to confirm") -ne 'yes') { Write-Host '  Aborted.'; exit 0 }
 }
 
-# 1. Podman machine
-Write-Host '  [1/12] Stopping + removing podman machine...' -ForegroundColor Cyan
-try { & podman machine stop `$B 2>`$null } catch {}
-try { & podman machine rm -f `$B 2>`$null } catch {}
+# 1. Podman machine (every variant + global system reset)
+Write-Host '  [1/13] Stopping + removing podman machines...' -ForegroundColor Cyan
+foreach (`$mch in @(`$B, 'MiOS-DEV','MiOS-BUILDER','podman-MiOS-DEV','podman-MiOS-BUILDER')) {
+    if ([string]::IsNullOrWhiteSpace(`$mch)) { continue }
+    try { & podman machine stop `$mch 2>`$null } catch {}
+    try { & podman machine rm -f `$mch 2>`$null } catch {}
+}
+try { & podman system reset --force 2>`$null } catch {}
 
 # 2. WSL distros (every variant the install has used across revisions)
-Write-Host '  [2/12] Unregistering WSL distros...' -ForegroundColor Cyan
-foreach (`$d in @(`$B, `$M, 'MiOS-DEV', 'podman-MiOS-DEV', 'MiOS-BUILDER', 'podman-MiOS-BUILDER')) {
+Write-Host '  [2/13] Unregistering WSL distros...' -ForegroundColor Cyan
+foreach (`$d in @(`$B, `$M, 'MiOS', 'MiOS-DEV', 'podman-MiOS-DEV', 'MiOS-BUILDER', 'podman-MiOS-BUILDER')) {
     if ([string]::IsNullOrWhiteSpace(`$d)) { continue }
     try { & wsl.exe --unregister `$d 2>`$null | Out-Null } catch {}
 }
+try { & wsl.exe --shutdown 2>`$null | Out-Null } catch {}
+
+# 2b. Hyper-V VMs matching MiOS-* (per feedback_mios_entry_full_reset memory)
+Write-Host '  [3/13] Removing Hyper-V VMs (MiOS-*)...' -ForegroundColor Cyan
+try {
+    if (Get-Command Get-VM -ErrorAction SilentlyContinue) {
+        Get-VM -Name 'MiOS-*' -ErrorAction SilentlyContinue | ForEach-Object {
+            try { Stop-VM -Name `$_.Name -TurnOff -Force -ErrorAction SilentlyContinue } catch {}
+            try { Remove-VM -Name `$_.Name -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+} catch {}
 
 # 3. Install dirs (preserve `$C unless -Purge)
-Write-Host '  [3/12] Removing install dirs (M:\\MiOS + overlay)...' -ForegroundColor Cyan
+Write-Host '  [4/13] Removing install dirs (M:\\MiOS + overlay)...' -ForegroundColor Cyan
 `$dirsToRemove = @(`$I, `$P, `$D, `$S)
 if (`$Purge) { `$dirsToRemove += `$C }
 foreach (`$p in `$dirsToRemove) {
@@ -8973,7 +8991,7 @@ if (Test-Path -LiteralPath 'M:\') {
 }
 
 # 4. WT settings.json -- remove only MiOS-set keys, preserve everything else
-Write-Host '  [4/12] Cleaning Windows Terminal settings.json...' -ForegroundColor Cyan
+Write-Host '  [5/13] Cleaning Windows Terminal settings.json...' -ForegroundColor Cyan
 foreach (`$wtPath in @(`$WT, `$WT_PREVIEW)) {
     if (-not (Test-Path -LiteralPath `$wtPath)) { continue }
     try {
@@ -9000,10 +9018,10 @@ foreach (`$wtPath in @(`$WT, `$WT_PREVIEW)) {
             `$keepSchemes = @(`$j.schemes | Where-Object { `$_.name -ne 'MiOS' })
             if (`$keepSchemes.Count -ne `$j.schemes.Count) { `$j.schemes = [object[]]`$keepSchemes; `$changed = `$true }
         }
-        # MiOS / MiOS-DEV / podman-MiOS-* profiles
+        # MiOS / MiOS-WIN / MiOS-DEV / podman-MiOS-* profiles
         if (`$j.profiles -and `$j.profiles.list) {
             `$keepProfiles = @(`$j.profiles.list | Where-Object {
-                `$_.name -ne 'MiOS' -and `$_.name -ne 'MiOS-DEV' -and `$_.name -ne 'MiOS-Bootstrap' -and `$_.name -notmatch '^podman-MiOS-' -and `$_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}' -and `$_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456790}'
+                `$_.name -ne 'MiOS' -and `$_.name -ne 'MiOS-WIN' -and `$_.name -ne 'MiOS-DEV' -and `$_.name -ne 'MiOS-Bootstrap' -and `$_.name -notmatch '^podman-MiOS-' -and `$_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}' -and `$_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456790}'
             })
             if (`$keepProfiles.Count -ne `$j.profiles.list.Count) { `$j.profiles.list = [object[]]`$keepProfiles; `$changed = `$true }
         }
@@ -9014,7 +9032,7 @@ foreach (`$wtPath in @(`$WT, `$WT_PREVIEW)) {
 }
 
 # 5. PowerShell profile redirector blocks (both pwsh 7 + WindowsPowerShell 5.1)
-Write-Host '  [5/12] Removing PowerShell profile redirector blocks...' -ForegroundColor Cyan
+Write-Host '  [6/13] Removing PowerShell profile redirector blocks...' -ForegroundColor Cyan
 function Remove-MarkerBlock {
     param([string]`$Text, [string]`$StartMarker, [string]`$EndMarker)
     while (`$true) {
@@ -9057,7 +9075,7 @@ foreach (`$pp in `$pwshProfileCandidates) {
 }
 
 # 6. Fonts (Geist + Symbols-Only Nerd Font)
-Write-Host '  [6/12] Removing MiOS fonts...' -ForegroundColor Cyan
+Write-Host '  [7/13] Removing MiOS fonts...' -ForegroundColor Cyan
 if (Test-Path -LiteralPath `$FONTDIR) {
     Get-ChildItem -LiteralPath `$FONTDIR -File -ErrorAction SilentlyContinue |
         Where-Object { `$_.Name -match '^(Geist|.*NerdFontMono|.*NerdFontPropo|.*NerdFont|SymbolsOnly|.*Symbols.*)' } |
@@ -9076,7 +9094,7 @@ if (Test-Path -LiteralPath `$FONTDIR) {
 }
 
 # 7. PATH env (HKCU + HKLM if admin)
-Write-Host '  [7/12] Removing PATH env entries...' -ForegroundColor Cyan
+Write-Host '  [8/13] Removing PATH env entries...' -ForegroundColor Cyan
 foreach (`$scope in @('User','Machine')) {
     try {
         `$cur = [Environment]::GetEnvironmentVariable('Path', `$scope)
@@ -9090,11 +9108,11 @@ foreach (`$scope in @('User','Machine')) {
 }
 
 # 8. HKCU uninstall reg key
-Write-Host '  [8/12] Removing HKCU uninstall reg key...' -ForegroundColor Cyan
+Write-Host '  [9/13] Removing HKCU uninstall reg key...' -ForegroundColor Cyan
 if (Test-Path -LiteralPath `$K) { Remove-Item -LiteralPath `$K -Recurse -Force -ErrorAction SilentlyContinue }
 
 # 9. Start Menu folder + Desktop .lnk shortcuts
-Write-Host '  [9/12] Removing Start Menu + Desktop shortcuts...' -ForegroundColor Cyan
+Write-Host '  [10/13] Removing Start Menu + Desktop shortcuts...' -ForegroundColor Cyan
 `$lnkNames = @(
     'MiOS.lnk','MiOS-DEV.lnk','MiOS Config.lnk','MiOS Help.lnk','Uninstall MiOS.lnk',
     # Legacy names from prior install revisions
@@ -9123,7 +9141,7 @@ foreach (`$dir in `$shortcutDirs) {
 }
 
 # 10. AppUserModelID HKCU registrations
-Write-Host '  [10/12] Removing AppUserModelID registrations...' -ForegroundColor Cyan
+Write-Host '  [11/13] Removing AppUserModelID registrations...' -ForegroundColor Cyan
 foreach (`$aumKey in @('HKCU:\Software\Classes\AppUserModelId\MiOS.Workstation',
                        'HKLM:\Software\Classes\AppUserModelId\MiOS.Workstation')) {
     if (Test-Path -LiteralPath `$aumKey) {
@@ -9132,7 +9150,7 @@ foreach (`$aumKey in @('HKCU:\Software\Classes\AppUserModelId\MiOS.Workstation',
 }
 
 # 11. podman-machine state symlinks
-Write-Host '  [11/12] Removing podman-machine state symlinks...' -ForegroundColor Cyan
+Write-Host '  [12/13] Removing podman-machine state symlinks...' -ForegroundColor Cyan
 foreach (`$pmLink in @(
     (Join-Path `$env:LOCALAPPDATA 'containers\podman\machine'),
     (Join-Path `$env:USERPROFILE  '.local\share\containers\podman\machine'),
@@ -9149,7 +9167,7 @@ foreach (`$pmLink in @(
 }
 
 # 12. MIOS_* environment variables
-Write-Host '  [12/12] Removing MIOS_* environment variables...' -ForegroundColor Cyan
+Write-Host '  [13/13] Removing MIOS_* environment variables...' -ForegroundColor Cyan
 foreach (`$scope in @('User','Machine')) {
     try {
         `$envKey = if (`$scope -eq 'User') { 'HKCU:\Environment' }
@@ -9169,7 +9187,7 @@ if (`$Purge) {
     Write-Host "  Run with -Purge to also remove per-user config." -ForegroundColor DarkGray
 }
 "@ | Set-Content $uninstSc -Encoding UTF8
-    Log-Ok "uninstall.ps1 written (12-category cleanup)"
+    Log-Ok "uninstall.ps1 written (13-category cleanup, mirrors Get-MiOS.ps1 Invoke-MiOSFullReap)"
     End-Phase $script:AppRegPhaseId
 
     # ── Phase 9 -- Build (DEPRECATED) ─────────────────────────────────────────
