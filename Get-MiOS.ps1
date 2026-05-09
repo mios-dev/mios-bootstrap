@@ -211,75 +211,59 @@ if (-not $env:MIOS_CACHE_BUSTED -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
 # On 'No thanks' or any non-accept reply we exit 78 (EX_CONFIG) before
 # any clone, fetch, or elevation -- nothing on disk is mutated.
 
-# ── mios.toml layered-overlay reader ─────────────────────────────────────────
+# ── mios.toml reader (Get-MiOS.ps1 = ALWAYS web-only) ─────────────────────────
 # mios.toml is THE global dotfile (per feedback_mios_toml_html_global_dotfile
 # memory). EVERY tunable -- window dims, M:\ size, font, AumID, retry
 # delays, theming, package lists -- sources from here. The HTML
 # configurator edits mios.toml; every consumer reads from it.
 #
-# Resolution order (highest → lowest):
-#   1. ~/.config/mios/mios.toml        (per-user override)
-#   2. M:\etc\mios\mios.toml           (host override; configurator-saved)
-#   3. M:\usr\share\mios\mios.toml     (vendor copy on M:\)
-#   4. origin/main raw GitHub          (cold first-run, no M:\ yet)
+# This file (Get-MiOS.ps1) is the BOOTSTRAP entry -- invoked via
+# `irm | iex` for clean installs and via `mios update` for forced
+# refresh.  Per operator architectural rule 2026-05-09:
 #
-# C:\MiOS is INTENTIONALLY excluded -- it's a developer working tree
-# for the MiOS project, not a consumer-facing install path. End
-# consumers never have C:\MiOS; falling through to it would silently
-# succeed on developer machines and silently fail everywhere else.
+#   "ORIGIN = web entries/repos only -- no fallback to M:\ or
+#    anywhere else -- unless origin has been pulled and it's a
+#    simple 'mios build' -- that can pull from M:\ as it'd already
+#    exist -- then 'mios update' would ALWAYS pull from web
+#    regardless of clean entry, updating, etc-etc!!!"
 #
-# Vendor defaults are sufficient (per feedback_mios_defaults_baseline): the
-# stack works with no user toml present. Get-MiosTomlValue returns its
-# `-Default` arg if the key is missing anywhere.
+# Get-MiOS.ps1 is BOTH the clean entry AND what mios update re-runs,
+# so EVERY read here is web-only.  M:\ overlays / ~/.config user
+# overrides are honored by build-mios.ps1's `mios build` flow (which
+# is downstream of mios-pull and assumes M:\ is current), NOT by the
+# bootstrap itself.  Mixing the two would let a stale M:\ silently
+# override a web fetch, defeating the "clean entry forces refresh"
+# guarantee.
+#
+# Vendor defaults are sufficient (per feedback_mios_defaults_baseline):
+# the stack works with no user toml present. Get-MiosTomlValue returns
+# its `-Default` arg if the key is missing anywhere.
 $script:_MiosTomlCache = @{}
 
 function Resolve-MiosTomlText {
     if ($script:_MiosTomlCache.ContainsKey('_text') -and $script:_MiosTomlCache['_text']) {
         return $script:_MiosTomlCache['_text']
     }
-    $candidates = @(
-        (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
-        'M:\etc\mios\mios.toml',
-        'M:\usr\share\mios\mios.toml'
-    )
-    foreach ($p in $candidates) {
-        if ($p -and (Test-Path -LiteralPath $p)) {
-            try {
-                # Read as UTF-8 explicitly. PS 5.1's Get-Content default
-                # is the system ANSI codepage (cp1252 on en-US), which
-                # decoded the UTF-8 PUA glyphs in [theme.prompt] as 3-char
-                # mojibake (U+E0B4's bytes EE 82 B4 became 'î‚´'). My
-                # substitution code then took $s[0]='î' as the glyph and
-                # wrote 'î' into the deployed omp.json, which
-                # rendered the operator's prompt as 'pwsh î M:\ î ...'.
-                # ReadAllText with explicit UTF8Encoding always decodes
-                # the file as UTF-8 regardless of PS version / locale.
-                $script:_MiosTomlCache['_text']   = [IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false)))
-                $script:_MiosTomlCache['_source'] = $p
-                return $script:_MiosTomlCache['_text']
-            } catch {
-                # Fallback to PS Get-Content if ReadAllText throws (e.g.
-                # path contains characters PS handles but .NET doesn't).
-                try {
-                    $script:_MiosTomlCache['_text']   = Get-Content -LiteralPath $p -Raw -Encoding UTF8 -ErrorAction Stop
-                    $script:_MiosTomlCache['_source'] = $p
-                    return $script:_MiosTomlCache['_text']
-                } catch {}
-            }
-        }
-    }
-    # Cold first-run: pull origin.
+    # Web only -- no local fallback.  See header comment for the rule.
     try {
         $cb  = [int][double]::Parse((Get-Date -UFormat %s))
         $url = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/mios.toml?cb=$cb"
-        $script:_MiosTomlCache['_text']   = Invoke-RestMethod -Uri $url `
+        # Use IWR not IRM so the response body comes back as raw text
+        # regardless of Content-Type (raw.githubusercontent.com sometimes
+        # serves .toml as application/octet-stream which IRM can't decode).
+        $resp = Invoke-WebRequest -Uri $url `
             -Headers @{ 'Cache-Control'='no-cache, no-store, max-age=0'; 'Pragma'='no-cache' } `
-            -ErrorAction Stop
-        $script:_MiosTomlCache['_source'] = "origin/main (cold)"
+            -UseBasicParsing -ErrorAction Stop
+        if ($resp.Content -is [byte[]]) {
+            $script:_MiosTomlCache['_text'] = [System.Text.Encoding]::UTF8.GetString($resp.Content)
+        } else {
+            $script:_MiosTomlCache['_text'] = [string]$resp.Content
+        }
+        $script:_MiosTomlCache['_source'] = "origin/main (web)"
         return $script:_MiosTomlCache['_text']
     } catch {
         $script:_MiosTomlCache['_text']   = ''
-        $script:_MiosTomlCache['_source'] = '(none -- vendor defaults only)'
+        $script:_MiosTomlCache['_source'] = '(unreachable -- vendor defaults only)'
         return ''
     }
 }
@@ -2361,67 +2345,54 @@ namespace MiOS.NativeApp {
 # developing, self building, self hosted... ALL values source from the
 # toml".
 #
-# Get-MiosVendorContent below resolves vendor content from mios.git
-# origin (with M:\ overlay shortcut) -- NO embedded snapshots in this
-# script.  Self-replication contract: if origin is unreachable AND
-# no on-disk overlay exists, the install hard-fails with a clear
-# error rather than falling back to a stale snapshot.
+# Get-MiosVendorContent resolves vendor content from mios.git origin
+# (raw.githubusercontent.com).  WEB ONLY -- no local fallback.
 #
-# Read order:
-#   1. M:\usr\share\mios\<rel>      -- vendor copy on M:\ (Phase 2)
-#   2. raw.githubusercontent.com mios.git origin/main
+# Per operator architectural rule 2026-05-09:
 #
-# C:\MiOS is INTENTIONALLY NOT in this list -- it's a developer
-# working directory for the MiOS project (where mios-dev/mios.git is
-# cloned for committing), NOT a consumer-facing path.  End consumers
-# never have C:\MiOS; falling back to it would silently succeed on
-# developer machines and silently fail everywhere else, masking the
-# self-replication contract.  Operator 2026-05-09: "C:\ is just
-# developer working directories for the MiOS project -- NOT for end
-# consumers at all".
+#   "ORIGIN = web entries/repos only -- no fallback to M:\ or
+#    anywhere else -- unless origin has been pulled and it's a
+#    simple 'mios build' -- that can pull from M:\ as it'd already
+#    exist -- then 'mios update' would ALWAYS pull from web
+#    regardless of clean entry, updating, etc-etc!!!"
 #
-# All on-disk reads use explicit UTF-8 ([IO.File]::ReadAllText with
-# UTF8Encoding(false)) per feedback_mios_toml_read_utf8 -- bare
-# Get-Content -Raw on PS 5.1 decodes UTF-8 PUA glyphs as cp1252 and
-# permanently mojibakes the powerline.
+# Get-MiOS.ps1 is BOTH the clean `irm | iex` entry AND what `mios
+# update` re-fetches.  Both must hit the web -- never M:\, never
+# C:\MiOS, never %USERPROFILE%.  M:\ overlays exist for build-mios.ps1
+# / `mios build` to read AFTER mios-pull has populated them; the
+# bootstrap itself ALWAYS forces a fresh fetch.  Mixing the two
+# would let a stale M:\ silently override the web pull, defeating
+# the "clean entry forces refresh" guarantee.
+#
+# Hard-fail with a clear error rather than falling back to a stale
+# snapshot.  No embedded heredocs, no M:\ cache, no on-disk dev
+# tree -- nothing but origin.
 # ========================================================================
 function Get-MiosVendorContent {
     [CmdletBinding()] param(
         [Parameter(Mandatory)] [string] $RelPath
     )
-    $rel  = $RelPath -replace '/', '\'
-    $cand = "M:\usr\share\mios\$rel"
-    if (Test-Path -LiteralPath $cand) {
-        try {
-            return [IO.File]::ReadAllText($cand, (New-Object System.Text.UTF8Encoding($false)))
-        } catch {}
-    }
     try {
         $cb  = [int][double]::Parse((Get-Date -UFormat %s))
         $url = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/$RelPath" + "?cb=$cb"
         $headers = @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' }
-        # CRITICAL: use Invoke-WebRequest, not Invoke-RestMethod.  IRM
+        # Use Invoke-WebRequest, NOT Invoke-RestMethod.  IRM
         # auto-deserializes any JSON response into a PSCustomObject; for
-        # vendor content that's a .json file (mios.omp.json) we want the
-        # RAW TEXT, not a parsed object.  IRM produced an 867-byte
-        # Set-Content stringification of a PSCustomObject (instead of
+        # vendor content like mios.omp.json we need RAW TEXT.  IRM
+        # produced an 867-byte stringified-PSCustomObject (instead of
         # the 10.9 kb omp.json source) and broke the downstream
-        # [System.Text.Encoding]::UTF8.GetBytes($Script:MiosOmpJson)
-        # call with "Cannot find an overload for GetBytes and the
-        # argument count 1" -- because the argument was an object, not a
-        # string.  IWR returns a BasicHtmlWebResponseObject whose
-        # .Content is the raw response body as a string.
+        # GetBytes() call with "Cannot find an overload" because the
+        # argument was an object, not a string.  IWR returns the raw
+        # response body as a string (or byte[] for binary), which we
+        # then UTF-8-decode if it came back as bytes -- so PUA glyphs
+        # (U+E0B4 / U+E0B6) in mios.omp.json survive end-to-end.
         $resp = Invoke-WebRequest -Uri $url -Headers $headers -UseBasicParsing -ErrorAction Stop
-        # IWR's .Content is a string for text/* responses, byte[] for
-        # binary.  raw.githubusercontent.com sometimes serves .json as
-        # application/octet-stream; decode bytes as UTF-8 explicitly so
-        # PUA glyphs in mios.omp.json (U+E0B4 / U+E0B6) survive.
         if ($resp.Content -is [byte[]]) {
             return [System.Text.Encoding]::UTF8.GetString($resp.Content)
         }
         return [string]$resp.Content
     } catch {
-        throw "Get-MiosVendorContent: cannot resolve '$RelPath' from M:\usr\share\mios or raw.githubusercontent.com mios.git origin/main. MiOS self-replication requires reachable origin -- there are no embedded fallback snapshots in this script. Underlying: $($_.Exception.Message)"
+        throw "Get-MiosVendorContent: cannot resolve '$RelPath' from raw.githubusercontent.com mios.git origin/main. MiOS self-replication requires reachable origin -- no local fallback (per operator: 'ORIGIN = web entries/repos only'). Underlying: $($_.Exception.Message)"
     }
 }
 
