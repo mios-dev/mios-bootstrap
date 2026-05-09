@@ -6939,6 +6939,58 @@ class MiOSLaunch {
     }
 
     Log-Ok "MiOS launcher installed (Desktop + Start Menu). Open it to enter an 80x32 pwsh window with the MiOS dashboard."
+
+    # ── 7. Re-run Get-MiOS.ps1's Install-MiOSPowerShellProfile +
+    # Install-MiOSTerminalProfile so EVERY install path (irm|iex Get-MiOS,
+    # mios-update, build-mios.ps1 BootstrapOnly, etc.) deterministically
+    # re-substitutes:
+    #   - M:\MiOS\powershell\profile.ps1 (Show-MiosDashboard frame_width /
+    #     right_margin / cell budget literals from current mios.toml
+    #     [terminal])
+    #   - WT settings.json globals (root launchMode, profiles.defaults
+    #     scrollbarState/padding/useAcrylic/opacity/systemBackdrop/
+    #     suppressApplicationTitle/disableAnimations/useAtlasEngine/
+    #     experimental.* from current mios.toml [theme])
+    # Before this hook, ONLY the irm|iex Get-MiOS.ps1 entry path triggered
+    # those substitutions. Every install.ps1 / mios-update / re-run of
+    # build-mios.ps1 left the deployed dashboard + WT settings.json STALE,
+    # so toml/omp.json edits looked like they had no effect (operator
+    # iteration loop on 2026-05-08, which uninstalled + reinstalled
+    # multiple times waiting for the dashboard to update -- it never did
+    # because the Step 1-8 chain never ran).
+    #
+    # Operator pivot 2026-05-08: "irm|iex is the main entry point for ALL
+    # things MiOS... FIX all in code!" -> all entry paths now route through
+    # the same Install-MiOS* function bodies, sourced from the canonical
+    # Get-MiOS.ps1 via the MIOS_GETMIOS_FUNCTIONS_ONLY=1 dot-source gate.
+    $_getMiosCandidates = @(
+        Join-Path $MiosRepoDir 'Get-MiOS.ps1'
+        Join-Path $MiosBootstrapShadow 'Get-MiOS.ps1'
+        'M:\Get-MiOS.ps1'
+    )
+    $_getMios = $_getMiosCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if ($_getMios) {
+        try {
+            $env:MIOS_GETMIOS_FUNCTIONS_ONLY = '1'
+            . $_getMios
+            Remove-Item env:\MIOS_GETMIOS_FUNCTIONS_ONLY -ErrorAction SilentlyContinue
+            if (Get-Command Install-MiOSPowerShellProfile -ErrorAction SilentlyContinue) {
+                Install-MiOSPowerShellProfile | Out-Null
+                Log-Ok "Get-MiOS Install-MiOSPowerShellProfile re-substituted (M:\MiOS\powershell\profile.ps1 from current mios.toml)"
+            } else {
+                Log-Warn "Install-MiOSPowerShellProfile not defined after Get-MiOS.ps1 dot-source -- gate may have triggered too early"
+            }
+            if (Get-Command Install-MiOSTerminalProfile -ErrorAction SilentlyContinue) {
+                Install-MiOSTerminalProfile | Out-Null
+                Log-Ok "Get-MiOS Install-MiOSTerminalProfile re-substituted (WT settings.json from current mios.toml)"
+            }
+        } catch {
+            Remove-Item env:\MIOS_GETMIOS_FUNCTIONS_ONLY -ErrorAction SilentlyContinue
+            Log-Warn "Get-MiOS.ps1 functions-only dot-source failed: $($_.Exception.Message). Dashboard + WT settings.json may be stale -- run 'irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex' to refresh."
+        }
+    } else {
+        Log-Warn "Get-MiOS.ps1 not found in any candidate path ($($_getMiosCandidates -join ', ')) -- dashboard + WT settings.json patches skipped. Run 'irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex' to refresh."
+    }
 }
 
 # =============================================================================
@@ -8275,14 +8327,56 @@ exit 1
     }
     Log-Ok "Add/Remove Programs + Start Menu created (5 native apps: MiOS, MiOS-DEV, MiOS Config, MiOS Help, Uninstall MiOS)"
 
-    # Uninstaller script. Removes the install dir + machine-wide
-    # ProgramData state + Start Menu + registry entry + Podman/WSL2
-    # distros. Preserves per-user config ($MiosConfigDir) so re-installs
-    # pick up the operator's last identity.
+    # Uninstaller script. Operator-asserted contract 2026-05-08:
+    # "EVERY failure will result in an uninstallation!! Plus make sure
+    # MiOS uninstaller ACTUALLY removes and cleans everything up after."
+    #
+    # Goal: every uninstall leaves Windows in EXACTLY the state it was
+    # in before MiOS was first installed. The next install starts from
+    # zero, no stale state to confuse the next debug iteration.
+    #
+    # What gets removed (12 artifact categories):
+    #   1. Podman machine ($BuilderDistro) -- stop + rm
+    #   2. WSL distros -- $BuilderDistro + $MiosWslDistro + every
+    #      podman-MiOS-* + MiOS-BUILDER variant (defensive, since the
+    #      install pipeline has gone through several distro names)
+    #   3. M:\MiOS install dir, M:\ overlay files, M:\ProgramData,
+    #      M:\ data dir
+    #   4. WT settings.json -- launchMode root key (only if MiOS-set),
+    #      profiles.defaults globals (only the keys MiOS writes), MiOS
+    #      scheme, MiOS profile, MiOS-DEV profile, podman-MiOS-* auto
+    #      profiles
+    #   5. PowerShell profile redirector blocks -- both pwsh 7
+    #      ($PROFILE.CurrentUserAllHosts) AND WindowsPowerShell 5.1
+    #      (~\Documents\WindowsPowerShell\profile.ps1) -- marker-
+    #      delimited block removal preserves any operator-added content
+    #      outside the markers
+    #   6. Fonts -- Geist*.otf/.ttf + Symbols-Only Nerd Font from
+    #      %LOCALAPPDATA%\Microsoft\Windows\Fonts + matching HKCU font
+    #      registry entries
+    #   7. PATH env -- M:\MiOS\bin removed from HKCU + HKLM Path
+    #   8. HKCU uninstall reg key
+    #   9. Start Menu folder + Desktop .lnk shortcuts (MiOS, MiOS-DEV,
+    #      MiOS Config, MiOS Help, Uninstall MiOS, plus stale legacy
+    #      names from prior install revisions)
+    #  10. AppUserModelID HKCU registrations
+    #  11. podman-machine state symlinks (the symlinks to M:\podman from
+    #      AppData\Local, .local\share, ProgramData\containers\podman\machine)
+    #  12. MIOS_* environment variables (HKCU + HKLM scope)
+    #
+    # Default preserves $MiosConfigDir (per-user identity / mios.toml
+    # operator overrides) so a re-install picks up the operator's
+    # last config. -Purge nukes that too for true zero-state uninstall.
+    #
+    # Non-destructive: never touches C:\MiOS, C:\mios-bootstrap (the
+    # operator's source repos), the operator's own pwsh profile content
+    # outside the >>> MiOS oh-my-posh init >>> markers, or any non-MiOS
+    # WT profiles / schemes / fonts.
     $B = $BuilderDistro
     @"
 #Requires -Version 5.1
-param([switch]`$Quiet)
+param([switch]`$Quiet, [switch]`$Purge)
+`$ErrorActionPreference = 'SilentlyContinue'
 `$I='$($MiosInstallDir-replace"'","''")'
 `$P='$($MiosProgramData-replace"'","''")'
 `$D='$($MiosDataDir-replace"'","''")'
@@ -8291,21 +8385,260 @@ param([switch]`$Quiet)
 `$K='$($UninstallRegKey-replace"'","''")'
 `$B='$B'
 `$M='$MiosWslDistro'
+`$BIN='$($MiosBinDir-replace"'","''")'
+`$DESK = [Environment]::GetFolderPath('Desktop')
+`$WT='$($env:LOCALAPPDATA-replace"'","''")\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'
+`$WT_PREVIEW='$($env:LOCALAPPDATA-replace"'","''")\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'
+`$FONTDIR='$($env:LOCALAPPDATA-replace"'","''")\Microsoft\Windows\Fonts'
+`$FONTREG='HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+
 if (-not `$Quiet) {
     Write-Host ''; Write-Host '  ''MiOS'' Uninstaller' -ForegroundColor Red; Write-Host ''
-    Write-Host "  Removes: `$I, `$P, `$D, ``$B`` + ``$M`` (Podman + WSL2 distros), Start Menu"
-    Write-Host "  Preserves: `$C (per-user config)"; Write-Host ''
+    Write-Host "  Removes:"
+    Write-Host "    - Podman machine + WSL distros (`$B, `$M, podman-MiOS-*)"
+    Write-Host "    - M:\\MiOS install dir + overlay files + ProgramData (`$I, `$P, `$D)"
+    Write-Host "    - Start Menu folder + Desktop shortcuts"
+    Write-Host "    - WT settings.json: launchMode, profiles.defaults, MiOS scheme + profiles"
+    Write-Host "    - PowerShell profile redirector blocks (pwsh 7 + WindowsPowerShell 5.1)"
+    Write-Host "    - Geist + Symbols-Only Nerd Font files + registry entries"
+    Write-Host "    - HKCU/HKLM Path entries pointing into MiOS bin"
+    Write-Host "    - HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MiOS"
+    Write-Host "    - podman-machine state symlinks"
+    Write-Host "    - MIOS_* environment variables"
+    if (`$Purge) {
+        Write-Host "    - Per-user config at `$C (PURGE mode)" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Preserves: `$C (per-user config -- pass -Purge to also remove)"
+    }
+    Write-Host ''
     if ((Read-Host "  Type 'yes' to confirm") -ne 'yes') { Write-Host '  Aborted.'; exit 0 }
 }
-try { podman machine stop `$B 2>`$null } catch {}
-try { podman machine rm -f `$B 2>`$null } catch {}
-try { wsl --unregister `$B 2>`$null } catch {}
-try { wsl --unregister `$M 2>`$null } catch {}
-foreach (`$p in @(`$I,`$P,`$D,`$S)) { if (Test-Path `$p) { Remove-Item `$p -Recurse -Force -ErrorAction SilentlyContinue } }
-if (Test-Path `$K) { Remove-Item `$K -Recurse -Force -ErrorAction SilentlyContinue }
-Write-Host ''; Write-Host "  'MiOS' removed. Per-user config at `$C preserved." -ForegroundColor Green
+
+# 1. Podman machine
+Write-Host '  [1/12] Stopping + removing podman machine...' -ForegroundColor Cyan
+try { & podman machine stop `$B 2>`$null } catch {}
+try { & podman machine rm -f `$B 2>`$null } catch {}
+
+# 2. WSL distros (every variant the install has used across revisions)
+Write-Host '  [2/12] Unregistering WSL distros...' -ForegroundColor Cyan
+foreach (`$d in @(`$B, `$M, 'MiOS-DEV', 'podman-MiOS-DEV', 'MiOS-BUILDER', 'podman-MiOS-BUILDER')) {
+    if ([string]::IsNullOrWhiteSpace(`$d)) { continue }
+    try { & wsl.exe --unregister `$d 2>`$null | Out-Null } catch {}
+}
+
+# 3. Install dirs (preserve `$C unless -Purge)
+Write-Host '  [3/12] Removing install dirs (M:\\MiOS + overlay)...' -ForegroundColor Cyan
+`$dirsToRemove = @(`$I, `$P, `$D, `$S)
+if (`$Purge) { `$dirsToRemove += `$C }
+foreach (`$p in `$dirsToRemove) {
+    if ([string]::IsNullOrWhiteSpace(`$p)) { continue }
+    if (Test-Path -LiteralPath `$p) { Remove-Item -LiteralPath `$p -Recurse -Force -ErrorAction SilentlyContinue }
+}
+# M:\ root overlay files (only the ones MiOS overlaid; never wipe drive root structure)
+if (Test-Path -LiteralPath 'M:\') {
+    foreach (`$mRoot in @('M:\etc','M:\usr','M:\var','M:\automation','M:\config','M:\tools','M:\v1','M:\winget','M:\.devcontainer','M:\.forgejo','M:\.github','M:\.git','M:\Get-MiOS.ps1','M:\install.ps1','M:\bootstrap.ps1','M:\bootstrap.sh','M:\build-mios.ps1','M:\build-mios.sh','M:\install.sh','M:\install-mios-agents.sh','M:\seed-merge.ps1','M:\seed-merge.sh','M:\push-to-github.ps1','M:\preflight.ps1','M:\mios-pipeline.ps1','M:\mios-build-local.ps1','M:\Justfile','M:\Containerfile','M:\Containerfile.minimal','M:\manifest.json','M:\image-versions.yml','M:\renovate.json','M:\system-prompt.md','M:\identity.env.example','M:\mios.toml','M:\AGENTS.md','M:\AGREEMENTS.md','M:\CLAUDE.md','M:\GEMINI.md','M:\CONTRIBUTING.md','M:\SECURITY.md','M:\README.md','M:\LICENSE','M:\VERSION','M:\MiOS-SBOM.csv','M:\llms.txt','M:\llms-full.txt','M:\.clinerules','M:\.cursorrules','M:\.editorconfig','M:\.env.mios','M:\.gitattributes','M:\.gitignore','M:\podman')) {
+        if (Test-Path -LiteralPath `$mRoot) { Remove-Item -LiteralPath `$mRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+# 4. WT settings.json -- remove only MiOS-set keys, preserve everything else
+Write-Host '  [4/12] Cleaning Windows Terminal settings.json...' -ForegroundColor Cyan
+foreach (`$wtPath in @(`$WT, `$WT_PREVIEW)) {
+    if (-not (Test-Path -LiteralPath `$wtPath)) { continue }
+    try {
+        `$raw = Get-Content -LiteralPath `$wtPath -Raw
+        `$stripped = [regex]::Replace(`$raw, '(?ms)/\*.*?\*/', '')
+        `$stripped = [regex]::Replace(`$stripped, '(?m)^\s*//.*$', '')
+        `$stripped = [regex]::Replace(`$stripped, ',(\s*[\}\]])', '`$1')
+        `$j = `$stripped | ConvertFrom-Json -ErrorAction Stop
+        `$changed = `$false
+        # Root-level launchMode (only remove if = 'focus' or 'maximizedFocus' -- our values)
+        if (`$j.PSObject.Properties['launchMode'] -and `$j.launchMode -in @('focus','maximizedFocus','focusFullscreen')) {
+            `$j.PSObject.Properties.Remove('launchMode'); `$changed = `$true
+        }
+        # profiles.defaults: only the keys MiOS writes
+        if (`$j.profiles -and `$j.profiles.defaults) {
+            foreach (`$k in @('scrollbarState','padding','useAcrylic','opacity','systemBackdrop','suppressApplicationTitle','disableAnimations','useAtlasEngine','experimental.detectURLs','experimental.input.forceVT','experimental.rendering.forceFullRepaint')) {
+                if (`$j.profiles.defaults.PSObject.Properties[`$k]) {
+                    `$j.profiles.defaults.PSObject.Properties.Remove(`$k); `$changed = `$true
+                }
+            }
+        }
+        # MiOS scheme
+        if (`$j.schemes) {
+            `$keepSchemes = @(`$j.schemes | Where-Object { `$_.name -ne 'MiOS' })
+            if (`$keepSchemes.Count -ne `$j.schemes.Count) { `$j.schemes = [object[]]`$keepSchemes; `$changed = `$true }
+        }
+        # MiOS / MiOS-DEV / podman-MiOS-* profiles
+        if (`$j.profiles -and `$j.profiles.list) {
+            `$keepProfiles = @(`$j.profiles.list | Where-Object {
+                `$_.name -ne 'MiOS' -and `$_.name -ne 'MiOS-DEV' -and `$_.name -ne 'MiOS-Bootstrap' -and `$_.name -notmatch '^podman-MiOS-' -and `$_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}' -and `$_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456790}'
+            })
+            if (`$keepProfiles.Count -ne `$j.profiles.list.Count) { `$j.profiles.list = [object[]]`$keepProfiles; `$changed = `$true }
+        }
+        if (`$changed) {
+            (`$j | ConvertTo-Json -Depth 32) | Set-Content -LiteralPath `$wtPath -Encoding UTF8
+        }
+    } catch {}
+}
+
+# 5. PowerShell profile redirector blocks (both pwsh 7 + WindowsPowerShell 5.1)
+Write-Host '  [5/12] Removing PowerShell profile redirector blocks...' -ForegroundColor Cyan
+function Remove-MarkerBlock {
+    param([string]`$Text, [string]`$StartMarker, [string]`$EndMarker)
+    while (`$true) {
+        `$si = `$Text.IndexOf(`$StartMarker)
+        if (`$si -lt 0) { return `$Text }
+        `$ei = `$Text.IndexOf(`$EndMarker, `$si)
+        if (`$ei -lt 0) { return `$Text }
+        `$endPos = `$ei + `$EndMarker.Length
+        # Trim a trailing newline if present so the removal is clean.
+        if (`$endPos -lt `$Text.Length -and `$Text[`$endPos] -eq "``r") { `$endPos++ }
+        if (`$endPos -lt `$Text.Length -and `$Text[`$endPos] -eq "``n") { `$endPos++ }
+        `$Text = `$Text.Substring(0, `$si) + `$Text.Substring(`$endPos)
+    }
+}
+`$pwshProfileCandidates = @(
+    `$PROFILE.CurrentUserAllHosts,
+    `$PROFILE.CurrentUserCurrentHost,
+    (Join-Path `$env:USERPROFILE 'Documents\PowerShell\profile.ps1'),
+    (Join-Path `$env:USERPROFILE 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
+    (Join-Path `$env:USERPROFILE 'Documents\WindowsPowerShell\profile.ps1'),
+    (Join-Path `$env:USERPROFILE 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+    (Join-Path `$env:USERPROFILE 'OneDrive\Documents\PowerShell\profile.ps1'),
+    (Join-Path `$env:USERPROFILE 'OneDrive\Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
+    (Join-Path `$env:USERPROFILE 'OneDrive\Documents\WindowsPowerShell\profile.ps1'),
+    (Join-Path `$env:USERPROFILE 'OneDrive\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
+) | Where-Object { `$_ } | Sort-Object -Unique
+foreach (`$pp in `$pwshProfileCandidates) {
+    if (-not (Test-Path -LiteralPath `$pp)) { continue }
+    try {
+        `$body = Get-Content -LiteralPath `$pp -Raw
+        `$body = Remove-MarkerBlock -Text `$body -StartMarker '# >>> MiOS oh-my-posh init >>>' -EndMarker '# <<< MiOS oh-my-posh init <<<'
+        `$body = Remove-MarkerBlock -Text `$body -StartMarker '# >>> MiOS dash function >>>' -EndMarker '# <<< MiOS dash function <<<'
+        `$body = `$body.Trim()
+        if ([string]::IsNullOrWhiteSpace(`$body)) {
+            Remove-Item -LiteralPath `$pp -Force -ErrorAction SilentlyContinue
+        } else {
+            Set-Content -LiteralPath `$pp -Value `$body -Encoding UTF8 -NoNewline
+        }
+    } catch {}
+}
+
+# 6. Fonts (Geist + Symbols-Only Nerd Font)
+Write-Host '  [6/12] Removing MiOS fonts...' -ForegroundColor Cyan
+if (Test-Path -LiteralPath `$FONTDIR) {
+    Get-ChildItem -LiteralPath `$FONTDIR -File -ErrorAction SilentlyContinue |
+        Where-Object { `$_.Name -match '^(Geist|.*NerdFontMono|.*NerdFontPropo|.*NerdFont|SymbolsOnly|.*Symbols.*)' } |
+        ForEach-Object {
+            `$fname = `$_.Name
+            try { Remove-Item -LiteralPath `$_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+            # Matching reg entries (TrueType / OpenType suffixes)
+            if (Test-Path -LiteralPath `$FONTREG) {
+                `$face = [System.IO.Path]::GetFileNameWithoutExtension(`$fname)
+                foreach (`$suffix in @(' (TrueType)',' (OpenType)')) {
+                    `$regName = "`$face`$suffix"
+                    try { Remove-ItemProperty -LiteralPath `$FONTREG -Name `$regName -ErrorAction SilentlyContinue } catch {}
+                }
+            }
+        }
+}
+
+# 7. PATH env (HKCU + HKLM if admin)
+Write-Host '  [7/12] Removing PATH env entries...' -ForegroundColor Cyan
+foreach (`$scope in @('User','Machine')) {
+    try {
+        `$cur = [Environment]::GetEnvironmentVariable('Path', `$scope)
+        if (-not `$cur) { continue }
+        `$parts = `$cur -split ';' | Where-Object { `$_ -and `$_ -notmatch '[Mm]:\\\\?MiOS\\\\bin' -and `$_ -notmatch [regex]::Escape(`$BIN) }
+        `$new = (`$parts -join ';')
+        if (`$new -ne `$cur) {
+            [Environment]::SetEnvironmentVariable('Path', `$new, `$scope)
+        }
+    } catch {}
+}
+
+# 8. HKCU uninstall reg key
+Write-Host '  [8/12] Removing HKCU uninstall reg key...' -ForegroundColor Cyan
+if (Test-Path -LiteralPath `$K) { Remove-Item -LiteralPath `$K -Recurse -Force -ErrorAction SilentlyContinue }
+
+# 9. Start Menu folder + Desktop .lnk shortcuts
+Write-Host '  [9/12] Removing Start Menu + Desktop shortcuts...' -ForegroundColor Cyan
+`$lnkNames = @(
+    'MiOS.lnk','MiOS-DEV.lnk','MiOS Config.lnk','MiOS Help.lnk','Uninstall MiOS.lnk',
+    # Legacy names from prior install revisions
+    'MiOS Setup.lnk','Build MiOS.lnk','MiOS Configurator.lnk','MiOS Terminal.lnk',
+    'MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','MiOS Build.lnk','MiOS Dashboard.lnk',
+    'MiOS Update.lnk','MiOS Pull.lnk'
+)
+`$shortcutDirs = @(`$DESK, `$S,
+    'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\MiOS',
+    (Join-Path `$env:APPDATA 'Microsoft\Windows\Start Menu\Programs\MiOS'),
+    (Join-Path `$env:USERPROFILE 'OneDrive\Desktop')
+) | Where-Object { `$_ -and (Test-Path -LiteralPath `$_) } | Sort-Object -Unique
+foreach (`$dir in `$shortcutDirs) {
+    foreach (`$ln in `$lnkNames) {
+        `$lp = Join-Path `$dir `$ln
+        if (Test-Path -LiteralPath `$lp) {
+            try { Remove-Item -LiteralPath `$lp -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    # If dir is the MiOS Start Menu folder and now empty, remove it
+    if (`$dir -match 'Start Menu\\Programs\\MiOS$') {
+        if ((Get-ChildItem -LiteralPath `$dir -Force -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) {
+            try { Remove-Item -LiteralPath `$dir -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+}
+
+# 10. AppUserModelID HKCU registrations
+Write-Host '  [10/12] Removing AppUserModelID registrations...' -ForegroundColor Cyan
+foreach (`$aumKey in @('HKCU:\Software\Classes\AppUserModelId\MiOS.Workstation',
+                       'HKLM:\Software\Classes\AppUserModelId\MiOS.Workstation')) {
+    if (Test-Path -LiteralPath `$aumKey) {
+        try { Remove-Item -LiteralPath `$aumKey -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+    }
+}
+
+# 11. podman-machine state symlinks
+Write-Host '  [11/12] Removing podman-machine state symlinks...' -ForegroundColor Cyan
+foreach (`$pmLink in @(
+    (Join-Path `$env:LOCALAPPDATA 'containers\podman\machine'),
+    (Join-Path `$env:USERPROFILE  '.local\share\containers\podman\machine'),
+    'C:\ProgramData\containers\podman\machine'
+)) {
+    if (Test-Path -LiteralPath `$pmLink) {
+        try {
+            `$item = Get-Item -LiteralPath `$pmLink -Force -ErrorAction SilentlyContinue
+            if (`$item.LinkType -eq 'SymbolicLink' -or `$item.LinkType -eq 'Junction' -or `$item.Target) {
+                Remove-Item -LiteralPath `$pmLink -Force -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
+}
+
+# 12. MIOS_* environment variables
+Write-Host '  [12/12] Removing MIOS_* environment variables...' -ForegroundColor Cyan
+foreach (`$scope in @('User','Machine')) {
+    try {
+        `$envKey = if (`$scope -eq 'User') { 'HKCU:\Environment' }
+                   else { 'HKLM:\System\CurrentControlSet\Control\Session Manager\Environment' }
+        if (Test-Path -LiteralPath `$envKey) {
+            (Get-Item -LiteralPath `$envKey).Property | Where-Object { `$_ -match '^(MIOS_|MiOS_)' } |
+                ForEach-Object { try { Remove-ItemProperty -LiteralPath `$envKey -Name `$_ -ErrorAction SilentlyContinue } catch {} }
+        }
+    } catch {}
+}
+
+Write-Host ''
+if (`$Purge) {
+    Write-Host "  'MiOS' fully removed (zero-state). Per-user config at `$C also purged." -ForegroundColor Green
+} else {
+    Write-Host "  'MiOS' removed. Per-user config at `$C preserved." -ForegroundColor Green
+    Write-Host "  Run with -Purge to also remove per-user config." -ForegroundColor DarkGray
+}
 "@ | Set-Content $uninstSc -Encoding UTF8
-    Log-Ok "uninstall.ps1 written"
+    Log-Ok "uninstall.ps1 written (12-category cleanup)"
     End-Phase $script:AppRegPhaseId
 
     # ── Phase 9 -- Build (DEPRECATED) ─────────────────────────────────────────

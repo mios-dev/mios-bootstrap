@@ -4159,6 +4159,31 @@ function Set-WingetStorageOnM {
     }
 }
 
+# ── Functions-only dot-source gate ───────────────────────────────────────────
+# Per operator 2026-05-08: "irm|iex is the main entry point for ALL things
+# MiOS... FIX all in code!". The canonical entry is:
+#   irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex
+# which falls through to the Pass-1 main flow below (M:\ provisioning + Step
+# 1-8 chain + bootstrap.ps1 handoff). EVERY install path -- whether triggered
+# by the irm|iex one-liner, the MiOS launcher, mios-update, or build-mios.ps1
+# -- routes through these same Install-MiOS* functions so the deployed state
+# is deterministic regardless of entry path.
+#
+# build-mios.ps1's Install-MiosLauncher dot-sources THIS script with
+# $env:MIOS_GETMIOS_FUNCTIONS_ONLY=1 set so it can reuse the function
+# definitions (Install-MiOSPowerShellProfile, Install-MiOSTerminalProfile,
+# etc.) without re-entering the main flow. Without this gate, dot-sourcing
+# would re-trigger Initialize-DataDisk + Step 1-8 + the bootstrap.ps1
+# handoff, which would recurse infinitely (build-mios.ps1 was called BY
+# bootstrap.ps1 in the first place).
+if ($env:MIOS_GETMIOS_FUNCTIONS_ONLY) {
+    # All function defs + $Script:Mios* vars (MiosBrandingTxt,
+    # MiosFastfetchConfig, MiosOmpJson) above this point are now in
+    # the caller's scope. Caller invokes Install-MiOSPowerShellProfile
+    # / Install-MiOSTerminalProfile / etc. directly.
+    return
+}
+
 # ── Step 0: M:\ provisioning BEFORE Pass-1 stages anything ───────────────────
 # Per operator: "EVERYTHING MIOS RELATED--EVEN WINDOWS COMPONENTS INSTALLED--
 # ARE ALL INSTALLED ON THE CREATED M:\ Drive/Partition!!!"
