@@ -6226,112 +6226,59 @@ Write-Host ''
     Set-Content -Path $buildPath -Value $buildScript -Encoding UTF8
     Log-Ok "mios-build.ps1 (the `mios build` verb) staged at $buildPath"
 
-    # mios.ps1 -- THE MiOS app. Single launcher that replaces the
-    # previous per-verb Start Menu shortcuts. Each verb (Build, Dev VM,
-    # Update, Dashboard, Configurator, ...) is a numbered menu item;
-    # the bin scripts beside this one stay as the actual workers and
-    # the app just dispatches. Self-locates bin/ via $PSScriptRoot so
-    # a re-run picks up the latest verbs without regeneration.
+    # mios.ps1 -- THE MiOS app dispatcher.  Operator 2026-05-09:
+    # "U.N.I.F.I.E.D EVERYTHING MiOS related!!!".  This file used to
+    # render a SECOND, NON-UNIFIED layout (a numbered TUI menu) when
+    # the operator typed `mios <anything>` -- diverging from the
+    # canonical Show-MiosDashboard ([dashboard].rows) layout the
+    # M:\MiOS\powershell\profile.ps1 renders.  The redundancy is
+    # gone: `function mios <verb>` in the profile body now dispatches
+    # to mios-<verb> directly, so this file just exists as a
+    # thin pass-through (some legacy code paths Start-Process this
+    # script).  The body re-defines the per-verb mios-<name> wrapper
+    # functions and dispatches the requested verb.  No TUI menu, no
+    # divergent dashboard.
     $hubPath   = Join-Path $MiosBinDir 'mios.ps1'
     $hubScript = @'
-# <MiOSRoot>\bin\mios.ps1 -- the MiOS app.
-# Auto-installed by mios-bootstrap (Install-MiosLauncher).
+# <MiOSRoot>\bin\mios.ps1 -- thin verb-dispatch pass-through.
+# Auto-installed by mios-bootstrap (Install-MiosLauncher).  Operator
+# 2026-05-09: "U.N.I.F.I.E.D EVERYTHING MiOS related!!!".  This file
+# used to render its own Show-MiosApp TUI menu (a different layout
+# from the canonical Show-MiosDashboard that [dashboard].rows
+# drives) -- that has been REMOVED.  Now the file dot-sources the
+# canonical M:\MiOS\powershell\profile.ps1 (so the operator gets
+# the same Show-MiosDashboard render + `mios <verb>` dispatcher
+# every other entry path uses) then dispatches the verb passed as
+# argv if any.  No TUI menu, no second dashboard layout.
 $ErrorActionPreference = 'SilentlyContinue'
 $Script:MiOSBin  = $PSScriptRoot
 $Script:MiOSRoot = Split-Path -Parent $Script:MiOSBin
 
-try {
-    $sz  = New-Object Management.Automation.Host.Size 80, 30
-    $buf = New-Object Management.Automation.Host.Size 80, 9000
-    $Host.UI.RawUI.BufferSize = $buf
-    $Host.UI.RawUI.WindowSize = $sz
-} catch {}
-
-function Read-MiosVersion {
-    $f = Join-Path $Script:MiOSRoot 'VERSION'
-    if (Test-Path $f) { return (Get-Content $f -Raw).Trim() }
-    return '0.2.2'
-}
-
-function Resolve-MiosDevDistro {
-    $wslList = @()
-    try { $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" | ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ } } catch {}
-    foreach ($c in @('MiOS-DEV', 'podman-MiOS-DEV', 'MiOS-BUILDER', 'podman-MiOS-BUILDER')) {
-        if ($wslList -contains $c) { return $c }
-    }
-    return $null
-}
-
-function Show-MiosApp {
-    Clear-Host
-    $ver  = Read-MiosVersion
-    # 78-char frame to match the MiOS profile dashboard + leave 1-2 col
-    # right margin in an 80-col window. Unicode box-drawing chars match
-    # the global Show-MiosDashboard styling.
-    $top  = [char]0x256D + ([string][char]0x2500) * 76 + [char]0x256E   # ╭──...──╮
-    $bot  = [char]0x2570 + ([string][char]0x2500) * 76 + [char]0x256F   # ╰──...──╯
-    $thin = [char]0x251C + ([string][char]0x2500) * 76 + [char]0x2524   # ├──...──┤
-    $V    = [char]0x2502                                                # │
-    Write-Host $top -ForegroundColor DarkCyan
-    $title = "$V  MiOS v" + $ver
-    Write-Host ($title + (' ' * (77 - $title.Length)) + $V) -ForegroundColor Cyan
-    $sub = "$V  one launcher; mios.toml is the SSOT for every target"
-    Write-Host ($sub + (' ' * (77 - $sub.Length)) + $V) -ForegroundColor DarkGray
-    Write-Host $thin -ForegroundColor DarkCyan
-    $items = @(
-        @{ Key = '1'; Name = 'Build MiOS';        Desc = 'build deployable OCI (podman build + deploy)' },
-        @{ Key = '2'; Name = 'Enter Dev VM';      Desc = 'wsl into MiOS-DEV (root shell)'              },
-        @{ Key = '3'; Name = 'Update Overlay';    Desc = 'mios-pull onto / inside MiOS-DEV'            },
-        @{ Key = '4'; Name = 'Dashboard';         Desc = 'live system view (services, fastfetch)'      },
-        @{ Key = '5'; Name = 'Configurator';      Desc = 'edit mios.toml (Epiphany via WSLg)'          },
-        @{ Key = '6'; Name = 'Re-run Bootstrap';  Desc = 'rerun localhost setup + dev VM provision'    },
-        @{ Key = '7'; Name = 'Open Install Root'; Desc = 'open ' + $Script:MiOSRoot + ' in Explorer'    },
-        @{ Key = 'q'; Name = 'Quit';              Desc = 'exit'                                         }
-    )
-    foreach ($it in $items) {
-        $body = '  [' + $it.Key + ']  ' + $it.Name.PadRight(20) + $it.Desc
-        if ($body.Length -gt 74) { $body = $body.Substring(0, 73) + [char]0x2026 }
-        $line = "$V $body".PadRight(77) + $V
-        $color = if ($it.Key -eq 'q') { 'DarkGray' } else { 'White' }
-        Write-Host $line -ForegroundColor $color
-    }
-    Write-Host $thin -ForegroundColor DarkCyan
-    $dev = Resolve-MiosDevDistro
-    $devTxt = if ($dev) { $dev } else { 'not registered' }
-    $devLine = "$V  Dev distro : $devTxt"
-    Write-Host ($devLine.PadRight(77) + $V) -ForegroundColor DarkGray
-    $instLine = "$V  Install    : $($Script:MiOSRoot)"
-    Write-Host ($instLine.PadRight(77) + $V) -ForegroundColor DarkGray
-    $ssotLine = "$V  SSOT       : ~/.config > /etc > /usr/share  (mios/mios.toml)"
-    Write-Host ($ssotLine.PadRight(77) + $V) -ForegroundColor DarkGray
-    Write-Host $bot -ForegroundColor DarkCyan
-    Write-Host ''
-}
-
-function Invoke-Verb {
-    param([string]$Key)
-    switch ($Key) {
-        '1' { & (Join-Path $Script:MiOSBin 'mios-build.ps1')              }
-        '2' { & (Join-Path $Script:MiOSBin 'mios-dev.ps1')                }
-        '3' { & (Join-Path $Script:MiOSBin 'mios-pull.ps1')               }
-        '4' { & (Join-Path $Script:MiOSBin 'mios-dash.ps1')               }
-        '5' { & (Join-Path $Script:MiOSBin 'mios-config.ps1')             }
-        '6' { & (Join-Path $Script:MiOSBin 'mios-update.ps1')             }
-        '7' { Start-Process explorer.exe $Script:MiOSRoot                 }
-        default { Write-Host "  Unknown option '$Key'." -ForegroundColor Yellow; Start-Sleep 1 }
+# Canonical profile body (Show-MiosDashboard + mios <verb> dispatcher).
+$_miosProfile = Join-Path $Script:MiOSRoot 'powershell\profile.ps1'
+if (Test-Path -LiteralPath $_miosProfile) {
+    try { . $_miosProfile } catch {
+        Write-Host "  [!] Failed to load $_miosProfile : $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
-while ($true) {
-    Show-MiosApp
-    Write-Host -NoNewline '  Choose [1-7,q]: ' -ForegroundColor Cyan
-    $choice = Read-Host
-    if ($choice -in @('q','Q','quit','exit')) { break }
-    Invoke-Verb $choice
-    if ($choice -ne 'q') {
-        Write-Host ''
-        Write-Host -NoNewline '  Press Enter to return to the menu...' -ForegroundColor DarkGray
-        $null = Read-Host
+# If a verb was passed (e.g. `mios.ps1 build`), dispatch through the
+# `mios` function the profile body just defined; else just leave the
+# operator at the loaded prompt.
+if ($args.Count -gt 0) {
+    $verb = $args[0]
+    $rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
+    if (Get-Command mios -ErrorAction SilentlyContinue) {
+        & mios $verb @rest
+    } else {
+        # Fallback when the profile didn't load: invoke the per-verb
+        # bin script directly.
+        $vScript = Join-Path $Script:MiOSBin "mios-$verb.ps1"
+        if (Test-Path -LiteralPath $vScript) {
+            & $vScript @rest
+        } else {
+            Write-Host "  [!] mios verb '$verb' not found ($vScript)." -ForegroundColor Yellow
+        }
     }
 }
 '@
