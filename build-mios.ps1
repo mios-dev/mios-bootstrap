@@ -6114,12 +6114,48 @@ if (Test-Path `$pull) {
     Write-Host '  [pull] mios-pull.ps1 not found -- skipping dev VM pull, build will run against staged dev tree' -ForegroundColor Yellow
 }
 
-# SSH handoff into MiOS-DEV. mios-build-driver is THE build pipeline:
-# overlay -> account -> install -> smoketest -> build -> deploy -> boot.
-# The build dashboard renders here in this WT tab (live, not proxied).
+# Start the WSL-Podman machine. `wsl.exe -d <distro>` later will
+# auto-start the WSL distro alone, but the podman MACHINE wraps the
+# distro with the rootful podman daemon + OCI builder services that
+# mios-build-driver uses to actually build MiOS. Without this explicit
+# start, the build can fail on first invocation after a reboot with
+# "Cannot connect to Podman" because the daemon isn't up yet.
+# Idempotent: no-op if the machine is already running. Operator-confirmed
+# 2026-05-08: `mios build` should actually open the WSL-Podman machine
+# AND build MiOS AND overlay newest MiOS repos at /ROOT.
 `$distro = Resolve-MiosDevDistro
 Write-Host ''
+Write-Host ('  [build] starting WSL-Podman machine: {0} ...' -f `$distro) -ForegroundColor Cyan
+try {
+    & podman machine start `$distro 2>&1 | ForEach-Object {
+        `$line = `$_.ToString()
+        # Filter the noisy "already running" line into something less alarming.
+        if (`$line -match 'is already running') {
+            Write-Host '    (machine already running)' -ForegroundColor DarkGray
+        } else {
+            Write-Host ('    ' + `$line) -ForegroundColor DarkGray
+        }
+    }
+} catch {
+    Write-Host ('  [build] podman machine start threw: ' + `$_.Exception.Message) -ForegroundColor Yellow
+    Write-Host '  [build] continuing -- wsl.exe -d will fall back to starting the distro alone (build may fail if podman daemon isn''t reachable)' -ForegroundColor Yellow
+}
+
+# Brief settling pause so podman API socket is reachable before the
+# build driver's first `podman ...` invocation.
+Start-Sleep -Milliseconds 800
+
+# SSH handoff into MiOS-DEV. mios-build-driver is THE build pipeline:
+# fetch + overlay newest mios.git at / (Architectural Law 3 ".git IS /")
+# -> account/identity -> install -> smoketest -> build -> deploy -> boot.
+# The build dashboard renders here in this WT tab (live, not proxied).
+# We pass --user mios because the WT MiOS-DEV profile and operator
+# expectations land on the mios login user (uid 1000) -- created by the
+# seed script in Phase 3, with passwordless sudo for the build pipeline's
+# privileged steps.
+Write-Host ''
 Write-Host ('  [build] handing off to {0}:/usr/libexec/mios/mios-build-driver' -f `$distro) -ForegroundColor Cyan
+Write-Host '  [build] (this builds the OCI image inside MiOS-DEV; first run takes 10-30 min)' -ForegroundColor DarkGray
 Write-Host ''
 & wsl.exe -d `$distro --user mios --cd / -- bash -lc '/usr/libexec/mios/mios-build-driver'
 "@
