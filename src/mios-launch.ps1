@@ -70,6 +70,9 @@ if (-not $wtExe) {
     exit 1
 }
 
+# Shared window name "MiOS" -- subsequent launches nest as new tabs
+# in the same WT window. Operator 2026-05-09: "Subsequent MiOS windows
+# should launch nested inside one-another as a new tab".
 if ([string]::IsNullOrWhiteSpace($Verb) -or $Profile -eq 'MiOS-DEV') {
     # Bare profile launch (or dev VM -- bash login takes no verb).
     $wtArgs = @('-w','MiOS','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile)

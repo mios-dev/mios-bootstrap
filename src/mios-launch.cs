@@ -38,9 +38,18 @@ class MiOSLaunch {
             }
         }
         if (wt == null) { MessageBox.Show("Windows Terminal (wt.exe) not found. Re-run the MiOS bootstrap.","MiOS",MessageBoxButtons.OK,MessageBoxIcon.Error); return 1; }
+        // Operator 2026-05-09 image #11: "Subsequent MiOS windows should
+        // launch nested inside one-another as a new tab". Use SHARED
+        // window name "MiOS" (not per-profile) so wt.exe routes every
+        // MiOS click into the SAME window. New tab if MiOS window
+        // exists; new window if it doesn't. -p selects the profile
+        // for the new tab. Plus: same window name = same hwnd lookup
+        // for centering, so MiOS / MiOS-WIN / MiOS Help all center
+        // identically (was: per-profile window name made every click
+        // a separate hwnd that the centering loop sometimes missed).
         DateTime spawnAt = DateTime.UtcNow;
         try {
-            var psi = new ProcessStartInfo(wt, "-w " + profile + " --size " + cols + "," + rows + " --focus -p " + profile);
+            var psi = new ProcessStartInfo(wt, "-w MiOS --size " + cols + "," + rows + " --focus -p " + profile);
             psi.UseShellExecute = false; psi.CreateNoWindow = true;
             Process.Start(psi);
         } catch (Exception ex) { MessageBox.Show("wt.exe spawn failed: " + ex.Message,"MiOS",MessageBoxButtons.OK,MessageBoxIcon.Error); return 2; }
