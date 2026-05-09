@@ -2809,6 +2809,14 @@ function Install-MiOSPowerShellProfile {
     # scrollbarState='hidden' setting and its scrollbar-reservation
     # release have taken effect). cols-2 always avoids wrap.
     $_miosRightMargin = Get-MiosTomlValue -Section 'terminal' -Key 'right_margin' -Default 2
+    # Font family + size sourced from mios.toml [theme.font] -- baked
+    # as the install-time default for the dashboard's "font" field
+    # (Show-MiosDashboard re-reads at runtime so configurator edits
+    # also flow through; this is the cold-start fallback).
+    $_themeFontFace = Get-MiosTomlValue -Section 'theme.font' -Key 'family' -Default 'GeistMono Nerd Font Mono'
+    if ([string]::IsNullOrWhiteSpace($_themeFontFace)) { $_themeFontFace = 'GeistMono Nerd Font Mono' }
+    $_themeFontSize = Get-MiosTomlValue -Section 'theme.font' -Key 'size' -Default 12
+    if (-not ($_themeFontSize -is [int]) -or $_themeFontSize -lt 6 -or $_themeFontSize -gt 72) { $_themeFontSize = 12 }
     $miosScriptBody = @"
 # MiOS PowerShell profile -- PSReadLine reload + fastfetch MOTD +
 # oh-my-posh init.
@@ -3092,45 +3100,177 @@ if (`$true) {
         }
         # Divider.
         Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
-        # Framed fastfetch (no logo -- we drew it above). Side-by-side
-        # pairing: two consecutive lines that both fit in half the
-        # interior width get emitted as a single row, saving vertical
-        # rows. Cap rendered rows at `$_ffBudget so the dashboard fits
-        # the configured frame_height even with a verbose fastfetch.
-        if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
-            try {
-                `$ffOut = @(& fastfetch -c `$ConfigPath --logo none 2>&1 | Out-String -Stream | Where-Object { `$_ -ne `$null })
-                `$ffOut = @(`$ffOut | Where-Object {
-                    `$cleaned = (_Strip `$_).Trim()
-                    if (-not `$cleaned) { return `$false }
-                    if (`$cleaned -match '^[^:]+:\s*`$') { return `$false }
-                    `$true
-                })
-                `$halfW = [int][math]::Floor((`$INNER - 3) / 2)
-                `$i = 0
-                `$rowsPrinted = 0
-                while (`$i -lt `$ffOut.Count -and `$rowsPrinted -lt `$_ffBudget) {
-                    `$cur = [string]`$ffOut[`$i]
-                    `$curVis = (_Strip `$cur).TrimEnd()
-                    if ([string]::IsNullOrWhiteSpace(`$curVis)) { `$i++; continue }
-                    `$nxt = if ((`$i + 1) -lt `$ffOut.Count) { [string]`$ffOut[`$i+1] } else { `$null }
-                    `$nxtVis = if (`$nxt) { (_Strip `$nxt).TrimEnd() } else { '' }
-                    if (`$curVis.Length -le `$halfW -and `$nxt -and -not [string]::IsNullOrWhiteSpace(`$nxtVis) -and `$nxtVis.Length -le `$halfW) {
-                        `$padL = ' ' * [math]::Max(1, `$halfW - `$curVis.Length)
-                        `$combined = `$cur + `$padL + `$nxt
-                        Write-Host (_Frame `$combined)
-                        `$i += 2
-                    } else {
-                        Write-Host (_Frame `$cur)
-                        `$i += 1
+
+        # ── Compact metric rows ─────────────────────────────────
+        # Driven by mios.toml [dashboard].rows -- side-by-side fields
+        # per row keep the dashboard at ~5 metric rows so 80x20 leaves
+        # ample room for the prompt and command output.  Per operator
+        # 2026-05-09: "the dash is set GLOBALLY to Windows and Linux
+        # dashboards!! same settings!!! ... smaller metric can be
+        # side-by-side in the dash; freeing up more room for the
+        # prompt field."  The Linux-side mios-dashboard.sh reads the
+        # same [dashboard] section.
+        #
+        # Field renderers fetch values via Get-CimInstance (single-
+        # cached) / Get-Volume / `$PSVersionTable.  They each return a
+        # short labeled string ("CPU AMD Ryzen 9 9950X3D 5.75GHz (32c)").
+        # Unknown field-keys are silently skipped so the dashboard
+        # is forward-compatible with future mios.toml additions.
+        `$_dashCache = @{}
+        `$_DashGetField = {
+            param([string]`$_k, [string]`$_fontFam, [int]`$_fontSz)
+            switch (`$_k) {
+                'host_os' {
+                    if (-not `$_dashCache.ContainsKey('_os')) {
+                        `$_dashCache['_os'] = try { Get-CimInstance Win32_OperatingSystem -ErrorAction Stop } catch { `$null }
                     }
-                    `$rowsPrinted++
+                    `$_o = `$_dashCache['_os']
+                    `$_cap = if (`$_o -and `$_o.Caption) { (`$_o.Caption -replace 'Microsoft\s*','').Trim() } else { 'Windows' }
+                    `$_arch = if (`$_o -and `$_o.OSArchitecture) { `$_o.OSArchitecture } else { '' }
+                    return "`$env:USERNAME@`$env:COMPUTERNAME -- `$_cap `$_arch".Trim()
                 }
-            } catch {
-                Write-Host (_Frame "  fastfetch failed: `$(`$_.Exception.Message)")
+                'cpu' {
+                    if (-not `$_dashCache.ContainsKey('_cpu')) {
+                        `$_dashCache['_cpu'] = try { Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1 } catch { `$null }
+                    }
+                    `$_c = `$_dashCache['_cpu']
+                    if (-not `$_c) { return 'CPU --' }
+                    `$_n = (`$_c.Name -replace '\s+@.*','' -replace '\s+Processor','' -replace '\(R\)','' -replace '\(TM\)','').Trim()
+                    `$_clk = if (`$_c.MaxClockSpeed) { [math]::Round(`$_c.MaxClockSpeed / 1000.0, 2) } else { 0 }
+                    `$_co  = `$_c.NumberOfLogicalProcessors
+                    return "CPU `$_n `${_clk}GHz (`${_co}c)"
+                }
+                {`$_ -in 'gpu_discrete','gpu_integrated'} {
+                    if (-not `$_dashCache.ContainsKey('_gpus')) {
+                        `$_dashCache['_gpus'] = try { @(Get-CimInstance Win32_VideoController -ErrorAction Stop) } catch { @() }
+                    }
+                    `$_gs = `$_dashCache['_gpus']
+                    if (-not `$_gs -or `$_gs.Count -eq 0) { return 'GPU --' }
+                    if (`$_k -eq 'gpu_discrete') {
+                        `$_g = `$_gs | Where-Object { `$_.Name -match 'NVIDIA|GeForce|RTX|GTX|Quadro|Radeon RX|Radeon Pro' } | Select-Object -First 1
+                        if (-not `$_g) { `$_g = `$_gs | Sort-Object @{e={`$_.AdapterRAM};Descending=`$true} | Select-Object -First 1 }
+                    } else {
+                        `$_g = `$_gs | Where-Object { `$_.Name -match 'Radeon\(TM\) Graphics|Intel.*Graphics|UHD Graphics' } | Select-Object -First 1
+                        if (-not `$_g) { return '' }
+                    }
+                    if (-not `$_g) { return 'GPU --' }
+                    `$_n = (`$_g.Name -replace 'NVIDIA GeForce ','' -replace 'NVIDIA ','' -replace '\(R\)','' -replace '\(TM\)','').Trim()
+                    `$_vr = if (`$_g.AdapterRAM) { [math]::Round(([uint32]`$_g.AdapterRAM) / 1GB, 1) } else { 0 }
+                    if (`$_vr -le 0) { return "GPU `$_n" }
+                    return "GPU `$_n `${_vr}GiB"
+                }
+                'ram' {
+                    if (-not `$_dashCache.ContainsKey('_os')) {
+                        `$_dashCache['_os'] = try { Get-CimInstance Win32_OperatingSystem -ErrorAction Stop } catch { `$null }
+                    }
+                    `$_o = `$_dashCache['_os']
+                    if (-not `$_o) { return 'RAM --' }
+                    `$_tot = [math]::Round(([int64]`$_o.TotalVisibleMemorySize) / 1MB, 1)
+                    `$_use = [math]::Round((([int64]`$_o.TotalVisibleMemorySize - [int64]`$_o.FreePhysicalMemory)) / 1MB, 1)
+                    `$_pct = if (`$_o.TotalVisibleMemorySize -gt 0) { [math]::Round(((`$_use / `$_tot) * 100), 0) } else { 0 }
+                    return "RAM `${_use} / `${_tot}GiB (`${_pct}%)"
+                }
+                'swap' {
+                    if (-not `$_dashCache.ContainsKey('_pf')) {
+                        `$_dashCache['_pf'] = try { Get-CimInstance Win32_PageFileUsage -ErrorAction Stop } catch { `$null }
+                    }
+                    `$_p = @(`$_dashCache['_pf'])
+                    if (-not `$_p -or `$_p.Count -eq 0 -or -not `$_p[0]) { return 'Swap --' }
+                    `$_tot = [math]::Round((`$_p | Measure-Object AllocatedBaseSize -Sum).Sum / 1024.0, 1)
+                    `$_use = [math]::Round((`$_p | Measure-Object CurrentUsage -Sum).Sum / 1024.0, 1)
+                    `$_pct = if (`$_tot -gt 0) { [math]::Round(((`$_use / `$_tot) * 100), 0) } else { 0 }
+                    return "Swap `${_use} / `${_tot}GiB (`${_pct}%)"
+                }
+                {`$_ -match '^disk_([a-zA-Z])$'} {
+                    `$_dl = `$Matches[1].ToUpper()
+                    `$_v  = try { Get-Volume -DriveLetter `$_dl -ErrorAction Stop } catch { `$null }
+                    if (-not `$_v) { return "`${_dl}: --" }
+                    `$_tot = [math]::Round(`$_v.Size / 1GB, 1)
+                    `$_use = [math]::Round((`$_v.Size - `$_v.SizeRemaining) / 1GB, 1)
+                    `$_pct = if (`$_v.Size -gt 0) { [math]::Round((((`$_v.Size - `$_v.SizeRemaining) / `$_v.Size) * 100), 0) } else { 0 }
+                    return "`${_dl}: `${_use} / `${_tot}GiB (`${_pct}%)"
+                }
+                'kernel' {
+                    return 'Kernel ' + [System.Environment]::OSVersion.Version.ToString()
+                }
+                'shell' {
+                    return 'Shell pwsh ' + `$PSVersionTable.PSVersion.ToString()
+                }
+                'font' {
+                    return "Font `$_fontFam `${_fontSz}pt"
+                }
+                'uptime' {
+                    if (-not `$_dashCache.ContainsKey('_os')) {
+                        `$_dashCache['_os'] = try { Get-CimInstance Win32_OperatingSystem -ErrorAction Stop } catch { `$null }
+                    }
+                    `$_o = `$_dashCache['_os']
+                    if (-not `$_o -or -not `$_o.LastBootUpTime) { return 'Up --' }
+                    `$_up = (Get-Date) - `$_o.LastBootUpTime
+                    `$_upd = [math]::Floor(`$_up.TotalDays)
+                    return "Up `${_upd}d `$(`$_up.Hours)h `$(`$_up.Minutes)m"
+                }
+                default { return '' }
             }
-        } else {
-            Write-Host (_Frame '  fastfetch not installed -- run mios-update to refresh.')
+        }
+
+        # Read [dashboard].rows + [theme.font] from mios.toml at RUNTIME so
+        # operator edits via mios.html flow into the next dashboard render
+        # without re-running install.  Vendor defaults baked in below if
+        # parsing fails (cold first-run before M:\ overlay is staged).
+        `$_dashRows  = `$null
+        `$_dashFontF = '$_themeFontFace'
+        `$_dashFontS = $_themeFontSize
+        `$_dashTomlText = `$null
+        foreach (`$_tc in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+            if (Test-Path -LiteralPath `$_tc) {
+                try { `$_dashTomlText = [IO.File]::ReadAllText(`$_tc, (New-Object System.Text.UTF8Encoding(`$false))); break } catch {}
+            }
+        }
+        if (`$_dashTomlText) {
+            `$_dashSec = [regex]::Match(`$_dashTomlText, '(?ms)^\[dashboard\]\s*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)')
+            if (`$_dashSec.Success) {
+                `$_rowsM = [regex]::Match(`$_dashSec.Groups['body'].Value, '(?ms)^\s*rows\s*=\s*\[(?<arr>.*?)^\]')
+                if (`$_rowsM.Success) {
+                    `$_rowsBody = `$_rowsM.Groups['arr'].Value
+                    `$_rowMatches = [regex]::Matches(`$_rowsBody, '\[(?<r>[^\]]*)\]')
+                    `$_dashRows = @()
+                    foreach (`$_rm in `$_rowMatches) {
+                        `$_fields = @(`$_rm.Groups['r'].Value -split ',' | ForEach-Object { `$_.Trim().Trim('"',"'",' ',"``t","``r","``n") } | Where-Object { `$_ })
+                        if (`$_fields.Count -gt 0) { `$_dashRows += ,`$_fields }
+                    }
+                    if (`$_dashRows.Count -eq 0) { `$_dashRows = `$null }
+                }
+            }
+            # [theme.font] -- pick up runtime font overrides for the font field.
+            `$_fontSec = [regex]::Match(`$_dashTomlText, '(?ms)^\[theme\.font\]\s*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)')
+            if (`$_fontSec.Success) {
+                `$_fb = `$_fontSec.Groups['body'].Value
+                `$_fm = [regex]::Match(`$_fb, '(?m)^\s*family\s*=\s*"([^"]+)"')
+                if (`$_fm.Success) { `$_dashFontF = `$_fm.Groups[1].Value }
+                `$_sm = [regex]::Match(`$_fb, '(?m)^\s*size\s*=\s*(\d+)')
+                if (`$_sm.Success) { `$_dashFontS = [int]`$_sm.Groups[1].Value }
+            }
+        }
+        if (-not `$_dashRows) {
+            `$_dashRows = @(@('host_os'),@('cpu','gpu_discrete'),@('ram','swap'),@('disk_c','disk_m'),@('kernel','shell','font'))
+        }
+
+        foreach (`$_row in `$_dashRows) {
+            `$_n = @(`$_row).Count
+            if (`$_n -le 0) { continue }
+            # Equal-width columns within the framed inner area.
+            `$_colW = [math]::Floor((`$INNER - (`$_n - 1) * 2) / `$_n)
+            if (`$_colW -lt 8) { `$_colW = 8 }
+            `$_cells = @()
+            foreach (`$_fk in `$_row) {
+                `$_val = & `$_DashGetField `$_fk `$_dashFontF `$_dashFontS
+                if (-not `$_val) { `$_val = '' }
+                if (`$_val.Length -gt `$_colW) {
+                    `$_val = `$_val.Substring(0, [math]::Max(1, `$_colW - 1)) + '…'
+                }
+                `$_cells += `$_val.PadRight(`$_colW)
+            }
+            Write-Host (_Frame ((`$_cells -join '  ').TrimEnd()))
         }
         # ── Command hints rows ───────────────────────────────────
         # Verb list resolves through mios.toml [verbs] at RUNTIME (SSOT).
