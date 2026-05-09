@@ -2307,12 +2307,15 @@ function Initialize-MiosDataDisk {
         [string]$VolumeLabel = $(Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'volume_label' -Default 'MIOS-DEV')
     )
 
-    Set-Step "Sizing MiOS data disk ($ShrinkMB MB on ${DriveLetter}:)..."
+    # Step description from mios.toml [messages.steps].disk_sizing_template
+    # (SSOT). {placeholder} substitution at render time.
+    Set-Step ((Get-MiosTomlValue -Section 'messages.steps' -Key 'disk_sizing_template' -Default 'Sizing MiOS data disk ({mb} MB on {drive}:)...') -replace '\{mb\}', $ShrinkMB -replace '\{drive\}', $DriveLetter)
 
     # 0. Already-initialized? Skip.
     $existing = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
     if ($existing -and $existing.FileSystemLabel -eq $VolumeLabel) {
-        Log-Ok "MiOS data disk already on ${DriveLetter}: ($([math]::Round($existing.Size/1GB,1)) GB, $($existing.FileSystem))"
+        $_sgb = [math]::Round($existing.Size/1GB,1)
+        Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'disk_already_template' -Default 'MiOS data disk already on {drive}: ({size_gb} GB, NTFS)') -replace '\{drive\}', $DriveLetter -replace '\{size_gb\}', $_sgb)
         return "${DriveLetter}:\"
     }
     if ($existing) {
@@ -7517,7 +7520,7 @@ if ($activeDistro) {
     # use `git init + remote add + fetch + reset --hard` to bring the tree
     # in WITHOUT touching pre-existing untracked files.
     if (Test-Path (Join-Path $MiosRepoDir ".git")) {
-        Set-Step "Updating mios.git (fetch + hard reset @ $MiosRepoDir)"
+        Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_git_update' -Default "Updating mios.git (fetch + hard reset @ $MiosRepoDir)")
         Push-Location $MiosRepoDir
         try {
             $null = Invoke-NativeQuiet { git remote set-url origin $MiosRepoUrl }
@@ -7530,7 +7533,7 @@ if ($activeDistro) {
             }
         } finally { Pop-Location }
     } else {
-        Set-Step "Initializing mios.git as the $MiosRepoDir working tree"
+        Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_git_init' -Default "Initializing mios.git as the $MiosRepoDir working tree")
         # Pre-emptively whitelist M:\ as a safe.directory for git on
         # Windows. Git 2.35+ rejects operations in repos owned by a
         # different SID with: "fatal: detected dubious ownership in
@@ -7610,7 +7613,7 @@ if ($activeDistro) {
             $null = Invoke-NativeQuiet { git config --unset core.worktree }
         }
     } finally { Pop-Location }
-    Log-Ok "mios.git overlaid at $MiosRepoDir"
+    Log-Ok (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_git_overlaid' -Default "mios.git overlaid at $MiosRepoDir")
 
     # ── Step 2: mios-bootstrap.git in shadow checkout, files overlaid ──────
     if (Test-Path (Join-Path $MiosBootstrapShadow ".git")) {
@@ -7630,7 +7633,7 @@ if ($activeDistro) {
         if (-not (Test-Path $MiosBootstrapShadow)) {
             New-Item -ItemType Directory -Path $MiosBootstrapShadow -Force | Out-Null
         }
-        Set-Step "Cloning mios-bootstrap.git to shadow $MiosBootstrapShadow"
+        Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_bootstrap_clone' -Default "Cloning mios-bootstrap.git -> shadow $MiosBootstrapShadow")
         $cloneExit = Invoke-NativeQuiet { git clone --depth 1 $MiosBootstrapUrl $MiosBootstrapShadow }
         if ($cloneExit -ne 0) {
             throw "mios-bootstrap.git: clone from $MiosBootstrapUrl failed (exit $cloneExit)"
@@ -7639,7 +7642,7 @@ if ($activeDistro) {
 
     # Overlay mios-bootstrap files onto $MiosRepoDir (M:\) -- excluding .git
     # so we don't clobber mios.git's .git dir at M:\.
-    Set-Step "Overlaying mios-bootstrap files onto $MiosRepoDir"
+    Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_bootstrap_overlay' -Default "Overlaying mios-bootstrap files onto $MiosRepoDir")
     $robocopyExit = Invoke-NativeQuiet {
         robocopy $MiosBootstrapShadow $MiosRepoDir `
             /E /XD .git /NJH /NJS /NFL /NDL /NP
@@ -7664,7 +7667,7 @@ if ($activeDistro) {
             Copy-Item -Path $srcFile -Destination (Join-Path $MiosBinDir $script) -Force
         }
     }
-    Log-Ok "Entry scripts staged at $MiosBinDir"
+    Log-Ok (Get-MiosTomlValue -Section 'messages.steps' -Key 'entry_scripts_staged' -Default "Entry scripts staged at $MiosBinDir")
     End-Phase 2
 
     # ── Phase 3 -- MiOS-DEV distro (formerly MiOS-BUILDER) ───────────────────
