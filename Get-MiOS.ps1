@@ -2789,6 +2789,41 @@ function Install-MiOSFastfetch {
     # for the JSON string ("M:\\MiOS\\fastfetch\\mios.txt").
     $logoPathJson = $logoPath -replace '\\', '\\'
     $resolvedConfig = $Script:MiosFastfetchConfig -replace '__MIOS_LOGO__', $logoPathJson
+
+    # Source-of-truth path point on Windows: the deployed config uses
+    # /usr/share/mios/branding/mios.txt (the Linux path). Rewrite to
+    # the Windows-friendly Logo path that we just staged.
+    $resolvedConfig = $resolvedConfig -replace '/usr/share/mios/branding/mios\.txt', $logoPathJson
+
+    # ── Color substitution from mios.toml [theme.fastfetch] (SSOT) ──
+    # Per operator 2026-05-09: "oh my posh and other settings should
+    # source from the same toml sections for all platform for theme/
+    # branding to be truly unified in code".  fastfetch's per-module
+    # color overrides (logo / keys / title / output) ship with vendor-
+    # default ANSI tags that match [theme.fastfetch] vendor defaults;
+    # operator overrides via mios.html flow into every MiOS terminal
+    # without touching this script.  Only fires when the resolved
+    # value differs from vendor and is one of fastfetch's accepted
+    # ANSI color names.
+    $_ffPalette = @(
+        @{ Token='logo_color';   VendorAnsi='blue';   JsonField='"1"' }
+        @{ Token='keys_color';   VendorAnsi='yellow'; JsonField='"keys"' }
+        @{ Token='title_color';  VendorAnsi='white';  JsonField='"title"' }
+        @{ Token='output_color'; VendorAnsi='cyan';   JsonField='"output"' }
+    )
+    $_ansiNames = @('black','red','green','yellow','blue','magenta','cyan','white','default')
+    foreach ($_pe in $_ffPalette) {
+        $_resolved = Get-MiosTomlValue -Section 'theme.fastfetch' -Key $_pe.Token -Default $_pe.VendorAnsi
+        if ($_resolved -and $_resolved -ne $_pe.VendorAnsi -and $_ansiNames -contains $_resolved.ToLower()) {
+            # Replace `"1": "blue"` -> `"1": "<resolved>"` (or the
+            # equivalent for keys/title/output).  Field-anchored
+            # regex so we don't accidentally rewrite ANSI strings
+            # elsewhere in the JSONC.
+            $_rx = ($_pe.JsonField + '\s*:\s*"') + [regex]::Escape($_pe.VendorAnsi) + '"'
+            $_rep = $_pe.JsonField + ': "' + $_resolved + '"'
+            $resolvedConfig = [regex]::Replace($resolvedConfig, $_rx, $_rep)
+        }
+    }
     [System.IO.File]::WriteAllText($configPath, $resolvedConfig, $utf8NoBom)
 
     if ((Test-Path $configPath) -and (Test-Path $logoPath)) {
