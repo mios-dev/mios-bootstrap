@@ -7250,8 +7250,13 @@ Write-Host $bBot -ForegroundColor Cyan
 Write-Host ""
 
 if ($script:DashboardMode -eq 'log') {
-    Write-Host "Note: console doesn't support in-place repaint -- running in linear log mode." -ForegroundColor Yellow
-    Write-Host "      Phase transitions + throttled step updates print sequentially below." -ForegroundColor DarkYellow
+    # Resolve linear-log mode header lines from mios.toml
+    # [messages.build_pipeline] (SSOT).  Vendor fallback below
+    # preserves the existing wording when no toml is reachable.
+    $_llNote = Get-MiosTomlValue -Section 'messages.build_pipeline' -Key 'linear_log_note' -Default "Note: console doesn't support in-place repaint -- running in linear log mode."
+    $_llHint = Get-MiosTomlValue -Section 'messages.build_pipeline' -Key 'linear_log_hint' -Default "      Phase transitions + throttled step updates print sequentially below."
+    Write-Host $_llNote -ForegroundColor Yellow
+    Write-Host $_llHint -ForegroundColor DarkYellow
     Write-Host ""
 }
 

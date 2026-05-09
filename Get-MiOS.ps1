@@ -2931,6 +2931,63 @@ function Install-MiOSPowerShellProfile {
     if ([string]::IsNullOrWhiteSpace($_themeFontFace)) { $_themeFontFace = 'GeistMono Nerd Font Mono' }
     $_themeFontSize = Get-MiosTomlValue -Section 'theme.font' -Key 'size' -Default 12
     if (-not ($_themeFontSize -is [int]) -or $_themeFontSize -lt 6 -or $_themeFontSize -gt 72) { $_themeFontSize = 12 }
+
+    # ── EULA pre-print lines (mios.toml [messages.eula]) ─────────────
+    # Read the toml once at install time and bake the resolved lines
+    # as a literal PS array into the heredoc.  Operator edits via
+    # mios.html flow on the next `mios update` re-run.  Get-MiosTomlValue
+    # can't parse multi-line array values (its key regex doesn't span
+    # lines), so use an inline DOTALL match here.
+    $_eulaTomlText = Resolve-MiosTomlText
+    $_eulaLines = @(
+        '',
+        '  MiOS -- My Personal Operating System',
+        '  Immutable Fedora AI Workstation (pronounced "MyOS")',
+        '',
+        '  By invoking any MiOS entry point you acknowledge:',
+        '    * MiOS is provided AS IS, NO WARRANTY (MIT license).',
+        '    * Build/install scripts can modify your system globally',
+        '      (registry, env vars, fonts, WT settings, WSL distros, M:\ partition).',
+        '    * Telemetry: NONE (no data leaves the host without explicit operator action).',
+        '    * Full text: M:\AGREEMENTS.md  +  M:\LICENSE',
+        '',
+        '  Continued use of this terminal is treated as acknowledgment.',
+        ''
+    )
+    $_eulaDisplayMs = 600
+    if ($_eulaTomlText) {
+        $_euSec = [regex]::Match($_eulaTomlText, '(?ms)^\[messages\.eula\]\s*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)')
+        if ($_euSec.Success) {
+            $_euBody = $_euSec.Groups['body'].Value
+            $_msM = [regex]::Match($_euBody, '(?m)^\s*display_ms\s*=\s*(\d+)')
+            if ($_msM.Success) { $_eulaDisplayMs = [int]$_msM.Groups[1].Value }
+            $_lnsM = [regex]::Match($_euBody, '(?ms)^\s*lines\s*=\s*\[(?<arr>.*?)^\]')
+            if ($_lnsM.Success) {
+                $_parsed = @()
+                foreach ($_lm in [regex]::Matches($_lnsM.Groups['arr'].Value, '"((?:[^"\\]|\\.)*)"')) {
+                    # Unescape JSON-style \" \\ \n \t in the toml string
+                    $_v = $_lm.Groups[1].Value
+                    $_v = $_v -replace '\\\\', "`u{0001}BS`u{0001}"
+                    $_v = $_v -replace '\\"',   '"'
+                    $_v = $_v -replace '\\n',   "`n"
+                    $_v = $_v -replace '\\t',   "`t"
+                    $_v = $_v -replace "`u{0001}BS`u{0001}", '\'
+                    $_parsed += $_v
+                }
+                if ($_parsed.Count -gt 0) { $_eulaLines = $_parsed }
+            }
+        }
+    }
+    # Convert to a PS array literal that's safe to embed in the
+    # double-quoted heredoc.  Single-quote each line and escape
+    # single-quotes by doubling them (PS '' inside a single-quoted
+    # string = literal ').
+    $_eulaArrayLiteral = '@(' + (
+        ($_eulaLines | ForEach-Object {
+            "'" + ($_ -replace "'", "''") + "'"
+        }) -join ', '
+    ) + ')'
+
     $miosScriptBody = @"
 # MiOS PowerShell profile -- PSReadLine reload + fastfetch MOTD +
 # oh-my-posh init.
@@ -3499,27 +3556,14 @@ if (`$true) {
         # `$env:MIOS_SKIP_EULA=1.
         if (-not `$env:MIOS_SKIP_EULA) {
             try {
-                `$_eulaLines = @(
-                    '',
-                    '  MiOS -- My Personal Operating System',
-                    '  Immutable Fedora AI Workstation (pronounced "MyOS")',
-                    '',
-                    '  By invoking any MiOS entry point you acknowledge:',
-                    '    * MiOS is provided AS IS, NO WARRANTY (MIT license).',
-                    '    * Build/install scripts can modify your system globally',
-                    '      (registry, env vars, fonts, WT settings, WSL distros, M:\ partition).',
-                    '    * Telemetry: NONE (no data leaves the host without explicit operator action).',
-                    '    * Full text: M:\AGREEMENTS.md  +  M:\LICENSE',
-                    '',
-                    '  Continued use of this terminal is treated as acknowledgment.',
-                    ''
-                )
+                # EULA lines + display_ms baked at install time from
+                # mios.toml [messages.eula] (Install-MiOSPowerShellProfile
+                # parses the toml and emits the resolved array literal
+                # below).  Operator edits via mios.html flow on the
+                # next `mios update`.
+                `$_eulaLines = $_eulaArrayLiteral
                 foreach (`$_l in `$_eulaLines) { Write-Host `$_l -ForegroundColor DarkGray }
-                # Tiny pause so the operator can register that the EULA
-                # was shown before it scrolls out of the viewport on
-                # Clear-Host. 600ms is short enough to not annoy on
-                # repeat opens but long enough for visual confirmation.
-                Start-Sleep -Milliseconds 600
+                Start-Sleep -Milliseconds $_eulaDisplayMs
                 # Clear visible viewport (preserves scrollback in WT).
                 # Cursor moves to row 0 col 0 so the dashboard renders
                 # at the top of the fresh viewport.
