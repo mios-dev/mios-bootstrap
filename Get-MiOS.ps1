@@ -3785,6 +3785,23 @@ if (`$true) {
                 try { Clear-Host } catch { try { [Console]::Clear() } catch {} }
             } catch {}
         }
+        # Explicit cursor reset before the dashboard renders. Clear-Host
+        # in WT *should* reset cursor to (0,0) via the \e[2J\e[H ANSI,
+        # but on initial-spawn timing (the WT pseudoconsole hasn't
+        # finished sizing when the profile body fires) we have observed
+        # the dashboard's top frame `╭─...─╮` getting written to a row
+        # where the LATER SetWindowPos resize then crops it off-viewport.
+        # Operator screenshot 2026-05-10: dashboard top frame missing,
+        # fastfetch row at viewport top -- 4-6 rows of header gone.
+        # An unconditional cursor home before render guarantees row 0.
+        try {
+            if (`$Host.UI.RawUI) {
+                `$_zero = New-Object System.Management.Automation.Host.Coordinates 0, 0
+                `$Host.UI.RawUI.CursorPosition = `$_zero
+            }
+        } catch {
+            try { [Console]::SetCursorPosition(0, 0) } catch {}
+        }
         `$miosLogo   = _MiosSelfHeal 'fastfetch' 'mios.txt'      '$ffLogoBase64'
         `$miosFFCfg  = _MiosSelfHeal 'fastfetch' 'config.jsonc'  '$ffConfigBase64'
         if (`$miosLogo -and `$miosFFCfg) {
