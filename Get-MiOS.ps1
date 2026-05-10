@@ -3745,7 +3745,21 @@ if (`$true) {
     # the framed banner + verb-hints still render with a "fastfetch not
     # installed" placeholder row, so the operator sees the MiOS banner
     # even on a half-bootstrapped host.
-    if (`$Host.UI.RawUI -and (-not `$env:MIOS_SKIP_MOTD)) {
+    # Guard: profile body is dot-sourced from many places (interactive
+    # session start, mios-dash.ps1, mios-help.ps1, mios.ps1 dispatcher,
+    # etc.). Each of those then calls Show-MiosDashboard explicitly, so
+    # without this guard the dashboard renders TWICE per `mios dash`
+    # invocation (operator-reported 2026-05-10: "mios dash command
+    # spawns 2 dashboards on the windows side"). Render auto-MOTD only
+    # the FIRST time the profile is sourced in this session; subsequent
+    # dot-sources get the function definitions only, not the auto-render.
+    if (`$Global:MiosProfileMotdRendered) {
+        # Already rendered this session -- skip the auto-MOTD path
+        # entirely. Verb scripts (mios-dash.ps1) still call
+        # Show-MiosDashboard directly when they want it; this guard
+        # only suppresses the implicit auto-render.
+    } elseif (`$Host.UI.RawUI -and (-not `$env:MIOS_SKIP_MOTD)) {
+        `$Global:MiosProfileMotdRendered = `$true
         # ── EULA pre-print (operator request 2026-05-08) ─────────────
         # "We should print the EULA when the app opens -- and THEN starts
         # the dashboards!!! (make sure that the EULA scrolls out of view
