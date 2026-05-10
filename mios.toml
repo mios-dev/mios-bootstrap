@@ -79,6 +79,18 @@ right_margin      = 0
 cols              = 80
 rows              = 40
 
+# Reading mode -- larger centered window for outputs that don't fit in
+# the canonical 80x20 portal (btop, long log tails, code review,
+# multi-pane fastfetch, etc). `mios reading` resizes + re-centers the
+# CURRENT MiOS window to these dims; `mios portal` flips it back to
+# [terminal].cols/.rows. btop's launcher invokes `mios reading`
+# automatically because btop's hardcoded minimum is 80x24 -- WSLg's
+# effective viewport at the portal-size 80x20 is 75x18, below the
+# minimum, so btop refuses to render.
+[terminal.reading]
+cols              = 100
+rows              = 50
+
 # ----------------------------------------------------------------------------
 # [theme] -- WT MiOS profile chrome. Per feedback_mios_terminal_global_chrome.md
 # the look is acrylic 50% transparent + frameless + no scrollbar + no titlebar

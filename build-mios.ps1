@@ -6239,19 +6239,115 @@ function mios-pull    { & (Join-Path `$Global:MiosBin 'mios-pull.ps1')   @args }
 function mios-update  { & (Join-Path `$Global:MiosBin 'mios-update.ps1') @args }
 function mios-config  { & (Join-Path `$Global:MiosBin 'mios-config.ps1') @args }
 
-# btop on Windows -> spawn a DEDICATED 100x30 WT window running the
-# dev VM's Linux btop (UNIFIED). btop's hardcoded minimum is 80x24;
-# WSLg eats ~5 cols + ~2 rows of chrome from any WT spawn, so even
-# a 80x20 MiOS terminal reports 75x18 inside btop -- which then
-# refuses to render with "Terminal size too small Width=75
-# Height=18, Needed for current config: Width=80 Height=24"
-# (operator screenshot 2026-05-10).
-#
-# Fix: don't reuse the operator's MiOS terminal for btop; spawn a
-# separate WT window at 100x30 dedicated to btop. Inside-WSLg this
-# reports as ~95x28 -- well over btop's 80x24 minimum, every preset
-# fits. Window closes when btop exits. The MiOS hub stays 80x20
-# untouched.
+# Set-MiosWindow -- resize + re-center the CURRENT MiOS terminal
+# window between [terminal] and [terminal.reading] modes from
+# mios.toml. Operator 2026-05-10: "a centered 100x50 window called
+# MiOS 'reading mode' invoked with a command to resize (and re
+# center) the window between the sizes". Used by `mios portal` /
+# `mios reading` verbs and by the `btop` function which auto-flips
+# to reading mode.
+function Set-MiosWindow {
+    [CmdletBinding()]
+    param([ValidateSet('portal','reading')][string]`$Mode = 'portal')
+    `$_section = if (`$Mode -eq 'reading') { 'terminal.reading' } else { 'terminal' }
+    # Read dims from mios.toml (host overlay > vendor SSOT > hardcoded).
+    `$_cols = 80; `$_rows = 20
+    if (`$Mode -eq 'reading') { `$_cols = 100; `$_rows = 50 }
+    foreach (`$_t in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+        if (-not (Test-Path -LiteralPath `$_t)) { continue }
+        try {
+            `$_txt  = [IO.File]::ReadAllText(`$_t, (New-Object System.Text.UTF8Encoding(`$false)))
+            `$_secRx = '(?ms)^\[' + [regex]::Escape(`$_section) + '\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)'
+            `$_m = [regex]::Match(`$_txt, `$_secRx)
+            if (-not `$_m.Success) { continue }
+            `$_body = `$_m.Groups['body'].Value
+            `$_mc = [regex]::Match(`$_body, '(?m)^[ \t]*cols[ \t]*=[ \t]*(\d+)')
+            `$_mr = [regex]::Match(`$_body, '(?m)^[ \t]*rows[ \t]*=[ \t]*(\d+)')
+            if (`$_mc.Success) { `$_cols = [int]`$_mc.Groups[1].Value }
+            if (`$_mr.Success) { `$_rows = [int]`$_mr.Groups[1].Value }
+            break
+        } catch {}
+    }
+    # Cell + chrome metrics from mios.toml [theme.font] (defaulted to
+    # the Geist Mono Nerd Font 12pt baseline if the toml is unreadable
+    # at this point).
+    `$_cellW = 10; `$_cellH = 20; `$_chromeW = 20; `$_chromeH = 12
+    foreach (`$_t in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+        if (-not (Test-Path -LiteralPath `$_t)) { continue }
+        try {
+            `$_txt = [IO.File]::ReadAllText(`$_t, (New-Object System.Text.UTF8Encoding(`$false)))
+            `$_m = [regex]::Match(`$_txt, '(?ms)^\[theme\.font\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)')
+            if (-not `$_m.Success) { continue }
+            `$_b = `$_m.Groups['body'].Value
+            foreach (`$_kv in @(@('cell_w_px','_cellW'),@('cell_h_px','_cellH'),@('chrome_w_px','_chromeW'),@('chrome_h_px','_chromeH'))) {
+                `$_x = [regex]::Match(`$_b, "(?m)^[ \t]*$(`$_kv[0])[ \t]*=[ \t]*(\d+)")
+                if (`$_x.Success) { Set-Variable -Name `$_kv[1] -Value ([int]`$_x.Groups[1].Value) }
+            }
+            break
+        } catch {}
+    }
+    `$_winW = `$_cols * `$_cellW + `$_chromeW
+    `$_winH = `$_rows * `$_cellH + `$_chromeH
+
+    # Win32 helpers + Cursor.Position + Screen.FromPoint for centering
+    # on the monitor that currently hosts the cursor.
+    try {
+        Add-Type -Namespace 'MiOSResize' -Name 'W' -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr h, int x, int y, int cx, int cy, uint flags);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool IsWindowVisible(System.IntPtr hWnd);
+'@ -ErrorAction SilentlyContinue
+    } catch {}
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    `$_cur  = [System.Windows.Forms.Cursor]::Position
+    `$_work = [System.Windows.Forms.Screen]::FromPoint(`$_cur).WorkingArea
+    `$_x = [int](`$_work.X + (`$_work.Width  - `$_winW) / 2); if (`$_x -lt `$_work.X) { `$_x = `$_work.X }
+    `$_y = [int](`$_work.Y + (`$_work.Height - `$_winH) / 2); if (`$_y -lt `$_work.Y) { `$_y = `$_work.Y }
+
+    # Resolve the WT process hosting THIS pwsh. Walk up the parent
+    # chain via WMI since pwsh runs as a CHILD of WindowsTerminal.exe;
+    # Get-Process -Name WindowsTerminal could return any WT window,
+    # not necessarily ours.
+    `$_hwnd = [IntPtr]::Zero
+    try {
+        `$_pid = `$PID
+        for (`$_i = 0; `$_i -lt 6; `$_i++) {
+            `$_proc = Get-CimInstance Win32_Process -Filter "ProcessId=`$_pid" -ErrorAction SilentlyContinue
+            if (-not `$_proc) { break }
+            if (`$_proc.Name -match '^WindowsTerminal') {
+                `$_p = Get-Process -Id `$_proc.ProcessId -ErrorAction SilentlyContinue
+                if (`$_p -and `$_p.MainWindowHandle -ne [IntPtr]::Zero) { `$_hwnd = `$_p.MainWindowHandle; break }
+            }
+            `$_pid = `$_proc.ParentProcessId
+        }
+    } catch {}
+    if (`$_hwnd -eq [IntPtr]::Zero) {
+        # Fallback: newest visible WT window. Acceptable for the
+        # common case (one MiOS window open).
+        `$_p = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
+               Where-Object { `$_.MainWindowHandle -ne [IntPtr]::Zero -and [MiOSResize.W]::IsWindowVisible(`$_.MainWindowHandle) } |
+               Sort-Object StartTime -Descending | Select-Object -First 1
+        if (`$_p) { `$_hwnd = `$_p.MainWindowHandle }
+    }
+    if (`$_hwnd -ne [IntPtr]::Zero) {
+        # 0x40 = SWP_SHOWWINDOW. No NOZORDER so window comes to front.
+        [void][MiOSResize.W]::SetWindowPos(`$_hwnd, [IntPtr]::Zero, `$_x, `$_y, `$_winW, `$_winH, 0x40)
+        Write-Host ("  [+] MiOS window: {0} mode ({1}x{2})" -f `$Mode, `$_cols, `$_rows) -ForegroundColor DarkGray
+    } else {
+        Write-Host '  [!] Could not resolve current WT window handle; resize skipped.' -ForegroundColor Yellow
+    }
+}
+
+# Verb shorthands for Set-MiosWindow.
+function mios-portal  { Set-MiosWindow -Mode portal }
+function mios-reading { Set-MiosWindow -Mode reading }
+
+# btop on Windows -> resize current MiOS window to reading mode (100x50
+# centered) and run the dev VM's Linux btop via WSL (UNIFIED). btop
+# hardcodes 80x24 minimum; portal-mode 80x20 reports 75x18 post-WSLg
+# chrome, below the minimum. Reading mode (100x50) reports ~95x48,
+# every btop preset fits. Window restores to portal mode on exit.
 function btop {
     `$_devCandidates = @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')
     `$_wslList = @()
@@ -6264,26 +6360,13 @@ function btop {
         Write-Host '  [!] No MiOS-DEV WSL distro found -- cannot run btop.' -ForegroundColor Yellow
         return
     }
-    # Resolve wt.exe (App Execution Alias may be hijacked; prefer the
-    # WindowsTerminal package's actual executable).
-    `$_wtExe = `$null
+    Set-MiosWindow -Mode reading
+    Start-Sleep -Milliseconds 200   # let WT settle the new dims
     try {
-        `$_pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
-        if (`$_pkg -and `$_pkg.InstallLocation) {
-            `$_cand = Join-Path `$_pkg.InstallLocation 'wt.exe'
-            if (Test-Path -LiteralPath `$_cand) { `$_wtExe = `$_cand }
-        }
-    } catch {}
-    if (-not `$_wtExe) { `$_wtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
-    if (-not `$_wtExe) {
-        Write-Host '  [!] wt.exe not found -- falling back to in-place btop (may report Terminal size too small)' -ForegroundColor Yellow
         & wsl.exe -d `$_dev --user mios -- btop @args
-        return
+    } finally {
+        Set-MiosWindow -Mode portal
     }
-    # Dedicated 100x30 wt window -- btop has plenty of room post-WSLg
-    # chrome, MiOS hub at 80x20 stays untouched. -w 0 forces a NEW
-    # window (not joining an existing tab).
-    & `$_wtExe -w 0 --size '100,30' --title 'MiOS btop' wsl.exe -d `$_dev --user mios -- btop @args
 }
 $endMark
 "@
