@@ -6239,12 +6239,19 @@ function mios-pull    { & (Join-Path `$Global:MiosBin 'mios-pull.ps1')   @args }
 function mios-update  { & (Join-Path `$Global:MiosBin 'mios-update.ps1') @args }
 function mios-config  { & (Join-Path `$Global:MiosBin 'mios-config.ps1') @args }
 
-# btop on Windows -> dispatch to the dev VM's Linux btop (UNIFIED).
-# btop4win.exe is broken (CPPdll.dll missing on most hosts); using
-# the dev VM's btop gives the operator the SAME binary + same MiOS
-# theme on Windows AND Linux.  Function defined here so it shadows
-# any stale btop.exe on PATH and so a fresh `pwsh` session has it
-# without requiring a second profile load.
+# btop on Windows -> spawn a DEDICATED 100x30 WT window running the
+# dev VM's Linux btop (UNIFIED). btop's hardcoded minimum is 80x24;
+# WSLg eats ~5 cols + ~2 rows of chrome from any WT spawn, so even
+# a 80x20 MiOS terminal reports 75x18 inside btop -- which then
+# refuses to render with "Terminal size too small Width=75
+# Height=18, Needed for current config: Width=80 Height=24"
+# (operator screenshot 2026-05-10).
+#
+# Fix: don't reuse the operator's MiOS terminal for btop; spawn a
+# separate WT window at 100x30 dedicated to btop. Inside-WSLg this
+# reports as ~95x28 -- well over btop's 80x24 minimum, every preset
+# fits. Window closes when btop exits. The MiOS hub stays 80x20
+# untouched.
 function btop {
     `$_devCandidates = @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')
     `$_wslList = @()
@@ -6257,7 +6264,26 @@ function btop {
         Write-Host '  [!] No MiOS-DEV WSL distro found -- cannot run btop.' -ForegroundColor Yellow
         return
     }
-    & wsl.exe -d `$_dev --user mios -- btop @args
+    # Resolve wt.exe (App Execution Alias may be hijacked; prefer the
+    # WindowsTerminal package's actual executable).
+    `$_wtExe = `$null
+    try {
+        `$_pkg = Get-AppxPackage -Name 'Microsoft.WindowsTerminal' -ErrorAction SilentlyContinue
+        if (`$_pkg -and `$_pkg.InstallLocation) {
+            `$_cand = Join-Path `$_pkg.InstallLocation 'wt.exe'
+            if (Test-Path -LiteralPath `$_cand) { `$_wtExe = `$_cand }
+        }
+    } catch {}
+    if (-not `$_wtExe) { `$_wtExe = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source }
+    if (-not `$_wtExe) {
+        Write-Host '  [!] wt.exe not found -- falling back to in-place btop (may report Terminal size too small)' -ForegroundColor Yellow
+        & wsl.exe -d `$_dev --user mios -- btop @args
+        return
+    }
+    # Dedicated 100x30 wt window -- btop has plenty of room post-WSLg
+    # chrome, MiOS hub at 80x20 stays untouched. -w 0 forces a NEW
+    # window (not joining an existing tab).
+    & `$_wtExe -w 0 --size '100,30' --title 'MiOS btop' wsl.exe -d `$_dev --user mios -- btop @args
 }
 $endMark
 "@
