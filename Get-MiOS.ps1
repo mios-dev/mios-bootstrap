@@ -5683,4 +5683,35 @@ if ($_bootstrapExit -eq 0) {
 # corrected: that's wrong. Bootstrap returns at DEV-ready; the staged
 # MiOS hub shortcut + verb-hint banner above tell the operator what
 # verbs to type next.
+
+# ── WSLg host-side bridge reset (clears [WARN: COPY MODE]) ──────────────────
+# Operator 2026-05-10: "STILL no visible windows" -- weston / msrdc
+# accumulate state during the multi-minute install (mid-install
+# wsl.exe -- probes, daemon-reloads, container starts) that often
+# leaves the host-side RDP-RAIL bridge stuck in COPY MODE even after
+# our /mnt/wslg/runtime-dir chmod fix lands. A fresh `wsl --shutdown`
+# + `Restart-Service LxssManager` on the Windows host gives WSLg a
+# clean slate to negotiate VAIL (shared-memory) mode on first re-entry.
+#
+# Safe to run unconditionally at the END of irm|iex: bootstrap has
+# already completed all its work, no in-flight operations to lose.
+# The next time the operator launches MiOS, WSLg starts fresh.
+if ($_bootstrapExit -eq 0) {
+    try {
+        Write-Host ''
+        Write-Host '  [*] Resetting WSL/WSLg host-side state so the next launch starts clean...' -ForegroundColor Cyan
+        & wsl.exe --shutdown 2>&1 | Out-Null
+        Start-Sleep -Seconds 2
+        # Restart-Service requires admin; the irm|iex caller already
+        # elevated, so this works. Failure is non-fatal -- shutdown
+        # alone is usually enough.
+        try { Restart-Service -Name LxssManager -Force -ErrorAction Stop } catch {
+            Write-Host "  [!] LxssManager restart skipped: $($_.Exception.Message)" -ForegroundColor DarkGray
+        }
+        Write-Host '  [+] WSLg reset complete -- next MiOS terminal launch starts with fresh RDP-RAIL state.' -ForegroundColor Green
+    } catch {
+        Write-Host "  [!] WSLg reset step failed (non-fatal): $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 exit $_bootstrapExit
