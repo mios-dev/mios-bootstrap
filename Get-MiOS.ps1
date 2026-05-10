@@ -1743,6 +1743,21 @@ function Install-MiOSTerminalProfile {
         padding                  = $_themePadding
         suppressApplicationTitle = $_themeSuppress
         scrollbarState           = $_themeScrollbar
+        # Disable WT's end-of-line auto-wrap on the MiOS profile.
+        # Default WT behavior: writing to the LAST column emits a
+        # soft-wrap newline, so content that fills exactly cols-wide
+        # (e.g. our edge-to-edge dashboard frame at width=80 in an
+        # 80-col window) wraps every full-width row to a new visual
+        # row -- pushing the dashboard's TOP frame above the viewport.
+        # Operator screenshot 2026-05-10 image #12: top `╭─MiOS─╮`
+        # corner clipped, fastfetch info at row 0, right `│` border
+        # missing. Setting this to true tells WT to leave col cols-1
+        # written without firing the soft-wrap, so width=80 content
+        # in an 80-col window stays on one row. Combined with
+        # mios.toml [terminal].right_margin=0 + frame_width=80 this
+        # produces the truly edge-to-edge framed dashboard the
+        # operator wants on BOTH bash + pwsh sides.
+        disableEndOfLineWrap     = $true
         # initialCols / initialRows lock the dims when WT spawns this
         # profile from a non-launcher entry point (dropdown, "MiOS
         # Terminal" Start Menu shortcut). Operator-edited via mios.toml
