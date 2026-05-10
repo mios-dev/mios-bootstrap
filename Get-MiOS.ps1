@@ -5542,86 +5542,136 @@ if ($_bootstrapExit -eq 0) {
 # mios-flatpak-install.service. Skip via $env:MIOS_NO_AUTO_BUILD or
 # $env:MIOS_BOOTSTRAP_ONLY (CI / unattended scenarios that intentionally
 # halt at DEV-ready).
+# CRITICAL: the entire auto-chain block is wrapped in try/catch + a local
+# trap so that ANY failure (mios-build exit non-zero, wsl.exe stderr, null
+# .Trim() on empty output, distro reboot mid-poll, etc.) becomes a WARNING,
+# not a script-level throw. Reason: the Windows install has already
+# succeeded by this point ($_bootstrapExit==0). If we let an exception
+# bubble up, the top-level trap at line ~4983 fires Invoke-MiOSFullReap
+# and wipes Windows state -- destroying a successful install over a
+# dev-VM-side issue. Operator can re-run `mios build` from a MiOS terminal
+# to retry the build pipeline; nothing about the Windows side needs to be
+# rolled back.
 $_autoBuildSkip = ($env:MIOS_NO_AUTO_BUILD -or $env:MIOS_BOOTSTRAP_ONLY) -as [bool]
 if ($_bootstrapExit -eq 0 -and -not $_autoBuildSkip) {
-    $_buildVerb = 'M:\MiOS\bin\mios-build.ps1'
-    if (Test-Path -LiteralPath $_buildVerb) {
-        Write-Host ''
-        Write-Host '  [*] Auto-chaining into `mios build` (post-bootstrap = full MiOS contract)...' -ForegroundColor Cyan
-        Write-Host '      Set MIOS_NO_AUTO_BUILD=1 next time to halt at DEV-ready instead.' -ForegroundColor DarkGray
-        Write-Host ''
-        $_buildExit = 1
-        try {
-            & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $_buildVerb
-            $_buildExit = $LASTEXITCODE
-        } catch {
-            Write-Host "  [!] mios-build invocation threw: $($_.Exception.Message)" -ForegroundColor Yellow
-            $_buildExit = 1
-        }
-
-        # Resolve the dev distro post-reboot. mios-build-driver issues
-        # `systemctl reboot` inside MiOS-DEV; WSL terminates the distro and
-        # relaunches it on the next `wsl.exe -d` invocation. We poll
-        # mios-flatpak-install.service (oneshot) until it's no longer
-        # 'activating' -- meaning Epiphany / Nautilus / GNOME runtime are in.
-        $_devDistro = $null
-        try {
-            $_wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" |
-                        ForEach-Object { ($_ -replace [char]0, '').Trim() } |
-                        Where-Object { $_ }
-            foreach ($_c in @('MiOS-DEV','podman-MiOS-DEV','MiOS-BUILDER','podman-MiOS-BUILDER')) {
-                if ($_wslList -contains $_c) { $_devDistro = $_c; break }
-            }
-        } catch {}
-
-        if ($_devDistro) {
-            $_flatpakDeadline = (Get-Date).AddMinutes(20)
-            $_flatpakOk = $false
+    # Local trap that swallows ANY uncaught error from the auto-chain block
+    # without reaching the script-level trap. `continue` lets execution
+    # resume at the next statement after the failing one.
+    try {
+        trap {
             Write-Host ''
-            Write-Host "  [*] Waiting for mios-flatpak-install.service inside $_devDistro (timeout 20 min)..." -ForegroundColor Cyan
-            while ((Get-Date) -lt $_flatpakDeadline) {
-                Start-Sleep -Seconds 10
-                # Empty stdout = distro not up yet (post-reboot relaunch in flight).
-                $_state = (& wsl.exe -d $_devDistro --user root -- systemctl is-active mios-flatpak-install.service 2>$null | Select-Object -First 1).Trim()
-                if ($_state -in @('inactive','active')) {
-                    # oneshot completed (inactive after success, active during ExecStart).
-                    # Treat 'inactive' as final completion; 'active' means still running so loop.
-                    if ($_state -eq 'inactive') { $_flatpakOk = $true; break }
-                } elseif ($_state -eq 'failed') {
-                    Write-Host "  [!] mios-flatpak-install.service FAILED inside $_devDistro." -ForegroundColor Red
-                    Write-Host "      Inspect: wsl -d $_devDistro --user root -- journalctl -u mios-flatpak-install.service --no-pager" -ForegroundColor DarkGray
-                    break
-                } elseif ($_state -eq 'activating') {
-                    Write-Host '    (still installing flatpaks...)' -ForegroundColor DarkGray
-                }
+            Write-Host ('  [!] Auto-chain hit an error but Windows install is intact: ' + $_.Exception.Message) -ForegroundColor Yellow
+            Write-Host '      Re-run manually from a MiOS terminal: mios build' -ForegroundColor DarkGray
+            continue
+        }
+        $_buildVerb = 'M:\MiOS\bin\mios-build.ps1'
+        if (Test-Path -LiteralPath $_buildVerb) {
+            Write-Host ''
+            Write-Host '  [*] Auto-chaining into `mios build` (post-bootstrap = full MiOS contract)...' -ForegroundColor Cyan
+            Write-Host '      Set MIOS_NO_AUTO_BUILD=1 next time to halt at DEV-ready instead.' -ForegroundColor DarkGray
+            Write-Host ''
+            $_buildExit = 1
+            try {
+                & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $_buildVerb
+                $_buildExit = $LASTEXITCODE
+            } catch {
+                Write-Host "  [!] mios-build invocation threw: $($_.Exception.Message)" -ForegroundColor Yellow
+                $_buildExit = 1
             }
-            if ($_flatpakOk) {
-                Write-Host '  [+] mios-flatpak-install.service complete -- MiOS-DEV is now full-parity MiOS.' -ForegroundColor Green
-                # Final acceptance probe.
-                $_bootcStatus = (& wsl.exe -d $_devDistro --user root -- bootc status --format=json 2>$null) -join ''
-                if ($_bootcStatus -match 'localhost/mios') {
-                    Write-Host '  [+] bootc status confirms localhost/mios:latest is the booted deployment.' -ForegroundColor Green
+
+            # Resolve the dev distro post-build. mios-build-driver may issue
+            # `systemctl reboot`; WSL terminates the distro and relaunches it
+            # on the next `wsl.exe -d` invocation. Poll
+            # mios-flatpak-install.service (oneshot) until it's no longer
+            # 'activating'. This whole section is BEST-EFFORT -- if the dev
+            # VM didn't reach a state where systemctl can answer, we just
+            # warn and return; we don't fail the install.
+            $_devDistro = $null
+            try {
+                $_wslList = @((& wsl.exe -l -q 2>$null) -split "`r?`n" |
+                            ForEach-Object { ($_ -replace [char]0, '').Trim() } |
+                            Where-Object { $_ })
+                foreach ($_c in @('MiOS-DEV','podman-MiOS-DEV','MiOS-BUILDER','podman-MiOS-BUILDER')) {
+                    if ($_wslList -contains $_c) { $_devDistro = $_c; break }
                 }
-            } elseif ((Get-Date) -ge $_flatpakDeadline) {
-                Write-Host '  [!] Timeout waiting for mios-flatpak-install.service. Bootstrap returning anyway.' -ForegroundColor Yellow
-                Write-Host "      Tail the journal: wsl -d $_devDistro --user root -- journalctl -u mios-flatpak-install.service -f" -ForegroundColor DarkGray
+            } catch {}
+
+            # Only poll if the build returned 0 AND we found a distro. If
+            # the build failed (driver error, wrong path, etc.), polling the
+            # flatpak service is pointless -- it never started.
+            if ($_buildExit -eq 0 -and $_devDistro) {
+                $_flatpakDeadline = (Get-Date).AddMinutes(20)
+                $_flatpakOk = $false
+                $_giveUp    = $false
+                Write-Host ''
+                Write-Host "  [*] Waiting for mios-flatpak-install.service inside $_devDistro (timeout 20 min)..." -ForegroundColor Cyan
+                while ((Get-Date) -lt $_flatpakDeadline -and -not $_giveUp) {
+                    Start-Sleep -Seconds 10
+                    # Defensive read: capture stdout+stderr so we can detect
+                    # the "System has not been booted with systemd as init"
+                    # case explicitly without throwing on null .Trim().
+                    $_raw = $null
+                    try {
+                        $_raw = (& wsl.exe -d $_devDistro --user root -- systemctl is-active mios-flatpak-install.service 2>&1) -join "`n"
+                    } catch {
+                        $_raw = ''
+                    }
+                    $_state = if ([string]::IsNullOrWhiteSpace($_raw)) { '' } else { ($_raw -split "`n")[0].Trim() }
+
+                    if ($_raw -match 'has not been booted with systemd') {
+                        Write-Host "  [!] systemd is not PID 1 inside $_devDistro -- can't poll service state." -ForegroundColor Yellow
+                        Write-Host '      Likely cause: /etc/wsl.conf [boot] systemd=true did not take effect on this restart.' -ForegroundColor DarkGray
+                        Write-Host '      Re-run `mios build` after `wsl --terminate' " ${_devDistro}" '` to retry.' -ForegroundColor DarkGray
+                        $_giveUp = $true
+                        continue
+                    }
+                    switch -regex ($_state) {
+                        '^inactive$'   { $_flatpakOk = $true; $_giveUp = $true }
+                        '^failed$'     {
+                            Write-Host "  [!] mios-flatpak-install.service FAILED inside $_devDistro." -ForegroundColor Red
+                            Write-Host "      Inspect: wsl -d $_devDistro --user root -- journalctl -u mios-flatpak-install.service --no-pager" -ForegroundColor DarkGray
+                            $_giveUp = $true
+                        }
+                        '^activating$' { Write-Host '    (still installing flatpaks...)' -ForegroundColor DarkGray }
+                        '^active$'     { Write-Host '    (oneshot still in ExecStart...)' -ForegroundColor DarkGray }
+                        default        { Write-Host "    (waiting; current state: '$_state')" -ForegroundColor DarkGray }
+                    }
+                }
+                if ($_flatpakOk) {
+                    Write-Host '  [+] mios-flatpak-install.service complete -- MiOS-DEV is now full-parity MiOS.' -ForegroundColor Green
+                    # Best-effort acceptance probe; null-safe.
+                    $_bootcRaw = $null
+                    try { $_bootcRaw = (& wsl.exe -d $_devDistro --user root -- bootc status --format=json 2>$null) -join '' } catch {}
+                    if ($_bootcRaw -and $_bootcRaw -match 'localhost/mios') {
+                        Write-Host '  [+] bootc status confirms localhost/mios:latest is the booted deployment.' -ForegroundColor Green
+                    }
+                } elseif ((Get-Date) -ge $_flatpakDeadline) {
+                    Write-Host '  [!] Timeout waiting for mios-flatpak-install.service. Bootstrap returning anyway.' -ForegroundColor Yellow
+                    Write-Host "      Tail the journal: wsl -d $_devDistro --user root -- journalctl -u mios-flatpak-install.service -f" -ForegroundColor DarkGray
+                }
+            } elseif (-not $_devDistro) {
+                Write-Host '  [!] No MiOS-DEV WSL distro found post-build -- skipping flatpak wait.' -ForegroundColor Yellow
+            }
+
+            if ($_buildExit -ne 0) {
+                Write-Host ''
+                Write-Host "  [!] mios-build returned exit $_buildExit -- MiOS-DEV may not be fully MiOS-ified." -ForegroundColor Yellow
+                Write-Host '      Windows install is intact. Fix the dev-VM issue and re-run from a MiOS terminal:' -ForegroundColor DarkGray
+                Write-Host '          mios build' -ForegroundColor DarkGray
             }
         } else {
-            Write-Host '  [!] No MiOS-DEV WSL distro found post-build -- cannot wait for flatpaks.' -ForegroundColor Yellow
+            Write-Host ''
+            Write-Host "  [!] Auto-build skipped: $_buildVerb not staged." -ForegroundColor Yellow
+            Write-Host '      build-mios.ps1 should have created it -- check the install log.' -ForegroundColor DarkGray
+            Write-Host '      Windows install is intact; dev VM is still vanilla Fedora.' -ForegroundColor DarkGray
         }
-
-        if ($_buildExit -ne 0 -and $_buildExit -ne $null) {
-            # Don't override $_bootstrapExit -- the Windows side succeeded; the
-            # dev-VM-side build is what failed. Surface it as a warning so the
-            # operator knows MiOS-DEV may not be fully MiOS-ified.
-            Write-Host "  [!] mios-build returned exit $_buildExit -- MiOS-DEV may not be fully MiOS-ified." -ForegroundColor Yellow
-            Write-Host '      Re-run manually from a MiOS terminal: mios build' -ForegroundColor DarkGray
-        }
-    } else {
+    } catch {
+        # Defence-in-depth: even if the local trap is bypassed somehow,
+        # this catch ensures the auto-chain failure CANNOT propagate to
+        # the script-level trap that fires Invoke-MiOSFullReap.
         Write-Host ''
-        Write-Host "  [!] Auto-build skipped: $_buildVerb not staged." -ForegroundColor Yellow
-        Write-Host '      build-mios.ps1 should have created it -- check the install log.' -ForegroundColor DarkGray
-        Write-Host '      Bootstrap finished but MiOS-DEV is still vanilla Fedora.' -ForegroundColor DarkGray
+        Write-Host ('  [!] Auto-chain caught a fatal: ' + $_.Exception.Message) -ForegroundColor Yellow
+        Write-Host '      Windows install is intact. Re-run `mios build` from a MiOS terminal.' -ForegroundColor DarkGray
     }
 }
 exit $_bootstrapExit
