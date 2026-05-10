@@ -91,6 +91,34 @@ rows              = 40
 cols              = 100
 rows              = 50
 
+# Interactive-shell startup. The Windows pwsh profile body and the
+# Linux bash login dotfile each invoke ONE thing on console spawn:
+# the verb here, dispatched through the unified `mios <verb>`
+# entry. Profile bodies do NOT inline-print anything (no
+# Write-Host / no echo banners) -- the verb command is what
+# renders. This keeps the profile a thin function-definition layer
+# and makes "what shows up when I open MiOS" a single TOML edit.
+#
+# Vendor default = `mios mini` -- the compact framed banner +
+# fastfetch info dashboard that fits inside the 80x20 portal. The
+# FULL `mios dash` invocation (ASCII banner + per-service status +
+# extended sys specs) is reserved for explicit operator-triggered
+# render -- it doesn't fit in 80x20 and would push the prompt
+# off-viewport on every shell spawn.
+#
+# Operators who want a silent shell set this to "" -- the profile
+# body becomes truly inert. Operators who want a different first
+# impression point it at any other MiOS verb (e.g. `mios help`).
+#
+# Same TOML key drives Windows pwsh + Linux bash. Per-platform
+# overrides: [terminal.startup].windows / [terminal.startup].linux
+# win over the global `verb` key if set. SSOT remains mios.toml --
+# `mios update` re-bakes the startup verb dispatch on next bootstrap.
+[terminal.startup]
+verb              = "mini"
+windows           = "mini"
+linux             = "mini"
+
 # ----------------------------------------------------------------------------
 # [theme] -- WT MiOS profile chrome. Per feedback_mios_terminal_global_chrome.md
 # the look is acrylic 50% transparent + frameless + no scrollbar + no titlebar

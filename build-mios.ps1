@@ -6233,7 +6233,14 @@ $marker
 # to mios-<verb> functions sharing the same Show-MiosDashboard
 # layout) wins.
 `$Global:MiosBin = "$miosBinForProfile"
-function mios-dash    { & (Join-Path `$Global:MiosBin 'mios-dash.ps1')   @args }
+# mios-dash + mios-mini are defined as INLINE FUNCTIONS in the
+# Get-MiOS.ps1 profile body above (mios-dash = FULL render with
+# ASCII banner + services + sys specs; mios-mini = compact 80x20
+# framed banner + fastfetch). We don't override them with bin-
+# script wrappers here because the FULL render needs to query the
+# running MiOS-DEV state via wsl.exe -- inlining keeps it co-
+# located with the rest of the verb implementations and leaves
+# the bin-script staging point for legacy direct-invocation only.
 function mios-dev     { & (Join-Path `$Global:MiosBin 'mios-dev.ps1')    @args }
 function mios-pull    { & (Join-Path `$Global:MiosBin 'mios-pull.ps1')   @args }
 function mios-update  { & (Join-Path `$Global:MiosBin 'mios-update.ps1') @args }

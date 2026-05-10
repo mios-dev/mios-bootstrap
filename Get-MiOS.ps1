@@ -3772,84 +3772,17 @@ if (`$true) {
         Write-Host (`$BL + (`$H * (`$WIDTH - 2)) + `$BR) -ForegroundColor Blue
     }
 
-    # Dashboard auto-render. Drop the WT_SESSION gate -- with -NoProfile
-    # in the MiOS WT profile commandline the operator's $PROFILE is
-    # skipped entirely, so the only path into THIS script body IS the
-    # MiOS terminal launch. Render whenever the host can paint AND the
-    # operator hasn't opted out via $env:MIOS_SKIP_MOTD. fastfetch
-    # availability is probed inside Show-MiosDashboard -- if missing,
-    # the framed banner + verb-hints still render with a "fastfetch not
-    # installed" placeholder row, so the operator sees the MiOS banner
-    # even on a half-bootstrapped host.
-    # Guard: profile body is dot-sourced from many places (interactive
-    # session start, mios-dash.ps1, mios-help.ps1, mios.ps1 dispatcher,
-    # etc.). Each of those then calls Show-MiosDashboard explicitly, so
-    # without this guard the dashboard renders TWICE per `mios dash`
-    # invocation (operator-reported 2026-05-10: "mios dash command
-    # spawns 2 dashboards on the windows side"). Render auto-MOTD only
-    # the FIRST time the profile is sourced in this session; subsequent
-    # dot-sources get the function definitions only, not the auto-render.
-    if (`$Global:MiosProfileMotdRendered) {
-        # Already rendered this session -- skip the auto-MOTD path
-        # entirely. Verb scripts (mios-dash.ps1) still call
-        # Show-MiosDashboard directly when they want it; this guard
-        # only suppresses the implicit auto-render.
-    } elseif (`$Host.UI.RawUI -and (-not `$env:MIOS_SKIP_MOTD)) {
-        `$Global:MiosProfileMotdRendered = `$true
-        # ── EULA pre-print (operator request 2026-05-08) ─────────────
-        # "We should print the EULA when the app opens -- and THEN starts
-        # the dashboards!!! (make sure that the EULA scrolls out of view
-        # so that the dash is still top and center!!"
-        # Approach: print a condensed EULA banner, then Clear-Host (which
-        # blanks the visible viewport but preserves the WT scrollback so
-        # the EULA stays scroll-up-readable), then render the dashboard
-        # at the top of the fresh viewport. Operator can opt out via
-        # `$env:MIOS_SKIP_EULA=1.
-        # EULA pre-print disabled by default 2026-05-10. Operator
-        # already acknowledged via the irm|iex banner; pre-printing
-        # the EULA lines + Clear-Host adds 6-8 rows of pre-dashboard
-        # scrolling that on the initial WT spawn (before WT's
-        # pseudoconsole has settled the cell count) pushes the
-        # dashboard's top frame above the viewport. Net effect: the
-        # operator sees fastfetch info at row 0 with the
-        # `╭─MiOS─╮` corner clipped off-screen. Re-enable by setting
-        # MIOS_FORCE_EULA=1 if you specifically want the rolling EULA
-        # at every launch.
-        if (`$env:MIOS_FORCE_EULA -and (-not `$env:MIOS_SKIP_EULA)) {
-            try {
-                # EULA lines + display_ms baked at install time from
-                # mios.toml [messages.eula]; substituted at install time
-                # from the live toml.
-                `$_eulaLines = $_eulaArrayLiteral
-                foreach (`$_l in `$_eulaLines) { Write-Host `$_l -ForegroundColor DarkGray }
-                Start-Sleep -Milliseconds $_eulaDisplayMs
-                # Clear visible viewport (preserves scrollback in WT).
-                try { Clear-Host } catch { try { [Console]::Clear() } catch {} }
-            } catch {}
-        }
-        # Explicit cursor reset before the dashboard renders. Clear-Host
-        # in WT *should* reset cursor to (0,0) via the \e[2J\e[H ANSI,
-        # but on initial-spawn timing (the WT pseudoconsole hasn't
-        # finished sizing when the profile body fires) we have observed
-        # the dashboard's top frame `╭─...─╮` getting written to a row
-        # where the LATER SetWindowPos resize then crops it off-viewport.
-        # Operator screenshot 2026-05-10: dashboard top frame missing,
-        # fastfetch row at viewport top -- 4-6 rows of header gone.
-        # An unconditional cursor home before render guarantees row 0.
-        try {
-            if (`$Host.UI.RawUI) {
-                `$_zero = New-Object System.Management.Automation.Host.Coordinates 0, 0
-                `$Host.UI.RawUI.CursorPosition = `$_zero
-            }
-        } catch {
-            try { [Console]::SetCursorPosition(0, 0) } catch {}
-        }
-        `$miosLogo   = _MiosSelfHeal 'fastfetch' 'mios.txt'      '$ffLogoBase64'
-        `$miosFFCfg  = _MiosSelfHeal 'fastfetch' 'config.jsonc'  '$ffConfigBase64'
-        if (`$miosLogo -and `$miosFFCfg) {
-            try { Show-MiosDashboard -ConfigPath `$miosFFCfg -LogoPath `$miosLogo } catch {}
-        }
-    }
+    # NO inline-render here. The profile body is a thin function-
+    # definition layer; the "what shows up on terminal spawn" is
+    # whatever verb mios.toml [terminal.startup].windows points at.
+    # The dispatch fires AT THE END of this profile (after the `mios`
+    # verb function is defined). See the [terminal.startup] block
+    # below the function definitions.
+    # Operator 2026-05-10: "have the bash and pwsh/WT environment/
+    # dotfile(s) automatically run mios dash on open/launch--NOT
+    # PRINT ON LAUNCH!!! THE ACTUAL ENV/DOTFILE(S) SHOULD DICTATE THE
+    # COMMANDS/VERBS AND WHATS RUN ON CONSOLE SPAWN(ALL PLATFORMS
+    # GLOBALLY)--ALL SOURCED FROM THE MIOS.TOML"
 
     # ── oh-my-posh init ───────────────────────────────────────────
     # Capture the init script output, then regex-patch the broken
@@ -4065,25 +3998,91 @@ function mios-dev {
     & wsl.exe -d MiOS-DEV --cd / --user mios @Args
 }
 
-function mios-dash {
-    # Live MiOS dashboard -- reads system state, framed banner +
-    # fastfetch + service health. Wraps the bin script that
-    # build-mios.ps1 stages at M:\MiOS\bin\mios-dash.ps1.
-    `$dash = if (Test-Path 'M:\MiOS\bin\mios-dash.ps1') { 'M:\MiOS\bin\mios-dash.ps1' }
-            else { `$null }
-    if (`$dash) {
-        & `$dash
+function mios-mini {
+    # MINI dashboard -- the compact 80x20 framed banner + fastfetch
+    # info. This is what fires on every shell spawn (vendor default
+    # of [terminal.startup].verb). Operator 2026-05-10: "have launch
+    # be the mini-dashboard ... NOT PRINT ON LAUNCH" -- the dotfile
+    # dispatches THIS verb so the render comes from a verb command,
+    # not inline-print in the profile body.
+    if (Get-Command Show-MiosDashboard -ErrorAction SilentlyContinue) {
+        `$cfg  = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' } else { '' }
+        `$logo = if (Test-Path 'M:\MiOS\fastfetch\mios.txt')      { 'M:\MiOS\fastfetch\mios.txt' }      else { '' }
+        Show-MiosDashboard -ConfigPath `$cfg -LogoPath `$logo
     } else {
-        # Fall back to running Show-MiosDashboard inline since this
-        # profile defined it.
-        if (Get-Command Show-MiosDashboard -ErrorAction SilentlyContinue) {
-            `$cfg  = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' } else { '' }
-            `$logo = if (Test-Path 'M:\MiOS\fastfetch\mios.txt')      { 'M:\MiOS\fastfetch\mios.txt' }      else { '' }
-            Show-MiosDashboard -ConfigPath `$cfg -LogoPath `$logo
-        } else {
-            Write-Host '  [!] mios-dash not available -- run mios-build to deploy it.' -ForegroundColor Yellow
-        }
+        Write-Host '  [!] mios mini: Show-MiosDashboard not loaded.' -ForegroundColor Yellow
     }
+}
+
+function mios-dash {
+    # FULL MiOS dashboard -- ASCII banner + fastfetch (full width,
+    # no compact frame trim) + MiOS-DEV service status + extended
+    # sys specs. Operator 2026-05-10: "the invoked 'mios dash'
+    # command(s) runs the FULL MiOS dashboard; showing all service's
+    # and relevant MiOS system specs too--include the MIOS ASCII
+    # banner in the full dash!"
+    `$_ascii = `$null
+    foreach (`$_p in @('M:\MiOS\fastfetch\mios.txt','M:\usr\share\mios\branding\mios.txt')) {
+        if (Test-Path -LiteralPath `$_p) { `$_ascii = `$_p; break }
+    }
+    if (`$_ascii) {
+        Write-Host ''
+        foreach (`$_l in (Get-Content -LiteralPath `$_ascii)) {
+            Write-Host `$_l -ForegroundColor Blue
+        }
+        Write-Host ''
+    }
+
+    Write-Host '  MiOS -- Full system view' -ForegroundColor Cyan
+    Write-Host '  ------------------------' -ForegroundColor DarkCyan
+
+    # Sys specs via fastfetch (full module list, no frame).
+    `$_ffCfg = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' }
+              elseif (Test-Path 'M:\usr\share\mios\fastfetch\config.jsonc') { 'M:\usr\share\mios\fastfetch\config.jsonc' }
+              else { `$null }
+    if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
+        if (`$_ffCfg) { & fastfetch -c `$_ffCfg --logo none } else { & fastfetch --logo none }
+    } else {
+        Write-Host '  [fastfetch unavailable]' -ForegroundColor DarkGray
+    }
+
+    # MiOS-DEV service status (Quadlets + portal + dev-VM-essentials).
+    # Reads from the running podman-MiOS-DEV WSL distro via wsl.exe.
+    Write-Host ''
+    Write-Host '  MiOS-DEV services' -ForegroundColor Cyan
+    Write-Host '  -----------------' -ForegroundColor DarkCyan
+    if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
+        `$_distro = `$null
+        foreach (`$_d in @('podman-MiOS-DEV','MiOS-DEV')) {
+            try {
+                `$_chk = & wsl.exe -d `$_d --user mios -- echo ready 2>`$null
+                if (`$LASTEXITCODE -eq 0 -and `$_chk -match 'ready') { `$_distro = `$_d; break }
+            } catch {}
+        }
+        if (`$_distro) {
+            try {
+                & wsl.exe -d `$_distro --user mios -- bash -lc 'systemctl --user list-units --type=service --state=active --no-legend --no-pager 2>/dev/null | head -30; echo ""; echo "graphical-session.target: `$(systemctl --user is-active graphical-session.target 2>/dev/null)"; echo "xdg-desktop-portal.service: `$(systemctl --user is-active xdg-desktop-portal.service 2>/dev/null)"; echo "podman.socket: `$(systemctl --user is-active podman.socket 2>/dev/null)"'
+            } catch {
+                Write-Host "  [!] failed to query MiOS-DEV services: `$_" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host '  [MiOS-DEV distro not running -- start with: mios dev]' -ForegroundColor DarkGray
+        }
+    } else {
+        Write-Host '  [wsl.exe not available]' -ForegroundColor DarkGray
+    }
+
+    # Podman machine state (Windows host side).
+    Write-Host ''
+    Write-Host '  Podman machine' -ForegroundColor Cyan
+    Write-Host '  --------------' -ForegroundColor DarkCyan
+    if (Get-Command podman -ErrorAction SilentlyContinue) {
+        try { & podman machine list 2>&1 | Out-Host } catch {}
+        try { & podman info --format '  Hostname:   {{.Host.Hostname}}{{`"``n`"}}  Server OS:  {{.Host.OS}}{{`"``n`"}}  CPUs:       {{.Host.CPUs}}{{`"``n`"}}  Memory:     {{.Host.MemTotal}} bytes' 2>`$null } catch {}
+    } else {
+        Write-Host '  [podman not on PATH]' -ForegroundColor DarkGray
+    }
+    Write-Host ''
 }
 
 function mios-help {
@@ -4097,7 +4096,8 @@ function mios-help {
     Write-Host '  mios pull     git fetch + hard reset M:\ to origin/main' -ForegroundColor White
     Write-Host '  mios config   open the HTML configurator (mios.toml editor)' -ForegroundColor White
     Write-Host '  mios dev      wsl into the MiOS-DEV distro (root /, user mios)' -ForegroundColor White
-    Write-Host '  mios dash     live MiOS dashboard (services + fastfetch)' -ForegroundColor White
+    Write-Host '  mios mini     compact 80x20 framed banner + fastfetch (auto on shell spawn)' -ForegroundColor White
+    Write-Host '  mios dash     FULL dashboard: ASCII banner + services + extended sys specs' -ForegroundColor White
     Write-Host '  mios help     this list' -ForegroundColor White
     Write-Host ''
 }
@@ -4110,7 +4110,7 @@ function mios {
     [CmdletBinding()]
     param(
         [Parameter(Position=0)]
-        [ValidateSet('build','update','pull','config','dev','dash','help')]
+        [ValidateSet('build','update','pull','config','dev','dash','mini','help')]
         [string]`$Verb = 'help',
         [Parameter(ValueFromRemainingArguments)]
         `$Args
@@ -4126,9 +4126,67 @@ function mios {
 # Tab-completion for `mios <verb>` so `mios b<TAB>` -> `mios build`.
 Register-ArgumentCompleter -CommandName mios -ParameterName Verb -ScriptBlock {
     param(`$cmdName, `$paramName, `$wordToComplete, `$cmdAst, `$fakeBoundParam)
-    @('build','update','pull','config','dev','dash','help') |
+    @('build','update','pull','config','dev','dash','mini','help') |
         Where-Object { `$_ -like "`$wordToComplete*" } |
         ForEach-Object { [System.Management.Automation.CompletionResult]::new(`$_, `$_, 'ParameterValue', `$_) }
+}
+
+# ── Interactive-shell startup verb (SSOT: mios.toml [terminal.startup]) ──
+# The profile body above is JUST function definitions. What runs on
+# terminal spawn is the verb declared in mios.toml -- read fresh
+# every shell launch so HTML configurator edits flow through with
+# zero re-bake. Vendor default is "dash" but the operator can flip
+# to any other verb (or "" for a silent shell).
+#
+# Per-platform key precedence: [terminal.startup].windows wins over
+# [terminal.startup].verb (the cross-platform default). The Linux
+# bash side reads the same TOML keys (.linux > .verb).
+#
+# Guards:
+#   - `$env:MIOS_SKIP_MOTD = "1"      -> no startup verb fires.
+#   - non-interactive host           -> no fire (background scripts,
+#                                       VS Code's PowerShell extension
+#                                       integrated terminal, etc.).
+#   - `$Global:MiosStartupVerbFired   -> idempotent across re-sources
+#                                       (mios.ps1 dot-sources this
+#                                       profile to load functions, we
+#                                       don't want a recursive verb
+#                                       call inside an already-running
+#                                       verb).
+function _MiosResolveStartupVerb {
+    `$_cands = @(
+        (Join-Path `$env:USERPROFILE '.config\mios\mios.toml'),
+        'M:\etc\mios\mios.toml',
+        'M:\usr\share\mios\mios.toml'
+    )
+    foreach (`$_c in `$_cands) {
+        if (-not (Test-Path -LiteralPath `$_c)) { continue }
+        try {
+            `$_t = [IO.File]::ReadAllText(`$_c, (New-Object System.Text.UTF8Encoding(`$false)))
+        } catch { continue }
+        `$_sec = [regex]::Match(`$_t, '(?ms)^\[terminal\.startup\]\s*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)')
+        if (-not `$_sec.Success) { continue }
+        `$_body = `$_sec.Groups['body'].Value
+        # Per-platform key wins over cross-platform 'verb' key.
+        `$_keys = @('windows','verb')
+        foreach (`$_k in `$_keys) {
+            `$_m = [regex]::Match(`$_body, ('(?m)^\s*' + [regex]::Escape(`$_k) + '\s*=\s*"([^"]*)"'))
+            if (`$_m.Success) { return `$_m.Groups[1].Value.Trim() }
+        }
+    }
+    # Vendor fallback: mini (the compact 80x20 framed banner).
+    # `dash` is the FULL render -- ASCII banner + service status +
+    # extended sys specs -- explicitly invoked by the operator,
+    # not auto-fired on every shell spawn.
+    return 'mini'
+}
+
+if (-not `$Global:MiosStartupVerbFired -and `$Host.UI.RawUI -and (-not `$env:MIOS_SKIP_MOTD)) {
+    `$Global:MiosStartupVerbFired = `$true
+    `$_startupVerb = _MiosResolveStartupVerb
+    if (`$_startupVerb) {
+        try { mios `$_startupVerb } catch {}
+    }
 }
 "@
     # Write the profile body with explicit UTF-8 BOM. The body contains
