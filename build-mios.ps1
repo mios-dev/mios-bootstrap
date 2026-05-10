@@ -7878,38 +7878,61 @@ if ($activeDistro) {
                             & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update --system flathub org.gnome.Platform//master org.gnome.Sdk//master 2>&1 | tail -20" 2>&1 |
                                 ForEach-Object { Write-Log "mios-flatpak-runtime: $_" }
                         }
+                        # Ensure ALL configured remotes are added before the
+                        # install loop runs (flathub is added separately
+                        # elsewhere; fedora + gnome-nightly land here so
+                        # entries with "fedora:" / "gnome-nightly:" prefixes
+                        # in [desktop].flatpaks can install).
+                        & {
+                            $ErrorActionPreference = 'Continue'
+                            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                                $PSNativeCommandUseErrorActionPreference = $false
+                            }
+                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "
+                                sudo flatpak remote-add --system --if-not-exists fedora oci+https://registry.fedoraproject.org 2>/dev/null || true
+                                sudo flatpak remote-add --system --if-not-exists gnome-nightly https://nightly.gnome.org/gnome-nightly.flatpakrepo 2>/dev/null || true
+                                sudo flatpak update --system --appstream fedora 2>&1 | tail -2 || true
+                                sudo flatpak update --system --appstream gnome-nightly 2>&1 | tail -2 || true
+                            " 2>&1 | ForEach-Object { Write-Log "mios-flatpak-remotes: $_" }
+                        }
                         $_fpOk = 0; $_fpFail = 0
-                        foreach ($_fp in $_flatpaks) {
-                            Set-Step ("[overlay] flatpak install {0}..." -f $_fp)
+                        foreach ($_fpEntry in $_flatpaks) {
+                            # Parse "remote:appid" form; default to flathub when no prefix.
+                            # Operator-flagged 2026-05-10: nautilus/ptyxis shims
+                            # errored "app/<id>/x86_64/master not installed" because
+                            # the install loop hardcoded `flathub` and our toml
+                            # entries used `gnome-nightly:org.gnome.Nautilus.Devel`
+                            # + `fedora:org.gnome.Epiphany`.
+                            if ($_fpEntry -match '^([a-zA-Z0-9_-]+):(.+)$') {
+                                $_fpRemote = $matches[1]
+                                $_fp       = $matches[2]
+                            } else {
+                                $_fpRemote = 'flathub'
+                                $_fp       = $_fpEntry
+                            }
+                            Set-Step ("[overlay] flatpak install {0}:{1}..." -f $_fpRemote, $_fp)
                             $_fpStderrLog = New-Object System.Collections.Generic.List[string]
                             & {
                                 $ErrorActionPreference = 'Continue'
                                 if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                     $PSNativeCommandUseErrorActionPreference = $false
                                 }
-                                & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update flathub $_fp 2>&1" 2>&1 |
+                                & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update $_fpRemote $_fp 2>&1" 2>&1 |
                                     ForEach-Object { Write-Log "mios-flatpak: $_"; [void]$_fpStderrLog.Add($_) }
                                 $script:_fpLastRc = $LASTEXITCODE
                             }
                             if ($script:_fpLastRc -eq 0) {
-                                Log-Ok "[overlay] flatpak install OK: $_fp"
+                                Log-Ok "[overlay] flatpak install OK: $_fpRemote/$_fp"
                                 $_fpOk++
                             } else {
-                                # Operator 2026-05-09: org.gnome.Software
-                                # consistently fails on first pass with a
-                                # sub-200ms retry that captured no diagnostic.
-                                # Retry with verbose + write the FULL output
-                                # to its own log file, AND surface the last
-                                # 5 stderr lines inline so the operator
-                                # doesn't have to grep the 443 KB main log.
                                 $_fpRetryLog = New-Object System.Collections.Generic.List[string]
-                                Log-Warn "[overlay] flatpak install attempt 1 failed (exit $($script:_fpLastRc)): $_fp -- retrying with --arch=x86_64 -v"
+                                Log-Warn "[overlay] flatpak install attempt 1 failed (exit $($script:_fpLastRc)): $_fpRemote/$_fp -- retrying with --arch=x86_64 -v"
                                 & {
                                     $ErrorActionPreference = 'Continue'
                                     if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                         $PSNativeCommandUseErrorActionPreference = $false
                                     }
-                                    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update --system --arch=x86_64 -v flathub $_fp 2>&1" 2>&1 |
+                                    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update --system --arch=x86_64 -v $_fpRemote $_fp 2>&1" 2>&1 |
                                         ForEach-Object { Write-Log "mios-flatpak-retry: $_"; [void]$_fpRetryLog.Add($_) }
                                     $script:_fpRetryRc = $LASTEXITCODE
                                 }
