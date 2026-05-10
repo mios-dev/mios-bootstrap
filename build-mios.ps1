@@ -5537,6 +5537,17 @@ function Install-MiosLauncher {
 # terminal tab open. Operator's directive 2026-05-09: ONE dashboard
 # globally, dictated by mios.toml.
 $ErrorActionPreference = 'SilentlyContinue'
+
+# Pre-set the auto-MOTD guard BEFORE dot-sourcing the profile so the
+# profile body's auto-render is suppressed -- we explicitly call
+# Show-MiosDashboard ourselves below. Without this, fresh `pwsh`
+# processes (launched from a Start Menu shortcut, a new WT tab, or
+# any non-nested context) re-source the profile, which triggers its
+# auto-render, which then runs in addition to our explicit call --
+# producing two dashboards in a row. Operator-flagged 2026-05-10:
+# "DOUBLE DASHBOARD still when running 'mios dash'".
+$Global:MiosProfileMotdRendered = $true
+
 $_miosProfile = 'M:\MiOS\powershell\profile.ps1'
 if (Test-Path -LiteralPath $_miosProfile) {
     . $_miosProfile

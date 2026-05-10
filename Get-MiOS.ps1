@@ -3769,19 +3769,25 @@ if (`$true) {
         # the EULA stays scroll-up-readable), then render the dashboard
         # at the top of the fresh viewport. Operator can opt out via
         # `$env:MIOS_SKIP_EULA=1.
-        if (-not `$env:MIOS_SKIP_EULA) {
+        # EULA pre-print disabled by default 2026-05-10. Operator
+        # already acknowledged via the irm|iex banner; pre-printing
+        # the EULA lines + Clear-Host adds 6-8 rows of pre-dashboard
+        # scrolling that on the initial WT spawn (before WT's
+        # pseudoconsole has settled the cell count) pushes the
+        # dashboard's top frame above the viewport. Net effect: the
+        # operator sees fastfetch info at row 0 with the
+        # `╭─MiOS─╮` corner clipped off-screen. Re-enable by setting
+        # MIOS_FORCE_EULA=1 if you specifically want the rolling EULA
+        # at every launch.
+        if (`$env:MIOS_FORCE_EULA -and (-not `$env:MIOS_SKIP_EULA)) {
             try {
                 # EULA lines + display_ms baked at install time from
-                # mios.toml [messages.eula] (Install-MiOSPowerShellProfile
-                # parses the toml and emits the resolved array literal
-                # below).  Operator edits via mios.html flow on the
-                # next `mios update`.
+                # mios.toml [messages.eula]; substituted at install time
+                # from the live toml.
                 `$_eulaLines = $_eulaArrayLiteral
                 foreach (`$_l in `$_eulaLines) { Write-Host `$_l -ForegroundColor DarkGray }
                 Start-Sleep -Milliseconds $_eulaDisplayMs
                 # Clear visible viewport (preserves scrollback in WT).
-                # Cursor moves to row 0 col 0 so the dashboard renders
-                # at the top of the fresh viewport.
                 try { Clear-Host } catch { try { [Console]::Clear() } catch {} }
             } catch {}
         }
