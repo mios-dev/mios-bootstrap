@@ -3354,22 +3354,28 @@ if (`$true) {
         # Width adapts to LIVE terminal width every render so the dashboard
         # always renders edge-to-edge. Operator 2026-05-09: "dashboards
         # should be edge to edge globally!! 80x20 window is the Global
-        # benchmark!". Strategy:
-        #   1. Read live WindowWidth at THIS render (not cached at install).
-        #      Use BOTH [Console]::WindowWidth and $Host.UI.RawUI.WindowSize.Width
-        #      and pick the smaller -- different PS hosts lie differently.
-        #   2. Subtract right_margin (default 0 = full edge-to-edge in
-        #      canonical --focus launches; operator can bump in mios.toml
-        #      for non-focus chrome budgets).
-        #   3. NO frame_width cap -- in a 80x20 window paint 80 cells; in
-        #      a 100x30 resized window paint 100 cells; always edge-to-edge.
-        #   4. Floor at 20 so the math doesn't produce a negative width.
-        `$_winC = try { [Console]::WindowWidth } catch { 0 }
-        `$_winR = try { `$Host.UI.RawUI.WindowSize.Width } catch { 0 }
-        `$_winWNow = if (`$_winC -gt 0 -and `$_winR -gt 0) { [math]::Min(`$_winC, `$_winR) }
-                    elseif (`$_winC -gt 0) { `$_winC }
-                    elseif (`$_winR -gt 0) { `$_winR }
-                    else { $_miosFrameW }
+        # benchmark!" + "opening MiOS app and using things like fastfetch
+        # and btop--things that clear the screen; ends up fitting the
+        # dashboards in the same original window and tab--eventually".
+        #
+        # First-render timing: at session start, WT hasn't settled the
+        # cell count yet. Solution: poll WindowWidth up to 5x with a
+        # 50ms gap until it stabilizes (two consecutive reads agree),
+        # then use the stable value. After fastfetch/btop run, WT has
+        # fully settled and subsequent renders read correctly.
+        `$_widthA = 0; `$_widthB = 0
+        for (`$_i = 0; `$_i -lt 5; `$_i++) {
+            `$_widthB = `$_widthA
+            `$_winC = try { [Console]::WindowWidth } catch { 0 }
+            `$_winR = try { `$Host.UI.RawUI.WindowSize.Width } catch { 0 }
+            `$_widthA = if (`$_winC -gt 0 -and `$_winR -gt 0) { [math]::Min(`$_winC, `$_winR) }
+                        elseif (`$_winC -gt 0) { `$_winC }
+                        elseif (`$_winR -gt 0) { `$_winR }
+                        else { 0 }
+            if (`$_widthA -gt 0 -and `$_widthA -eq `$_widthB) { break }
+            if (`$_i -lt 4) { Start-Sleep -Milliseconds 50 }
+        }
+        `$_winWNow = if (`$_widthA -gt 0) { `$_widthA } else { $_miosFrameW }
         `$WIDTH = `$_winWNow - $_miosRightMargin
         if (`$WIDTH -lt 20) { `$WIDTH = [math]::Max(20, `$_winWNow) }
         `$INNER = `$WIDTH - 4
