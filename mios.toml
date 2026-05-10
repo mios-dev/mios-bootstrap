@@ -281,6 +281,16 @@ color_scheme  = "prefer-dark"   # libadwaita / dconf color-scheme
 # system services) ship as RPMs in usr/share/mios/PACKAGES.md. Add every
 # user-facing app here, never to PACKAGES.md.
 flatpaks      = [
+    # ── GTK theme extensions (so flatpaks honor host dark theme) ──
+    # Without these, every flatpak GTK app uses its bundled Adwaita
+    # fallback and ignores host dconf gtk-theme=adw-gtk3-dark.
+    # Operator-flagged 2026-05-10 "Nautilus STILL has olde GTK/CSS/
+    # Decorations/theming" -- root cause was missing flatpak theme
+    # extensions. Combined with mios.git's /etc/dconf/db/local.d/
+    # 00-mios-theme + per-flatpak GTK_THEME env override these
+    # produce a unified dark Adwaita look across system + flatpak.
+    "org.gtk.Gtk3theme.adw-gtk3-dark",                 # the dark theme itself
+    "org.gtk.Gtk3theme.adw-gtk3",                      # the light variant (for ADW_DEBUG_COLOR_SCHEME=force-light)
     # ── Default session apps ──
     "org.gnome.Epiphany",                              # default browser
     "org.gnome.Ptyxis",                                # terminal (replaces RPM)
