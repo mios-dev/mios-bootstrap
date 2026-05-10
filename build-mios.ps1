@@ -6043,20 +6043,42 @@ if (Test-Path `$pull) {
 # 'podman-' prefix for podman-machine calls.
 `$podmanMachine = `$distro -replace '^podman-', ''
 Write-Host ''
+# Pre-warm the WSL distro so its kernel + systemd are up BEFORE we ask
+# podman to start the machine. Without this, `podman machine start`
+# races and frequently emits:
+#   "could not start api proxy since expected pipe is not available:
+#    podman-MiOS-DEV"
+#   "Error: machine did not transition into running state: ssh error"
+# A no-op `wsl.exe -d <distro> --user mios -- true` triggers WSL to
+# (re)launch the distro, which creates the AF_VSOCK / pipe endpoints
+# podman then attaches to.
+Write-Host ('  [build] pre-warming WSL distro {0} ...' -f `$distro) -ForegroundColor DarkGray
+try {
+    & wsl.exe -d `$distro --user mios -- true 2>&1 | Out-Null
+} catch {}
+
 Write-Host ('  [build] starting WSL-Podman machine: {0} ...' -f `$podmanMachine) -ForegroundColor Cyan
 try {
     & podman machine start `$podmanMachine 2>&1 | ForEach-Object {
         `$line = `$_.ToString()
-        # Filter the noisy "already running" line into something less alarming.
+        # Filter noise. "already running" is happy-path; "machine did
+        # not transition into running state" is a known false-positive
+        # on WSL-backed machines when the api-proxy pipe is slow to
+        # surface -- the distro is up, the daemon is reachable,
+        # podman's own state cache just hasn't caught up yet.
         if (`$line -match 'is already running') {
             Write-Host '    (machine already running)' -ForegroundColor DarkGray
+        } elseif (`$line -match 'machine did not transition into running state' -or
+                  `$line -match 'could not start api proxy since expected pipe is not available' -or
+                  `$line -match 'API forwarding for Docker API clients is not available') {
+            Write-Host ('    (non-fatal: ' + `$line + ')') -ForegroundColor DarkGray
         } else {
             Write-Host ('    ' + `$line) -ForegroundColor DarkGray
         }
     }
 } catch {
     Write-Host ('  [build] podman machine start threw: ' + `$_.Exception.Message) -ForegroundColor Yellow
-    Write-Host '  [build] continuing -- wsl.exe -d will fall back to starting the distro alone (build may fail if podman daemon isn''t reachable)' -ForegroundColor Yellow
+    Write-Host '  [build] continuing -- wsl.exe -d already has the distro live; podman daemon should be reachable inside it.' -ForegroundColor Yellow
 }
 
 # Brief settling pause so podman API socket is reachable before the

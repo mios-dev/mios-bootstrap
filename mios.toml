@@ -223,7 +223,9 @@ flatpaks      = [
     "org.gnome.Ptyxis",                                # terminal (replaces RPM)
     "org.gnome.Nautilus",                              # file manager (replaces RPM)
     # ── App store / Flatpak management ──
-    "org.gnome.Software",                              # native GNOME app store (Flatpak frontend)
+    # NOTE: "org.gnome.Software" was here but Flathub returns
+    # "Nothing matches" as of 2026-05 -- delisted or renamed.
+    # Operators add a Flatpak browser via mios.html (e.g. Warehouse).
     "com.github.tchx84.Flatseal",                      # Flatpak permissions UI
     "com.mattjakeman.ExtensionManager",                # GNOME shell extensions (replaces gnome-tweaks)
     # ── Developer (FOSS rebuild of VS Code; only IDE shipped globally) ──
@@ -276,7 +278,7 @@ sections = [
     "base", "security", "utils", "build-toolchain", "containers",
     "cockpit", "storage", "virt", "guests",
     "gpu-mesa", "gpu-nvidia", "gpu-amd-compute", "gpu-intel-compute",
-    "gnome", "phosh",
+    "gnome", "gnome-core-apps", "phosh",
     "ai", "k3s", "k3s-selinux-build", "cockpit-plugins-build",
     "sbom-tools", "uki", "self-build", "network-discovery", "updater",
     "wintools", "gaming", "nut", "ceph", "freeipa", "ha",
@@ -444,6 +446,11 @@ pkgs = [
 
 [packages.gnome-core-apps]
 pkgs = [
+    # GNOME Software via Fedora repos (dnf), not Flathub. The Flathub
+    # `org.gnome.Software` ID returns "Nothing matches" as of 2026-05.
+    # dnf-installed gnome-software still browses Flathub apps via its
+    # flatpak plugin -- same UX, vendor install channel.
+    "gnome-software",
 ]
 
 [packages.gpu-mesa]
