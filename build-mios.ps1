@@ -6238,6 +6238,27 @@ function mios-dev     { & (Join-Path `$Global:MiosBin 'mios-dev.ps1')    @args }
 function mios-pull    { & (Join-Path `$Global:MiosBin 'mios-pull.ps1')   @args }
 function mios-update  { & (Join-Path `$Global:MiosBin 'mios-update.ps1') @args }
 function mios-config  { & (Join-Path `$Global:MiosBin 'mios-config.ps1') @args }
+
+# btop on Windows -> dispatch to the dev VM's Linux btop (UNIFIED).
+# btop4win.exe is broken (CPPdll.dll missing on most hosts); using
+# the dev VM's btop gives the operator the SAME binary + same MiOS
+# theme on Windows AND Linux.  Function defined here so it shadows
+# any stale btop.exe on PATH and so a fresh `pwsh` session has it
+# without requiring a second profile load.
+function btop {
+    `$_devCandidates = @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')
+    `$_wslList = @()
+    try { `$_wslList = (& wsl.exe -l -q 2>`$null) -split "``r?``n" | ForEach-Object { (`$_ -replace [char]0,'').Trim() } | Where-Object { `$_ } } catch {}
+    `$_dev = `$null
+    foreach (`$_c in `$_devCandidates) {
+        if (`$_wslList -contains `$_c) { `$_dev = `$_c; break }
+    }
+    if (-not `$_dev) {
+        Write-Host '  [!] No MiOS-DEV WSL distro found -- cannot run btop.' -ForegroundColor Yellow
+        return
+    }
+    & wsl.exe -d `$_dev --user mios -- btop @args
+}
 $endMark
 "@
     if ($existing -match [regex]::Escape($marker)) {

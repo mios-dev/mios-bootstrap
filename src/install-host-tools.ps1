@@ -208,39 +208,34 @@ function Install-MiosWindowsTools {
         } catch { Log-Warn ("fastfetch direct-download failed: {0}" -f $_.Exception.Message) }
     }
 
-    if (-not (Get-Command btop -ErrorAction SilentlyContinue)) {
-        Log-Ok 'btop: probing winget btop4win install + GitHub fallback...'
-        $btopExe = $null
-        $wingetBtop = Get-ChildItem -Path $wingetRoot -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^aristocratos\.btop4win' } |
-            Select-Object -First 1
-        if ($wingetBtop) {
-            $cand = Get-ChildItem -Path $wingetBtop.FullName -Recurse -Filter 'btop4win.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($cand) { $btopExe = $cand.FullName }
-        }
-        if (-not $btopExe) {
-            try {
-                $api = 'https://api.github.com/repos/aristocratos/btop4win/releases/latest'
-                $rel = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent'='mios-bootstrap' } -ErrorAction Stop
-                $asset = $rel.assets | Where-Object { $_.name -match '\.zip$' } | Select-Object -First 1
-                if ($asset) {
-                    $zip = Join-Path $env:TEMP "btop4win-$(Get-Random).zip"
-                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -ErrorAction Stop
-                    $extractRoot = Join-Path $env:TEMP "btop4win-$(Get-Random)"
-                    Expand-Archive -LiteralPath $zip -DestinationPath $extractRoot -Force
-                    $cand = Get-ChildItem -Path $extractRoot -Recurse -Filter 'btop4win.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
-                    if ($cand) { $btopExe = $cand.FullName }
-                    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
-                }
-            } catch { Log-Warn ("btop direct-download failed: {0}" -f $_.Exception.Message) }
-        }
-        if ($btopExe -and (Test-Path -LiteralPath $btopExe)) {
-            $dst = Join-Path $MiosBinDir 'btop.exe'
-            try {
-                Copy-Item -Path $btopExe -Destination $dst -Force
-                Log-Ok ("btop installed: {0} -> {1}" -f $btopExe, $dst)
-            } catch { Log-Warn ("btop copy failed: {0}" -f $_.Exception.Message) }
-        }
+    # btop on Windows: dispatch to the dev VM's Linux btop instead of
+    # shipping btop4win.exe. Reasons:
+    #   1. aristocratos/btop4win is the only Windows port; it's
+    #      experimental, links against a non-standard CPPdll.dll that
+    #      isn't on most systems, and the binary fails at launch with
+    #      "code execution cannot proceed because CPPdll.dll was not
+    #      found" on operator's host (2026-05-10 screenshot).
+    #   2. Operator's "UNIFIED across all platforms" directive: same
+    #      btop binary + same MiOS theme on Windows AND Linux gives
+    #      one consistent experience instead of two divergent ports.
+    #   3. The dev VM's btop already exists, has the MiOS theme
+    #      seeded by mios-seed at /var/home/mios/.config/btop/, and
+    #      renders cleanly via WSLg.
+    # The Windows-side `btop` function (defined in the MiOS PS profile
+    # body) calls `wsl.exe -d <dev-distro> --user mios -- btop`. No
+    # btop.exe in M:\MiOS\bin is needed.
+    Log-Ok 'btop: skipping btop4win install (broken CPPdll.dll dep); Windows pwsh `btop` dispatches to WSL via profile function'
+
+    # Defensive cleanup: prior installs may have left a broken
+    # btop.exe (copied from winget btop4win) in M:\MiOS\bin. Remove it
+    # so the profile function shadowing doesn't get bypassed by PATH
+    # lookup of the broken exe.
+    $stale = Join-Path $MiosBinDir 'btop.exe'
+    if (Test-Path -LiteralPath $stale) {
+        try {
+            Remove-Item -LiteralPath $stale -Force -ErrorAction Stop
+            Log-Ok ("btop: removed stale broken btop.exe at {0}" -f $stale)
+        } catch { Log-Warn ("btop: could not remove stale {0}: {1}" -f $stale, $_.Exception.Message) }
     }
 
     $directBins = @(
