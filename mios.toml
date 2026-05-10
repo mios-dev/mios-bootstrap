@@ -156,7 +156,7 @@ system_backdrop   = "acrylic"
 scrollbar_state   = "hidden"
 padding           = "0"
 launch_mode       = "focus"
-cursor_shape      = "bar"
+cursor_shape      = "vintage"     # steady half-block (operator 2026-05-10: make terminal cursor thicker -- thin "bar" was almost too thin on 4K)
 
 [theme.font]
 family            = "GeistMono Nerd Font Mono"
