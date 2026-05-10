@@ -135,8 +135,12 @@ linux             = "mini"
 # drag/resize freely -- the daemon only touches each window's
 # initial spawn frame.
 [terminal.gui_min]
-width             = 1024
-height            = 768
+# Vendor default sized for a ~3000x1700 work area (typical 1440p/QHD or
+# 4K with 1.5x scaling); covers ~55% width and 60% height -- comfortable
+# to read + manage without dominating the desktop. Operator override
+# in ~/.config/mios/mios.toml or /etc/mios/mios.toml.
+width             = 1600
+height            = 1000
 
 # ----------------------------------------------------------------------------
 # [theme] -- WT MiOS profile chrome. Per feedback_mios_terminal_global_chrome.md

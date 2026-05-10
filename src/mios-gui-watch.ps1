@@ -34,8 +34,8 @@
 # pixels) when present; otherwise vendor defaults (1024x768).
 
 param(
-    [int]$MinWidth   = 0,   # 0 = read from mios.toml, fall back to 1024
-    [int]$MinHeight  = 0,   # 0 = read from mios.toml, fall back to 768
+    [int]$MinWidth   = 0,   # 0 = read from mios.toml, fall back to 1600
+    [int]$MinHeight  = 0,   # 0 = read from mios.toml, fall back to 1000
     [int]$PollMs     = 500,
     [switch]$Verbose
 )
@@ -70,8 +70,8 @@ function _ResolveTomlDim {
     }
     return $Default
 }
-if ($MinWidth  -le 0) { $MinWidth  = _ResolveTomlDim 'width'  1024 }
-if ($MinHeight -le 0) { $MinHeight = _ResolveTomlDim 'height' 768  }
+if ($MinWidth  -le 0) { $MinWidth  = _ResolveTomlDim 'width'  1600 }
+if ($MinHeight -le 0) { $MinHeight = _ResolveTomlDim 'height' 1000 }
 
 if ($Verbose) {
     Write-Host "mios-gui-watch: min=${MinWidth}x${MinHeight} poll=${PollMs}ms" -ForegroundColor DarkCyan
