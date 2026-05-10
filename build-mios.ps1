@@ -3782,40 +3782,26 @@ NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-
 
 # Operator 2026-05-10: "now to finally fix none of the containers
 # existing or properly launching on boot.. in podman-MiOS-DEV".
-# Quadlet-generated services have [Install] WantedBy=multi-user.target
-# in their .container files, so they SHOULD auto-start at boot.
-# Empirically they don't on the WSL podman-machine substrate -- the
-# generator runs but the dependency chain into multi-user.target's
-# .wants/ doesn't reliably fire for every service.
+# Plus: "bake into mios.toml so operators can edit the list --
+# EVERYTHING is sourced from the mios.toml file and edited in the
+# mios.html in live environments browser".
 #
-# Fix: explicitly `systemctl start --no-block` every Quadlet that
-# doesn't require operator-supplied config (ConditionPathExists files
-# the operator must populate -- runner-token, ceph.conf, hermes/api.env,
-# crowdsec/config.yaml). The remaining set is the "MiOS workstation
-# core": file-manager / web-shell helper + Forgejo git host +
-# inference stack (LocalAI + Ollama + SearXNG + OpenWebUI + Hermes).
-# --no-block returns immediately so overlay doesn't wait on multi-GB
-# image pulls; each Quadlet's Restart=on-failure handles the retry.
-QUADLET_AUTOSTART=(
-    mios-cockpit-link.service       # cockpit web-shell forwarder
-    mios-forge.service              # Forgejo git host
-    mios-searxng.service            # private metasearch
-    mios-webui.service              # OpenWebUI (AI chat frontend)
-    mios-ai.service                 # LocalAI (OpenAI-compatible inference)
-    ollama.service                  # Ollama (LLM runtime)
-)
-# Operator-gated: require explicit env-flag to start. These either
-# need operator config (runner-token, ceph.conf, api.env, crowdsec
-# config.yaml) OR are heavy desktop substrates (k3s, guacamole stack,
-# pxe-hub) that don't make sense as dev-VM defaults.
-QUADLET_OPTIN=()
-[[ "${MIOS_DEV_ENABLE_RUNNER:-0}" == "1" ]] && QUADLET_OPTIN+=(mios-forgejo-runner.service)
-[[ "${MIOS_DEV_ENABLE_K3S:-0}"    == "1" ]] && QUADLET_OPTIN+=(mios-k3s.service)
-[[ "${MIOS_DEV_ENABLE_GUAC:-0}"   == "1" ]] && QUADLET_OPTIN+=(guacd.service guacamole-postgres.service mios-guacamole.service)
-[[ "${MIOS_DEV_ENABLE_CEPH:-0}"   == "1" ]] && QUADLET_OPTIN+=(mios-ceph.service)
-[[ "${MIOS_DEV_ENABLE_PXE:-0}"    == "1" ]] && QUADLET_OPTIN+=(mios-pxe-hub.service)
-[[ "${MIOS_DEV_ENABLE_HERMES:-0}" == "1" ]] && QUADLET_OPTIN+=(mios-hermes.service)
-[[ "${MIOS_DEV_ENABLE_CROWDSEC:-0}" == "1" ]] && QUADLET_OPTIN+=(crowdsec-dashboard.service)
+# Quadlet-generated services have [Install] WantedBy=multi-user.target
+# in their .container files, so they SHOULD auto-start at boot. On the
+# WSL podman-machine substrate the dependency chain doesn't reliably
+# fire for every service -- explicit `systemctl start --no-block` is
+# the fix. --no-block returns immediately so overlay doesn't wait on
+# multi-GB image pulls; each Quadlet's Restart=on-failure handles the
+# retry.
+#
+# Both lists are TOML-sourced: mios-bootstrap/mios.toml
+# [containers.quadlets].autostart + .optin. Operators edit via
+# mios.html in the browser; build-mios.ps1's PowerShell side reads
+# these on every overlay pass and substitutes them here. The
+# PowerShell-side substitution replaces __MIOS_QUADLET_AUTOSTART__
+# and __MIOS_QUADLET_OPTIN__ with literal bash-array entries.
+QUADLET_AUTOSTART=( __MIOS_QUADLET_AUTOSTART__ )
+QUADLET_OPTIN=( __MIOS_QUADLET_OPTIN__ )
 
 # Daemon-reload so the Quadlet generator regenerates units from the
 # latest .container files in /etc/containers/systemd/ +
@@ -4231,6 +4217,30 @@ echo "[quadlet-overlay] Podman Desktop: containers under MiOS-DEV machine carry 
 echo "[quadlet-overlay] Terminal:       Ptyxis flatpak ready -- launch via WSLg, default tab is host shell"
 echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for the local Ollama Quadlet"
 '@
+
+    # Quadlet autostart / opt-in lists -- SSOT: mios.toml
+    # [containers.quadlets]. Operator-editable via mios.html. The
+    # bash heredoc has __MIOS_QUADLET_AUTOSTART__ /
+    # __MIOS_QUADLET_OPTIN__ placeholders; resolve them here against
+    # the layered TOML cascade and substitute as literal bash array
+    # entries. Vendor default is the workstation-core set (cockpit-
+    # link + forge + searxng + webui + ai + ollama). Operator opt-in
+    # services land in the .optin list (per mios.toml).
+    $_quadletAutostartDefault = @(
+        'mios-cockpit-link','mios-forge','mios-searxng',
+        'mios-webui','mios-ai','ollama'
+    )
+    $_quadletAutostart = @(Get-MiosTomlValue -Section 'containers.quadlets' -Key 'autostart' -Default $_quadletAutostartDefault)
+    $_quadletOptin     = @(Get-MiosTomlValue -Section 'containers.quadlets' -Key 'optin'     -Default @())
+    # Convert ["mios-cockpit-link","mios-forge",...] to bash array
+    # entries: `"mios-cockpit-link.service" "mios-forge.service" ...`
+    # (one literal token per quadlet, .service suffix appended).
+    $_autostartBash = (@($_quadletAutostart) | ForEach-Object { '"' + $_ + '.service"' }) -join ' '
+    $_optinBash     = (@($_quadletOptin)     | ForEach-Object { '"' + $_ + '.service"' }) -join ' '
+    if ($null -eq $_autostartBash) { $_autostartBash = '' }
+    if ($null -eq $_optinBash)     { $_optinBash     = '' }
+    $overlayScript = $overlayScript -replace '__MIOS_QUADLET_AUTOSTART__', $_autostartBash
+    $overlayScript = $overlayScript -replace '__MIOS_QUADLET_OPTIN__',     $_optinBash
 
     # CRLF -> LF: bash on Linux is allergic to \r in shebang lines /
     # heredoc terminators. The PowerShell here-string ships CRLF on
@@ -8207,7 +8217,13 @@ fi
         if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
         }
-        & wsl.exe -d $_wslDistroForTerm --user root -- bash -lc 'dconf update 2>&1; ls /etc/dconf/db/local 2>&1 | head -1' 2>&1 |
+        # bash -c (NOT -lc) -- the dconf update step must not trigger
+        # /etc/profile.d/ cascade (zz-mios-motd.sh -> mios mini -> fastfetch
+        # render) which can hang here under WSL's pre-systemd boot state
+        # and stall the entire install. dconf is in $PATH at /bin/dconf
+        # without login-shell PATH-extension.
+        # Operator-flagged 2026-05-10: install "stuck here" at this step.
+        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c 'command -v dconf >/dev/null 2>&1 && dconf update 2>&1 || echo "dconf binary missing -- skipping system-db compile (theme defaults apply on first GTK app launch via xdg-config/gtk-{3,4}.0)"; ls /etc/dconf/db/local 2>&1 | head -1' 2>&1 |
             ForEach-Object { Write-Log "mios-dconf: $_" }
     }
     Log-Ok "MiOS dconf system-db compiled (adw-gtk3-dark + prefer-dark active for all user-bus sessions)"

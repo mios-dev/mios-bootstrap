@@ -270,6 +270,46 @@ mid_ram_model      = "qwen2.5-coder:7b"
 small_ram_model    = "phi4-mini:3.8b-q4_K_M"
 
 # ----------------------------------------------------------------------------
+# [containers.quadlets] -- Quadlet (.container) service auto-start lists.
+#
+# Operator-editable via mios.html in the browser. build-mios.ps1's
+# overlay phase reads BOTH lists below and explicitly
+# `systemctl start --no-block`s every named service after the Quadlet
+# generator has rendered units from etc/containers/systemd/ +
+# usr/share/containers/systemd/. The .service suffix is appended
+# automatically -- name entries WITHOUT it.
+#
+# autostart : workstation-core services that come up on every fresh
+#             dev VM. No operator config required beyond mios.toml.
+#             Vendor default = cockpit-link + Forgejo git host +
+#             SearXNG metasearch + OpenWebUI + LocalAI + Ollama.
+#
+# optin     : heavier / specialty services that EITHER require
+#             operator-supplied config (runner-token, ceph.conf,
+#             hermes/api.env, crowdsec/config.yaml) OR are heavy
+#             substrates (k3s, guacamole stack, pxe-hub) that don't
+#             make sense as dev-VM defaults. Add a name here to
+#             flip it on; remove to keep dormant.
+#
+# Operator-flagged 2026-05-10: "bake into mios.toml so operators
+# can edit the list -- EVERYTHING is sourced from the mios.toml
+# file and edited in the mios.html in live environments browser".
+# ----------------------------------------------------------------------------
+[containers.quadlets]
+autostart = ["mios-cockpit-link", "mios-forge", "mios-searxng", "mios-webui", "mios-ai", "ollama"]
+optin     = []
+# Available opt-in candidates (uncomment + add to `optin` above to enable):
+#   "mios-forgejo-runner"  -- needs /etc/mios/forge/runner-token
+#   "mios-k3s"             -- Kubernetes control plane (heavy on WSL)
+#   "guacd"                -- Apache Guacamole daemon
+#   "guacamole-postgres"   -- Postgres backend for Guacamole
+#   "mios-guacamole"       -- Browser-RDP gateway (needs the 2 above)
+#   "mios-ceph"            -- needs /etc/ceph/ceph.conf
+#   "mios-pxe-hub"         -- PXE/iPXE boot server
+#   "mios-hermes"          -- needs /etc/mios/hermes/api.env
+#   "crowdsec-dashboard"   -- needs /etc/crowdsec/config.yaml
+
+# ----------------------------------------------------------------------------
 # [desktop] -- session preferences and Flatpak picks.
 # desktop.flatpaks -> MIOS_FLATPAKS (comma-joined for the Containerfile arg).
 # ----------------------------------------------------------------------------
