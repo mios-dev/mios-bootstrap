@@ -8118,6 +8118,25 @@ fi
         Log-Warn "MiOS terminal experience seed failed (exit $($script:_seedRc)) -- bare bash login until bootc switch"
     }
 
+    # Compile MiOS dconf overrides into the system-db cascade.  The
+    # files at /etc/dconf/db/local.d/00-mios-theme + /etc/dconf/profile/
+    # user ship in mios.git's overlay but only take effect after
+    # `dconf update` builds the binary system-db.  Without this, the
+    # adw-gtk3-dark + prefer-dark defaults stay inert and every GTK
+    # app boots with the upstream light Adwaita fallback (operator-
+    # flagged 2026-05-10 "not the mios.toml defined prefer-dark mode
+    # yet").
+    Set-Step "Compiling MiOS dconf system-db in $_wslDistroForTerm..."
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        & wsl.exe -d $_wslDistroForTerm --user root -- bash -lc 'dconf update 2>&1; ls /etc/dconf/db/local 2>&1 | head -1' 2>&1 |
+            ForEach-Object { Write-Log "mios-dconf: $_" }
+    }
+    Log-Ok "MiOS dconf system-db compiled (adw-gtk3-dark + prefer-dark active for all user-bus sessions)"
+
     # The overlay seed wrote /etc/wsl.conf [user] default=mios so future
     # `wsl -d podman-MiOS-DEV` invocations land in the mios user (not the
     # bundled `user` UID 1000). But /etc/wsl.conf is read at distro
