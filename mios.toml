@@ -119,6 +119,25 @@ verb              = "mini"
 windows           = "mini"
 linux             = "mini"
 
+# Minimum window size for WSLg-hosted GUI apps. Read by
+# M:\MiOS\bin\mios-gui-watch.ps1 -- a background daemon that polls
+# msrdc.exe processes and auto-resizes any newly-spawned RDP-RAIL
+# window smaller than these dims to exactly these dims, centered
+# on the cursor monitor.
+#
+# Operator 2026-05-10: months of "GUI windows never render" was
+# actually "windows render at native X11 default sizes (e.g.
+# 129x113 for xeyes) at arbitrary positions and look invisible
+# against acrylic/transparent backgrounds." Force-resizing tiny
+# windows to a sane minimum makes them findable.
+#
+# Once a window is auto-adopted (resized once) the operator can
+# drag/resize freely -- the daemon only touches each window's
+# initial spawn frame.
+[terminal.gui_min]
+width             = 1024
+height            = 768
+
 # ----------------------------------------------------------------------------
 # [theme] -- WT MiOS profile chrome. Per feedback_mios_terminal_global_chrome.md
 # the look is acrylic 50% transparent + frameless + no scrollbar + no titlebar

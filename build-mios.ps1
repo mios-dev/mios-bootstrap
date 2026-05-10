@@ -6536,6 +6536,44 @@ $endMark
         Log-Ok "MiOS native launcher staged: $miosLauncher (cols=$_lnchCols rows=$_lnchRows from mios.toml [terminal])"
     }
 
+    # ── mios-gui-watch.ps1 (background daemon for WSLg window auto-resize) ─
+    # Operator 2026-05-10: months of "GUI windows never render on WSLg"
+    # turned out to be windows rendering at native X11 default sizes
+    # (e.g. 129x113 for xeyes) at arbitrary positions, invisible against
+    # acrylic terminals on a 4K display. mios-gui-watch.ps1 polls
+    # msrdc.exe for new RDP-RAIL windows and force-resizes any tiny
+    # spawn to mios.toml [terminal.gui_min] dims, centered on cursor
+    # monitor. Once "adopted" the window is left alone.
+    $miosGuiWatch = Join-Path $MiosBinDir 'mios-gui-watch.ps1'
+    $_gwSrcCands = @(
+        (Join-Path $MiosRepoDir 'src\mios-gui-watch.ps1'),
+        (Join-Path $MiosBootstrapShadow 'src\mios-gui-watch.ps1')
+    )
+    $_gwSrc = $null
+    foreach ($_c in $_gwSrcCands) { if (Test-Path -LiteralPath $_c) { $_gwSrc = $_c; break } }
+    if ($_gwSrc) {
+        try {
+            $_gwBody = [IO.File]::ReadAllText($_gwSrc, (New-Object System.Text.UTF8Encoding($false)))
+            Set-Content -Path $miosGuiWatch -Value $_gwBody -Encoding UTF8
+            Log-Ok "mios-gui-watch staged: $miosGuiWatch (auto-resize WSLg windows to mios.toml [terminal.gui_min])"
+
+            # HKCU Run entry so the daemon launches on every login
+            # (no terminal required). Hidden window via -WindowStyle
+            # Hidden + bypass AMSI scan via -ExecutionPolicy Bypass.
+            $_runKey  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+            if (-not (Test-Path $_runKey)) { New-Item -Path $_runKey -Force | Out-Null }
+            $_pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+            if (-not $_pwsh) { $_pwsh = "$env:ProgramFiles\PowerShell\7\pwsh.exe" }
+            $_runVal = '"{0}" -NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}"' -f $_pwsh, $miosGuiWatch
+            Set-ItemProperty -Path $_runKey -Name 'MiOS-GuiWatch' -Value $_runVal -Type String -Force
+            Log-Ok "mios-gui-watch autostart registered (HKCU\...\Run\MiOS-GuiWatch)"
+        } catch {
+            Log-Warn "mios-gui-watch staging failed: $($_.Exception.Message)"
+        }
+    } else {
+        Log-Warn "mios-gui-watch.ps1 source not found in repo (probed: $($_gwSrcCands -join ', '))"
+    }
+
     # Compile a tiny native .exe launcher with subsystem:Windows (no
     # console flash + window-centering loop). Source code lives in
     # src/mios-launch.cs at the repo root; build-mios.ps1 reads it from
