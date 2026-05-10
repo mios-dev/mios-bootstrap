@@ -6280,7 +6280,14 @@ function Set-MiosWindow {
             if (-not `$_m.Success) { continue }
             `$_b = `$_m.Groups['body'].Value
             foreach (`$_kv in @(@('cell_w_px','_cellW'),@('cell_h_px','_cellH'),@('chrome_w_px','_chromeW'),@('chrome_h_px','_chromeH'))) {
-                `$_x = [regex]::Match(`$_b, "(?m)^[ \t]*$(`$_kv[0])[ \t]*=[ \t]*(\d+)")
+                # String concat (NOT "$(...)" subexpression) so this
+                # heredoc renders cleanly. Earlier attempt used a
+                # `$(...)` subexpression but forgot to escape the
+                # outer `$(`, so build-mios.ps1's @"..."@ tried to
+                # evaluate `$_kv[0]` at install time -- crashed the
+                # bootstrap with "term '`$_kv[0]' is not recognized".
+                `$_pat = '(?m)^[ \t]*' + `$_kv[0] + '[ \t]*=[ \t]*(\d+)'
+                `$_x   = [regex]::Match(`$_b, `$_pat)
                 if (`$_x.Success) { Set-Variable -Name `$_kv[1] -Value ([int]`$_x.Groups[1].Value) }
             }
             break
