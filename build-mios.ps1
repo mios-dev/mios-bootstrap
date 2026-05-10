@@ -3906,6 +3906,8 @@ sudo install -d -m 0755 /var/lib/flatpak
 #              gives operators the "old GTK / CSS / decorations" look.
 sudo flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+sudo flatpak remote-add --system --if-not-exists flathub-beta \
+    https://flathub.org/beta-repo/flathub-beta.flatpakrepo 2>/dev/null || true
 sudo flatpak remote-add --system --if-not-exists fedora \
     oci+https://registry.fedoraproject.org 2>/dev/null || true
 # gnome-nightly: where the modern Nautilus lives (org.gnome.Nautilus.Devel).
@@ -3914,10 +3916,16 @@ sudo flatpak remote-add --system --if-not-exists fedora \
 # current GNOME with modern libadwaita CSS / decorations.
 sudo flatpak remote-add --system --if-not-exists gnome-nightly \
     https://nightly.gnome.org/gnome-nightly.flatpakrepo 2>/dev/null || true
+# Operator 2026-05-10: "enable all beta/preview/testing repositories
+# for all fedora sources". Enable updates-testing dnf repo so we
+# always get the freshest Fedora packages (fixes lag in Mesa /
+# libadwaita / gnome-* / etc. landing on stable).
+sudo dnf config-manager setopt updates-testing.enabled=1 2>/dev/null || true
 # Refresh the appstream index so the install loop below can resolve
 # the app IDs. Without this step `flatpak install` errors with
 # "Nothing matches <ref> in remote <remote>" on a fresh remote.
 sudo flatpak update --system --appstream flathub 2>&1 | tail -3 || true
+sudo flatpak update --system --appstream flathub-beta 2>&1 | tail -3 || true
 sudo flatpak update --system --appstream fedora 2>&1 | tail -3 || true
 sudo flatpak update --system --appstream gnome-nightly 2>&1 | tail -3 || true
 # Substrate-class Flatpaks: terminal (Ptyxis), file manager (Nautilus
@@ -7889,8 +7897,11 @@ if ($activeDistro) {
                                 $PSNativeCommandUseErrorActionPreference = $false
                             }
                             & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "
+                                sudo flatpak remote-add --system --if-not-exists flathub-beta https://flathub.org/beta-repo/flathub-beta.flatpakrepo 2>/dev/null || true
                                 sudo flatpak remote-add --system --if-not-exists fedora oci+https://registry.fedoraproject.org 2>/dev/null || true
                                 sudo flatpak remote-add --system --if-not-exists gnome-nightly https://nightly.gnome.org/gnome-nightly.flatpakrepo 2>/dev/null || true
+                                sudo dnf config-manager setopt updates-testing.enabled=1 2>/dev/null || true
+                                sudo flatpak update --system --appstream flathub-beta 2>&1 | tail -2 || true
                                 sudo flatpak update --system --appstream fedora 2>&1 | tail -2 || true
                                 sudo flatpak update --system --appstream gnome-nightly 2>&1 | tail -2 || true
                             " 2>&1 | ForEach-Object { Write-Log "mios-flatpak-remotes: $_" }
