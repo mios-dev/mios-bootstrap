@@ -293,7 +293,14 @@ function Install-MiosWindowsTools {
     } catch {}
 
     # Final verification: which targeted binaries are on PATH now?
-    $_probes = @(Get-MiosTomlValue -Section 'packages.windows' -Key 'verify_probes' -Default @('fastfetch','btop','rg','fzf','jq','gh','bat','fd','pwsh','oh-my-posh'))
+    # NOTE: 'btop' is intentionally NOT in the default probe list -- on
+    # Windows, `btop` is a profile-defined function that dispatches to the
+    # dev VM's Linux btop (UNIFIED), not a Windows-side .exe. Probing for
+    # it here would falsely warn "NOT on PATH" because Get-Command in this
+    # bootstrap-time scope can't see the soon-to-be-installed pwsh
+    # function. Operators who DO want a Windows-native btop4win can add
+    # 'btop' to verify_probes via mios.html.
+    $_probes = @(Get-MiosTomlValue -Section 'packages.windows' -Key 'verify_probes' -Default @('fastfetch','rg','fzf','jq','gh','bat','fd','pwsh','oh-my-posh'))
     foreach ($probe in $_probes) {
         if (Get-Command $probe -ErrorAction SilentlyContinue) {
             Log-Ok ("verify: '{0}' is on PATH" -f $probe)
