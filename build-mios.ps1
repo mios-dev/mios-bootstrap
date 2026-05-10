@@ -8137,6 +8137,23 @@ fi
     }
     Log-Ok "MiOS dconf system-db compiled (adw-gtk3-dark + prefer-dark active for all user-bus sessions)"
 
+    # MiOS AI CLI install: Claude Code + Gemini CLI globally via npm.
+    # Both are Node.js CLIs distributed via npm, so they don't fit RPM
+    # packaging. The helper script reads mios.toml [packages.ai].
+    # npm_globals to discover what to install -- operators can extend
+    # the list via /etc/mios/mios.toml or ~/.config/mios/mios.toml.
+    # ON by default; MIOS_SKIP_AI_CLIS=1 to skip.
+    Set-Step "Installing MiOS AI CLIs (Claude Code + Gemini CLI) in $_wslDistroForTerm..."
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        $_aiOut = & wsl.exe -d $_wslDistroForTerm --user root -- bash /usr/libexec/mios/install-ai-clis.sh 2>&1
+        $_aiOut | ForEach-Object { Write-Log "mios-ai-cli: $_" }
+    }
+    Log-Ok "MiOS AI CLIs installed (claude + gemini available on PATH)"
+
     # The overlay seed wrote /etc/wsl.conf [user] default=mios so future
     # `wsl -d podman-MiOS-DEV` invocations land in the mios user (not the
     # bundled `user` UID 1000). But /etc/wsl.conf is read at distro

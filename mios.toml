@@ -887,6 +887,17 @@ pkgs = [
 [packages.ai]
 pkgs = [
     "python3-openai",
+    "nodejs",           # required by claude-code + gemini-cli (npm-installed)
+    "npm",
+]
+# AI assistant CLIs installed globally via npm. ON by default --
+# operator can remove from this list to skip. Each entry is an npm
+# package id (passed to `npm install -g`). Installed by
+# /usr/libexec/mios/install-ai-clis.sh which runs once during the
+# overlay phase (build-mios.ps1) and is also re-runnable any time.
+npm_globals = [
+    "@anthropic-ai/claude-code",     # Anthropic Claude Code CLI
+    "@google/gemini-cli",            # Google Gemini CLI
 ]
 
 [packages.critical]
