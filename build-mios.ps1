@@ -3779,7 +3779,49 @@ fi
 # `start` instead. Native systemd units (cockpit.socket, mios-cdi-detect,
 # nvidia-cdi-refresh.path) take the standard `enable --now` path.
 NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-ollama-firstboot.service)
-QUADLET_SET=(mios-cockpit-link.service mios-forge.service ollama.service)
+
+# Operator 2026-05-10: "now to finally fix none of the containers
+# existing or properly launching on boot.. in podman-MiOS-DEV".
+# Quadlet-generated services have [Install] WantedBy=multi-user.target
+# in their .container files, so they SHOULD auto-start at boot.
+# Empirically they don't on the WSL podman-machine substrate -- the
+# generator runs but the dependency chain into multi-user.target's
+# .wants/ doesn't reliably fire for every service.
+#
+# Fix: explicitly `systemctl start --no-block` every Quadlet that
+# doesn't require operator-supplied config (ConditionPathExists files
+# the operator must populate -- runner-token, ceph.conf, hermes/api.env,
+# crowdsec/config.yaml). The remaining set is the "MiOS workstation
+# core": file-manager / web-shell helper + Forgejo git host +
+# inference stack (LocalAI + Ollama + SearXNG + OpenWebUI + Hermes).
+# --no-block returns immediately so overlay doesn't wait on multi-GB
+# image pulls; each Quadlet's Restart=on-failure handles the retry.
+QUADLET_AUTOSTART=(
+    mios-cockpit-link.service       # cockpit web-shell forwarder
+    mios-forge.service              # Forgejo git host
+    mios-searxng.service            # private metasearch
+    mios-webui.service              # OpenWebUI (AI chat frontend)
+    mios-ai.service                 # LocalAI (OpenAI-compatible inference)
+    ollama.service                  # Ollama (LLM runtime)
+)
+# Operator-gated: require explicit env-flag to start. These either
+# need operator config (runner-token, ceph.conf, api.env, crowdsec
+# config.yaml) OR are heavy desktop substrates (k3s, guacamole stack,
+# pxe-hub) that don't make sense as dev-VM defaults.
+QUADLET_OPTIN=()
+[[ "${MIOS_DEV_ENABLE_RUNNER:-0}" == "1" ]] && QUADLET_OPTIN+=(mios-forgejo-runner.service)
+[[ "${MIOS_DEV_ENABLE_K3S:-0}"    == "1" ]] && QUADLET_OPTIN+=(mios-k3s.service)
+[[ "${MIOS_DEV_ENABLE_GUAC:-0}"   == "1" ]] && QUADLET_OPTIN+=(guacd.service guacamole-postgres.service mios-guacamole.service)
+[[ "${MIOS_DEV_ENABLE_CEPH:-0}"   == "1" ]] && QUADLET_OPTIN+=(mios-ceph.service)
+[[ "${MIOS_DEV_ENABLE_PXE:-0}"    == "1" ]] && QUADLET_OPTIN+=(mios-pxe-hub.service)
+[[ "${MIOS_DEV_ENABLE_HERMES:-0}" == "1" ]] && QUADLET_OPTIN+=(mios-hermes.service)
+[[ "${MIOS_DEV_ENABLE_CROWDSEC:-0}" == "1" ]] && QUADLET_OPTIN+=(crowdsec-dashboard.service)
+
+# Daemon-reload so the Quadlet generator regenerates units from the
+# latest .container files in /etc/containers/systemd/ +
+# /usr/share/containers/systemd/ -- the bootc-deployed root may
+# carry newer ones than the live systemd state.
+$NS systemctl daemon-reload 2>&1 | grep -vE 'created symlink' || true
 
 for svc in "${NATIVE_SET[@]}"; do
     if $NS systemctl list-unit-files "$svc" 2>/dev/null | grep -q "$svc"; then
@@ -3789,26 +3831,19 @@ for svc in "${NATIVE_SET[@]}"; do
         echo "[quadlet-overlay] skip $svc (unit not present -- pkg may be missing)"
     fi
 done
-for svc in "${QUADLET_SET[@]}"; do
+
+# Start the autostart set + any opt-in extras. `--no-block` so the
+# overlay returns immediately; each Quadlet pulls/starts in parallel
+# via systemd's job queue. Restart=on-failure (set per-Quadlet) covers
+# the retry on transient image-pull failures.
+for svc in "${QUADLET_AUTOSTART[@]}" "${QUADLET_OPTIN[@]}"; do
     if $NS systemctl cat "$svc" >/dev/null 2>&1; then
-        echo "[quadlet-overlay] start $svc (Quadlet-generated, auto-wanted)"
-        $NS systemctl start "$svc" 2>&1 | grep -vE 'created symlink' || true
+        echo "[quadlet-overlay] start --no-block $svc (Quadlet-generated)"
+        $NS systemctl start --no-block "$svc" 2>&1 | grep -vE 'created symlink' || true
     else
-        echo "[quadlet-overlay] skip $svc (Quadlet not yet rendered)"
+        echo "[quadlet-overlay] skip $svc (Quadlet not yet rendered or pruned)"
     fi
 done
-
-# OPT-IN HEAVY SET: AI inference + Forgejo Runner. Gated by env vars
-# threaded through from the PowerShell side -- defaults to skip so
-# the dev VM doesn't pull multi-GB images on first boot.
-if [[ "${MIOS_DEV_ENABLE_AI:-0}" == "1" ]]; then
-    echo "[quadlet-overlay] start mios-ai + ollama (Quadlet-generated)"
-    $NS systemctl start mios-ai.service ollama.service 2>&1 || true
-fi
-if [[ "${MIOS_DEV_ENABLE_RUNNER:-0}" == "1" ]]; then
-    echo "[quadlet-overlay] start mios-forgejo-runner (Quadlet-generated)"
-    $NS systemctl start mios-forgejo-runner.service 2>&1 || true
-fi
 
 # Install the operator-facing terminal flatpak so MiOS-DEV mirrors a
 # deployed MiOS host's UX: open Ptyxis on the Windows desktop via WSLg
