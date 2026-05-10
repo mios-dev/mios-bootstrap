@@ -3398,20 +3398,17 @@ function Invoke-MiosQuadletOverlay {
 
     Set-Step "Overlaying MiOS Quadlets + systemd units onto $DevDistro..."
 
-    # Early-out: rootful machine-os distros are NOT wsl.exe-accessible
-    # by design. The previous --exec probe-with-timeout still left
-    # hung wsl.exe processes that didn't always Kill cleanly. Probe
-    # the machine's rootful flag via podman's API (which IS reachable
-    # because Phase 3 just verified it) and skip the entire overlay
-    # if rootful -- the Quadlet provisioning happens INSIDE the
-    # mios-build-driver via OCI build instead.
-    try {
-        $mInfo = (& podman machine inspect $DevDistro 2>$null) | ConvertFrom-Json -ErrorAction Stop
-        if ($mInfo -and $mInfo[0].Rootful) {
-            Log-Warn "Rootful machine-os detected -- Quadlet overlay deferred (handled by OCI build inside MiOS-DEV)"
-            return
-        }
-    } catch {}
+    # NOTE: an earlier version of this function early-returned here based
+    # on podman machine inspect.Rootful, on the theory that rootful
+    # machine-os distros aren't wsl.exe-accessible. Modern WSL handles
+    # rootful machine-os fine and the contract `MiOS-DEV ≡ MiOS` requires
+    # the dev VM to have the same Quadlets / containers / units as a
+    # deployed MiOS host AS EARLY AS POSSIBLE -- not deferred to the OCI
+    # build phase. Letting the wsl.exe probe below decide gates the
+    # overlay on actual capability rather than an a-priori assumption.
+    # (The OCI build path still re-applies the overlay later via the
+    # baked-in image; if the install-time overlay succeeds, it's a no-op
+    # post-bootc-switch via the sentinel check.)
 
     # Per the 2026-05-06 directive "M:\ IS git", mios.git is overlaid AT
     # $MiosRepoDir root, not at $MiosRepoDir\mios subdir.
@@ -3453,7 +3450,9 @@ function Invoke-MiosQuadletOverlay {
         }
     }
     if (-not $sshOk) {
-        Log-Warn "Cannot wsl.exe into $DevDistro within 8s (rootful machine-os is not wsl.exe-accessible by design) -- Quadlet overlay deferred"
+        Log-Warn "wsl.exe probe into $DevDistro timed out at 8s -- install-time Quadlet overlay skipped."
+        Log-Warn "  The mios-build-driver / bootc switch path still delivers the SAME Quadlets via the OCI image,"
+        Log-Warn "  so MiOS-DEV will reach full-parity (MiOS-DEV ≡ MiOS) after the build phase regardless."
         return
     }
 
