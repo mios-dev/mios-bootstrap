@@ -3608,7 +3608,27 @@ $NS systemctl daemon-reload 2>&1 | tail -3 || true
 # / groups setup). /etc/wsl.conf is read once at distro start, so the
 # next `wsl --terminate podman-MiOS-DEV` + reentry picks this up.
 # Idempotent: only ADDS [user] block if not already present.
-echo "[quadlet-overlay] setting wsl.conf default user to mios"
+echo "[quadlet-overlay] setting wsl.conf [boot].systemd=true + [user].default=mios"
+# [boot].systemd=true is REQUIRED for `systemctl is-system-running`,
+# Quadlet generators, mios-flatpak-install.service, and every other
+# systemd-coupled feature inside the WSL distro. Without it, WSL boots
+# without systemd as PID 1; smoke tests then see state='offline' and
+# the build pipeline can't poll service state. WSL >= 0.67.6 honors
+# this directive on next `wsl --terminate` + reentry.
+if ! grep -q '^\[boot\]' /etc/wsl.conf 2>/dev/null; then
+    printf '\n[boot]\nsystemd=true\n' | sudo tee -a /etc/wsl.conf >/dev/null
+    echo "[quadlet-overlay] /etc/wsl.conf: appended [boot] systemd=true"
+elif ! grep -qE '^[[:space:]]*systemd[[:space:]]*=[[:space:]]*true[[:space:]]*$' /etc/wsl.conf 2>/dev/null; then
+    if grep -qE '^[[:space:]]*systemd[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then
+        sudo sed -i 's|^[[:space:]]*systemd[[:space:]]*=.*|systemd=true|' /etc/wsl.conf
+        echo "[quadlet-overlay] /etc/wsl.conf: rewrote systemd=<other> to systemd=true under [boot]"
+    else
+        sudo sed -i '/^\[boot\]/a systemd=true' /etc/wsl.conf
+        echo "[quadlet-overlay] /etc/wsl.conf: inserted systemd=true under existing [boot]"
+    fi
+else
+    echo "[quadlet-overlay] /etc/wsl.conf: [boot] systemd=true already set"
+fi
 if id mios >/dev/null 2>&1; then
     if ! grep -q '^\[user\]' /etc/wsl.conf 2>/dev/null; then
         printf '\n[user]\ndefault=mios\n' | sudo tee -a /etc/wsl.conf >/dev/null
@@ -4369,10 +4389,12 @@ function Import-MiosWsl([string]$TarFile, [string]$InstallDir) {
     & wsl.exe --import $MiosWslDistro $InstallDir $TarFile --version 2 2>&1 |
         ForEach-Object { Write-Log "wsl-import: $_" }
     if ($LASTEXITCODE -ne 0) { throw "wsl --import exited $LASTEXITCODE" }
-    # Set default user in the new distro
+    # Set [boot] systemd=true + [user] default=mios in the new distro.
+    # systemd=true is REQUIRED -- without it WSL boots without systemd
+    # as PID 1 and every Quadlet / service-coupled step downstream fails.
     try {
         & wsl.exe -d $MiosWslDistro --user root --exec bash -c `
-            "id mios &>/dev/null && echo '[user]\ndefault=mios' >> /etc/wsl.conf || true" 2>$null | Out-Null
+            "if ! grep -q '^\[boot\]' /etc/wsl.conf 2>/dev/null; then printf '[boot]\nsystemd=true\n\n' >> /etc/wsl.conf; fi; id mios &>/dev/null && echo -e '[user]\ndefault=mios' >> /etc/wsl.conf || true" 2>$null | Out-Null
     } catch {}
     return $true
 }
@@ -5550,8 +5572,36 @@ if ((Test-Path (Join-Path `$miosRoot '.git')) -and (Get-Command git -ErrorAction
 }
 
 # Step 2: dev VM root refresh.
+# Pre-bootc-switch the dev VM doesn't have /usr/bin/mios-pull yet (that
+# binary lands via the OCI image overlay during `mios build`). Inline
+# the equivalent bash so this verb works on day-0 -- before, during, and
+# after the OCI image is built. The work is identical to what
+# /usr/bin/mios-pull does post-bootc-switch: ensure / is a git working
+# tree of mios.git (Architectural Law 3, ".git IS /"), then
+# fetch + reset --hard origin/main.
 Write-Host '  [mios-pull] dev VM: syncing / overlay to origin/main...' -ForegroundColor Cyan
-wsl.exe -d (Resolve-MiosDevDistro) --user root sudo /usr/bin/mios-pull @args
+`$inlinePull = @'
+set -uo pipefail
+if [ -x /usr/bin/mios-pull ]; then
+    # post-bootc-switch path: canonical script is present, defer to it
+    sudo /usr/bin/mios-pull "$@"
+    exit $?
+fi
+# pre-bootc-switch path: do the same work inline
+if [ ! -d /.git ]; then
+    echo "[mios-pull-inline] /.git missing -- dev VM root is not yet a mios.git working tree"
+    echo "[mios-pull-inline]   (this is normal pre-build; bootstrap's mios-build-driver"
+    echo "[mios-pull-inline]    will git-init / and overlay mios.git on the next build)"
+    exit 0
+fi
+echo "[mios-pull-inline] git -C / fetch --depth=1 origin main ..."
+sudo git -C / fetch --depth=1 origin main 2>&1 | sed 's/^/    /'
+echo "[mios-pull-inline] git -C / reset --hard FETCH_HEAD ..."
+sudo git -C / reset --hard FETCH_HEAD 2>&1 | sed 's/^/    /'
+_head=$(sudo git -C / rev-parse --short HEAD 2>/dev/null || true)
+echo "[mios-pull-inline] / now at origin/main HEAD = ${_head}"
+'@
+wsl.exe -d (Resolve-MiosDevDistro) --user mios -- bash -c `$inlinePull -- @args
 "@ -Encoding UTF8
 
     # mios-update.ps1 -- self-updates the bootstrap from origin BEFORE
@@ -5896,10 +5946,18 @@ if (Test-Path `$pull) {
 # 2026-05-08: `mios build` should actually open the WSL-Podman machine
 # AND build MiOS AND overlay newest MiOS repos at /ROOT.
 `$distro = Resolve-MiosDevDistro
+# `podman machine` and `wsl.exe -d` use DIFFERENT names for the same VM:
+#   wsl.exe -d expects the WSL distro registration name -- 'podman-MiOS-DEV'
+#   podman machine expects the machine name without prefix -- 'MiOS-DEV'
+# Resolve-MiosDevDistro returns the WSL distro name (because it iterates
+# `wsl -l -q`), which is correct for wsl.exe but causes `podman machine
+# start podman-MiOS-DEV` to fail with 'VM does not exist'. Strip the
+# 'podman-' prefix for podman-machine calls.
+`$podmanMachine = `$distro -replace '^podman-', ''
 Write-Host ''
-Write-Host ('  [build] starting WSL-Podman machine: {0} ...' -f `$distro) -ForegroundColor Cyan
+Write-Host ('  [build] starting WSL-Podman machine: {0} ...' -f `$podmanMachine) -ForegroundColor Cyan
 try {
-    & podman machine start `$distro 2>&1 | ForEach-Object {
+    & podman machine start `$podmanMachine 2>&1 | ForEach-Object {
         `$line = `$_.ToString()
         # Filter the noisy "already running" line into something less alarming.
         if (`$line -match 'is already running') {
@@ -7571,15 +7629,33 @@ if ! id mios >/dev/null 2>&1; then
         echo "[mios-seed] WARN: useradd mios failed (rc=$_useradd_rc) -- wsl.conf default=mios will fail until the user exists"
     fi
 fi
-# ── /etc/wsl.conf [user].default=mios ─────────────────────────────────
-# So `wsl -d podman-MiOS-DEV` (no --user flag) and `wsl -d MiOS-DEV`
-# both land in the mios user shell. Only write if mios user actually
-# exists -- writing default=<missing-user> bricks the distro entry.
+# ── /etc/wsl.conf [boot] systemd=true + [user] default=mios ─────────
+# [boot] systemd=true MUST be set or the distro boots without systemd
+# as PID 1; smoke tests then see state='offline' and Quadlets / the
+# flatpak first-boot service / every service-coupled bootstrap step
+# fails. WSL >= 0.67.6 honors this on next terminate+reentry.
+# [user] default=mios so `wsl -d podman-MiOS-DEV` / `wsl -d MiOS-DEV`
+# land in the mios shell; only written if the user exists or the
+# distro entry breaks.
+if [ ! -f /etc/wsl.conf ]; then
+    printf '[boot]\nsystemd=true\n' > /etc/wsl.conf
+    echo "[mios-seed] /etc/wsl.conf created with [boot] systemd=true"
+elif ! grep -q '^\[boot\]' /etc/wsl.conf 2>/dev/null; then
+    printf '\n[boot]\nsystemd=true\n' >> /etc/wsl.conf
+    echo "[mios-seed] /etc/wsl.conf: appended [boot] systemd=true"
+elif ! grep -qE '^[[:space:]]*systemd[[:space:]]*=[[:space:]]*true[[:space:]]*$' /etc/wsl.conf 2>/dev/null; then
+    if grep -qE '^[[:space:]]*systemd[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then
+        sed -i 's|^[[:space:]]*systemd[[:space:]]*=.*|systemd=true|' /etc/wsl.conf
+        echo "[mios-seed] /etc/wsl.conf: rewrote systemd=<other> to systemd=true"
+    else
+        sed -i '/^\[boot\]/a systemd=true' /etc/wsl.conf
+        echo "[mios-seed] /etc/wsl.conf: inserted systemd=true under existing [boot]"
+    fi
+else
+    echo "[mios-seed] /etc/wsl.conf: [boot] systemd=true already set"
+fi
 if id mios >/dev/null 2>&1; then
-    if [ ! -f /etc/wsl.conf ]; then
-        printf '[user]\ndefault=mios\n' > /etc/wsl.conf
-        echo "[mios-seed] /etc/wsl.conf created with [user].default=mios"
-    elif ! grep -q '^\[user\]' /etc/wsl.conf 2>/dev/null; then
+    if ! grep -q '^\[user\]' /etc/wsl.conf 2>/dev/null; then
         printf '\n[user]\ndefault=mios\n' >> /etc/wsl.conf
         echo "[mios-seed] /etc/wsl.conf: appended [user].default=mios"
     elif ! grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then
