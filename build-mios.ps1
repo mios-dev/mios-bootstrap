@@ -5579,13 +5579,22 @@ if ((Test-Path (Join-Path `$miosRoot '.git')) -and (Get-Command git -ErrorAction
 # /usr/bin/mios-pull does post-bootc-switch: ensure / is a git working
 # tree of mios.git (Architectural Law 3, ".git IS /"), then
 # fetch + reset --hard origin/main.
+# NOTE: this whole heredoc is INSIDE the outer @"..."@ that builds
+# mios-pull.ps1. PowerShell's double-quoted heredoc still interpolates
+# `$variable` and `$(...)` inside any visible region -- the @'...'@
+# below does NOT create a nested literal section (those are just literal
+# chars in the outer here-string). So every bash `$` that should reach
+# the rendered file as a literal `$` must be escaped with a backtick.
+# Otherwise PowerShell tries to evaluate `$(... || ...)` as a PS
+# subexpression and crashes on `||` (PS 5.1: "The token '||' is not a
+# valid statement separator in this version.")
 Write-Host '  [mios-pull] dev VM: syncing / overlay to origin/main...' -ForegroundColor Cyan
 `$inlinePull = @'
 set -uo pipefail
 if [ -x /usr/bin/mios-pull ]; then
     # post-bootc-switch path: canonical script is present, defer to it
-    sudo /usr/bin/mios-pull "$@"
-    exit $?
+    sudo /usr/bin/mios-pull "`$@"
+    exit `$?
 fi
 # pre-bootc-switch path: do the same work inline
 if [ ! -d /.git ]; then
@@ -5598,8 +5607,8 @@ echo "[mios-pull-inline] git -C / fetch --depth=1 origin main ..."
 sudo git -C / fetch --depth=1 origin main 2>&1 | sed 's/^/    /'
 echo "[mios-pull-inline] git -C / reset --hard FETCH_HEAD ..."
 sudo git -C / reset --hard FETCH_HEAD 2>&1 | sed 's/^/    /'
-_head=$(sudo git -C / rev-parse --short HEAD 2>/dev/null || true)
-echo "[mios-pull-inline] / now at origin/main HEAD = ${_head}"
+_head=`$(sudo git -C / rev-parse --short HEAD 2>/dev/null || true)
+echo "[mios-pull-inline] / now at origin/main HEAD = `${_head}"
 '@
 wsl.exe -d (Resolve-MiosDevDistro) --user mios -- bash -c `$inlinePull -- @args
 "@ -Encoding UTF8
