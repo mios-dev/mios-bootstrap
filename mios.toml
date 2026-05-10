@@ -293,7 +293,7 @@ flatpaks      = [
     "org.gtk.Gtk3theme.adw-gtk3",                      # the light variant (for ADW_DEBUG_COLOR_SCHEME=force-light)
     # ── Default session apps ──
     "org.gnome.Epiphany",                              # default browser
-    "org.gnome.Ptyxis",                                # terminal (replaces RPM)
+    "app.devsuite.Ptyxis",                             # terminal (replaces RPM; renamed from org.gnome.Ptyxis 2026-Q1)
     "org.gnome.Nautilus",                              # file manager (replaces RPM)
     # ── App store / Flatpak management ──
     # NOTE: "org.gnome.Software" was here but Flathub returns
