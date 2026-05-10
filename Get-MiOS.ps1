@@ -5625,8 +5625,26 @@ if ($_bootstrapExit -eq 0 -and -not $_autoBuildSkip) {
                         $_giveUp = $true
                         continue
                     }
+                    # CRITICAL: 'inactive' alone is ambiguous -- it means EITHER
+                    # (a) the oneshot ran and finished successfully, OR (b) the
+                    # service has never been triggered at all (e.g. because
+                    # bootc switch never happened, so first-boot didn't fire).
+                    # Require Result=success to disambiguate.
                     switch -regex ($_state) {
-                        '^inactive$'   { $_flatpakOk = $true; $_giveUp = $true }
+                        '^inactive$'   {
+                            $_result = $null
+                            try {
+                                $_result = ((& wsl.exe -d $_devDistro --user root -- systemctl show mios-flatpak-install.service --property=Result --value 2>&1) -join "`n").Trim()
+                            } catch {}
+                            if ($_result -eq 'success') {
+                                $_flatpakOk = $true; $_giveUp = $true
+                            } else {
+                                Write-Host "    (service inactive but Result='$_result' -- not yet a successful run)" -ForegroundColor DarkGray
+                                # Don't loop forever on a service that may not run at all
+                                # (no bootc switch) -- the outer 20-min deadline catches this.
+                                Start-Sleep -Seconds 30
+                            }
+                        }
                         '^failed$'     {
                             Write-Host "  [!] mios-flatpak-install.service FAILED inside $_devDistro." -ForegroundColor Red
                             Write-Host "      Inspect: wsl -d $_devDistro --user root -- journalctl -u mios-flatpak-install.service --no-pager" -ForegroundColor DarkGray
@@ -5637,17 +5655,27 @@ if ($_bootstrapExit -eq 0 -and -not $_autoBuildSkip) {
                         default        { Write-Host "    (waiting; current state: '$_state')" -ForegroundColor DarkGray }
                     }
                 }
-                if ($_flatpakOk) {
-                    Write-Host '  [+] mios-flatpak-install.service complete -- MiOS-DEV is now full-parity MiOS.' -ForegroundColor Green
-                    # Best-effort acceptance probe; null-safe.
-                    $_bootcRaw = $null
-                    try { $_bootcRaw = (& wsl.exe -d $_devDistro --user root -- bootc status --format=json 2>$null) -join '' } catch {}
-                    if ($_bootcRaw -and $_bootcRaw -match 'localhost/mios') {
-                        Write-Host '  [+] bootc status confirms localhost/mios:latest is the booted deployment.' -ForegroundColor Green
-                    }
-                } elseif ((Get-Date) -ge $_flatpakDeadline) {
+                # Acceptance gate: BOTH Result=success on the oneshot AND
+                # bootc status reports localhost/mios deployed. If either is
+                # missing, the dev VM hasn't reached MiOS-DEV ≡ MiOS yet --
+                # warn instead of celebrating prematurely.
+                $_bootcRaw = $null
+                try { $_bootcRaw = (& wsl.exe -d $_devDistro --user root -- bootc status --format=json 2>$null) -join '' } catch {}
+                $_bootcDeployed = ($_bootcRaw -and $_bootcRaw -match 'localhost/mios')
+                if ($_flatpakOk -and $_bootcDeployed) {
+                    Write-Host '  [+] MiOS-DEV is now full-parity MiOS:' -ForegroundColor Green
+                    Write-Host '      [+] mios-flatpak-install.service: Result=success' -ForegroundColor Green
+                    Write-Host '      [+] bootc status: localhost/mios deployed' -ForegroundColor Green
+                } elseif ($_flatpakOk -and -not $_bootcDeployed) {
+                    Write-Host '  [!] mios-flatpak-install.service succeeded but bootc deployment is NOT localhost/mios.' -ForegroundColor Yellow
+                    Write-Host '      The dev VM probably never bootc-switched; build-driver may have failed earlier.' -ForegroundColor DarkGray
+                    Write-Host "      Inspect: wsl -d $_devDistro --user root -- bootc status" -ForegroundColor DarkGray
+                } elseif (-not $_flatpakOk -and (Get-Date) -ge $_flatpakDeadline) {
                     Write-Host '  [!] Timeout waiting for mios-flatpak-install.service. Bootstrap returning anyway.' -ForegroundColor Yellow
                     Write-Host "      Tail the journal: wsl -d $_devDistro --user root -- journalctl -u mios-flatpak-install.service -f" -ForegroundColor DarkGray
+                } elseif (-not $_flatpakOk) {
+                    Write-Host '  [!] mios-flatpak-install.service did not reach Result=success.' -ForegroundColor Yellow
+                    Write-Host '      MiOS-DEV is not full-parity MiOS yet. Re-run `mios build` to retry.' -ForegroundColor DarkGray
                 }
             } elseif (-not $_devDistro) {
                 Write-Host '  [!] No MiOS-DEV WSL distro found post-build -- skipping flatpak wait.' -ForegroundColor Yellow

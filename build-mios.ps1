@@ -5648,14 +5648,18 @@ if ((Test-Path (Join-Path `$miosRoot '.git')) -and (Get-Command git -ErrorAction
 # tree of mios.git (Architectural Law 3, ".git IS /"), then
 # fetch + reset --hard origin/main.
 # NOTE: this whole heredoc is INSIDE the outer @"..."@ that builds
-# mios-pull.ps1. PowerShell's double-quoted heredoc still interpolates
-# `$variable` and `$(...)` inside any visible region -- the @'...'@
-# below does NOT create a nested literal section (those are just literal
-# chars in the outer here-string). So every bash `$` that should reach
-# the rendered file as a literal `$` must be escaped with a backtick.
-# Otherwise PowerShell tries to evaluate `$(... || ...)` as a PS
-# subexpression and crashes on `||` (PS 5.1: "The token '||' is not a
-# valid statement separator in this version.")
+# mios-pull.ps1. The @'...'@ below does NOT create a nested literal
+# section -- it's just literal chars in the outer here-string. Every
+# bash `$` that should reach the rendered file as a literal `$` must
+# be escaped with a backtick or PS evaluates it.
+#
+# Earlier attempt passed `bash -c \$inlinePull` -- PowerShell's native-
+# command argument quoting mangled the multi-line string (operator-
+# observed 2026-05-10 install: ": invalid option namefail / -c: line
+# 20: syntax error: unexpected end of file from `if' command on line
+# 8"). The robust pattern is stdin-piping: write the script to bash's
+# stdin via the pipeline, with LF normalization so CRLF doesn't make
+# bash see `\r` as part of identifiers.
 Write-Host '  [mios-pull] dev VM: syncing / overlay to origin/main...' -ForegroundColor Cyan
 `$inlinePull = @'
 set -uo pipefail
@@ -5678,7 +5682,14 @@ sudo git -C / reset --hard FETCH_HEAD 2>&1 | sed 's/^/    /'
 _head=`$(sudo git -C / rev-parse --short HEAD 2>/dev/null || true)
 echo "[mios-pull-inline] / now at origin/main HEAD = `${_head}"
 '@
-wsl.exe -d (Resolve-MiosDevDistro) --user mios -- bash -c `$inlinePull -- @args
+# Normalize CRLF -> LF (Windows authoring of this PS file may leave
+# CRLF in `$inlinePull which would corrupt bash identifiers like `\r`
+# being treated as part of variable names) and pipe to bash via stdin
+# (bash -s reads the script from stdin; arguments after `--` reach the
+# script as `\$1 \$2 ...`). This avoids the native-cmd quoting bugs
+# `bash -c <multi-line>` exhibited.
+`$inlinePullLf = `$inlinePull.Replace("``r``n", "``n")
+`$inlinePullLf | wsl.exe -d (Resolve-MiosDevDistro) --user mios -- bash -s -- @args
 "@ -Encoding UTF8
 
     # mios-update.ps1 -- self-updates the bootstrap from origin BEFORE
