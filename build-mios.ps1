@@ -3882,18 +3882,32 @@ sudo flatpak remote-add --system --if-not-exists flathub \
 # the app IDs. Without this step `flatpak install` errors with
 # "Nothing matches <ref> in remote flathub" on a fresh remote.
 sudo flatpak update --system --appstream flathub 2>&1 | tail -3 || true
-# Substrate-class Flatpaks: terminal, file manager, app store, Flatpak
-# permissions UI, default browser. Each routes through WSLg as a Windows
-# desktop window; the gnome-flatpak-runtime RPM section provides the
-# host-side portals/audio/theming these need to render correctly.
+# Substrate-class Flatpaks: terminal, file manager, Flatpak permissions
+# UI, default browser. Each routes through WSLg as a Windows desktop
+# window; the gnome-flatpak-runtime RPM section provides the host-side
+# portals/audio/theming these need to render correctly.
+#
+# NOTE: org.gnome.Software was previously in this map but moved to
+# Fedora-repo dnf install (per `[packages.gnome-core-apps]` in mios.toml,
+# operator directive 2026-05-10: "ONLY GNOME SOFTWARE GETS THIS CHANGE").
+# Removing it from this map removes the /usr/local/bin/gnome-software
+# flatpak wrapper that was reaching for `app/org.gnome.Software/x86_64/
+# master not installed` and erroring.
 declare -A FLATPAK_SHORT=(
     [org.gnome.Ptyxis]=ptyxis
     [org.gnome.Nautilus]=nautilus
-    [org.gnome.Software]=gnome-software
     [com.github.tchx84.Flatseal]=flatseal
     [org.gnome.Epiphany]=epiphany
     [com.vscodium.codium]=codium
 )
+# Defensive cleanup: if the prior install left a gnome-software flatpak
+# wrapper at /usr/local/bin/gnome-software, remove it so the dnf-installed
+# /usr/bin/gnome-software (from [packages.gnome-core-apps]) takes
+# precedence on PATH.
+if [[ -f /usr/local/bin/gnome-software ]] && grep -q 'flatpak.*org.gnome.Software\|flatpak-launch.*org.gnome.Software' /usr/local/bin/gnome-software 2>/dev/null; then
+    sudo rm -f /usr/local/bin/gnome-software
+    echo "[quadlet-overlay] removed legacy /usr/local/bin/gnome-software flatpak wrapper (now installed via dnf)"
+fi
 for ref in "${!FLATPAK_SHORT[@]}"; do
     if ! flatpak list --system --app --columns=application 2>/dev/null | grep -qx "$ref"; then
         # sudo prefix bypasses polkit's "Deploy not allowed for user"
