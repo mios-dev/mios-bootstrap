@@ -5926,6 +5926,22 @@ Start-Sleep -Milliseconds 800
 # expectations land on the mios login user (uid 1000) -- created by the
 # seed script in Phase 3, with passwordless sudo for the build pipeline's
 # privileged steps.
+# First-run staging: on a fresh MiOS-DEV the OCI image hasn't been built
+# yet, so /usr/libexec/mios/mios-build-driver doesn't exist inside the
+# distro. The canonical source lives in mios.git at
+# system_files/usr/libexec/mios/mios-build-driver. Per the 2026-05-06
+# "M:\ IS git" layout (build-mios.ps1 Update-MiosInstallPaths), mios.git's
+# working tree is overlaid AT M:\ root, so the file is at
+# M:\system_files\usr\libexec\mios\mios-build-driver, which is
+# /mnt/m/system_files/usr/libexec/mios/mios-build-driver from inside WSL.
+# Copy it in (idempotent -- overwrites any older staged copy) before
+# invoking. Once the OCI image is built and bootc switch deploys it, the
+# file is also present at the same path from the image overlay; this
+# copy step becomes a no-op on subsequent re-builds.
+`$driverSrc = '/mnt/m/system_files/usr/libexec/mios/mios-build-driver'
+Write-Host ('  [build] staging mios-build-driver into {0}:/usr/libexec/mios/' -f `$distro) -ForegroundColor DarkGray
+& wsl.exe -d `$distro --user root -- bash -c "mkdir -p /usr/libexec/mios && if [ -r '`$driverSrc' ]; then cp '`$driverSrc' /usr/libexec/mios/mios-build-driver && chmod +x /usr/libexec/mios/mios-build-driver && echo '[stage] driver staged from `$driverSrc'; else echo '[stage] WARN: `$driverSrc not readable from inside `$distro -- relying on pre-staged copy'; fi"
+
 Write-Host ''
 Write-Host ('  [build] handing off to {0}:/usr/libexec/mios/mios-build-driver' -f `$distro) -ForegroundColor Cyan
 Write-Host '  [build] (this builds the OCI image inside MiOS-DEV; first run takes 10-30 min)' -ForegroundColor DarkGray

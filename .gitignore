@@ -89,6 +89,12 @@
 !profile/
 !profile/**
 
+# tests/ -- runnable acceptance tests for the bootstrap contract
+# (post-bootstrap = full MiOS environment, etc.). Operator-runnable from
+# inside MiOS-DEV or a deployed bootc host.
+!tests/
+!tests/**
+
 # Re-ignore noise
 **/__pycache__/
 **/*.pyc

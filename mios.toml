@@ -1,5 +1,16 @@
 # mios-bootstrap/mios.toml -- 'MiOS' User Profile (single source of user truth)
 #
+# IMPORTANT: this file is the SSOT for code, not just runtime config.
+# Every .ps1 / .sh / .py in mios.git + mios-bootstrap.git that reads a
+# string, verb, option, arg, var, env export, venv path, dotfile body,
+# version, image ref, package name, tag, glyph, dimension, color, or
+# install path resolves through Get-MiosTomlValue / mios_toml_get
+# against this file (with /etc/mios + ~/.config/mios as overlays).
+#
+# Hardcoded literals that match a TOML-shaped value are bugs -- lift
+# them. Vendor defaults are allowed only as the resolver's -Default
+# argument, never as the canonical value.
+#
 # THIS IS THE ONE FILE YOU EDIT. Every script in 'mios.git' and
 # 'mios-bootstrap.git' that needs to know your username, hostname,
 # base image, AI endpoint, flatpaks, profile features, free-form
@@ -26,6 +37,97 @@
 # installer prompts interactively for them and writes them to
 # root-owned mode-0600 files outside this profile. Leave the fields
 # empty here.
+
+# ----------------------------------------------------------------------------
+# [meta] -- version + provenance scalars consumed by every framed surface
+# (dashboard banner, install help, configurator chrome, fastfetch).
+# ----------------------------------------------------------------------------
+[meta]
+mios_version  = "0.2.4"
+
+# ----------------------------------------------------------------------------
+# [branding] -- taglines + frame chars. Per feedback_mios_messages_section_ssot.md
+# frame_chars feeds every framed surface (dashboard, agreement banner, post-bootstrap
+# pane). Operator-locked palette + glyph set; do not hardcode literals elsewhere.
+# ----------------------------------------------------------------------------
+[branding]
+tagline       = "My Personal Operating System"
+tagline_long  = "My Personal Operating System  --  Immutable Fedora AI Workstation"
+tagline_app   = "My Personal Operating System"
+
+[branding.dashboard]
+frame_chars   = "╭─╮│╰╯"
+
+# ----------------------------------------------------------------------------
+# [terminal] -- entry-point WT MiOS app geometry + scrollback. Operator
+# 2026-05-09: the MiOS app window is 80 cols x 20 rows (the entry-point
+# dashboard fits in 19 rows; row 20 is the prompt). [terminal.install] is
+# the install-time dashboard window (40 rows) used during phase rendering.
+#
+# Chrome flags (acrylic / frameless / no scrollbar / no titlebar / focus mode)
+# live in [theme] below.
+# ----------------------------------------------------------------------------
+[terminal]
+cols              = 80
+rows              = 20
+scrollback_rows   = 9000
+frame_width       = 80
+frame_height      = 19
+right_margin      = 0
+
+[terminal.install]
+cols              = 80
+rows              = 40
+
+# ----------------------------------------------------------------------------
+# [theme] -- WT MiOS profile chrome. Per feedback_mios_terminal_global_chrome.md
+# the look is acrylic 50% transparent + frameless + no scrollbar + no titlebar
+# + focus mode + bar cursor. Both useAcrylic + systemBackdrop are set so WT
+# 1.16-1.18+ all render correctly. Apply per-profile only (don't pollute
+# operator's other WT profiles).
+# ----------------------------------------------------------------------------
+[theme]
+acrylic           = true
+opacity           = 50
+system_backdrop   = "acrylic"
+scrollbar_state   = "hidden"
+padding           = "0"
+launch_mode       = "focus"
+cursor_shape      = "bar"
+
+[theme.font]
+family            = "GeistMono Nerd Font Mono"
+size              = 12
+weight            = "normal"
+cell_w_px         = 10
+cell_h_px         = 20
+chrome_w_px       = 20
+chrome_h_px       = 12
+
+[theme.terminal]
+scheme_name           = "MiOS"
+profile_name          = "MiOS-WIN"
+dev_profile_name      = "MiOS-DEV"
+hub_target_profile    = "MiOS-DEV"
+summon_keys           = "win+space"
+summon_window_name    = "MiOS-DEV"
+
+# Powerline glyphs feeding the rounded-powerline omp.json template at install
+# time. Lift any hardcoded .. in omp templates to references here.
+[theme.prompt]
+powerline_left        = ""
+powerline_right       = ""
+leading_diamond       = ""
+trailing_diamond      = ""
+
+# ----------------------------------------------------------------------------
+# [apps] -- native Windows app surface (Start Menu + Desktop + Pin to Start).
+# AUMID controls Win11 taskbar grouping + Pin-to-Start identity.
+# ----------------------------------------------------------------------------
+[apps]
+aumid                = "MiOS.Workstation"
+start_menu_folder    = "MiOS"
+hub_shortcut_name    = "MiOS"
 
 # ----------------------------------------------------------------------------
 # [identity] -- Linux account, hostname, GECOS, login shell, group membership.
@@ -93,6 +195,17 @@ enable_localai      = true
 mcp_registry        = "/usr/share/mios/ai/v1/mcp.json"
 system_prompt_file  = ""                # optional override; empty = use canonical
 
+# Host RAM-driven default model selection. The bootstrap reads detected RAM
+# and picks big_ram_model (>= big_ram_gb), mid_ram_model (>= mid_ram_gb),
+# or small_ram_model otherwise. Operator can override the picked model in
+# [ai].model above; these thresholds are the auto-picker's table.
+[ai.host_thresholds]
+big_ram_gb         = 32
+mid_ram_gb         = 12
+big_ram_model      = "qwen2.5-coder:14b"
+mid_ram_model      = "qwen2.5-coder:7b"
+small_ram_model    = "phi4-mini:3.8b-q4_K_M"
+
 # ----------------------------------------------------------------------------
 # [desktop] -- session preferences and Flatpak picks.
 # desktop.flatpaks -> MIOS_FLATPAKS (comma-joined for the Containerfile arg).
@@ -139,13 +252,17 @@ flatpaks      = [
 # MIOS_IMAGE_NAME, MIOS_IMAGE_TAG, MIOS_LOCAL_TAG.
 # ----------------------------------------------------------------------------
 [image]
-ref       = "ghcr.io/mios-dev/mios:latest"
-branch    = "main"
-base      = "ghcr.io/ublue-os/ucore-hci:stable-nvidia"
-bib       = "quay.io/centos-bootc/bootc-image-builder:latest"
-name      = "ghcr.io/mios-dev/mios"
-tag       = "latest"
-local_tag = "localhost/mios:latest"
+ref             = "ghcr.io/mios-dev/mios:latest"
+branch          = "main"
+base            = "ghcr.io/ublue-os/ucore-hci:stable-nvidia"
+base_nvidia     = "ghcr.io/ublue-os/ucore-hci:stable-nvidia"
+base_no_nvidia  = "ghcr.io/ublue-os/ucore-hci:stable"
+bib             = "quay.io/centos-bootc/bootc-image-builder:latest"
+name            = "ghcr.io/mios-dev/mios"
+tag             = "latest"
+local_tag       = "localhost/mios:latest"
+machine_os_repo = "quay.io/podman/machine-os"
+machine_os_tag  = "6.0"
 
 # ----------------------------------------------------------------------------
 # [packages] -- SSOT mapping mios.toml -> usr/share/mios/PACKAGES.md sections.
@@ -780,8 +897,42 @@ ansi_15_bright_white    = "#FFFFFF"
 mode             = "auto"
 mios_repo        = "https://github.com/mios-dev/mios.git"
 bootstrap_repo   = "https://github.com/mios-dev/mios-bootstrap.git"
-install_packages = true   # run dnf install on PACKAGES.md after FHS overlay
-reboot_on_finish = true   # interactive y/N prompt at end of install
+dev_distro       = "MiOS-DEV"             # WSL distro name for podman-MiOS-DEV machine
+install_packages = true                   # run dnf install on PACKAGES.md after FHS overlay
+reboot_on_finish = true                   # interactive y/N prompt at end of install
+
+# Host data-disk provisioning (Initialize-DataDisk). Operator-locked at 256 GiB
+# + 512 MB buffer so Windows Explorer rounds Capacity to "256 GB" not "255 GB".
+# NTFS reserves ~16 MB for boot sector / alignment / $MFT.
+[bootstrap.host_storage]
+shrink_mb         = 262656
+drive_letter      = "M"
+volume_label      = "MIOS-DEV"
+
+# Dev VM (podman-MiOS-DEV) provisioning. base_image is the Fedora bootc base
+# the podman-machine VHDX is bootstrapped from before mios-build-driver
+# bootc-switches it to localhost/mios:latest.
+[bootstrap.dev_vm]
+base_image        = "quay.io/podman/machine-os:6.0"
+
+# ----------------------------------------------------------------------------
+# [smoke_tests] -- attempts + interval the dev-VM smoketests use during
+# bootstrap. Phase-3 brings up the podman-MiOS-DEV machine and runs four
+# smoketests (responsive / systemd / overlay / podman API) before declaring
+# the dev VM ready. Tunables live here so operators don't need to edit code.
+# ----------------------------------------------------------------------------
+[smoke_tests]
+systemd_attempts        = 15
+podman_api_attempts     = 15
+interval_seconds        = 2
+
+# ----------------------------------------------------------------------------
+# [network.retry] -- backoff schedule for podman pull / git clone / curl
+# retries during bootstrap. Each integer is delay-before-next-attempt in
+# seconds; len(delays_seconds) = total attempts.
+# ----------------------------------------------------------------------------
+[network.retry]
+delays_seconds          = [0, 5, 15, 30]
 
 # ----------------------------------------------------------------------------
 # [profile] -- developer-vs-server-vs-kiosk flavor and feature toggles.
