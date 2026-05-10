@@ -3392,6 +3392,21 @@ if (`$true) {
         }
         `$_winWNow = if (`$_widthA -gt 0) { `$_widthA } else { $_miosFrameW }
         `$WIDTH = `$_winWNow - $_miosRightMargin
+        # Cap to mios.toml [terminal].frame_width (SSOT). WT's
+        # WindowWidth poll is unreliable during the first ~200ms after
+        # spawn -- it can return a value 4-8 cells wider than the
+        # final viewport (focus-mode + acrylic backdrop allocation
+        # haven't settled). Without this cap, host_os/CPU/font lines
+        # render at the inflated WIDTH, then WT re-sizes the buffer
+        # narrower, and every overflowing line wraps -- pushing the
+        # top frame off-viewport. Capping to the toml value (the
+        # operator-declared "this is what 80x20 means") guarantees
+        # the dashboard never renders wider than the declared frame.
+        # Operator-flagged 2026-05-10: "ie..." / "on..." wraps in
+        # MiOS-WIN dashboard with top frame clipped off-screen.
+        if ($_miosFrameW -gt 0 -and `$WIDTH -gt $_miosFrameW) {
+            `$WIDTH = $_miosFrameW
+        }
         if (`$WIDTH -lt 20) { `$WIDTH = [math]::Max(20, `$_winWNow) }
         `$INNER = `$WIDTH - 4
         `$TL='╭'; `$TR='╮'; `$BL='╰'; `$BR='╯'; `$LT='├'; `$RT='┤'; `$V='│'; `$H='─'
@@ -3533,9 +3548,15 @@ if (`$true) {
                         `$_dashCache['_os'] = try { Get-CimInstance Win32_OperatingSystem -ErrorAction Stop } catch { `$null }
                     }
                     `$_o = `$_dashCache['_os']
-                    `$_cap = if (`$_o -and `$_o.Caption) { (`$_o.Caption -replace 'Microsoft\s*','').Trim() } else { 'Windows' }
-                    `$_arch = if (`$_o -and `$_o.OSArchitecture) { `$_o.OSArchitecture } else { '' }
-                    return "`$env:USERNAME@`$env:COMPUTERNAME -- `$_cap `$_arch".Trim()
+                    # Compact OS caption: strip Microsoft prefix, the
+                    # "for Workstations" SKU suffix, "Insider Preview"
+                    # marketing, "(64-bit)" arch (it's redundant -- the
+                    # arch line covers it), and trailing whitespace.
+                    # Operator-flagged 2026-05-10: "Windows 11 Pro for
+                    # Workstations Insider Preview" overflowed the 80x20
+                    # frame and wrapped, pushing the top frame off-screen.
+                    `$_cap = if (`$_o -and `$_o.Caption) { ((((((`$_o.Caption -replace 'Microsoft\s*','') -replace '\s+for\s+Workstations','') -replace '\s+Insider\s+Preview','') -replace '\s*\(64-?bit\)','') -replace '\s*N\s+Edition','')).Trim() } else { 'Windows' }
+                    return "`$env:USERNAME@`$env:COMPUTERNAME -- `$_cap".Trim()
                 }
                 'cpu' {
                     if (-not `$_dashCache.ContainsKey('_cpu')) {
