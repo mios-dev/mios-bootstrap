@@ -7817,6 +7817,30 @@ if ($activeDistro) {
         }
     }
 
+    # ── NVIDIA WSL userland (gated on /dev/dxg present in dev VM) ───
+    # Operator 2026-05-10: "WSLg + GPU-PV or CDI" -> "WSLg + NVIDIA
+    # Vulkan ICD". Installs NVIDIA's userspace Vulkan ICD + GLX/EGL
+    # libs from the official CUDA repo. Userland-only; no kernel
+    # modules. The script self-detects /dev/dxg + /mnt/wslg presence
+    # and exits cleanly on non-WSLg substrates (bare-metal / Hyper-V
+    # / OCI). Idempotent.
+    Set-Step "Installing NVIDIA WSL userland in $_wslDistroForTerm (Vulkan ICD + GLX/EGL libs)..."
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        $_nvOut = & wsl.exe -d $_wslDistroForTerm --user root -- bash /usr/libexec/mios/install-nvidia-wsl-userland.sh 2>&1
+        $_nvExit = $LASTEXITCODE
+        if ($_nvExit -eq 0) {
+            $_nvSummary = ($_nvOut | Where-Object { $_ -match '^\s*\[(ok|skip|warn)\]' } | Select-Object -Last 3) -join ' / '
+            if (-not $_nvSummary) { $_nvSummary = '(silent — see install log if needed)' }
+            Log-Ok "NVIDIA WSL userland: $_nvSummary"
+        } else {
+            Log-Warn "NVIDIA WSL userland install exit=$_nvExit; GUI apps may fall back to dzn-only Vulkan path"
+        }
+    }
+
     # Disable netavark's firewall management. WSL2's kernel doesn't ship
     # the iptables/nf_tables netfilter modules that netavark expects, so
     # even with the iptables BINARY present (whois package above) the
