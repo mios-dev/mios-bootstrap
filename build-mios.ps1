@@ -3505,47 +3505,115 @@ echo "[quadlet-overlay] making / a git working tree of mios.git ($SRC) ..."
 # root .gitignore further declares which `/etc/*`, `/var/*`, etc.
 # subtrees stay host-managed.
 
-# Refresh the local Windows-side mios.git clone to origin/main first
-# so the dev VM sees the latest commits. Without this the dev VM
-# fetches from a stale clone if the Windows side hasn't been pulled
-# since `irm | iex` started.
-if [[ -d "$SRC/.git" ]]; then
-    git -C "$SRC" fetch --depth=1 origin main 2>&1 | tail -2 || true
-    git -C "$SRC" reset --hard origin/main 2>&1 | tail -2 || true
-fi
+# ── Universal mios.git overlay sync ──────────────────────────────────────────
+# Works identically across every MiOS deploy shape:
+#   - Bare-metal bootc (mios:latest deployed)
+#   - Hyper-V VHDX / QEMU qcow2 / RAW disk image
+#   - WSL2/g distros (mios:latest imported via wsl --import)
+#   - Podman-WSL dev VM (the canonical podman-MiOS-DEV pre-bootc-switch)
+#   - Podman / Podman Desktop (Windows + Linux native)
+#   - Traditional FHS installs (mios.git overlaid into / via install.sh)
+#
+# Architectural Law 3 ".git IS /": the deployed root is always a git
+# working tree of mios.git. This sync brings / up to origin/main using
+# the FASTEST available source given the deploy context.
+#
+# Per WSL filesystem-performance guidance
+# (learn.microsoft.com/en-us/windows/wsl/filesystems):
+#   "For the fastest performance speed, store your files in the WSL
+#    file system if you are working in a Linux command line."
+# So all git operations target a NATIVE-ext4 bare-clone cache at
+# $CACHE_DIR; /mnt/m (DrvFs / 9P) is only ever consulted as a one-shot
+# offline-bootstrap source for the cache itself.
 
-# Mark `/` as a safe git directory -- root-owned `.git` triggers
-# git's "dubious ownership" rejection when a non-root user later
-# inspects state (`git -C / log`, dashboard's git panel, etc.).
+ORIGIN_URL="${MIOS_GIT_ORIGIN:-https://github.com/mios-dev/MiOS.git}"
+ORIGIN_BRANCH="${MIOS_GIT_BRANCH:-main}"
+CACHE_DIR="${MIOS_GIT_CACHE:-/var/lib/mios/git/mios.git}"
+
+sudo mkdir -p "$(dirname "$CACHE_DIR")"
+
+# Mark `/` AND the cache as safe git directories -- root-owned `.git`
+# triggers "dubious ownership" rejection when non-root users later
+# inspect state (`git -C / log`, dashboard's git panel, etc.).
 sudo git config --system --add safe.directory / 2>/dev/null || \
     sudo git config --global --add safe.directory /
+sudo git config --system --add safe.directory "$CACHE_DIR" 2>/dev/null || \
+    sudo git config --global --add safe.directory "$CACHE_DIR"
 
-sudo git -C / init -b main 2>&1 | head -1 || true
+# ── Phase A: ensure native bare-clone cache exists + is fresh ────────────────
+cache_state=missing
+if [[ -d "$CACHE_DIR/objects" ]]; then
+    cache_state=present
+fi
+
+if [[ "$cache_state" = present ]]; then
+    echo "[overlay] refreshing native cache: $CACHE_DIR (origin=$ORIGIN_URL)"
+    if ! timeout 60 sudo git -C "$CACHE_DIR" fetch --depth=1 origin "$ORIGIN_BRANCH" 2>&1 | tail -3; then
+        echo "[overlay] WARN: cache fetch failed (or timed out) -- proceeding with stale cache"
+    fi
+else
+    # Cold cache. Try direct origin clone first (network-only path; pure
+    # ext4 destination, no DrvFs round-trips). Both probe + clone are
+    # bounded by `timeout` so a hung DNS / unreachable proxy can't stall
+    # the whole bootstrap; the /mnt/m fallback below is the offline path.
+    cache_populated=0
+    if timeout 10 git ls-remote --exit-code --heads "$ORIGIN_URL" "$ORIGIN_BRANCH" >/dev/null 2>&1; then
+        echo "[overlay] populating native cache via direct clone of $ORIGIN_URL"
+        if timeout 120 sudo git clone --bare --depth=1 --branch="$ORIGIN_BRANCH" "$ORIGIN_URL" "$CACHE_DIR" 2>&1 | tail -3; then
+            cache_populated=1
+        else
+            echo "[overlay] WARN: direct clone failed (or timed out at 2 min); falling back to $SRC bootstrap"
+        fi
+    else
+        echo "[overlay] origin $ORIGIN_URL unreachable (probe timed out); falling back to $SRC bootstrap"
+    fi
+
+    # Fallback: bootstrap from the operator-side mios.git checkout (one-shot
+    # DrvFs read; cache then operates on native ext4 forever after).
+    if [[ $cache_populated -eq 0 ]] && [[ -d "$SRC/.git" ]]; then
+        echo "[overlay] bootstrap-cloning native cache from $SRC (one-shot)"
+        if sudo git clone --bare --depth=1 --branch="$ORIGIN_BRANCH" "$SRC" "$CACHE_DIR" 2>&1 | tail -3; then
+            sudo git -C "$CACHE_DIR" remote set-url origin "$ORIGIN_URL"
+            cache_populated=1
+        fi
+    fi
+
+    if [[ $cache_populated -eq 0 ]]; then
+        echo "[overlay] FATAL: no source for mios.git cache (origin unreachable AND $SRC/.git missing)"
+        exit 1
+    fi
+fi
+
+# ── Phase B: ensure / is a git working tree pointing at the native cache ─────
+echo "[overlay] making / a git working tree of mios.git ($CACHE_DIR)"
+sudo git -C / init -b "$ORIGIN_BRANCH" 2>&1 | head -1 || true
 sudo git -C / config --bool core.fileMode false
 sudo git -C / config --bool core.autocrlf false
 sudo git -C / config --bool core.symlinks true
 sudo git -C / remote remove origin 2>/dev/null || true
-sudo git -C / remote add origin "$SRC/.git"
-echo "[quadlet-overlay] git fetch ..."
-fetch_out=$(sudo git -C / fetch --depth=1 origin main 2>&1)
+sudo git -C / remote add origin "$CACHE_DIR"
+
+# ── Phase C: fetch + reset --hard (operates entirely on native ext4) ─────────
+echo "[overlay] git -C / fetch origin $ORIGIN_BRANCH (from native cache) ..."
+fetch_out=$(sudo git -C / fetch --depth=1 origin "$ORIGIN_BRANCH" 2>&1)
 fetch_rc=$?
 echo "$fetch_out" | tail -3
 if [[ $fetch_rc -ne 0 ]]; then
-    echo "[quadlet-overlay] ERROR: git fetch failed (rc=$fetch_rc)"
-    echo "[quadlet-overlay] $fetch_out"
+    echo "[overlay] ERROR: git fetch failed (rc=$fetch_rc)"
 fi
-echo "[quadlet-overlay] git reset --hard FETCH_HEAD ..."
+echo "[overlay] git -C / reset --hard FETCH_HEAD ..."
 reset_out=$(sudo git -C / reset --hard FETCH_HEAD 2>&1)
 reset_rc=$?
 echo "$reset_out" | tail -3
 if [[ $reset_rc -ne 0 ]]; then
-    echo "[quadlet-overlay] ERROR: git reset failed (rc=$reset_rc)"
-    # Most common cause: /usr is read-only (ostree-managed FCOS).
-    # Attempt to enable a writable overlay and retry once.
+    echo "[overlay] ERROR: git reset failed (rc=$reset_rc)"
+    # Most common cause: /usr is read-only on ostree-managed bootc /
+    # FCOS deploys. Enable a writable overlay and retry once. This
+    # branch is a no-op on non-bootc shapes (rpm-ostree absent).
     if echo "$reset_out" | grep -qiE 'read-only|ostree'; then
-        echo "[quadlet-overlay] /usr appears read-only -- enabling rpm-ostree usroverlay"
+        echo "[overlay] /usr appears read-only -- enabling rpm-ostree usroverlay"
         sudo rpm-ostree usroverlay 2>&1 | tail -2 || true
-        echo "[quadlet-overlay] retrying git reset --hard FETCH_HEAD"
+        echo "[overlay] retrying git reset --hard FETCH_HEAD"
         sudo git -C / reset --hard FETCH_HEAD 2>&1 | tail -3
         reset_rc=$?
     fi
