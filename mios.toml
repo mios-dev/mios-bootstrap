@@ -292,9 +292,23 @@ flatpaks      = [
     "org.gtk.Gtk3theme.adw-gtk3-dark",                 # the dark theme itself
     "org.gtk.Gtk3theme.adw-gtk3",                      # the light variant (for ADW_DEBUG_COLOR_SCHEME=force-light)
     # ── Default session apps ──
-    "org.gnome.Epiphany",                              # default browser
-    "app.devsuite.Ptyxis",                             # terminal (replaces RPM; renamed from org.gnome.Ptyxis 2026-Q1)
-    "org.gnome.Nautilus",                              # file manager (replaces RPM)
+    "app.devsuite.Ptyxis",                             # terminal (renamed from org.gnome.Ptyxis 2026-Q1)
+    # Nautilus + Epiphany: install from the FEDORA flatpak remote, NOT
+    # flathub. Flathub's org.gnome.Nautilus / org.gnome.Epiphany are
+    # END-OF-LIFE (pinned to GNOME 3.28 runtime, years out of date) --
+    # that's why operator saw "old GTK / CSS / Decorations" on Nautilus
+    # despite all the dconf + override fixes. Fedora's flatpak remote
+    # tracks current GNOME (50.x as of Fedora 44+), built against the
+    # current libadwaita with modern rounded-corner decorations.
+    # build-mios.ps1's install loop routes any "fedora:<id>" prefix
+    # through `flatpak install fedora` instead of flathub.
+    # Nautilus modern: ONLY available as org.gnome.Nautilus.Devel on the
+    # gnome-nightly remote (Fedora flatpak registry doesn't carry Nautilus;
+    # Flathub's org.gnome.Nautilus is EOL on GNOME 3.28). Devel = nightly
+    # builds against current GNOME (50.x as of 2026-05) -- modern
+    # libadwaita CSS + rounded corner decorations.
+    "gnome-nightly:org.gnome.Nautilus.Devel",          # file manager (gnome-nightly, current 50.x)
+    "fedora:org.gnome.Epiphany",                       # default browser (Fedora flatpak, current 50.3)
     # ── App store / Flatpak management ──
     # NOTE: "org.gnome.Software" was here but Flathub returns
     # "Nothing matches" as of 2026-05 -- delisted or renamed.

@@ -3876,29 +3876,48 @@ fi
 
 echo "[quadlet-overlay] installing GNOME Flatpaks for WSLg portal (one-time, ~600MB)..."
 sudo install -d -m 0755 /var/lib/flatpak
+# Two flatpak remotes:
+#   flathub -- community / third-party flatpaks (Flatseal, VSCodium, etc.)
+#   fedora  -- Fedora's own flatpak registry, ships CURRENT GNOME apps
+#              built against the current libadwaita runtime. Critical for
+#              Nautilus + Epiphany because Flathub's versions are EOL
+#              (pinned to GNOME 3.28 runtime, years out of date) which
+#              gives operators the "old GTK / CSS / decorations" look.
 sudo flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+sudo flatpak remote-add --system --if-not-exists fedora \
+    oci+https://registry.fedoraproject.org 2>/dev/null || true
+# gnome-nightly: where the modern Nautilus lives (org.gnome.Nautilus.Devel).
+# Flathub's org.gnome.Nautilus is EOL on GNOME 3.28; Fedora flatpak
+# registry doesn't carry Nautilus at all. The Devel build tracks
+# current GNOME with modern libadwaita CSS / decorations.
+sudo flatpak remote-add --system --if-not-exists gnome-nightly \
+    https://nightly.gnome.org/gnome-nightly.flatpakrepo 2>/dev/null || true
 # Refresh the appstream index so the install loop below can resolve
 # the app IDs. Without this step `flatpak install` errors with
-# "Nothing matches <ref> in remote flathub" on a fresh remote.
+# "Nothing matches <ref> in remote <remote>" on a fresh remote.
 sudo flatpak update --system --appstream flathub 2>&1 | tail -3 || true
-# Substrate-class Flatpaks: terminal, file manager, Flatpak permissions
-# UI, default browser. Each routes through WSLg as a Windows desktop
-# window; the gnome-flatpak-runtime RPM section provides the host-side
+sudo flatpak update --system --appstream fedora 2>&1 | tail -3 || true
+sudo flatpak update --system --appstream gnome-nightly 2>&1 | tail -3 || true
+# Substrate-class Flatpaks: terminal (Ptyxis), file manager (Nautilus
+# from fedora), Flatpak permissions UI (Flatseal), default browser
+# (Epiphany from fedora), GNOME shell extensions, VSCodium. Each
+# routes through WSLg as a Windows desktop window; the
+# gnome-flatpak-runtime RPM section provides the host-side
 # portals/audio/theming these need to render correctly.
 #
-# NOTE: org.gnome.Software was previously in this map but moved to
-# Fedora-repo dnf install (per `[packages.gnome-core-apps]` in mios.toml,
-# operator directive 2026-05-10: "ONLY GNOME SOFTWARE GETS THIS CHANGE").
-# Removing it from this map removes the /usr/local/bin/gnome-software
-# flatpak wrapper that was reaching for `app/org.gnome.Software/x86_64/
-# master not installed` and erroring.
+# Entries with a "fedora:" prefix install from the fedora remote
+# (current libadwaita / GNOME 50.x); plain entries install from
+# flathub. Operator directive 2026-05-10: "just enable newer fedora
+# repos for the flatpaks" / "you hard coded an old version of gnome
+# files flatpak -- THAT'S why it's old looking!!"
 declare -A FLATPAK_SHORT=(
-    [org.gnome.Ptyxis]=ptyxis
-    [org.gnome.Nautilus]=nautilus
+    [app.devsuite.Ptyxis]=ptyxis
+    [gnome-nightly:org.gnome.Nautilus.Devel]=nautilus
     [com.github.tchx84.Flatseal]=flatseal
-    [org.gnome.Epiphany]=epiphany
+    [fedora:org.gnome.Epiphany]=epiphany
     [com.vscodium.codium]=codium
+    [com.mattjakeman.ExtensionManager]=extension-manager
 )
 # Defensive cleanup: if the prior install left a gnome-software flatpak
 # wrapper at /usr/local/bin/gnome-software, remove it so the dnf-installed
@@ -3908,13 +3927,33 @@ if [[ -f /usr/local/bin/gnome-software ]] && grep -q 'flatpak.*org.gnome.Softwar
     sudo rm -f /usr/local/bin/gnome-software
     echo "[quadlet-overlay] removed legacy /usr/local/bin/gnome-software flatpak wrapper (now installed via dnf)"
 fi
-for ref in "${!FLATPAK_SHORT[@]}"; do
+# Also clean up the OLD flathub Nautilus / Epiphany if a prior install
+# pulled the EOL versions -- they conflict with the fedora-remote
+# versions on the same app id.
+for _eol in org.gnome.Nautilus org.gnome.Epiphany; do
+    if flatpak info --system "$_eol" >/dev/null 2>&1; then
+        _origin=$(flatpak info --system "$_eol" 2>/dev/null | awk -F': *' '/^Origin:/ {print $2; exit}')
+        if [[ "$_origin" == "flathub" ]]; then
+            sudo flatpak uninstall --system --noninteractive --assumeyes "$_eol" 2>&1 | tail -2 || true
+            echo "[quadlet-overlay] uninstalled EOL flathub $_eol (will reinstall from fedora remote)"
+        fi
+    fi
+done
+for keyref in "${!FLATPAK_SHORT[@]}"; do
+    # Split "remote:appid" form; default to flathub when no prefix.
+    if [[ "$keyref" == *:* ]]; then
+        remote="${keyref%%:*}"
+        ref="${keyref#*:}"
+    else
+        remote="flathub"
+        ref="$keyref"
+    fi
     if ! flatpak list --system --app --columns=application 2>/dev/null | grep -qx "$ref"; then
         # sudo prefix bypasses polkit's "Deploy not allowed for user"
         # gate on a fresh dev VM where polkit auth hasn't been
         # established yet. The sudoers drop-in below grants
         # passwordless sudo for the dev user, so this is silent.
-        sudo flatpak install --system --noninteractive --assumeyes --or-update flathub "$ref" \
+        sudo flatpak install --system --noninteractive --assumeyes --or-update "$remote" "$ref" \
             2>&1 | grep -E '^(Installing|Updating|Already|Error|Warning)' || true
     fi
     # Drop a /usr/local/bin/<short> wrapper so operators can run
@@ -3939,7 +3978,8 @@ for ref in "${!FLATPAK_SHORT[@]}"; do
     # before this fix landed), fall back to the original direct-exec
     # form so the wrapper still launches the flatpak -- it just won't
     # benefit from the env restore.
-    short="${FLATPAK_SHORT[$ref]}"
+    # Look up short alias by the ORIGINAL key (with potential remote: prefix).
+    short="${FLATPAK_SHORT[$keyref]}"
     # Regenerate the shim if it's missing OR if it doesn't reference
     # the flatpak-launch helper -- a previous bootstrap run before the
     # WSLg-env-restore fix landed produced shims that just `exec flatpak
