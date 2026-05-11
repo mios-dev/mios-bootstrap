@@ -4415,15 +4415,19 @@ tools:
 CFGLOCAL
 
 echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward workaround)"
-WEBUI_SECRET="$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+# mios-webui dropped 2026-05-11 (operator: hermes-workspace is the default
+# chat UI). mios-hermes-workspace added on the same port (3030). Forge
+# HTTP_ADDR=127.0.0.1 + ollama OLLAMA_HOST=127.0.0.1:11434 force AF_INET
+# binds so WSL2 NAT localhostForwarding catches them (gitea + ollama
+# upgrade 0.0.0.0 to AF_INET6 dual-stack otherwise; Windows times out).
 for svc_pair in \
-    "mios-forge:" \
+    "mios-forge:Environment=FORGEJO__server__HTTP_ADDR=127.0.0.1|Environment=GITEA__server__HTTP_ADDR=127.0.0.1" \
     "mios-ai:" \
-    "mios-searxng:Environment=BIND_ADDRESS=0.0.0.0:8888" \
-    "mios-webui:Environment=PORT=3030|Environment=WEBUI_SECRET_KEY=${WEBUI_SECRET}|Environment=OPENAI_API_BASE_URL=http://localhost:8642/v1" \
-    "mios-hermes:Environment=PORT=8642|Environment=HOME=/opt/data|Environment=UV_CACHE_DIR=/opt/data/.cache/uv|Environment=XDG_CACHE_HOME=/opt/data/.cache|WorkingDir=/opt/data|User=0|Group=0" \
+    "mios-searxng:Environment=GRANIAN_HOST=0.0.0.0|Environment=GRANIAN_PORT=8888|Environment=SEARXNG_BIND_ADDRESS=0.0.0.0:8888|Environment=BIND_ADDRESS=0.0.0.0:8888" \
+    "mios-hermes:Environment=PORT=8642|Environment=HERMES_BACKEND_BASE_URL=http://localhost:11434|Environment=HOME=/opt/data|Environment=UV_CACHE_DIR=/opt/data/.cache/uv|Environment=XDG_CACHE_HOME=/opt/data/.cache|WorkingDir=/opt/data|User=0|Group=0" \
+    "mios-hermes-workspace:Environment=PORT=3030|Environment=COOKIE_SECURE=0|Environment=HERMES_API_URL=http://localhost:8642" \
     "mios-cockpit-link:" \
-    "ollama:Environment=HOME=/var/lib/ollama" \
+    "ollama:Environment=HOME=/var/lib/ollama|Environment=OLLAMA_HOST=127.0.0.1:11434" \
     "mios-forgejo-runner:" \
 ; do
     svc="${svc_pair%%:*}"
@@ -4518,9 +4522,12 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     # entries. Vendor default is the workstation-core set (cockpit-
     # link + forge + searxng + webui + ai + ollama). Operator opt-in
     # services land in the .optin list (per mios.toml).
+    # Operator directive 2026-05-11: 'forget open webui for now -- Ollama
+    # >> hermes agent >> hermes-workspace app is the front-end'. Swap
+    # mios-webui out, swap mios-hermes + mios-hermes-workspace in.
     $_quadletAutostartDefault = @(
         'mios-cockpit-link','mios-forge','mios-searxng',
-        'mios-webui','mios-ai','ollama'
+        'mios-hermes','mios-hermes-workspace','mios-ai','ollama'
     )
     $_quadletAutostart = @(Get-MiosTomlValue -Section 'containers.quadlets' -Key 'autostart' -Default $_quadletAutostartDefault)
     $_quadletOptin     = @(Get-MiosTomlValue -Section 'containers.quadlets' -Key 'optin'     -Default @())
@@ -7535,24 +7542,27 @@ $endMark
             New-Item -ItemType Directory -Path $servicesDir -Force | Out-Null
         }
         $_defaultPorts = [ordered]@{
-            forge   = 3000
-            webui   = 3030
-            ai      = 8080
-            hermes  = 8642
-            searxng = 8888
-            cockpit = 9090
-            ollama  = 11434
+            forge            = 3000
+            hermes_workspace = 3030
+            ai               = 8080
+            hermes           = 8642
+            searxng          = 8888
+            cockpit          = 9090
+            ollama           = 11434
         }
         # Display name + path/scheme per service. Cockpit is the only
         # HTTPS one (self-signed cert; operator clicks through once).
+        # Hermes Workspace is THE default chat frontend (operator
+        # directive 2026-05-11). Open WebUI dropped; the legacy
+        # mios-webui Quadlet is disabled in mios.toml [quadlets.enable].
         $_webLinks = @(
-            @{ Key='cockpit';  Name='Cockpit';     Scheme='https'; Path='/' }
-            @{ Key='webui';    Name='Open WebUI';  Scheme='http';  Path='/' }
-            @{ Key='forge';    Name='Forge';       Scheme='http';  Path='/' }
-            @{ Key='searxng';  Name='SearXNG';     Scheme='http';  Path='/' }
-            @{ Key='hermes';   Name='Hermes API';  Scheme='http';  Path='/v1/models' }
-            @{ Key='ai';       Name='LocalAI API'; Scheme='http';  Path='/v1/models' }
-            @{ Key='ollama';   Name='Ollama API';  Scheme='http';  Path='/' }
+            @{ Key='hermes_workspace'; Name='Hermes Workspace'; Scheme='http';  Path='/' }
+            @{ Key='cockpit';          Name='Cockpit';          Scheme='https'; Path='/' }
+            @{ Key='forge';            Name='Forge';            Scheme='http';  Path='/' }
+            @{ Key='searxng';          Name='SearXNG';          Scheme='http';  Path='/' }
+            @{ Key='hermes';           Name='Hermes API';       Scheme='http';  Path='/v1/models' }
+            @{ Key='ai';               Name='LocalAI API';      Scheme='http';  Path='/v1/models' }
+            @{ Key='ollama';           Name='Ollama API';       Scheme='http';  Path='/' }
         )
         $_svcCreated = 0
         foreach ($_w in $_webLinks) {
