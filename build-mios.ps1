@@ -4062,10 +4062,59 @@ fi
 # credentials inline next to the Cockpit endpoint so the operator doesn't
 # have to remember them. Single-tenant dev VM trust model -- documented
 # on the dashboard, never used outside the dev surface.
-echo "${DEV_USER}:mios" | sudo chpasswd 2>/dev/null && \
-    echo "[quadlet-overlay] $DEV_USER password set to 'mios' (Cockpit login)"
-echo "mios:mios" | sudo chpasswd 2>/dev/null && \
-    echo "[quadlet-overlay] mios password set to 'mios'"
+#
+# Placeholder __MIOS_LOGIN_PASSWORD__ is substituted at heredoc-bake
+# time by Invoke-MiosQuadletOverlay from mios.toml [auth].password
+# (SSOT, operator-editable via mios.html). Vendor default is 'mios'.
+# DO NOT inline 'mios' here -- the substitution pass is what makes
+# the toml the single source of truth.
+_mios_pw='__MIOS_LOGIN_PASSWORD__'
+echo "${DEV_USER}:${_mios_pw}" | sudo chpasswd 2>&1 \
+    && echo "[quadlet-overlay] ${DEV_USER} password set (length=${#_mios_pw})" \
+    || echo "[quadlet-overlay] WARN: chpasswd for ${DEV_USER} failed"
+echo "mios:${_mios_pw}" | sudo chpasswd 2>&1 \
+    && echo "[quadlet-overlay] mios password set (length=${#_mios_pw})" \
+    || echo "[quadlet-overlay] WARN: chpasswd for mios failed"
+
+# Verify: drive `su - mios -c id` through a pty so we can actually
+# type the password. If this succeeds, Cockpit's PAM stack (which
+# uses the same /etc/shadow lookup) will accept the same credential.
+# Operator-flagged 2026-05-10: dashboard said `mios / mios` but the
+# Cockpit login rejected those credentials because an earlier chpasswd
+# silently set the hash to something else (likely a CRLF leak from a
+# prior PowerShell heredoc, since fixed). The verify step catches a
+# silent failure here instead of letting the operator hit it at login.
+if command -v python3 >/dev/null 2>&1; then
+    if python3 - "${_mios_pw}" <<'PYVERIFY' 2>&1; then
+import pty, os, sys, select, time
+pw = sys.argv[1]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("su", ["su", "-", "mios", "-c", "id -un"])
+buf = b""
+end = time.time() + 6
+sent = False
+while time.time() < end:
+    r, _, _ = select.select([fd], [], [], 0.5)
+    if r:
+        try: data = os.read(fd, 4096)
+        except OSError: break
+        if not data: break
+        buf += data
+        if not sent and b"assword" in buf:
+            os.write(fd, pw.encode() + b"\n"); sent = True
+        if b"mios" in buf and b"su:" not in buf:
+            print("[quadlet-overlay] password verify OK")
+            sys.exit(0)
+        if b"Authentication failure" in buf or b"incorrect password" in buf:
+            print("[quadlet-overlay] password verify FAILED:", buf.decode("ascii", "ignore")[:200])
+            sys.exit(1)
+print("[quadlet-overlay] password verify INCONCLUSIVE:", buf.decode("ascii", "ignore")[:200])
+sys.exit(2)
+PYVERIFY
+        :
+    fi
+fi
 
 # ── Layer the FULL mios.toml [packages].sections set into MiOS-DEV ───────
 # Per feedback_mios_dev_equals_mios.md and the 2026-05-06 directive
@@ -4249,6 +4298,20 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     if ($null -eq $_optinBash)     { $_optinBash     = '' }
     $overlayScript = $overlayScript -replace '__MIOS_QUADLET_AUTOSTART__', $_autostartBash
     $overlayScript = $overlayScript -replace '__MIOS_QUADLET_OPTIN__',     $_optinBash
+
+    # __MIOS_LOGIN_PASSWORD__ -- the operator-facing dev-VM login (also
+    # the credential Cockpit web at https://localhost:9090/ accepts).
+    # SSOT: mios.toml [auth].password (plain) or [auth].password_hash
+    # (pre-hashed for hardened deploys). Default 'mios' if both blank.
+    # The dashboard banner shows the literal string, so resolving it
+    # from the same place the chpasswd line consumes guarantees the
+    # advertised credential is the actual credential.
+    $_miosLoginPassword = [string](Get-MiosTomlValue -Section 'auth' -Key 'password' -Default 'mios')
+    if ([string]::IsNullOrWhiteSpace($_miosLoginPassword)) { $_miosLoginPassword = 'mios' }
+    # Escape single-quote so the bash literal stays sound even if the
+    # operator picks a password containing a quote character.
+    $_miosLoginPasswordEsc = $_miosLoginPassword -replace "'", "'\''"
+    $overlayScript = $overlayScript -replace '__MIOS_LOGIN_PASSWORD__', $_miosLoginPasswordEsc
 
     # CRLF -> LF: bash on Linux is allergic to \r in shebang lines /
     # heredoc terminators. The PowerShell here-string ships CRLF on
@@ -8495,21 +8558,24 @@ fi
     # WSL2 -> Windows host reachability (containers PublishPort on
     # 0.0.0.0:NNNN inside the VM = Windows-side localhost:NNNN).
     #
-    # Mirrored mode needs THREE companion keys to actually function:
-    #   firewall       - enables Hyper-V Firewall integration so Windows
-    #                    Defender doesn't drop the mirrored ports inbound.
-    #                    Without this, Windows-side localhost:NNNN times
-    #                    out even though the VM-side bind is fine.
+    # Mirrored mode companion keys:
+    #   firewall       - MUST BE FALSE. Hyper-V Firewall integration
+    #                    blocks all inbound by default; only explicit
+    #                    per-port allow rules (New-NetFirewallHyperVRule)
+    #                    let traffic through. We don't ship those rules,
+    #                    so firewall=true means every published container
+    #                    port (3000/8888/9090/11434/8080/3030/8642) times
+    #                    out from Windows-side localhost. firewall=false
+    #                    bypasses Defender enforcement for the VM, which
+    #                    is what makes mirrored mode actually "just work".
+    #                    Operator-confirmed 2026-05-10 (try with true ->
+    #                    cockpit + forge + searxng all timed out from
+    #                    Windows even after wsl --shutdown; switching to
+    #                    false unblocked them).
     #   dnsTunneling   - tunnels DNS through the host adapter so VM apps
     #                    see the same DNS surface as Windows-native apps
     #                    (matches the mirrored networking promise).
     #   autoProxy      - inherits Windows's proxy settings into the VM.
-    #
-    # Operator-flagged 2026-05-10: forge/searxng up rootfully, ports
-    # listening on 0.0.0.0 inside the VM, but Windows-side curls to
-    # localhost:3000 / localhost:8888 / localhost:11434 all timed out.
-    # Root cause was missing `firewall=true` -- mirrored mode without
-    # firewall integration is a known footgun.
     #
     # localhostForwarding is INCOMPATIBLE with mirrored mode -- wsl.exe
     # warns "wsl2.localhostForwarding setting has no effect when using
@@ -8520,7 +8586,7 @@ fi
         processors      = "$($HW.Cpus)"
         swap            = "4GB"
         networkingMode  = "mirrored"
-        firewall        = "true"
+        firewall        = "false"
         dnsTunneling    = "true"
         autoProxy       = "true"
         guiApplications = "true"
