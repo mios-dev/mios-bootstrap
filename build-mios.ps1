@@ -3644,6 +3644,33 @@ sudo ln -sf usr/share/mios/mios.toml             /mios.toml             2>/dev/n
 sudo ln -sf usr/share/mios/configurator/mios.html /configurator.html  2>/dev/null || true
 echo "[quadlet-overlay] root symlinks: /mios.toml, /configurator.html"
 
+# Render Quadlet ${MIOS_*} placeholders BEFORE systemd's podman
+# generator runs at daemon-reload. The .container files at
+# /etc/containers/systemd/*.container ship raw `${VAR:-default}`
+# placeholders (Image=, PublishPort=, User=, Group=, Network=, ...);
+# systemd's Quadlet generator does NOT expand them, so podman gets
+# the literal string `${MIOS_PORT_LOCALAI` (split on the `:` of
+# `:-8080`) and dies with:
+#     Error: cannot parse "${MIOS_PORT_LOCALAI" as an IP address
+# Every Quadlet stays in `activating auto-restart` and `podman ps`
+# is empty. Operator-flagged 2026-05-11 (containers all dead after
+# install).
+#
+# automation/15-render-quadlets.sh walks the four Quadlet search
+# dirs, resolves the placeholders against the layered mios.toml
+# (vendor < host < user) via tools/lib/userenv.sh, and writes the
+# rendered files back in place. The deployed bootc image builds run
+# this at image-build time; the dev-VM overlay path does NOT, so
+# we run it here. Idempotent: re-runs against an already-rendered
+# .container are a no-op (envsubst sees no remaining placeholders).
+if [[ -x /automation/15-render-quadlets.sh ]]; then
+    echo "[quadlet-overlay] rendering Quadlet \${MIOS_*} placeholders via automation/15-render-quadlets.sh"
+    sudo /automation/15-render-quadlets.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
+        echo "[quadlet-overlay] WARN: 15-render-quadlets.sh exited non-zero (Quadlets may still have placeholders)"
+else
+    echo "[quadlet-overlay] WARN: /automation/15-render-quadlets.sh not found (mios.git overlay incomplete?)"
+fi
+
 # Realize sysusers + tmpfiles, then reload systemd so the new units
 # (and Quadlet-generated *.service files) are visible.
 #
