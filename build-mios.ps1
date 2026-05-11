@@ -4267,6 +4267,25 @@ fi
 sudo install -d -m 0755 /var/lib/mios
 sudo touch "$SENTINEL"
 
+# Re-resolve the systemd PID NOW. The dnf transaction we just ran
+# upgraded the `systemd` RPM (a transitive dep of dozens of the 297
+# packages in mios.toml). On WSL2's nested-systemd-in-WSL the new
+# binary respawns inside the user namespace and PID 1's PID number
+# changes -- so the $NS we captured at overlay start (line ~3658)
+# points at a /proc/<old-pid> entry that no longer exists. Every
+# subsequent `nsenter -t <old-pid> -a` then dies with:
+#     nsenter: stat of /proc/<old-pid>/ns/user failed: No such file
+# tripping the reap-on-failure trap and wiping the install.
+# Operator-flagged 2026-05-11.
+SYSTEMD_PID=$(pidof systemd 2>/dev/null | tr ' ' '\n' | head -1)
+if [[ -n "$SYSTEMD_PID" ]]; then
+    NS="sudo nsenter -t $SYSTEMD_PID -a"
+    echo "[quadlet-overlay] post-pkg: re-resolved systemd ns (PID $SYSTEMD_PID)"
+else
+    NS="sudo"
+    echo "[quadlet-overlay] post-pkg: WARN systemd PID not found; falling back to bare sudo"
+fi
+
 # ── Dev-VM host networking drop-ins ──────────────────────────────────
 # Operator-flagged 2026-05-11: localhost:3000 / :8888 from Windows
 # (and from inside the dev VM) timed out even though the containers
