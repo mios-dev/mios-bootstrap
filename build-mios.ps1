@@ -4365,7 +4365,35 @@ for svc_pair in \
         done
     } | sudo tee "/etc/containers/systemd/${svc}.container.d/10-mios-dev-host-network.conf" >/dev/null
 done
-sudo systemctl daemon-reload
+# Use $NS (nsenter into systemd's namespace) instead of bare `sudo` so
+# the reload reaches the running PID 1's bus. Bare `sudo systemctl
+# daemon-reload` runs in the OUTER WSL ns and gets "Transport endpoint
+# is not connected" -- same root cause as the early-overlay daemon-
+# reload that already routes through $NS. Operator-flagged 2026-05-11:
+# the bare-sudo call here tripped the reap-on-failure trap and wiped
+# their install after a 9-minute Phase-3 build.
+$NS systemctl daemon-reload
+
+# Apply the MiOS systemd-preset so cockpit.socket / pmcd / pmlogger /
+# pmproxy and other MiOS-preset-enabled units land at enabled=enabled
+# on the dev VM. The deployed bootc image processes presets at image-
+# build time; the dev-VM overlay path does NOT, so without this every
+# preset-`enable`d unit stays at upstream Fedora's `disabled` default.
+# Operator-flagged 2026-05-11: cockpit metrics page showed "pmlogger.
+# service is not running" because PCP units were stuck disabled. The
+# preset is the SSOT for "what should be on by default"; applying it
+# here keeps the dev VM behavior identical to the deployed image.
+if [[ -r /usr/lib/systemd/system-preset/90-mios.preset ]]; then
+    echo "[quadlet-overlay] applying 90-mios.preset (cockpit + pcp + firstboot services)"
+    grep -E '^enable ' /usr/lib/systemd/system-preset/90-mios.preset 2>/dev/null \
+      | awk '{print $2}' \
+      | while read -r _unit; do
+            [[ -z "$_unit" ]] && continue
+            if $NS systemctl cat "$_unit" >/dev/null 2>&1; then
+                $NS systemctl preset "$_unit" 2>&1 | sed 's/^/[quadlet-overlay]   /'
+            fi
+        done
+fi
 
 active=$($NS systemctl --no-legend list-units 'mios-*' 2>/dev/null | wc -l)
 echo "[quadlet-overlay] done -- $active mios-* units active"
