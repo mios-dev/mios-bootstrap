@@ -4344,7 +4344,7 @@ for svc_pair in \
     "mios-ai:" \
     "mios-searxng:Environment=BIND_ADDRESS=0.0.0.0:8888" \
     "mios-webui:Environment=PORT=3030|Environment=WEBUI_SECRET_KEY=${WEBUI_SECRET}|Environment=OPENAI_API_BASE_URL=http://localhost:8642/v1" \
-    "mios-hermes:Environment=PORT=8642|Environment=HOME=/opt/data|Environment=UV_CACHE_DIR=/opt/data/.cache/uv|Environment=XDG_CACHE_HOME=/opt/data/.cache" \
+    "mios-hermes:Environment=PORT=8642|Environment=HOME=/opt/data|Environment=UV_CACHE_DIR=/opt/data/.cache/uv|Environment=XDG_CACHE_HOME=/opt/data/.cache|WorkingDir=/opt/data" \
     "mios-cockpit-link:" \
     "ollama:Environment=HOME=/var/lib/ollama" \
     "mios-forgejo-runner:" \
