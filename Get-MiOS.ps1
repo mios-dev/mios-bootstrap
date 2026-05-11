@@ -4516,9 +4516,11 @@ function Ensure-PodmanDesktop {
 # Per feedback_mios_entry_full_reset memory:
 #   "every irm|iex must reap ALL prior MiOS state: temp clones, persistent
 #   clones, WSL distros (MiOS / MiOS-DEV / podman-MiOS-DEV / MiOS-BUILDER),
-#   podman machines, Hyper-V VMs (MiOS-*), install dirs (M:\MiOS / C:\MiOS /
-#   %PROGRAMDATA%\MiOS), Start Menu shortcuts, registry uninstall key. No
-#   partial state; no carry-over."
+#   podman machines, Hyper-V VMs (MiOS-*), install dirs (M:\ contents +
+#   %PROGRAMDATA%\MiOS / %LOCALAPPDATA%\MiOS / %APPDATA%\MiOS), Start Menu
+#   shortcuts, registry uninstall key. No partial state; no carry-over."
+# C:\MiOS + C:\mios-bootstrap are PROTECTED -- operator dev working trees
+# of mios.git + mios-bootstrap.git per feedback_mios_no_c_drive_fallback.
 #
 # AND per operator 2026-05-09: "If the uninstaller actually uninstalled
 # things automatically every time; I wouldn't have to Manually uninstall
@@ -4540,7 +4542,8 @@ function Ensure-PodmanDesktop {
 #   2. WSL distros (MiOS, MiOS-DEV, podman-MiOS-DEV, MiOS-BUILDER, podman-MiOS-BUILDER)
 #   3. Hyper-V VMs matching MiOS-*
 #   4. Install dirs: M:\ contents (everything except drive root metadata),
-#      C:\MiOS, %PROGRAMDATA%\MiOS, %LOCALAPPDATA%\MiOS, %APPDATA%\MiOS
+#      %PROGRAMDATA%\MiOS, %LOCALAPPDATA%\MiOS, %APPDATA%\MiOS.
+#      NEVER C:\MiOS (operator dev tree of mios.git -- protected).
 #   5. WT settings.json -- launchMode, profiles.defaults MiOS keys, MiOS scheme,
 #      MiOS / MiOS-WIN / MiOS-DEV / podman-MiOS-* profiles
 #   6. PowerShell profile redirector blocks (10 candidate paths, marker-delimited)
@@ -4552,9 +4555,10 @@ function Ensure-PodmanDesktop {
 #  12. podman-machine state symlinks (3 candidate paths)
 #  13. MIOS_*/MiOS_* environment variables (HKCU + HKLM)
 #
-# Non-destructive: NEVER touches C:\mios-bootstrap (operator dev clone -- may
-# have uncommitted work), the operator's pwsh profile body outside the
-# >>> MiOS ... >>> markers, or any non-MiOS WT profiles / schemes / fonts.
+# Non-destructive: NEVER touches C:\mios-bootstrap OR C:\MiOS (both are
+# operator dev clones -- may have uncommitted work), the operator's
+# pwsh profile body outside the >>> MiOS ... >>> markers, or any
+# non-MiOS WT profiles / schemes / fonts.
 function Invoke-MiOSFullReap {
     param([switch]$Quiet)
     $reapEAP = $ErrorActionPreference
@@ -4608,10 +4612,23 @@ function Invoke-MiOSFullReap {
         }
     } catch {}
 
-    # 4. Install dirs (NEVER touches C:\mios-bootstrap -- operator dev clone)
-    & $_log (& $_lookupReap 'category_4' '[4/13] Install dirs (M:\ contents, C:\MiOS, %PROGRAMDATA%\MiOS, %LOCALAPPDATA%\MiOS) ...')
+    # 4. Install dirs. PROTECTED FROM REAP -- operator-owned dev trees:
+    #   * C:\MiOS            -- dev working tree of mios.git (memory:
+    #                            feedback_mios_no_c_drive_fallback;
+    #                            ".git IS /" working tree). End consumers
+    #                            never have this dir, so deleting it
+    #                            only ever destroys operator dev work.
+    #                            Operator-flagged 2026-05-11 after this
+    #                            trap fired on a Phase-3 reap-on-failure
+    #                            and wiped their checkout (uncommitted
+    #                            edits unrecoverable -- no shadow copies).
+    #   * C:\mios-bootstrap  -- dev working tree of mios-bootstrap.git
+    #                            (same protected category).
+    #
+    # MiOS owns M:\ exclusively (see block below) + a few %ProgramData% /
+    # %LOCALAPPDATA% / %APPDATA% caches that ARE install-managed.
+    & $_log (& $_lookupReap 'category_4' '[4/13] Install dirs (%PROGRAMDATA%\MiOS, %LOCALAPPDATA%\MiOS, %APPDATA%\MiOS) -- skipping C:\MiOS + C:\mios-bootstrap ...')
     foreach ($p in @(
-        'C:\MiOS',
         (Join-Path $env:ProgramData    'MiOS'),
         (Join-Path $env:LOCALAPPDATA   'MiOS'),
         (Join-Path $env:APPDATA        'MiOS')
@@ -5573,18 +5590,22 @@ Write-Good "Prerequisites OK (git, podman)"
 # NOTE: Phase 0 above (Invoke-MiOSFullReap, called BEFORE Initialize-
 # DataDisk on every irm|iex run) has already nuked every prior MiOS
 # artifact on this machine: WSL distros, podman machines, Hyper-V VMs,
-# install dirs (M:\ contents / C:\MiOS / %PROGRAMDATA%\MiOS), WT MiOS
-# scheme + profiles, Start Menu folder + Desktop .lnks, HKCU uninstall
-# reg key, AppUserModelID regs, podman-machine state symlinks, MIOS_*
-# env vars, fonts, PATH entries.
+# install dirs (%PROGRAMDATA%\MiOS / %LOCALAPPDATA%\MiOS / %APPDATA%\MiOS),
+# M:\ contents, WT MiOS scheme + profiles, Start Menu folder + Desktop
+# .lnks, HKCU uninstall reg key, AppUserModelID regs, podman-machine
+# state symlinks, MIOS_* env vars, fonts, PATH entries, MiOS Firewall
+# rules.
+#
+# C:\MiOS + C:\mios-bootstrap are NEVER touched: both are operator-
+# owned dev working trees of mios.git / mios-bootstrap.git (per the
+# feedback_mios_no_c_drive_fallback memory). End consumers never have
+# these dirs; reaping them only ever destroys operator dev work.
+# Operator-flagged 2026-05-11 after C:\MiOS got nuked.
 #
 # Per feedback_mios_entry_full_reset memory + operator 2026-05-09:
 # "every irm|iex must reap ALL prior MiOS state... No partial state;
-# no carry-over." A previous revision deleted the reset block out of
-# excessive caution about operator dev work -- but operator dev work
-# lives in C:\mios-bootstrap (operator's git clone), which Phase 0
-# explicitly does NOT touch. M:\ is a MiOS-owned 256 GB partition;
-# C:\MiOS is the legacy install dir; neither contains operator work.
+# no carry-over." M:\ is the MiOS-owned 256 GB partition; the reap
+# clears that + the AppData caches but never the dev-tree C:\ paths.
 
 # Step 0 above (before Pass-1) ALREADY provisioned M:\ + symlinked
 # podman-machine + winget package storage onto M:\. Pass-1's winget
