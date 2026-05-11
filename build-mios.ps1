@@ -7545,24 +7545,27 @@ $endMark
         $_defaultPorts = [ordered]@{
             forge            = 3000
             hermes_workspace = 3030
-            ai               = 8080
             hermes           = 8642
+            guacamole_web    = 8090
+            ceph_dashboard   = 8443
             searxng          = 8888
             cockpit          = 9090
             ollama           = 11434
         }
-        # Display name + path/scheme per service. Cockpit is the only
-        # HTTPS one (self-signed cert; operator clicks through once).
+        # Display name + path/scheme per service. Cockpit + Ceph are the
+        # HTTPS ones (self-signed certs; operator clicks through once).
         # Hermes Workspace is THE default chat frontend (operator
-        # directive 2026-05-11). Open WebUI dropped; the legacy
-        # mios-webui Quadlet is disabled in mios.toml [quadlets.enable].
+        # directive 2026-05-11). LocalAI was purged from the codebase
+        # 2026-05-11; Open WebUI is masked (legacy fallback).
         $_webLinks = @(
-            @{ Key='hermes_workspace'; Name='Hermes Workspace'; Scheme='http';  Path='/' }
-            @{ Key='cockpit';          Name='Cockpit';          Scheme='https'; Path='/' }
-            @{ Key='forge';            Name='Forge';            Scheme='http';  Path='/' }
-            @{ Key='searxng';          Name='SearXNG';          Scheme='http';  Path='/' }
-            @{ Key='hermes';           Name='Hermes API';       Scheme='http';  Path='/v1/models' }
-            @{ Key='ollama';           Name='Ollama API';       Scheme='http';  Path='/' }
+            @{ Key='hermes_workspace'; Name='MiOS Chat (Hermes Workspace)'; Scheme='http';  Path='/' }
+            @{ Key='cockpit';          Name='MiOS Cockpit';                 Scheme='https'; Path='/' }
+            @{ Key='forge';            Name='MiOS Forge';                   Scheme='http';  Path='/' }
+            @{ Key='searxng';          Name='MiOS Search (SearXNG)';        Scheme='http';  Path='/' }
+            @{ Key='hermes';           Name='MiOS Hermes API';              Scheme='http';  Path='/v1/models' }
+            @{ Key='ollama';           Name='MiOS Ollama API';              Scheme='http';  Path='/' }
+            @{ Key='guacamole_web';    Name='MiOS Guacamole';               Scheme='http';  Path='/guacamole/' }
+            @{ Key='ceph_dashboard';   Name='MiOS Ceph Dashboard';          Scheme='https'; Path='/' }
         )
         $_svcCreated = 0
         foreach ($_w in $_webLinks) {
