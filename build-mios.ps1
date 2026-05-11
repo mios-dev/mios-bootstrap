@@ -4290,19 +4290,35 @@ sudo touch "$SENTINEL"
 # below ONLY land on the dev VM (their parent units are guarded by
 # the existing overlay flow, which only runs in podman-MiOS-DEV).
 #
-# Per-container port overrides for the env vars each upstream image
-# reads to choose its bind port -- needed because in host-netns mode
-# every container would default-bind on 8080 and collide. SSOT is
-# mios.toml [ports].* (default vendor values baked here).
+# Per-container env overrides for host-network mode. In host netns,
+# every container shares the VM's main netns -- so bind ports collide
+# AND inter-container DNS (e.g. mios-hermes resolution) no longer
+# works (no aardvark; bridge networks aren't used). Override each
+# image's bind/upstream env vars to talk over localhost on the
+# canonical MiOS port from mios.toml [ports].*. Discovered live
+# 2026-05-11 while shaking out the operator's first install.
+#
+#   ollama: HOME=/var/lib/ollama -- without this ollama tries to
+#       mkdir /.ollama in the read-only container root and dies with
+#       "permission denied". The Quadlet already mounts /var/lib/ollama
+#       (writable for UID 815), so point HOME at it.
+#   webui:  WEBUI_SECRET_KEY=<random> (env.py:611 requires non-empty
+#       when WEBUI_AUTH=true), PORT=3030, OPENAI_API_BASE_URL=
+#       http://localhost:8642/v1 (mios-hermes:8642 doesn't resolve in
+#       host netns; use localhost instead).
+#   hermes: PORT=8642 (otherwise picks an upstream default).
+#   searxng: BIND_ADDRESS=0.0.0.0:8888 (granian default is :8080 which
+#       collides with mios-ai).
 echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward workaround)"
+WEBUI_SECRET="$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 for svc_pair in \
     "mios-forge:" \
     "mios-ai:" \
     "mios-searxng:Environment=BIND_ADDRESS=0.0.0.0:8888" \
-    "mios-webui:Environment=PORT=3030" \
+    "mios-webui:Environment=PORT=3030|Environment=WEBUI_SECRET_KEY=${WEBUI_SECRET}|Environment=OPENAI_API_BASE_URL=http://localhost:8642/v1" \
     "mios-hermes:Environment=PORT=8642" \
     "mios-cockpit-link:" \
-    "ollama:" \
+    "ollama:Environment=HOME=/var/lib/ollama" \
     "mios-forgejo-runner:" \
 ; do
     svc="${svc_pair%%:*}"
@@ -4313,7 +4329,12 @@ for svc_pair in \
         echo "[Container]"
         echo "Network="
         echo "Network=host"
-        [ -n "$extra" ] && echo "$extra"
+        # `extra` may carry multiple Environment= lines separated by
+        # `|` (the heredoc loop above can't hold newlines).
+        IFS='|' read -ra extras <<< "$extra"
+        for e in "${extras[@]}"; do
+            [ -n "$e" ] && echo "$e"
+        done
     } | sudo tee "/etc/containers/systemd/${svc}.container.d/10-mios-dev-host-network.conf" >/dev/null
 done
 sudo systemctl daemon-reload
