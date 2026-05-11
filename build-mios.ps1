@@ -6474,6 +6474,9 @@ Header 'Core verbs' 'Type any of these in a MiOS terminal, OR click the matching
 Verb 'mios'         '(no arg) -- open this help; runs `mios help` by default'
 Verb 'mios build'   'Promote Downloads edits, sync the overlay, SSH into MiOS-DEV,'
 Note '               ignite mios-build-driver -- the full OCI build pipeline.'
+Verb 'mios code'    'Open code-server (VS Code in a browser) at http://localhost:8800/.'
+Note '               Login: mios. Terminal pre-rooted at your home; `git clone'
+Note '               http://mios-forge:3000/<user>/<repo>.git` works in-browser.'
 Verb 'mios config'  'Open the HTML configurator (mios.toml editor) in your browser.'
 Note '               Edit identity, AI, packages, ports, services, theme, etc.'
 Verb 'mios dash'    'Render the framed MiOS dashboard (banner + fastfetch + verbs).'
@@ -6481,6 +6484,11 @@ Verb 'mios dev'     'Drop into the MiOS-DEV podman machine as user `mios` at /.'
 Verb 'mios pull'    'git fetch + hard reset M:\ overlay to origin/main (no rebuild).'
 Verb 'mios update'  'Re-run the bootstrap (cache-busted) -- refresh terminal + dev VM.'
 Verb 'mios help'    'This list.'
+Note ''
+Verb 'mios <Q>'     'Free-form chat with Hermes-Agent. Anything that is not a known'
+Note '               verb is sent to http://localhost:8642/v1/chat/completions and'
+Note '               the response streamed to the terminal.'
+Note '               Example: mios what kargs do I need for VFIO passthrough'
 
 Header 'Native Windows apps' 'The five-app MiOS surface (Start Menu + Desktop).'
 Verb 'MiOS'         'The MiOS terminal. Themed Windows Terminal MiOS profile, 80x20,'
@@ -6530,7 +6538,7 @@ Note '   2. NO /VAR WRITES AT BUILD   tmpfiles.d realises /var at first boot'
 Note '   3. GIT-MANAGED ROOT      `.git` IS `/` on every deployed host'
 Note '   4. BOOTC-CONTAINER-LINT  every build ends with `bootc container lint`'
 Note '   5. UNIFIED-AI-REDIRECTS  every OpenAI-API client targets MIOS_AI_ENDPOINT'
-Note '                            (default http://localhost:8080/v1 -- LocalAI Quadlet)'
+Note '                            (default http://localhost:8642/v1 -- Hermes-Agent)'
 Note '   6. UNPRIVILEGED-QUADLETS every Quadlet declares User=, Group=, Delegate=yes'
 
 Header 'Where to dig deeper'
@@ -6802,7 +6810,97 @@ if ($args.Count -gt 0) {
     Set-Content -Path $hubPath -Value $hubScript -Encoding UTF8
     Log-Ok "MiOS app staged at $hubPath"
 
-    Log-Ok "Bin scripts staged: mios (app), mios-dash, mios-dev, mios-pull, mios-update, mios-config"
+    # mios-code.ps1 -- `mios code` verb. Opens code-server in the
+    # operator's default browser.
+    $codePath = Join-Path $MiosBinDir 'mios-code.ps1'
+    $codeScript = @'
+# <MiOSRoot>\bin\mios-code.ps1 -- the `mios code` verb.
+# Opens code-server (VS Code in a browser) in the default browser.
+# Resolves the URL via mios.toml [ports].code_server (default 8800).
+param([Parameter(ValueFromRemainingArguments)] $Args)
+$ErrorActionPreference = 'SilentlyContinue'
+$port = 8800
+foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+    if (Test-Path -LiteralPath $_t) {
+        try {
+            $_txt = [IO.File]::ReadAllText($_t, (New-Object System.Text.UTF8Encoding($false)))
+            $_m = [regex]::Match($_txt, '(?ms)^\[ports\].*?^\s*code_server\s*=\s*(\d+)')
+            if ($_m.Success) { $port = [int]$_m.Groups[1].Value; break }
+        } catch {}
+    }
+}
+$url = "http://localhost:$port/"
+Write-Host "  Opening $url (login: mios)" -ForegroundColor DarkGray
+Start-Process $url | Out-Null
+'@
+    Set-Content -Path $codePath -Value $codeScript -Encoding UTF8
+
+    # mios-ask.ps1 -- free-form Hermes-Agent chat from the Windows
+    # PowerShell terminal. Invoked by the `mios` dispatcher whenever
+    # the first arg isn't a known verb. POSTs to MIOS_AI_ENDPOINT
+    # (default http://localhost:8642/v1) and streams the assistant
+    # content to the console.
+    $askPath = Join-Path $MiosBinDir 'mios-ask.ps1'
+    $askScript = @'
+# <MiOSRoot>\bin\mios-ask.ps1 -- `mios <query>` chat against Hermes-Agent.
+param([Parameter(ValueFromRemainingArguments)] [string[]] $Q)
+$ErrorActionPreference = 'SilentlyContinue'
+if (-not $Q -or $Q.Count -eq 0) {
+    Write-Host "  Usage: mios <question or instruction>" -ForegroundColor Yellow
+    Write-Host "  Example: mios how do I bootc switch to a staged image" -ForegroundColor DarkGray
+    return
+}
+$query = ($Q -join ' ').Trim()
+if (-not $query) { return }
+
+# Endpoint + model + key resolved from env > install.env > mios.toml fallback.
+$endpoint = if ($env:MIOS_AI_ENDPOINT) { $env:MIOS_AI_ENDPOINT } else { 'http://localhost:8642/v1' }
+$model    = if ($env:MIOS_AI_MODEL)    { $env:MIOS_AI_MODEL }    else { 'qwen3.5:2b' }
+$apiKey   = if ($env:MIOS_AI_KEY)      { $env:MIOS_AI_KEY }      else { '' }
+
+# If no env key, scrape /etc/mios/install.env on M:\ for the key.
+if (-not $apiKey) {
+    foreach ($_e in @('M:\etc\mios\install.env','M:\etc\mios\hermes\api.env')) {
+        if (Test-Path -LiteralPath $_e) {
+            try {
+                $_txt = [IO.File]::ReadAllText($_e, (New-Object System.Text.UTF8Encoding($false)))
+                $_m = [regex]::Match($_txt, '(?m)^(?:API_SERVER_KEY|MIOS_AI_KEY|OPENAI_API_KEY)\s*=\s*"?([^"\r\n]+)"?')
+                if ($_m.Success) { $apiKey = $_m.Groups[1].Value.Trim(); break }
+            } catch {}
+        }
+    }
+}
+
+$headers = @{ 'Content-Type' = 'application/json' }
+if ($apiKey) { $headers['Authorization'] = "Bearer $apiKey" }
+
+$body = @{
+    model    = $model
+    messages = @(
+        @{ role = 'user'; content = $query }
+    )
+    stream   = $false
+} | ConvertTo-Json -Depth 8 -Compress
+
+try {
+    $resp = Invoke-RestMethod -Method Post -Uri "$endpoint/chat/completions" -Headers $headers -Body $body -TimeoutSec 120 -ErrorAction Stop
+    $content = $resp.choices[0].message.content
+    if ($content) {
+        Write-Host ''
+        Write-Host $content
+        Write-Host ''
+    } else {
+        Write-Host "  [!] Hermes returned an empty response." -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "  [!] mios ask: $($_.Exception.Message)" -ForegroundColor Yellow
+    Write-Host "  Hermes-Agent endpoint: $endpoint" -ForegroundColor DarkGray
+    Write-Host "  Is mios-hermes.service running? Check with: mios dash" -ForegroundColor DarkGray
+}
+'@
+    Set-Content -Path $askPath -Value $askScript -Encoding UTF8
+
+    Log-Ok "Bin scripts staged: mios (app), mios-dash, mios-dev, mios-pull, mios-update, mios-config, mios-code, mios-ask"
 
     # Also drop a VERSION file so mios-dash can render the current ver.
     Set-Content -Path (Join-Path $MiosInstallDir 'VERSION') -Value $MiosVersion.TrimStart('v') -Encoding UTF8
@@ -6844,6 +6942,8 @@ function mios-dev     { & (Join-Path `$Global:MiosBin 'mios-dev.ps1')    @args }
 function mios-pull    { & (Join-Path `$Global:MiosBin 'mios-pull.ps1')   @args }
 function mios-update  { & (Join-Path `$Global:MiosBin 'mios-update.ps1') @args }
 function mios-config  { & (Join-Path `$Global:MiosBin 'mios-config.ps1') @args }
+function mios-code    { & (Join-Path `$Global:MiosBin 'mios-code.ps1')   @args }
+function mios-ask     { & (Join-Path `$Global:MiosBin 'mios-ask.ps1')    @args }
 
 # Set-MiosWindow -- resize + re-center the CURRENT MiOS terminal
 # window between [terminal] and [terminal.reading] modes from

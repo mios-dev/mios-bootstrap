@@ -4106,27 +4106,43 @@ function mios-help {
 # `mios b<TAB>` (PSReadLine + the ArgumentCompleter below complete to
 # `mios build`). Falls through to `mios-<verb>` so the same wrappers
 # back both call shapes.
+# Known verbs dispatch to mios-<verb>.ps1 wrappers in `$Global:MiosBin.
+# Anything that isn't a known verb is routed to Hermes-Agent at
+# MIOS_AI_ENDPOINT as a chat completion, so `mios how do I bootc switch`
+# works from any PowerShell terminal without a separate `ask` verb.
+`$Script:MiosKnownVerbs = @('build','update','pull','config','dev','dash','mini','help','code')
+
 function mios {
     [CmdletBinding()]
     param(
         [Parameter(Position=0)]
-        [ValidateSet('build','update','pull','config','dev','dash','mini','help')]
-        [string]`$Verb = 'help',
+        [string]`$Verb,
         [Parameter(ValueFromRemainingArguments)]
         `$Args
     )
-    `$cmd = "mios-`$Verb"
-    if (Get-Command `$cmd -ErrorAction SilentlyContinue) {
-        & `$cmd @Args
+    if (-not `$Verb) { `$Verb = 'help' }
+    if (`$Script:MiosKnownVerbs -contains `$Verb.ToLowerInvariant()) {
+        `$cmd = "mios-`$(`$Verb.ToLowerInvariant())"
+        if (Get-Command `$cmd -ErrorAction SilentlyContinue) {
+            & `$cmd @Args
+        } else {
+            Write-Host "  [!] mios: verb '`$Verb' wrapper not found. Try: mios help" -ForegroundColor Yellow
+        }
+        return
+    }
+    # Free-form query -> Hermes-Agent /v1/chat/completions.
+    `$_query = (@(`$Verb) + @(`$Args)) -join ' '
+    `$_ask = Join-Path `$Global:MiosBin 'mios-ask.ps1'
+    if (Test-Path -LiteralPath `$_ask) {
+        & `$_ask `$_query
     } else {
-        Write-Host "  [!] mios: '`$Verb' is not a known verb. Try: mios help" -ForegroundColor Yellow
+        Write-Host "  [!] mios-ask.ps1 not staged. Try: mios help" -ForegroundColor Yellow
     }
 }
 
-# Tab-completion for `mios <verb>` so `mios b<TAB>` -> `mios build`.
 Register-ArgumentCompleter -CommandName mios -ParameterName Verb -ScriptBlock {
     param(`$cmdName, `$paramName, `$wordToComplete, `$cmdAst, `$fakeBoundParam)
-    @('build','update','pull','config','dev','dash','mini','help') |
+    `$Script:MiosKnownVerbs |
         Where-Object { `$_ -like "`$wordToComplete*" } |
         ForEach-Object { [System.Management.Automation.CompletionResult]::new(`$_, `$_, 'ParameterValue', `$_) }
 }
