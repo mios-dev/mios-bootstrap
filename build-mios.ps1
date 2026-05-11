@@ -6905,14 +6905,34 @@ $endMark
             'org.gnome.Software'               = 'Software'
         }
 
-        # Pull current flatpak picks from mios.toml [desktop].flatpaks
-        # (returns space- or comma-separated string depending on resolver).
-        $_fpRaw = Get-MiosTomlValue -Section 'desktop' -Key 'flatpaks' -Default ''
+        # Pull current flatpak picks from mios.toml [desktop].flatpaks.
+        # Get-MiosTomlValue's regex is SINGLE-line (`(?<val>.+?)$`),
+        # so a multi-line `flatpaks = [\n  "a",\n  "b",\n]` array
+        # returns just `[` (the opening bracket on the same line as
+        # the assignment). That stray `[` then propagated as a
+        # phantom entry, producing a `[.lnk` shortcut in the
+        # operator's Linux Apps folder (2026-05-10 21:39).
+        #
+        # Use the same multi-line array parser the overlay flatpak
+        # loop uses upstream at line ~7945: regex-grab the bracket
+        # body across newlines, strip TOML comments, split on commas,
+        # trim quote/whitespace decoration.
         $_fpList = @()
-        if ($_fpRaw -is [System.Array]) {
-            $_fpList = $_fpRaw
-        } elseif ($_fpRaw) {
-            $_fpList = $_fpRaw -split '[,\s]+' | Where-Object { $_ }
+        try {
+            $_tomlTextForFp = Resolve-MiosTomlText
+            if ($_tomlTextForFp) {
+                $_fpMatch = [regex]::Match($_tomlTextForFp,
+                    '(?ms)^\[desktop\]\s*$.*?^\s*flatpaks\s*=\s*\[(?<arr>.*?)\]\s*$')
+                if ($_fpMatch.Success) {
+                    $_fpArrBody = ($_fpMatch.Groups['arr'].Value -split "`n" |
+                        ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -join ' '
+                    $_fpList = @($_fpArrBody -split ',' |
+                        ForEach-Object { $_.Trim().Trim('"', "'", ' ', "`t", "`r", "`n") } |
+                        Where-Object { $_ })
+                }
+            }
+        } catch {
+            Log-Warn "Linux Apps: mios.toml [desktop].flatpaks parse failed: $($_.Exception.Message)"
         }
 
         $linuxShortcutsCreated = 0
