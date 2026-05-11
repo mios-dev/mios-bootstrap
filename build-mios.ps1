@@ -8395,6 +8395,45 @@ fi
     }
     Log-Ok "MiOS dconf system-db compiled (adw-gtk3-dark + prefer-dark active for all user-bus sessions)"
 
+    # Bibata-Modern-Classic cursor install. mios.git's automation/10-gnome.sh
+    # bakes Bibata into the bootc OCI image MANDATORILY, but the dev VM
+    # (podman-MiOS-DEV = podman-machine-os Fedora 44 + MiOS overlay) doesn't
+    # run that automation. Without this overlay step, dconf points at
+    # 'Bibata-Modern-Classic' but the theme dir doesn't exist -> libXcursor
+    # silently falls back to default (operator-flagged 2026-05-10: "not
+    # seeing bibata cursor that is the GLOBAL MiOS defaults"). Match the
+    # image install path so the dev VM has the same cursor surface.
+    Set-Step "Installing Bibata-Modern-Classic cursor in $_wslDistroForTerm..."
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c '
+if [ -d /usr/share/icons/Bibata-Modern-Classic ]; then
+    echo "Bibata already installed -- skipping"
+    exit 0
+fi
+VER=$(curl -sSL -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest 2>/dev/null \
+  | grep -oE "\"tag_name\":\\s*\"v[0-9.]+\"" | head -1 | grep -oE "v[0-9.]+" | sed "s/^v//")
+[ -z "$VER" ] && VER="2.0.7"
+URL="https://github.com/ful1e5/Bibata_Cursor/releases/download/v${VER}/Bibata-Modern-Classic.tar.xz"
+echo "Bibata v${VER}: ${URL}"
+TARBALL=$(mktemp --suffix=.tar.xz)
+if curl -fsSL --retry 3 -o "$TARBALL" "$URL"; then
+    tar -xJf "$TARBALL" -C /usr/share/icons/ && rm -f "$TARBALL"
+    if [ -d /usr/share/icons/Bibata-Modern-Classic ]; then
+        echo "Bibata installed: $(ls /usr/share/icons/Bibata-Modern-Classic/cursors/ 2>/dev/null | wc -l) cursors"
+        gtk-update-icon-cache /usr/share/icons/Bibata-Modern-Classic 2>&1 || true
+    fi
+else
+    echo "Bibata download failed -- non-fatal; cursor falls back to Adwaita"
+fi
+' 2>&1 | ForEach-Object { Write-Log "mios-bibata: $_" }
+    }
+    Log-Ok "MiOS Bibata cursor theme staged"
+
     # MiOS AI CLI install: Claude Code + Gemini CLI globally via npm.
     # Both are Node.js CLIs distributed via npm, so they don't fit RPM
     # packaging. The helper script reads mios.toml [packages.ai].
