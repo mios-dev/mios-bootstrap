@@ -4422,7 +4422,6 @@ echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward work
 # upgrade 0.0.0.0 to AF_INET6 dual-stack otherwise; Windows times out).
 for svc_pair in \
     "mios-forge:Environment=FORGEJO__server__HTTP_ADDR=127.0.0.1|Environment=GITEA__server__HTTP_ADDR=127.0.0.1" \
-    "mios-ai:" \
     "mios-searxng:Environment=GRANIAN_HOST=0.0.0.0|Environment=GRANIAN_PORT=8888|Environment=SEARXNG_BIND_ADDRESS=0.0.0.0:8888|Environment=BIND_ADDRESS=0.0.0.0:8888" \
     "mios-hermes:Environment=PORT=8642|Environment=HERMES_BACKEND_BASE_URL=http://localhost:11434|Environment=HOME=/opt/data|Environment=UV_CACHE_DIR=/opt/data/.cache/uv|Environment=XDG_CACHE_HOME=/opt/data/.cache|WorkingDir=/opt/data|User=0|Group=0" \
     "mios-hermes-workspace:Environment=PORT=3030|Environment=COOKIE_SECURE=0|Environment=HERMES_API_URL=http://localhost:8642" \
@@ -4527,7 +4526,7 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     # mios-webui out, swap mios-hermes + mios-hermes-workspace in.
     $_quadletAutostartDefault = @(
         'mios-cockpit-link','mios-forge','mios-searxng',
-        'mios-hermes','mios-hermes-workspace','mios-ai','ollama'
+        'mios-hermes','mios-hermes-workspace','ollama'
     )
     $_quadletAutostart = @(Get-MiosTomlValue -Section 'containers.quadlets' -Key 'autostart' -Default $_quadletAutostartDefault)
     $_quadletOptin     = @(Get-MiosTomlValue -Section 'containers.quadlets' -Key 'optin'     -Default @())
@@ -7561,7 +7560,6 @@ $endMark
             @{ Key='forge';            Name='Forge';            Scheme='http';  Path='/' }
             @{ Key='searxng';          Name='SearXNG';          Scheme='http';  Path='/' }
             @{ Key='hermes';           Name='Hermes API';       Scheme='http';  Path='/v1/models' }
-            @{ Key='ai';               Name='LocalAI API';      Scheme='http';  Path='/v1/models' }
             @{ Key='ollama';           Name='Ollama API';       Scheme='http';  Path='/' }
         )
         $_svcCreated = 0
