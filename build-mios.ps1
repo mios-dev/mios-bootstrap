@@ -3795,6 +3795,29 @@ if id mios >/dev/null 2>&1; then
     fi
 fi
 
+# Expose flatpak .desktop entries to WSLg's auto-publisher. WSLg scans
+# /usr/share/applications/ + ~/.local/share/applications/ on each
+# distro start and creates Windows Start Menu shortcuts under
+# %APPDATA%\Microsoft\Windows\Start Menu\Programs\<distro>\<App>
+# (on <distro>).lnk -- WITH the app's real icon and no terminal popup.
+# Flatpak installs its entries to /var/lib/flatpak/exports/share/
+# applications/ which WSLg does NOT scan, so symlink each into the
+# WSLg-watched dir. Operator-flagged 2026-05-11: flatpak apps weren't
+# in Start Menu STILL after the custom Linux Apps shortcuts were
+# fixed -- WSLg's quality (icons + no terminal) is the canonical
+# user expectation, our custom .lnks are a fallback only.
+if [[ -d /var/lib/flatpak/exports/share/applications ]]; then
+    for _df in /var/lib/flatpak/exports/share/applications/*.desktop; do
+        [[ -f "$_df" ]] || continue
+        _base=$(basename "$_df")
+        if [[ ! -e "/usr/share/applications/$_base" ]]; then
+            sudo ln -sf "$_df" "/usr/share/applications/$_base" 2>/dev/null
+            echo "[quadlet-overlay]   linked flatpak desktop: $_base"
+        fi
+    done
+    sudo update-desktop-database /usr/share/applications/ 2>/dev/null || true
+fi
+
 # ALWAYS-ON LIGHTWEIGHT SET: Cockpit (web console at :9090), the
 # Podman-Desktop discovery shim that surfaces MiOS containers in PD's
 # UI, and the self-hosted Forgejo forge (small SQLite-backed git host).
@@ -7363,8 +7386,23 @@ $endMark
         } catch {}
         if (-not $linuxDistro) { $linuxDistro = "podman-$DevDistro" }
 
-        $wslExe = (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source
-        if (-not $wslExe) { $wslExe = "$env:WINDIR\System32\wsl.exe" }
+        # Prefer wslg.exe (part of WSL since 2021) over wsl.exe so the
+        # shortcuts launch the GUI app DIRECTLY with no console popup
+        # and Windows-Terminal-style chrome -- matches the exact UX
+        # that WSLg's own auto-published `App (on podman-MiOS-DEV).lnk`
+        # entries give the operator. wsl.exe spawns a host console;
+        # wslg.exe is a pure GUI launcher.
+        $wslExe = $null
+        foreach ($_c in @(
+            "$env:ProgramFiles\WSL\wslg.exe",
+            "$env:WINDIR\System32\wslg.exe"
+        )) {
+            if (Test-Path -LiteralPath $_c) { $wslExe = $_c; break }
+        }
+        if (-not $wslExe) {
+            $wslExe = (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source
+            if (-not $wslExe) { $wslExe = "$env:WINDIR\System32\wsl.exe" }
+        }
 
         # AppId -> friendly-name mapping. Operator-edit-friendly: short
         # name appears in Start Menu, app id resolves the actual flatpak.
@@ -7426,10 +7464,24 @@ $endMark
                 $_friendly = (Get-Culture).TextInfo.ToTitleCase($_last)
             }
             $_lnk = Join-Path $linuxAppsDir ("{0}.lnk" -f $_friendly)
+            # wslg.exe takes the same -d / --user / -- arg shape as
+            # wsl.exe BUT must be invoked with the FULL command path
+            # (it doesn't run a login shell), so use /usr/bin/flatpak
+            # explicitly. Matches WSLg's own auto-published shortcut
+            # args exactly (e.g. for Ptyxis it writes:
+            #   -d podman-MiOS-DEV --cd "~" -- /usr/bin/flatpak run
+            #     --branch=stable --arch=x86_64 --command=ptyxis
+            #     app.devsuite.Ptyxis).
+            $_isWslg = $wslExe -match 'wslg\.exe$'
+            $_args   = if ($_isWslg) {
+                ("-d {0} --user mios --cd `"~`" -- /usr/bin/flatpak run {1}" -f $linuxDistro, $_appId)
+            } else {
+                ("-d {0} --user mios -- flatpak run {1}" -f $linuxDistro, $_appId)
+            }
             try {
                 New-Shortcut -Path $_lnk `
                     -Target $wslExe `
-                    -ArgList ("-d {0} --user mios -- flatpak run {1}" -f $linuxDistro, $_appId) `
+                    -ArgList $_args `
                     -Desc ("MiOS Linux app: {0} ({1}) on {2}" -f $_friendly, $_appId, $linuxDistro) `
                     -Dir ([Environment]::GetFolderPath('Desktop'))
                 $linuxShortcutsCreated++
@@ -7446,10 +7498,17 @@ $endMark
         )
         foreach ($_sa in $sysApps) {
             $_lnk = Join-Path $linuxAppsDir ("{0}.lnk" -f $_sa.Name)
+            $_isWslg = $wslExe -match 'wslg\.exe$'
+            $_sysArgs = if ($_isWslg) {
+                # wslg.exe needs the full bin path (no login shell).
+                ("-d {0} --user mios --cd `"~`" -- /usr/bin/bash -lc `"{1}`"" -f $linuxDistro, $_sa.Cmd)
+            } else {
+                ("-d {0} --user mios -- bash -lc `"{1}`"" -f $linuxDistro, $_sa.Cmd)
+            }
             try {
                 New-Shortcut -Path $_lnk `
                     -Target $wslExe `
-                    -ArgList ("-d {0} --user mios -- bash -lc `"{1}`"" -f $linuxDistro, $_sa.Cmd) `
+                    -ArgList $_sysArgs `
                     -Desc ("MiOS Linux app: {0} ({1}) on {2}" -f $_sa.Name, $_sa.Cmd, $linuxDistro) `
                     -Dir ([Environment]::GetFolderPath('Desktop'))
                 $linuxShortcutsCreated++
@@ -7459,6 +7518,70 @@ $endMark
         Log-Ok ("MiOS Linux Apps: {0} Start Menu shortcuts -> {1}" -f $linuxShortcutsCreated, $linuxAppsDir)
     } catch {
         Log-Warn "MiOS Linux Apps Start Menu seeding failed: $($_.Exception.Message)"
+    }
+
+    # ── MiOS Services (web links via default browser) ──────────────────
+    # Start Menu\Programs\MiOS\Services\<Name>.url -- Internet Shortcut
+    # files that open in the operator's default browser (Zen / Edge /
+    # Firefox / Chrome). Operator-flagged 2026-05-11: "Should also
+    # include shortcuts to all our containers and services as webapps/
+    # weblinks using local browser(s)". .url files are Start Menu
+    # indexable and respect the operator's BrowserChoice without us
+    # having to detect the installed browser.
+    # SSOT: mios.toml [ports].* + a label/url map of the same shape.
+    try {
+        $servicesDir = Join-Path $StartMenuDir 'Services'
+        if (-not (Test-Path -LiteralPath $servicesDir)) {
+            New-Item -ItemType Directory -Path $servicesDir -Force | Out-Null
+        }
+        $_defaultPorts = [ordered]@{
+            forge   = 3000
+            webui   = 3030
+            ai      = 8080
+            hermes  = 8642
+            searxng = 8888
+            cockpit = 9090
+            ollama  = 11434
+        }
+        # Display name + path/scheme per service. Cockpit is the only
+        # HTTPS one (self-signed cert; operator clicks through once).
+        $_webLinks = @(
+            @{ Key='cockpit';  Name='Cockpit';     Scheme='https'; Path='/' }
+            @{ Key='webui';    Name='Open WebUI';  Scheme='http';  Path='/' }
+            @{ Key='forge';    Name='Forge';       Scheme='http';  Path='/' }
+            @{ Key='searxng';  Name='SearXNG';     Scheme='http';  Path='/' }
+            @{ Key='hermes';   Name='Hermes API';  Scheme='http';  Path='/v1/models' }
+            @{ Key='ai';       Name='LocalAI API'; Scheme='http';  Path='/v1/models' }
+            @{ Key='ollama';   Name='Ollama API';  Scheme='http';  Path='/' }
+        )
+        $_svcCreated = 0
+        foreach ($_w in $_webLinks) {
+            $_port = [int](Get-MiosTomlValue -Section 'ports' -Key $_w.Key -Default $_defaultPorts[$_w.Key])
+            if ($_port -lt 1 -or $_port -gt 65535) { continue }
+            $_url = "{0}://localhost:{1}{2}" -f $_w.Scheme, $_port, $_w.Path
+            $_urlFile = Join-Path $servicesDir ("{0}.url" -f $_w.Name)
+            try {
+                # Internet Shortcut (.url) -- ASCII INI format that
+                # Windows Explorer + the Start Menu treat as a clickable
+                # browser link. The [{000214A0-...}] block is the
+                # ShellLinkPropertyBag GUID; Prop3=19,2 sets the file
+                # as a Browse-shortcut (not Web-shortcut), which makes
+                # Open With... behave correctly.
+                $_lines = @(
+                    '[InternetShortcut]'
+                    "URL=$_url"
+                    '[{000214A0-0000-0000-C000-000000000046}]'
+                    'Prop3=19,2'
+                )
+                Set-Content -Path $_urlFile -Value $_lines -Encoding ASCII -Force
+                $_svcCreated++
+            } catch {
+                Log-Warn "MiOS Services: $($_w.Name) shortcut failed: $($_.Exception.Message)"
+            }
+        }
+        Log-Ok ("MiOS Services: {0} Start Menu .url shortcuts -> {1}" -f $_svcCreated, $servicesDir)
+    } catch {
+        Log-Warn "MiOS Services Start Menu seeding failed: $($_.Exception.Message)"
     }
 
     [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
