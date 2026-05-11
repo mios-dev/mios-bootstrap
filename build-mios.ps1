@@ -3781,9 +3781,17 @@ if id mios >/dev/null 2>&1; then
     sudo install -d -m 0755 -o mios -g mios /var/home/mios 2>/dev/null || \
         sudo install -d -m 0755 /var/home/mios
     if [[ -d /etc/skel ]] && [[ ! -e /var/home/mios/.bashrc ]]; then
-        sudo rsync -aH --ignore-existing /etc/skel/ /var/home/mios/ 2>/dev/null || true
+        # `cp -a` instead of rsync -- podman-machine-os 6.0 base does
+        # NOT ship rsync, so the prior rsync call silently no-op'd
+        # (the `|| true` swallowed the missing-binary error) and
+        # /var/home/mios ended up with subdirs from other overlay
+        # steps but no .bashrc / .bash_profile / .bash_logout. Side
+        # effect: WT bash in MiOS-DEV had no completion (interactive
+        # non-login bash sources ~/.bashrc but never /etc/profile.d).
+        # Operator-flagged 2026-05-11. cp is coreutils, always present.
+        sudo cp -a /etc/skel/. /var/home/mios/ 2>/dev/null || true
         sudo chown -R mios:mios /var/home/mios 2>/dev/null || true
-        echo "[quadlet-overlay]   /var/home/mios seeded from /etc/skel"
+        echo "[quadlet-overlay]   /var/home/mios seeded from /etc/skel (cp -a)"
     fi
 fi
 
@@ -5159,6 +5167,84 @@ function Invoke-DistroSh {
     Write-Log "Invoke-DistroSh: neither '$MachineName' nor 'podman-$MachineName' is registered" "ERROR"
     # Synthesize a non-zero exit code so callers' $LASTEXITCODE check fires.
     cmd /c "exit 127" | Out-Null
+}
+
+function Set-MiosWslConfig {
+    # Write / merge $env:USERPROFILE\.wslconfig with the keys MiOS-DEV
+    # needs from the WSL2 utility VM:
+    #   * networkingMode=mirrored  -- containers' 0.0.0.0:NNNN binds
+    #     show up on Windows' loopback (and physical NICs once the
+    #     LAN firewall rules let them through).
+    #   * firewall=false           -- bypass Hyper-V Firewall (we don't
+    #     ship per-port New-NetFirewallHyperVRule rules).
+    #   * dnsTunneling=true        -- VM DNS matches Windows-native.
+    #   * autoProxy=true           -- inherit Windows proxy settings.
+    #   * guiApplications=true     -- WSLg compositor for flatpaks.
+    #   * memory/processors/swap   -- right-sized for the detected host.
+    #
+    # CRITICAL: must run BEFORE Phase 3 initializes the dev VM. WSL2
+    # reads .wslconfig at WSL2-utility-VM-START, so if we write it
+    # AFTER podman-machine-init has spawned the VM, the VM keeps its
+    # boot-time settings (legacy NAT mode) until the next `wsl --
+    # shutdown`. Symptom the operator hit 2026-05-11: cockpit + every
+    # other port timed out from Windows because the dev VM came up
+    # in NAT mode while .wslconfig (set in Phase 4) said mirrored.
+    # Idempotent: re-invoking from Phase 4 sees the same key set and
+    # writes nothing new.
+    param([int]$RamGB, [int]$Cpus)
+
+    $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
+    $requiredKeys = [ordered]@{
+        memory          = "${RamGB}GB"
+        processors      = "$Cpus"
+        swap            = "4GB"
+        networkingMode  = "mirrored"
+        firewall        = "false"
+        dnsTunneling    = "true"
+        autoProxy       = "true"
+        guiApplications = "true"
+    }
+
+    $cfgRaw = if (Test-Path $wslCfg) { Get-Content $wslCfg -Raw } else { "" }
+
+    if ($cfgRaw -notmatch "\[wsl2\]") {
+        $block = "`n[wsl2]`n# MiOS-managed -- host resources for MiOS-DEV`n"
+        foreach ($kv in $requiredKeys.GetEnumerator()) { $block += "$($kv.Key)=$($kv.Value)`n" }
+        Add-Content -Path $wslCfg -Value $block
+        Log-Ok ".wslconfig: wrote [wsl2] -- ${RamGB}GB RAM, $Cpus CPUs, mirrored"
+        return
+    }
+
+    $deprecatedKeys = @('localhostForwarding')
+    $lines    = (Get-Content $wslCfg)
+    $inWsl2   = $false
+    $patched  = [System.Collections.Generic.List[string]]::new()
+    $inserted = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($line in $lines) {
+        if ($line -match "^\[wsl2\]") { $inWsl2 = $true }
+        elseif ($line -match "^\[")   { $inWsl2 = $false }
+        if ($inWsl2 -and $line -match "^(\w+)\s*=") {
+            $key = $Matches[1]
+            if ($deprecatedKeys -contains $key) { continue }
+            if ($requiredKeys.Contains($key)) {
+                $patched.Add("$key=$($requiredKeys[$key])")
+                $null = $inserted.Add($key)
+                continue
+            }
+        }
+        $patched.Add($line)
+    }
+    $missing = $requiredKeys.Keys | Where-Object { -not $inserted.Contains($_) }
+    if ($missing) {
+        $insertIdx = ($patched | Select-String -Pattern "^\[wsl2\]" | Select-Object -First 1).LineNumber
+        $offset = 0
+        foreach ($key in $missing) {
+            $patched.Insert($insertIdx + $offset, "$key=$($requiredKeys[$key])")
+            $offset++
+        }
+    }
+    Set-Content -Path $wslCfg -Value $patched -Encoding UTF8
+    Log-Ok ".wslconfig: merged [wsl2] -- ${RamGB}GB RAM, $Cpus CPUs, mirrored"
 }
 
 function Set-MiosLanFirewallRules {
@@ -7913,6 +7999,19 @@ if ($activeDistro) {
 
     # ── Phase 3 -- MiOS-DEV distro (formerly MiOS-BUILDER) ───────────────────
     Start-Phase 3
+
+    # Provision .wslconfig FIRST, before any podman-machine init.
+    # WSL2 reads .wslconfig at utility-VM start; if we write it after
+    # podman has already spawned the VM, mirrored mode + firewall=false
+    # never apply until the next `wsl --shutdown`. Operator-flagged
+    # 2026-05-11: cockpit + every other container port timed out from
+    # Windows because the VM came up in NAT mode while Phase 4's
+    # post-hoc .wslconfig write said mirrored. Phase 4 still re-calls
+    # this (idempotent) so any path that skips Phase 3 still lands
+    # the config.
+    try { Set-MiosWslConfig -RamGB $HW.RamGB -Cpus $HW.Cpus } catch { Log-Warn "Set-MiosWslConfig (pre-Phase-3): $($_.Exception.Message)" }
+    & wsl.exe --shutdown 2>&1 | ForEach-Object { Write-Log "wsl-shutdown-pre-phase3: $_" }
+
     $machineRunning = $false
     # Check via Podman API first (covers rootful machine-os distros inaccessible via wsl.exe).
     # Accept BOTH the canonical "MiOS-DEV" and the legacy "MiOS-BUILDER" names so existing
@@ -8842,114 +8941,13 @@ fi
     End-Phase 3
 
     # ── Phase 4 -- WSL2 .wslconfig ───────────────────────────────────────────
+    # Phase 3 already wrote .wslconfig BEFORE initializing the dev VM
+    # (so mirrored networking + firewall=false applied at first boot).
+    # This phase is the idempotent re-check + post-Phase-3 firewall
+    # rules. Set-MiosWslConfig is a no-op if all required keys already
+    # match.
     Start-Phase 4
-    $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
-
-    # Required keys -- always ensure these are present regardless of existing config.
-    # Mirrored networking is essential for Cockpit (port 9090) and general
-    # WSL2 -> Windows host reachability (containers PublishPort on
-    # 0.0.0.0:NNNN inside the VM = Windows-side localhost:NNNN).
-    #
-    # Mirrored mode companion keys:
-    #   firewall       - MUST BE FALSE. Hyper-V Firewall integration
-    #                    blocks all inbound by default; only explicit
-    #                    per-port allow rules (New-NetFirewallHyperVRule)
-    #                    let traffic through. We don't ship those rules,
-    #                    so firewall=true means every published container
-    #                    port (3000/8888/9090/11434/8080/3030/8642) times
-    #                    out from Windows-side localhost. firewall=false
-    #                    bypasses Defender enforcement for the VM, which
-    #                    is what makes mirrored mode actually "just work".
-    #                    Operator-confirmed 2026-05-10 (try with true ->
-    #                    cockpit + forge + searxng all timed out from
-    #                    Windows even after wsl --shutdown; switching to
-    #                    false unblocked them).
-    #   dnsTunneling   - tunnels DNS through the host adapter so VM apps
-    #                    see the same DNS surface as Windows-native apps
-    #                    (matches the mirrored networking promise).
-    #   autoProxy      - inherits Windows's proxy settings into the VM.
-    #
-    # localhostForwarding is INCOMPATIBLE with mirrored mode -- wsl.exe
-    # warns "wsl2.localhostForwarding setting has no effect when using
-    # mirrored networking mode" at every distro start. Dropped from
-    # required keys; mirrored handles loopback natively.
-    $requiredKeys = [ordered]@{
-        memory          = "$($HW.RamGB)GB"
-        processors      = "$($HW.Cpus)"
-        swap            = "4GB"
-        networkingMode  = "mirrored"
-        firewall        = "false"
-        dnsTunneling    = "true"
-        autoProxy       = "true"
-        guiApplications = "true"
-    }
-
-    $cfgRaw = if (Test-Path $wslCfg) { Get-Content $wslCfg -Raw } else { "" }
-
-    if ($cfgRaw -notmatch "\[wsl2\]") {
-        # No [wsl2] section at all -- append one wholesale
-        $block = "`n[wsl2]`n# MiOS-managed -- host resources for MiOS-DEV`n"
-        foreach ($kv in $requiredKeys.GetEnumerator()) { $block += "$($kv.Key)=$($kv.Value)`n" }
-        Add-Content -Path $wslCfg -Value $block
-        Log-Ok ".wslconfig: wrote [wsl2] -- $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
-    } else {
-        # [wsl2] exists -- patch each required key in place; append missing ones.
-        # Also actively REMOVE deprecated keys that conflict with the new
-        # required set (e.g., localhostForwarding once mirrored mode is on).
-        # Without this, every install that started in the localhostForwarding
-        # era keeps that line forever, triggering the wsl.exe parse-warning
-        # at every distro start.
-        $deprecatedKeys = @('localhostForwarding')
-
-        $lines    = (Get-Content $wslCfg)
-        $inWsl2   = $false
-        $patched  = [System.Collections.Generic.List[string]]::new()
-        $inserted = [System.Collections.Generic.HashSet[string]]::new()
-
-        foreach ($line in $lines) {
-            if ($line -match "^\[wsl2\]") { $inWsl2 = $true }
-            elseif ($line -match "^\[")   { $inWsl2 = $false }
-
-            if ($inWsl2 -and $line -match "^(\w+)\s*=") {
-                $key = $Matches[1]
-                if ($deprecatedKeys -contains $key) {
-                    # Drop the line entirely; never re-add it.
-                    continue
-                }
-                if ($requiredKeys.Contains($key)) {
-                    $patched.Add("$key=$($requiredKeys[$key])")
-                    $null = $inserted.Add($key)
-                    continue
-                }
-            }
-            $patched.Add($line)
-
-            # After [wsl2] header, inject any keys not yet seen in the section
-            if ($line -match "^\[wsl2\]") {
-                foreach ($kv in $requiredKeys.GetEnumerator()) {
-                    if (-not $inserted.Contains($kv.Key)) {
-                        # We will add them below after scanning the full section;
-                        # set a sentinel so the post-loop block fires once.
-                    }
-                }
-            }
-        }
-
-        # Append any required keys that never appeared in [wsl2]
-        $missing = $requiredKeys.Keys | Where-Object { -not $inserted.Contains($_) }
-        if ($missing) {
-            # Find insertion point: after [wsl2] header line
-            $insertIdx = ($patched | Select-String -Pattern "^\[wsl2\]" | Select-Object -First 1).LineNumber
-            $offset = 0
-            foreach ($key in $missing) {
-                $patched.Insert($insertIdx + $offset, "$key=$($requiredKeys[$key])")
-                $offset++
-            }
-        }
-
-        Set-Content -Path $wslCfg -Value $patched -Encoding UTF8
-        Log-Ok ".wslconfig: merged [wsl2] -- $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
-    }
+    try { Set-MiosWslConfig -RamGB $HW.RamGB -Cpus $HW.Cpus } catch { Log-Warn "Set-MiosWslConfig (Phase-4 recheck): $($_.Exception.Message)" }
 
     # Windows Firewall inbound rules for MiOS container ports. SSOT is
     # mios.toml [ports].* + [ports.lan_firewall].profiles/.expose.
