@@ -3780,18 +3780,20 @@ if id mios >/dev/null 2>&1; then
     sudo install -d -m 0755 /var/home 2>/dev/null || true
     sudo install -d -m 0755 -o mios -g mios /var/home/mios 2>/dev/null || \
         sudo install -d -m 0755 /var/home/mios
-    if [[ -d /etc/skel ]] && [[ ! -e /var/home/mios/.bashrc ]]; then
+    if [[ -d /etc/skel ]]; then
+        # Idempotent: `cp -an` (no-clobber) copies entries that are
+        # MISSING in /var/home/mios without overwriting operator-edited
+        # dotfiles. Previous guard (only-on-first-boot via missing
+        # .bashrc) prevented newly-added skel entries (XDG user-dir tree,
+        # user-dirs.dirs) from propagating to existing users on
+        # `mios update`. Switched to per-file no-clobber so re-runs are
+        # safe AND new skel content reaches existing users.
         # `cp -a` instead of rsync -- podman-machine-os 6.0 base does
-        # NOT ship rsync, so the prior rsync call silently no-op'd
-        # (the `|| true` swallowed the missing-binary error) and
-        # /var/home/mios ended up with subdirs from other overlay
-        # steps but no .bashrc / .bash_profile / .bash_logout. Side
-        # effect: WT bash in MiOS-DEV had no completion (interactive
-        # non-login bash sources ~/.bashrc but never /etc/profile.d).
-        # Operator-flagged 2026-05-11. cp is coreutils, always present.
-        sudo cp -a /etc/skel/. /var/home/mios/ 2>/dev/null || true
+        # NOT ship rsync, so the prior rsync call silently no-op'd.
+        # Operator-flagged 2026-05-11.
+        sudo cp -an /etc/skel/. /var/home/mios/ 2>/dev/null || true
         sudo chown -R mios:mios /var/home/mios 2>/dev/null || true
-        echo "[quadlet-overlay]   /var/home/mios seeded from /etc/skel (cp -a)"
+        echo "[quadlet-overlay]   /var/home/mios reconciled against /etc/skel (cp -an, idempotent)"
     fi
 fi
 
@@ -9082,8 +9084,9 @@ fi
         if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
         }
-        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c '
-if [ -d /usr/share/icons/Bibata-Modern-Classic ]; then
+        $_bibataOutput = & wsl.exe -d $_wslDistroForTerm --user root -- bash -c '
+set -e
+if [ -d /usr/share/icons/Bibata-Modern-Classic ] && [ -n "$(ls -A /usr/share/icons/Bibata-Modern-Classic/cursors 2>/dev/null)" ]; then
     echo "Bibata already installed -- skipping"
     exit 0
 fi
@@ -9094,18 +9097,35 @@ VER=$(curl -sSL -H "Accept: application/vnd.github+json" \
 URL="https://github.com/ful1e5/Bibata_Cursor/releases/download/v${VER}/Bibata-Modern-Classic.tar.xz"
 echo "Bibata v${VER}: ${URL}"
 TARBALL=$(mktemp --suffix=.tar.xz)
-if curl -fsSL --retry 3 -o "$TARBALL" "$URL"; then
-    tar -xJf "$TARBALL" -C /usr/share/icons/ && rm -f "$TARBALL"
-    if [ -d /usr/share/icons/Bibata-Modern-Classic ]; then
-        echo "Bibata installed: $(ls /usr/share/icons/Bibata-Modern-Classic/cursors/ 2>/dev/null | wc -l) cursors"
-        gtk-update-icon-cache /usr/share/icons/Bibata-Modern-Classic 2>&1 || true
-    fi
-else
-    echo "Bibata download failed -- non-fatal; cursor falls back to Adwaita"
+# --retry-all-errors covers 5xx and the 302 -> S3 redirect chain that
+# trips bare --retry on transient TLS handshake failures.
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$TARBALL" "$URL"
+SIZE=$(stat -c %s "$TARBALL" 2>/dev/null || echo 0)
+echo "Bibata tarball downloaded: ${SIZE} bytes"
+if [ "${SIZE:-0}" -lt 100000 ]; then
+    echo "Bibata tarball too small (${SIZE} bytes); aborting" >&2
+    rm -f "$TARBALL"
+    exit 1
 fi
-' 2>&1 | ForEach-Object { Write-Log "mios-bibata: $_" }
+mkdir -p /usr/share/icons
+tar -xJf "$TARBALL" -C /usr/share/icons/
+rm -f "$TARBALL"
+if [ ! -d /usr/share/icons/Bibata-Modern-Classic/cursors ] || \
+   [ -z "$(ls -A /usr/share/icons/Bibata-Modern-Classic/cursors 2>/dev/null)" ]; then
+    echo "Bibata extraction failed -- cursors dir empty" >&2
+    exit 1
+fi
+echo "Bibata installed: $(ls /usr/share/icons/Bibata-Modern-Classic/cursors | wc -l) cursors"
+gtk-update-icon-cache /usr/share/icons/Bibata-Modern-Classic 2>&1 || true
+' 2>&1
+        $_bibataExit = $LASTEXITCODE
+        foreach ($_line in $_bibataOutput) { Write-Log "mios-bibata: $_line" }
     }
-    Log-Ok "MiOS Bibata cursor theme staged"
+    if ($_bibataExit -eq 0) {
+        Log-Ok "MiOS Bibata cursor theme staged"
+    } else {
+        Log-Warn ("Bibata cursor install failed (exit=$_bibataExit); dconf points at Bibata-Modern-Classic but theme dir is missing -- run ``mios update`` after networking stabilizes or install manually from https://github.com/ful1e5/Bibata_Cursor/releases")
+    }
 
     # MiOS AI CLI install: Claude Code + Gemini CLI globally via npm.
     # Both are Node.js CLIs distributed via npm, so they don't fit RPM
