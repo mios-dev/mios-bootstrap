@@ -7645,8 +7645,8 @@ $endMark
         $_defaultPorts = [ordered]@{
             forge            = 3000
             hermes_workspace = 3030
+            code_server      = 8080
             hermes           = 8642
-            code_server      = 8800
             guacamole_web    = 8090
             ceph_dashboard   = 8443
             searxng          = 8888
