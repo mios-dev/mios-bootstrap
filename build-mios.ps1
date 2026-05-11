@@ -6853,6 +6853,119 @@ $endMark
             }
         }
     }
+
+    # ── MiOS Linux Apps (Start Menu subfolder) ─────────────────────────
+    # Operator 2026-05-10: "no MiOS Linux apps in windows start menus".
+    # Two-prong fix: (a) /etc/wsl.conf adds [gui] guiApplications=true
+    # so WSLg auto-exports .desktop entries (handled in mios.git);
+    # (b) we ALSO create explicit Windows .lnk shortcuts here, because
+    # WSLg auto-export depends on the distro's user-systemd being
+    # healthy and the operator's preferred friendly names (Files / Web
+    # / VSCodium / etc.) don't survive the "(on podman-MiOS-DEV)"
+    # suffix WSLg appends. Explicit shortcuts under
+    #   Start Menu\Programs\MiOS\Linux Apps\<FriendlyName>.lnk
+    # are bulletproof + match the operator's mental model.
+    #
+    # Each shortcut targets wsl.exe with the dev distro:
+    #   wsl.exe -d podman-MiOS-DEV --user mios -- flatpak run <appid>
+    # Source of truth: mios.toml [desktop].flatpaks (operator-editable
+    # via mios.html; new entries auto-surface on next bootstrap).
+    try {
+        $linuxAppsDir = Join-Path $StartMenuDir 'Linux Apps'
+        if (-not (Test-Path -LiteralPath $linuxAppsDir)) {
+            New-Item -ItemType Directory -Path $linuxAppsDir -Force | Out-Null
+        }
+
+        # Resolve WSL distro that actually exists (podman-prefixed or bare).
+        $linuxDistro = $null
+        try {
+            $_wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" |
+                ForEach-Object { ($_ -replace [char]0, '').Trim() } |
+                Where-Object { $_ }
+            foreach ($_cand in @("podman-$DevDistro", $DevDistro, "podman-$LegacyDevName", $LegacyDevName)) {
+                if ($_wslList -contains $_cand) { $linuxDistro = $_cand; break }
+            }
+        } catch {}
+        if (-not $linuxDistro) { $linuxDistro = "podman-$DevDistro" }
+
+        $wslExe = (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source
+        if (-not $wslExe) { $wslExe = "$env:WINDIR\System32\wsl.exe" }
+
+        # AppId -> friendly-name mapping. Operator-edit-friendly: short
+        # name appears in Start Menu, app id resolves the actual flatpak.
+        # Unknown entries fall back to the last segment of the app id.
+        $linuxAppMap = @{
+            'org.gnome.Nautilus.Devel'         = 'Files'
+            'org.gnome.Nautilus'               = 'Files'
+            'org.gnome.Epiphany'               = 'Web'
+            'app.devsuite.Ptyxis'              = 'Ptyxis'
+            'com.github.tchx84.Flatseal'       = 'Flatseal'
+            'com.mattjakeman.ExtensionManager' = 'Extension Manager'
+            'com.vscodium.codium'              = 'VSCodium'
+            'org.gnome.Software'               = 'Software'
+        }
+
+        # Pull current flatpak picks from mios.toml [desktop].flatpaks
+        # (returns space- or comma-separated string depending on resolver).
+        $_fpRaw = Get-MiosTomlValue -Section 'desktop' -Key 'flatpaks' -Default ''
+        $_fpList = @()
+        if ($_fpRaw -is [System.Array]) {
+            $_fpList = $_fpRaw
+        } elseif ($_fpRaw) {
+            $_fpList = $_fpRaw -split '[,\s]+' | Where-Object { $_ }
+        }
+
+        $linuxShortcutsCreated = 0
+        foreach ($_ref in $_fpList) {
+            $_r = $_ref.Trim().Trim('"').Trim("'")
+            if (-not $_r) { continue }
+            if ($_r -like '#*') { continue }
+            # Strip <remote>: prefix if present.
+            $_appId = if ($_r -match ':') { $_r -split ':', 2 | Select-Object -Last 1 } else { $_r }
+            # Skip GTK theme extensions (not launchable apps).
+            if ($_appId -like 'org.gtk.Gtk*theme*') { continue }
+            $_friendly = $linuxAppMap[$_appId]
+            if (-not $_friendly) {
+                # Fallback: last dotted segment, capitalized.
+                $_last = ($_appId -split '\.')[-1]
+                $_friendly = (Get-Culture).TextInfo.ToTitleCase($_last)
+            }
+            $_lnk = Join-Path $linuxAppsDir ("{0}.lnk" -f $_friendly)
+            try {
+                New-Shortcut -Path $_lnk `
+                    -Target $wslExe `
+                    -Args ("-d {0} --user mios -- flatpak run {1}" -f $linuxDistro, $_appId) `
+                    -Desc ("MiOS Linux app: {0} ({1}) on {2}" -f $_friendly, $_appId, $linuxDistro) `
+                    -Dir ([Environment]::GetFolderPath('Desktop'))
+                $linuxShortcutsCreated++
+            } catch {
+                Log-Warn "Linux app shortcut failed for ${_appId}: $($_.Exception.Message)"
+            }
+        }
+
+        # System apps that aren't flatpaks but should still appear in
+        # the Linux Apps folder (control center, system monitor).
+        $sysApps = @(
+            @{ Name = 'System Monitor'; Cmd = 'btop' },
+            @{ Name = 'Settings';       Cmd = 'gnome-control-center' }
+        )
+        foreach ($_sa in $sysApps) {
+            $_lnk = Join-Path $linuxAppsDir ("{0}.lnk" -f $_sa.Name)
+            try {
+                New-Shortcut -Path $_lnk `
+                    -Target $wslExe `
+                    -Args ("-d {0} --user mios -- bash -lc `"{1}`"" -f $linuxDistro, $_sa.Cmd) `
+                    -Desc ("MiOS Linux app: {0} ({1}) on {2}" -f $_sa.Name, $_sa.Cmd, $linuxDistro) `
+                    -Dir ([Environment]::GetFolderPath('Desktop'))
+                $linuxShortcutsCreated++
+            } catch {}
+        }
+
+        Log-Ok ("MiOS Linux Apps: {0} Start Menu shortcuts -> {1}" -f $linuxShortcutsCreated, $linuxAppsDir)
+    } catch {
+        Log-Warn "MiOS Linux Apps Start Menu seeding failed: $($_.Exception.Message)"
+    }
+
     [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
 
     # ── 6. Verify the dev distro is registered (or warn) ──────────────
@@ -8156,6 +8269,26 @@ echo "[mios-seed] symlinks + pre-bootc bridge installed"
 # sessions). Symlink approach so operator edits to mios.toml -> rebuild
 # omp.json + theme flow through automatically.
 if [ -d /mnt/m/MiOS/btop ]; then
+    # System-wide fallback first. mios-btop.sh exports
+    # BTOP_CONFIG_DIR=/etc/btop when the user has no ~/.config/btop,
+    # so this guarantees the MiOS preset/palette renders even if the
+    # per-user copy is missing (e.g. /=git home edge case).
+    # Operator 2026-05-10 screenshot: btop launched with btop's
+    # compiled-in defaults (preset 3 = cpu+net, update_ms=2000)
+    # because no config was found at $HOME/.config/btop. With this
+    # /etc/btop/ copy in place, the resolver hits it unconditionally.
+    mkdir -p /etc/btop/themes
+    if [ -f /mnt/m/MiOS/btop/btop.conf ]; then
+        cp -f /mnt/m/MiOS/btop/btop.conf /etc/btop/btop.conf
+        chmod 0644 /etc/btop/btop.conf
+    fi
+    if [ -f /mnt/m/MiOS/btop/themes/mios.theme ]; then
+        cp -f /mnt/m/MiOS/btop/themes/mios.theme /etc/btop/themes/mios.theme
+        chmod 0644 /etc/btop/themes/mios.theme
+    fi
+    echo "[mios-seed] btop system-wide config staged at /etc/btop/"
+
+    # Per-user copies (kept for operators who customize per-user).
     for _u in mios root; do
         if id "$_u" >/dev/null 2>&1; then
             _uhome=$(getent passwd "$_u" | cut -d: -f6)
@@ -9003,6 +9136,18 @@ foreach (`$dir in `$shortcutDirs) {
         `$lp = Join-Path `$dir `$ln
         if (Test-Path -LiteralPath `$lp) {
             try { Remove-Item -LiteralPath `$lp -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    # Also nuke the MiOS\Linux Apps\ subfolder + every .lnk inside it
+    # (Files / Web / VSCodium / Flatseal / Extension Manager / Ptyxis /
+    # System Monitor / Settings -- created by Install-WindowsBranding's
+    # Linux Apps loop). Operator 2026-05-10: "uninstaller STILL doesn't
+    # uninstall everything from windows" -- previous build only removed
+    # named .lnks, leaving Linux Apps\ orphaned in Start Menu.
+    if (`$dir -match 'Start Menu\\Programs\\MiOS$') {
+        `$linuxAppsSub = Join-Path `$dir 'Linux Apps'
+        if (Test-Path -LiteralPath `$linuxAppsSub) {
+            try { Remove-Item -LiteralPath `$linuxAppsSub -Recurse -Force -ErrorAction SilentlyContinue } catch {}
         }
     }
     # If dir is the MiOS Start Menu folder and now empty, remove it

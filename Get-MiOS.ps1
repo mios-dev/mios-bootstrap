@@ -4793,6 +4793,17 @@ function Invoke-MiOSFullReap {
                 try { Remove-Item -LiteralPath $lp -Force -ErrorAction SilentlyContinue } catch {}
             }
         }
+        # Recursively remove MiOS\Linux Apps\ subfolder (Files / Web / VSCodium /
+        # Flatseal / Extension Manager / Ptyxis / System Monitor / Settings)
+        # created by Install-WindowsBranding's Linux Apps loop. Operator
+        # 2026-05-10: "uninstaller STILL doesn't uninstall everything from
+        # windows" -- the named-.lnk loop above left Linux Apps\ orphaned.
+        if ($dir -match 'Start Menu\\Programs\\MiOS$') {
+            $linuxAppsSub = Join-Path $dir 'Linux Apps'
+            if (Test-Path -LiteralPath $linuxAppsSub) {
+                try { Remove-Item -LiteralPath $linuxAppsSub -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
         if ($dir -match 'Start Menu\\Programs\\MiOS$') {
             if ((Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) {
                 try { Remove-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue } catch {}
