@@ -12,7 +12,7 @@
 # Override per-user by editing this file in $HOME, or system-wide by
 # editing /etc/mios/profile.toml's [ai] section -- the bootstrap layer
 # regenerates this from profile.toml on every install.
-model: openai:qwen2.5-coder:7b
+model: openai:qwen3.5:2b
 temperature: null
 top_p: null
 
@@ -33,7 +33,7 @@ clients:
     api_base: http://localhost:8080/v1
     api_key: ""
     models:
-      - name: qwen2.5-coder:7b
+      - name: qwen3.5:2b
         max_input_tokens: 32768
         supports_function_calling: true
       - name: qwen2.5-coder:14b

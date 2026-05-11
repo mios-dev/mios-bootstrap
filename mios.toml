@@ -284,7 +284,7 @@ expose   = ["forge", "webui", "ai", "hermes", "searxng", "cockpit", "ollama"]
 # ----------------------------------------------------------------------------
 [ai]
 endpoint            = "http://localhost:8080/v1"
-model               = "qwen2.5-coder:7b"
+model               = "qwen3.5:2b"
 embed_model         = "nomic-embed-text"
 api_key             = ""                # empty for localhost; cloud needs a key
 enable_ollama       = true
@@ -299,8 +299,8 @@ system_prompt_file  = ""                # optional override; empty = use canonic
 [ai.host_thresholds]
 big_ram_gb         = 32
 mid_ram_gb         = 12
-big_ram_model      = "qwen2.5-coder:14b"
-mid_ram_model      = "qwen2.5-coder:7b"
+big_ram_model      = "qwen3.5:14b"
+mid_ram_model      = "qwen3.5:2b"
 small_ram_model    = "phi4-mini:3.8b-q4_K_M"
 
 # ----------------------------------------------------------------------------

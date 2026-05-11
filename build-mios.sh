@@ -70,9 +70,9 @@ DEFAULT_LANG="en_US.UTF-8"
 # AI model defaults track the 12 GB-RAM / 8 GB-available baseline
 # documented in mios.toml [ai] and INDEX.md sec 2a. Override via
 # the layered profile-card resolution in load_profile_defaults().
-DEFAULT_AI_MODEL="qwen2.5-coder:7b"
+DEFAULT_AI_MODEL="qwen3.5:2b"
 DEFAULT_AI_EMBED_MODEL="nomic-embed-text"
-DEFAULT_AI_BAKE="qwen2.5-coder:7b,nomic-embed-text"
+DEFAULT_AI_BAKE="qwen3.5:2b,nomic-embed-text"
 
 MIOS_REPO="https://github.com/mios-dev/mios.git"
 BOOTSTRAP_REPO="https://github.com/mios-dev/mios-bootstrap.git"
@@ -323,13 +323,13 @@ prompt_model() {
     local default="$1"
     log_info ""
     log_info "AI model (Architectural Law 5 -- baked into the image):"
-    log_info "  1) qwen2.5-coder:7b   -- 12 GB RAM, code-specialized, default"
+    log_info "  1) qwen3.5:2b   -- 12 GB RAM, code-specialized, default"
     log_info "  2) qwen2.5-coder:14b  -- 24+ GB RAM, larger code reasoning"
     log_info "  3) llama3.2:3b        -- 8 GB RAM, fast"
     log_info "  4) custom             -- enter your own ollama model id"
     local choice; choice="$(prompt_default 'Choice [1-4]' '1')"
     case "$choice" in
-        1|"")    echo "qwen2.5-coder:7b" ;;
+        1|"")    echo "qwen3.5:2b" ;;
         2)       echo "qwen2.5-coder:14b" ;;
         3)       echo "llama3.2:3b" ;;
         4)       prompt_default 'Custom model id (e.g. mistral:7b)' "${default}" ;;

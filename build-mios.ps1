@@ -1840,7 +1840,7 @@ function Read-Line([string]$Prompt, [string]$Default = "") {
     if ([string]::IsNullOrWhiteSpace($v)) { return $Default } else { return $v }
 }
 
-function Read-Model([string]$Default = "qwen2.5-coder:7b") {
+function Read-Model([string]$Default = "qwen3.5:2b") {
     # AI model menu prompt -- feature parity with build-mios.sh's
     # prompt_model. Drives MIOS_OLLAMA_BAKE_MODELS at build time and
     # MIOS_AI_MODEL in install.env at runtime. Same auto-accept
@@ -1848,14 +1848,14 @@ function Read-Model([string]$Default = "qwen2.5-coder:7b") {
     Move-BelowDash
     Write-Host ""
     Write-Host "  AI model (Architectural Law 5 -- baked into the image):" -ForegroundColor White
-    Write-Host "    1) qwen2.5-coder:7b   -- 12 GB RAM, code-specialized, default" -ForegroundColor DarkGray
+    Write-Host "    1) qwen3.5:2b   -- 12 GB RAM, code-specialized, default" -ForegroundColor DarkGray
     Write-Host "    2) qwen2.5-coder:14b  -- 24+ GB RAM, larger code reasoning" -ForegroundColor DarkGray
     Write-Host "    3) llama3.2:3b        -- 8 GB RAM, fast" -ForegroundColor DarkGray
     Write-Host "    4) custom             -- enter your own ollama model id" -ForegroundColor DarkGray
     $choice = Read-Line "Choice [1-4]" "1"
     switch ($choice) {
-        "1"     { return "qwen2.5-coder:7b" }
-        ""      { return "qwen2.5-coder:7b" }
+        "1"     { return "qwen3.5:2b" }
+        ""      { return "qwen3.5:2b" }
         "2"     { return "qwen2.5-coder:14b" }
         "3"     { return "llama3.2:3b" }
         "4"     { return (Read-Line "Custom model id (e.g. mistral:7b)" $Default) }
@@ -1871,9 +1871,9 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
     # interactive prompt without re-cloning. Pure regex parser; no TOML
     # library dependency. Returns a hashtable -- caller picks fields.
     $defaults = @{
-        Model       = "qwen2.5-coder:7b"
+        Model       = "qwen3.5:2b"
         EmbedModel  = "nomic-embed-text"
-        BakeModels  = "qwen2.5-coder:7b,nomic-embed-text"
+        BakeModels  = "qwen3.5:2b,nomic-embed-text"
     }
     $layers = @()
     foreach ($p in @(
@@ -2210,7 +2210,7 @@ function Get-Hardware {
     $_aiBig    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_gb'        -Default 32
     $_aiMid    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_gb'        -Default 12
     $_aiBigM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_model'     -Default 'qwen2.5-coder:14b'
-    $_aiMidM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_model'     -Default 'qwen2.5-coder:7b'
+    $_aiMidM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_model'     -Default 'qwen3.5:2b'
     $_aiSmallM = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'small_ram_model'   -Default 'phi4-mini:3.8b-q4_K_M'
     $aiModel   = if ($hostRamGB -ge $_aiBig) { $_aiBigM } elseif ($hostRamGB -ge $_aiMid) { $_aiMidM } else { $_aiSmallM }
 
@@ -4592,9 +4592,9 @@ function Invoke-GhcrLogin([string]$Token) {
 # legacy callers; a follow-up commit will delete them outright.
 # ============================================================================
 function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [string]$MiosHostname,
-                                   [string]$AiModel = "qwen2.5-coder:7b",
+                                   [string]$AiModel = "qwen3.5:2b",
                                    [string]$EmbedModel = "nomic-embed-text",
-                                   [string]$BakeModels = "qwen2.5-coder:7b,nomic-embed-text") {
+                                   [string]$BakeModels = "qwen3.5:2b,nomic-embed-text") {
     # mios.git is now overlaid AT $MiosRepoDir root (M:\), per the
     # 2026-05-06 directive. The build context IS the overlay root.
     $repoPath = $MiosRepoDir
