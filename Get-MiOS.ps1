@@ -4830,17 +4830,65 @@ function Invoke-MiOSFullReap {
         }
     }
 
-    # 13. MIOS_*/MiOS_* environment variables (HKCU + HKLM)
-    & $_log (& $_lookupReap 'category_13' '[13/13] MIOS_* environment variables (HKCU + HKLM) ...')
+    # 13. MIOS_*/MiOS_*/BTOP_CONFIG_DIR environment variables (HKCU + HKLM)
+    & $_log (& $_lookupReap 'category_13' '[13/17] MIOS_* + BTOP_CONFIG_DIR environment variables ...')
     foreach ($scope in @('User','Machine')) {
         try {
             $envKey = if ($scope -eq 'User') { 'HKCU:\Environment' }
                        else { 'HKLM:\System\CurrentControlSet\Control\Session Manager\Environment' }
             if (Test-Path -LiteralPath $envKey) {
-                (Get-Item -LiteralPath $envKey).Property | Where-Object { $_ -match '^(MIOS_|MiOS_)' } |
+                (Get-Item -LiteralPath $envKey).Property | Where-Object { $_ -match '^(MIOS_|MiOS_|BTOP_CONFIG_DIR$)' } |
                     ForEach-Object { try { Remove-ItemProperty -LiteralPath $envKey -Name $_ -ErrorAction SilentlyContinue } catch {} }
             }
         } catch {}
+    }
+
+    # 14. HKCU\Run autostart + kill mios-gui-watch.ps1 daemon
+    & $_log '[14/17] HKCU\Run autostart entries + mios-gui-watch daemon ...'
+    foreach ($runVal in @('MiOS-GuiWatch','MiOS','MiOSGuiWatch')) {
+        try { Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $runVal -ErrorAction SilentlyContinue } catch {}
+    }
+    try {
+        Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -match 'mios-gui-watch' } |
+            ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+    } catch {}
+
+    # 15. Windows Defender exclusions (paired with Add-MiosDefenderExclusions)
+    & $_log '[15/17] Windows Defender exclusions (paths + processes) ...'
+    try {
+        if (Get-Command Remove-MpPreference -ErrorAction SilentlyContinue) {
+            foreach ($excPath in @('M:\','M:\MiOS','M:\MiOS\bin','M:\MiOS\repo',(Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet'),$env:TEMP)) {
+                try { Remove-MpPreference -ExclusionPath $excPath -ErrorAction SilentlyContinue } catch {}
+            }
+            foreach ($excProc in @('pwsh.exe','wsl.exe','wslservice.exe','podman.exe','msrdc.exe')) {
+                try { Remove-MpPreference -ExclusionProcess $excProc -ErrorAction SilentlyContinue } catch {}
+            }
+        }
+    } catch {}
+
+    # 16. WSL service host caches + any in-flight wslhost/msrdc procs
+    & $_log '[16/17] Killing in-flight wslhost / msrdc / mios-gui-watch host processes ...'
+    foreach ($pn in @('wslhost','msrdc','wsl','vmmemWSL')) {
+        try { Get-Process -Name $pn -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
+
+    # 17. FULL FORMAT M:\ partition (operator 2026-05-10: "FULLY format
+    # the M:\ partition only"). Only formats if M:\ exists AND its label
+    # starts with MIOS (the partition we provisioned). NEVER repartitions,
+    # never touches any other drive letter.
+    & $_log '[17/17] Reformatting M:\ partition (NTFS, label MIOS-DEV) ...'
+    try {
+        $mVol = Get-Volume -DriveLetter M -ErrorAction SilentlyContinue
+        if ($mVol -and $mVol.FileSystemLabel -match '^MIOS') {
+            Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel 'MIOS-DEV' -Force -Confirm:$false -ErrorAction Stop | Out-Null
+            & $_log '  [+] M:\ reformatted (NTFS, label MIOS-DEV, empty)'
+        } else {
+            & $_log '  M:\ not present or label != MIOS-DEV; skipping format (safety guard)'
+        }
+    } catch {
+        & $_log ("  [!] M:\ format failed: " + $_.Exception.Message)
     }
 
     if (-not $Quiet) {

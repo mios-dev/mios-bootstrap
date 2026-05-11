@@ -9039,17 +9039,85 @@ foreach (`$pmLink in @(
     }
 }
 
-# 12. MIOS_* environment variables
-Write-Host '  [13/13] Removing MIOS_* environment variables...' -ForegroundColor Cyan
+# 12. MIOS_* + BTOP_CONFIG_DIR environment variables
+Write-Host '  [13/17] Removing MIOS_* + BTOP_CONFIG_DIR environment variables...' -ForegroundColor Cyan
 foreach (`$scope in @('User','Machine')) {
     try {
         `$envKey = if (`$scope -eq 'User') { 'HKCU:\Environment' }
                    else { 'HKLM:\System\CurrentControlSet\Control\Session Manager\Environment' }
         if (Test-Path -LiteralPath `$envKey) {
-            (Get-Item -LiteralPath `$envKey).Property | Where-Object { `$_ -match '^(MIOS_|MiOS_)' } |
+            (Get-Item -LiteralPath `$envKey).Property | Where-Object { `$_ -match '^(MIOS_|MiOS_|BTOP_CONFIG_DIR$)' } |
                 ForEach-Object { try { Remove-ItemProperty -LiteralPath `$envKey -Name `$_ -ErrorAction SilentlyContinue } catch {} }
         }
     } catch {}
+}
+
+# 13. HKCU\Run autostart entries (MiOS-GuiWatch background daemon)
+Write-Host '  [14/17] Removing HKCU\Run autostart entries...' -ForegroundColor Cyan
+foreach (`$runVal in @('MiOS-GuiWatch','MiOS','MiOSGuiWatch')) {
+    try { Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name `$runVal -ErrorAction SilentlyContinue } catch {}
+}
+# Kill any running mios-gui-watch.ps1 pwsh process (it auto-resizes WSLg
+# windows; without this it'd survive uninstall and keep polling).
+try {
+    Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { `$_.CommandLine -match 'mios-gui-watch' } |
+        ForEach-Object { try { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+} catch {}
+
+# 14. Windows Defender exclusions (added by Add-MiosDefenderExclusions)
+Write-Host '  [15/17] Removing Windows Defender exclusions...' -ForegroundColor Cyan
+try {
+    if (Get-Command Remove-MpPreference -ErrorAction SilentlyContinue) {
+        foreach (`$excPath in @('M:\','M:\MiOS','M:\MiOS\bin','M:\MiOS\repo',(Join-Path `$env:LOCALAPPDATA 'Microsoft\WinGet'),`$env:TEMP)) {
+            try { Remove-MpPreference -ExclusionPath `$excPath -ErrorAction SilentlyContinue } catch {}
+        }
+        foreach (`$excProc in @('pwsh.exe','wsl.exe','wslservice.exe','podman.exe','msrdc.exe')) {
+            try { Remove-MpPreference -ExclusionProcess `$excProc -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+} catch {}
+
+# 15. /etc/skel and Add/Remove Programs final cleanup (any stragglers)
+# (covered by step 4 + 9; explicit re-pass here in case a partial install left both states)
+Write-Host '  [16/17] Final HKCU\Uninstall\MiOS sweep + stale icon dir...' -ForegroundColor Cyan
+try { Remove-Item -LiteralPath `$K -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+try { Remove-Item -LiteralPath (Join-Path `$I 'icons') -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+
+# 16. FULL FORMAT M:\ partition (operator 2026-05-10: "FULLY format
+# the M:\ partition only"). Only formats if M:\ exists AND is the
+# MiOS-DEV labeled partition we provisioned. NEVER touches any other
+# drive letter, never re-partitions, never creates/deletes drives.
+# Confirmation gated -- only fires when operator explicitly asked for
+# uninstall (not on -Quiet runs from a panicked irm|iex reap path).
+Write-Host '  [17/17] Reformatting M:\ partition (MIOS-DEV label)...' -ForegroundColor Cyan
+try {
+    `$mVol = Get-Volume -DriveLetter M -ErrorAction SilentlyContinue
+    if (`$mVol -and `$mVol.FileSystemLabel -match '^MIOS') {
+        # Stop any process holding handles into M:\ first
+        try {
+            Get-Process | Where-Object {
+                try { `$_.Path -and `$_.Path -like 'M:\*' } catch { `$false }
+            } | ForEach-Object { try { Stop-Process -Id `$_.Id -Force -ErrorAction SilentlyContinue } catch {} }
+        } catch {}
+        if (-not `$Quiet) {
+            `$ans = Read-Host "  M: drive will be FULLY FORMATTED (label MIOS-DEV). Type 'format' to confirm"
+            if (`$ans -eq 'format') {
+                Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel 'MIOS-DEV' -Force -Confirm:`$false -ErrorAction Stop | Out-Null
+                Write-Host '  [+] M:\ reformatted (NTFS, label MIOS-DEV, empty).' -ForegroundColor Green
+            } else {
+                Write-Host '  M:\ format SKIPPED (operator did not confirm).' -ForegroundColor Yellow
+            }
+        } else {
+            # -Quiet mode: format without prompt (called from auto-reap)
+            Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel 'MIOS-DEV' -Force -Confirm:`$false -ErrorAction Stop | Out-Null
+            Write-Host '  [+] M:\ reformatted (NTFS, label MIOS-DEV, empty) [-Quiet].' -ForegroundColor Green
+        }
+    } else {
+        Write-Host '  M:\ not present or label != MIOS-DEV; skipping format (safety guard).' -ForegroundColor DarkGray
+    }
+} catch {
+    Write-Host "  [!] M:\ format failed: `$(`$_.Exception.Message)" -ForegroundColor Yellow
 }
 
 Write-Host ''
