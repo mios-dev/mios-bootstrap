@@ -9082,12 +9082,16 @@ fi
     # seeing bibata cursor that is the GLOBAL MiOS defaults"). Match the
     # image install path so the dev VM has the same cursor surface.
     Set-Step "Installing Bibata-Modern-Classic cursor in $_wslDistroForTerm..."
+    # NOTE: variables assigned inside `& { ... }` are scoped to that
+    # script block; using $script: prefix so the exit-code + output
+    # propagate to the post-block `if` check. The prior local scope
+    # left $_bibataExit empty and forced every install to log "exit=".
     & {
         $ErrorActionPreference = 'Continue'
         if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
         }
-        $_bibataOutput = & wsl.exe -d $_wslDistroForTerm --user root -- bash -c '
+        $script:_bibataOutput = & wsl.exe -d $_wslDistroForTerm --user root -- bash -c '
 set -e
 if [ -d /usr/share/icons/Bibata-Modern-Classic ] && [ -n "$(ls -A /usr/share/icons/Bibata-Modern-Classic/cursors 2>/dev/null)" ]; then
     echo "Bibata already installed -- skipping"
@@ -9121,13 +9125,13 @@ fi
 echo "Bibata installed: $(ls /usr/share/icons/Bibata-Modern-Classic/cursors | wc -l) cursors"
 gtk-update-icon-cache /usr/share/icons/Bibata-Modern-Classic 2>&1 || true
 ' 2>&1
-        $_bibataExit = $LASTEXITCODE
-        foreach ($_line in $_bibataOutput) { Write-Log "mios-bibata: $_line" }
+        $script:_bibataExit = $LASTEXITCODE
+        foreach ($_line in $script:_bibataOutput) { Write-Log "mios-bibata: $_line" }
     }
-    if ($_bibataExit -eq 0) {
+    if ($script:_bibataExit -eq 0) {
         Log-Ok "MiOS Bibata cursor theme staged"
     } else {
-        Log-Warn ("Bibata cursor install failed (exit=$_bibataExit); dconf points at Bibata-Modern-Classic but theme dir is missing -- run ``mios update`` after networking stabilizes or install manually from https://github.com/ful1e5/Bibata_Cursor/releases")
+        Log-Warn ("Bibata cursor install failed (exit=$($script:_bibataExit)); dconf points at Bibata-Modern-Classic but theme dir is missing -- run ``mios update`` after networking stabilizes or install manually from https://github.com/ful1e5/Bibata_Cursor/releases")
     }
 
     # MiOS AI CLI install: Claude Code + Gemini CLI globally via npm.
