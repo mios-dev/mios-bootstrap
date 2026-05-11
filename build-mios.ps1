@@ -8310,6 +8310,28 @@ if ($activeDistro) {
                     if (-not $script:_flatpakInstalledRef) {
                         Log-Warn "flatpak binary not present in $_wslDistroForTerm -- all $($_flatpaks.Count) [desktop].flatpaks deferred to bootc-switch (full MiOS OCI image has flatpak baked in)"
                     } else {
+                        # dbus-launch must be on PATH before any
+                        # `flatpak install` runs. The podman-machine-os
+                        # 6.0 base image ships dbus-broker (system bus
+                        # only) but NOT dbus-x11 (session bus launcher),
+                        # so flatpak's pre-install token-request step
+                        # fails with:
+                        #     error: Failed to execute child process
+                        #     "dbus-launch" (No such file or directory)
+                        # The retry-with-arch path then dies the same
+                        # way and the install loop reports 0/N OK.
+                        # Operator-flagged 2026-05-11. Cheap fix: install
+                        # dbus-x11 (and its xauth dep) here once, before
+                        # any flatpak call -- under 200 KB, runs in
+                        # ~2-3s. Idempotent: dnf no-ops on second run.
+                        & {
+                            $ErrorActionPreference = 'Continue'
+                            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                                $PSNativeCommandUseErrorActionPreference = $false
+                            }
+                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "command -v dbus-launch >/dev/null 2>&1 || dnf install -y --quiet dbus-x11 xorg-x11-xauth 2>&1 | tail -5" 2>&1 |
+                                ForEach-Object { Write-Log "mios-flatpak-dbus-prereq: $_" }
+                        }
                         # Pre-install GNOME runtime + SDK ONCE before the
                         # per-app loop. org.gnome.Software (and other GNOME
                         # apps) fail with "no compatible runtime" if the
