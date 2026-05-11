@@ -7546,19 +7546,21 @@ $endMark
             forge            = 3000
             hermes_workspace = 3030
             hermes           = 8642
+            code_server      = 8800
             guacamole_web    = 8090
             ceph_dashboard   = 8443
             searxng          = 8888
             cockpit          = 9090
             ollama           = 11434
         }
-        # Display name + path/scheme per service. Cockpit + Ceph are the
-        # HTTPS ones (self-signed certs; operator clicks through once).
-        # Hermes Workspace is THE default chat frontend (operator
-        # directive 2026-05-11). LocalAI was purged from the codebase
-        # 2026-05-11; Open WebUI is masked (legacy fallback).
+        # HTTPS for Cockpit + Ceph (self-signed; click through once). All
+        # logins default to the global MiOS password (mios.toml [identity].
+        # default_password = "mios"). Hermes Workspace is the default
+        # chat front-end; code-server pairs with mios-forge for an
+        # in-browser dev workflow.
         $_webLinks = @(
             @{ Key='hermes_workspace'; Name='MiOS Chat (Hermes Workspace)'; Scheme='http';  Path='/' }
+            @{ Key='code_server';      Name='MiOS Code (code-server)';      Scheme='http';  Path='/' }
             @{ Key='cockpit';          Name='MiOS Cockpit';                 Scheme='https'; Path='/' }
             @{ Key='forge';            Name='MiOS Forge';                   Scheme='http';  Path='/' }
             @{ Key='searxng';          Name='MiOS Search (SearXNG)';        Scheme='http';  Path='/' }
