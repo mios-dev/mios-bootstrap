@@ -9184,21 +9184,31 @@ fi
     # seeing bibata cursor that is the GLOBAL MiOS defaults"). Match the
     # image install path so the dev VM has the same cursor surface.
     Set-Step "Installing Bibata-Modern-Classic cursor in $_wslDistroForTerm..."
-    # NOTE: variables assigned inside `& { ... }` are scoped to that
-    # script block; using $script: prefix so the exit-code + output
-    # propagate to the post-block `if` check. The prior local scope
-    # left $_bibataExit empty and forced every install to log "exit=".
-    & {
-        $ErrorActionPreference = 'Continue'
-        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
-            $PSNativeCommandUseErrorActionPreference = $false
+    # Up to 3 attempts -- the first wsl.exe call right after a fresh
+    # dev-VM provision occasionally returns 127 (transient distro-ready
+    # race; the next call succeeds). Use $script: scope so the exit
+    # code propagates out of the & { ... } block.
+    $script:_bibataExit = 1
+    $script:_bibataOutput = @()
+    for ($_try = 1; $_try -le 3 -and $script:_bibataExit -ne 0; $_try++) {
+        if ($_try -gt 1) {
+            Write-Log "mios-bibata: attempt $_try after exit=$($script:_bibataExit)"
+            Start-Sleep -Seconds 5
         }
-        $script:_bibataOutput = & wsl.exe -d $_wslDistroForTerm --user root -- bash -c '
+        & {
+            $ErrorActionPreference = 'Continue'
+            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                $PSNativeCommandUseErrorActionPreference = $false
+            }
+            $script:_bibataOutput = & wsl.exe -d $_wslDistroForTerm --user root -- bash -c '
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 set -e
 if [ -d /usr/share/icons/Bibata-Modern-Classic ] && [ -n "$(ls -A /usr/share/icons/Bibata-Modern-Classic/cursors 2>/dev/null)" ]; then
     echo "Bibata already installed -- skipping"
     exit 0
 fi
+command -v curl >/dev/null || { echo "curl missing in dev VM"; exit 127; }
+command -v tar  >/dev/null || { echo "tar missing in dev VM";  exit 127; }
 VER=$(curl -sSL -H "Accept: application/vnd.github+json" \
   https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest 2>/dev/null \
   | grep -oE "\"tag_name\":\\s*\"v[0-9.]+\"" | head -1 | grep -oE "v[0-9.]+" | sed "s/^v//")
@@ -9206,8 +9216,6 @@ VER=$(curl -sSL -H "Accept: application/vnd.github+json" \
 URL="https://github.com/ful1e5/Bibata_Cursor/releases/download/v${VER}/Bibata-Modern-Classic.tar.xz"
 echo "Bibata v${VER}: ${URL}"
 TARBALL=$(mktemp --suffix=.tar.xz)
-# --retry-all-errors covers 5xx and the 302 -> S3 redirect chain that
-# trips bare --retry on transient TLS handshake failures.
 curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$TARBALL" "$URL"
 SIZE=$(stat -c %s "$TARBALL" 2>/dev/null || echo 0)
 echo "Bibata tarball downloaded: ${SIZE} bytes"
@@ -9225,15 +9233,17 @@ if [ ! -d /usr/share/icons/Bibata-Modern-Classic/cursors ] || \
     exit 1
 fi
 echo "Bibata installed: $(ls /usr/share/icons/Bibata-Modern-Classic/cursors | wc -l) cursors"
-gtk-update-icon-cache /usr/share/icons/Bibata-Modern-Classic 2>&1 || true
+command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache /usr/share/icons/Bibata-Modern-Classic 2>&1 || true
+exit 0
 ' 2>&1
-        $script:_bibataExit = $LASTEXITCODE
+            $script:_bibataExit = $LASTEXITCODE
+        }
         foreach ($_line in $script:_bibataOutput) { Write-Log "mios-bibata: $_line" }
     }
     if ($script:_bibataExit -eq 0) {
         Log-Ok "MiOS Bibata cursor theme staged"
     } else {
-        Log-Warn ("Bibata cursor install failed (exit=$($script:_bibataExit)); dconf points at Bibata-Modern-Classic but theme dir is missing -- run ``mios update`` after networking stabilizes or install manually from https://github.com/ful1e5/Bibata_Cursor/releases")
+        Log-Warn ("Bibata cursor install failed after 3 attempts (exit=$($script:_bibataExit)); dconf points at Bibata-Modern-Classic but theme dir is missing -- run ``mios update`` or install manually from https://github.com/ful1e5/Bibata_Cursor/releases")
     }
 
     # MiOS AI CLI install: Claude Code + Gemini CLI globally via npm.
