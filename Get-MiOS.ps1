@@ -4878,6 +4878,19 @@ function Invoke-MiOSFullReap {
         }
     } catch {}
 
+    # 16a. Windows Firewall inbound rules with the "MiOS -" prefix.
+    # Paired with build-mios.ps1 :: Set-MiosLanFirewallRules. Sweep by
+    # DisplayName prefix so we never touch operator-authored rules.
+    & $_log '[16a/17] Windows Firewall rules (DisplayName "MiOS - *") ...'
+    try {
+        if (Get-Command Get-NetFirewallRule -ErrorAction SilentlyContinue) {
+            Get-NetFirewallRule -DisplayName 'MiOS - *' -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    try { Remove-NetFirewallRule -InputObject $_ -ErrorAction SilentlyContinue } catch {}
+                }
+        }
+    } catch {}
+
     # 16. WSL service host caches + any in-flight wslhost/msrdc procs
     & $_log '[16/17] Killing in-flight wslhost / msrdc / mios-gui-watch host processes ...'
     foreach ($pn in @('wslhost','msrdc','wsl','vmmemWSL')) {
