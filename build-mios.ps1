@@ -8470,7 +8470,7 @@ if ($activeDistro) {
                             if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                 $PSNativeCommandUseErrorActionPreference = $false
                             }
-                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update --system flathub org.gnome.Platform//master org.gnome.Sdk//master 2>&1 | tail -20" 2>&1 |
+                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- flatpak install -y --noninteractive --or-update --system flathub org.gnome.Platform//master org.gnome.Sdk//master 2>&1 | tail -20" 2>&1 |
                                 ForEach-Object { Write-Log "mios-flatpak-runtime: $_" }
                         }
                         # Ensure ALL configured remotes are added before the
@@ -8515,7 +8515,19 @@ if ($activeDistro) {
                                 if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                     $PSNativeCommandUseErrorActionPreference = $false
                                 }
-                                & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update $_fpRemote $_fp 2>&1" 2>&1 |
+                                # `dbus-run-session --` spawns a one-shot D-Bus
+                                # session bus, runs the command, then tears it
+                                # down. Without it, flatpak's pre-install token-
+                                # request step ("Requesting tokens for remote
+                                # fedora") tries to dbus-launch into a session
+                                # that doesn't exist and dies with:
+                                #     error: Could not connect:
+                                #     No such file or directory
+                                # which is what killed `fedora:org.gnome.Epiphany`
+                                # for the operator 2026-05-11 even after dbus-x11
+                                # was installed. dbus-run-session is part of dbus
+                                # (always present on Fedora-base machine-os).
+                                & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- flatpak install -y --noninteractive --or-update $_fpRemote $_fp 2>&1" 2>&1 |
                                     ForEach-Object { Write-Log "mios-flatpak: $_"; [void]$_fpStderrLog.Add($_) }
                                 $script:_fpLastRc = $LASTEXITCODE
                             }
@@ -8530,7 +8542,7 @@ if ($activeDistro) {
                                     if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                         $PSNativeCommandUseErrorActionPreference = $false
                                     }
-                                    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "flatpak install -y --noninteractive --or-update --system --arch=x86_64 -v $_fpRemote $_fp 2>&1" 2>&1 |
+                                    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- flatpak install -y --noninteractive --or-update --system --arch=x86_64 -v $_fpRemote $_fp 2>&1" 2>&1 |
                                         ForEach-Object { Write-Log "mios-flatpak-retry: $_"; [void]$_fpRetryLog.Add($_) }
                                     $script:_fpRetryRc = $LASTEXITCODE
                                 }
@@ -8933,10 +8945,21 @@ fi
     # so the next entry (menu option 1 or 5) re-launches with the new
     # default user. Idempotent: if the distro isn't running, --terminate
     # is a no-op.
-    Set-Step "Terminating $_wslDistroForTerm so /etc/wsl.conf takes effect on next entry..."
-    & wsl.exe --terminate $_wslDistroForTerm 2>&1 |
-        ForEach-Object { Write-Log "wsl-terminate: $_" }
-    Log-Ok "$_wslDistroForTerm terminated -- next entry uses mios as default user"
+    # Full `wsl --shutdown` (utility VM + all distros) instead of just
+    # `wsl --terminate <distro>`. The terminate path only restarts the
+    # distro process, leaving the WSL2 utility VM running with whatever
+    # networkingMode it booted in. Symptom 2026-05-11: if the utility
+    # VM started in NAT mode earlier in the install (e.g. due to a
+    # wsl --list -v probe in Phase 1 firing before .wslconfig was on
+    # disk), .wslconfig's mirrored mode never takes effect and every
+    # container port stays unreachable from Windows. shutdown forces
+    # a clean utility-VM restart so the operator's next MiOS terminal
+    # launch picks up mirrored + firewall=false + the /etc/wsl.conf
+    # [user]=mios default user in one shot.
+    Set-Step "wsl --shutdown so .wslconfig + /etc/wsl.conf take effect on next entry..."
+    & wsl.exe --shutdown 2>&1 |
+        ForEach-Object { Write-Log "wsl-shutdown-end-phase3: $_" }
+    Log-Ok "WSL2 utility VM shutdown -- next entry uses mirrored networking + mios as default user"
 
     End-Phase 3
 

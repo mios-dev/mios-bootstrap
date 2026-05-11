@@ -5176,6 +5176,64 @@ function Add-MiosDefenderExclusions {
 }
 try { Add-MiosDefenderExclusions } catch { Write-Host "  [!] Defender exclusion add failed (non-fatal, AMSI may still block): $($_.Exception.Message)" -ForegroundColor Yellow }
 
+# ── Pre-Phase-0: write .wslconfig BEFORE the very first wsl.exe call ─────────
+# Mirrored networking + firewall=false are read by WSL2 when the
+# UTILITY VM starts. The utility VM starts on the FIRST wsl.exe
+# invocation anywhere in this run -- and Invoke-MiOSFullReap below
+# calls `wsl --unregister` + `wsl --shutdown` before anything else.
+# If .wslconfig isn't on disk by then, the utility VM that those reap
+# calls implicitly boot lands in legacy NAT mode and STAYS there until
+# the next time someone explicitly stops it. Symptom the operator hit
+# 2026-05-11: every container port (cockpit 9090, forge 3000, ai 8080,
+# webui 3030, hermes 8642, searxng 8888, ollama 11434) timed out from
+# Windows even though `ss -tlnp` inside MiOS-DEV showed the binds, and
+# the host showed `vEthernet (WSL (Hyper-V firewall))` (NAT-only
+# adapter) instead of the IP-mirrored topology.
+# build-mios.ps1 Phase 3 still writes .wslconfig before podman-machine
+# init (belt-and-suspenders); this earlier write is what makes that
+# work even after the reap's wsl.exe calls.
+$_wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
+$_wslCfgRaw = if (Test-Path $_wslCfg) { Get-Content $_wslCfg -Raw } else { "" }
+if ($_wslCfgRaw -notmatch 'networkingMode\s*=\s*mirrored' -or $_wslCfgRaw -notmatch 'firewall\s*=\s*false') {
+    $_baseline = @"
+
+[wsl2]
+# MiOS pre-Phase-0 minimum -- ensures the utility VM boots in mirrored
+# mode for the rest of this install. Phase 4 of build-mios.ps1 overlays
+# RAM/CPU/swap/dnsTunneling/autoProxy from detected host hardware.
+networkingMode=mirrored
+firewall=false
+guiApplications=true
+"@
+    if ($_wslCfgRaw -notmatch "\[wsl2\]") {
+        Add-Content -Path $_wslCfg -Value $_baseline
+    } else {
+        # [wsl2] section exists but missing one or both required keys --
+        # build-mios.ps1's Set-MiosWslConfig handles the full merge.
+        # Here we just inject the two networking keys via a quick patch.
+        $_lines = Get-Content $_wslCfg
+        $_in    = $false
+        $_out   = [System.Collections.Generic.List[string]]::new()
+        $_added = $false
+        foreach ($_l in $_lines) {
+            if ($_l -match '^\[wsl2\]') {
+                $_in = $true; $_out.Add($_l)
+                if (-not $_added) {
+                    if ($_wslCfgRaw -notmatch 'networkingMode\s*=\s*mirrored') { $_out.Add('networkingMode=mirrored') }
+                    if ($_wslCfgRaw -notmatch 'firewall\s*=\s*false')          { $_out.Add('firewall=false') }
+                    $_added = $true
+                }
+                continue
+            } elseif ($_l -match '^\[') { $_in = $false }
+            if ($_in -and $_l -match '^(networkingMode|firewall)\s*=') { continue }
+            $_out.Add($_l)
+        }
+        Set-Content -Path $_wslCfg -Value $_out -Encoding UTF8
+    }
+    Write-Host "  [+] .wslconfig: mirrored + firewall=false ensured (pre-Phase-0)" -ForegroundColor Green
+    & wsl.exe --shutdown 2>$null | Out-Null
+}
+
 # ── Phase 0: Reap ALL prior MiOS state BEFORE anything else ─────────────────
 # Per feedback_mios_entry_full_reset memory: "every irm|iex must reap ALL
 # prior MiOS state... No partial state; no carry-over." AND operator
