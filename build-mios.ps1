@@ -9653,9 +9653,24 @@ exit 1
     # verbs are operator-typed inside the MiOS terminal, NOT separate
     # native apps. ('MiOS Configurator' is the legacy long-form name
     # for the new 'MiOS Config' app.)
+    # vmconnect.exe is the Hyper-V Manager's VM-connection tool. On a
+    # MiOS Hyper-V deployment the guest's mios-hyperv-enhanced.service
+    # patches xrdp onto the VMBus vsock transport so vmconnect lights
+    # up Enhanced Session by default (clipboard sync, dynamic
+    # resolution, audio, USB). The shortcut opens vmconnect with no
+    # VM specified -- operator picks their MiOS VM from the list.
+    $vmconnect = Join-Path $env:WINDIR 'System32\vmconnect.exe'
     @(
-        @{ F="Uninstall MiOS.lnk";  T=$pwsh;  A="-ExecutionPolicy Bypass -File `"$uninstSc`"";  D="Remove MiOS (preserves per-user config)" }
-    ) | ForEach-Object { New-Shortcut (Join-Path $StartMenuDir $_.F) $_.T $_.A $_.D $MiosInstallDir }
+        @{ F="Uninstall MiOS.lnk";       T=$pwsh;      A="-ExecutionPolicy Bypass -File `"$uninstSc`"";  D="Remove MiOS (preserves per-user config)" }
+        @{ F="MiOS Enhanced Session.lnk"; T=$vmconnect; A="";                                            D="Connect to a MiOS Hyper-V VM with Enhanced Session (clipboard, dynamic resolution, audio, USB)" }
+    ) | ForEach-Object {
+        # Only ship Enhanced Session shortcut if vmconnect.exe exists
+        # (Hyper-V client tools installed). On Windows Home, Hyper-V
+        # client tools aren't present; skip silently rather than
+        # creating a broken shortcut.
+        if ($_.F -eq 'MiOS Enhanced Session.lnk' -and -not (Test-Path -LiteralPath $vmconnect)) { return }
+        New-Shortcut (Join-Path $StartMenuDir $_.F) $_.T $_.A $_.D $MiosInstallDir
+    }
 
     # Stale-shortcut cleanup -- if a legacy revision dropped any of
     # these names, remove them so the operator's Start Menu / Desktop
@@ -9670,7 +9685,7 @@ exit 1
             }
         }
     }
-    Log-Ok "Add/Remove Programs + Start Menu created (5 native apps: MiOS, MiOS-DEV, MiOS Config, MiOS Help, Uninstall MiOS)"
+    Log-Ok "Add/Remove Programs + Start Menu created (5+ native apps: MiOS, MiOS-DEV, MiOS Config, MiOS Help, Uninstall MiOS, MiOS Enhanced Session*)"
 
     # Uninstaller script. Operator-asserted contract 2026-05-08:
     # "EVERY failure will result in an uninstallation!! Plus make sure
@@ -9928,7 +9943,7 @@ if (Test-Path -LiteralPath `$K) { Remove-Item -LiteralPath `$K -Recurse -Force -
 # 9. Start Menu folder + Desktop .lnk shortcuts
 Write-Host '  [10/13] Removing Start Menu + Desktop shortcuts...' -ForegroundColor Cyan
 `$lnkNames = @(
-    'MiOS.lnk','MiOS-DEV.lnk','MiOS Config.lnk','MiOS Help.lnk','Uninstall MiOS.lnk',
+    'MiOS.lnk','MiOS-DEV.lnk','MiOS Config.lnk','MiOS Help.lnk','Uninstall MiOS.lnk','MiOS Enhanced Session.lnk',
     # Legacy names from prior install revisions
     'MiOS Setup.lnk','Build MiOS.lnk','MiOS Configurator.lnk','MiOS Terminal.lnk',
     'MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','MiOS Build.lnk','MiOS Dashboard.lnk',
