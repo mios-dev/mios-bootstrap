@@ -8491,15 +8491,39 @@ fi
     $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
 
     # Required keys -- always ensure these are present regardless of existing config.
-    # Mirrored networking + localhostForwarding are essential for Cockpit (port 9090)
-    # and general WSL2 → Windows host reachability.
+    # Mirrored networking is essential for Cockpit (port 9090) and general
+    # WSL2 -> Windows host reachability (containers PublishPort on
+    # 0.0.0.0:NNNN inside the VM = Windows-side localhost:NNNN).
+    #
+    # Mirrored mode needs THREE companion keys to actually function:
+    #   firewall       - enables Hyper-V Firewall integration so Windows
+    #                    Defender doesn't drop the mirrored ports inbound.
+    #                    Without this, Windows-side localhost:NNNN times
+    #                    out even though the VM-side bind is fine.
+    #   dnsTunneling   - tunnels DNS through the host adapter so VM apps
+    #                    see the same DNS surface as Windows-native apps
+    #                    (matches the mirrored networking promise).
+    #   autoProxy      - inherits Windows's proxy settings into the VM.
+    #
+    # Operator-flagged 2026-05-10: forge/searxng up rootfully, ports
+    # listening on 0.0.0.0 inside the VM, but Windows-side curls to
+    # localhost:3000 / localhost:8888 / localhost:11434 all timed out.
+    # Root cause was missing `firewall=true` -- mirrored mode without
+    # firewall integration is a known footgun.
+    #
+    # localhostForwarding is INCOMPATIBLE with mirrored mode -- wsl.exe
+    # warns "wsl2.localhostForwarding setting has no effect when using
+    # mirrored networking mode" at every distro start. Dropped from
+    # required keys; mirrored handles loopback natively.
     $requiredKeys = [ordered]@{
-        memory              = "$($HW.RamGB)GB"
-        processors          = "$($HW.Cpus)"
-        swap                = "4GB"
-        localhostForwarding = "true"
-        networkingMode      = "mirrored"
-        guiApplications     = "true"
+        memory          = "$($HW.RamGB)GB"
+        processors      = "$($HW.Cpus)"
+        swap            = "4GB"
+        networkingMode  = "mirrored"
+        firewall        = "true"
+        dnsTunneling    = "true"
+        autoProxy       = "true"
+        guiApplications = "true"
     }
 
     $cfgRaw = if (Test-Path $wslCfg) { Get-Content $wslCfg -Raw } else { "" }
@@ -8511,7 +8535,14 @@ fi
         Add-Content -Path $wslCfg -Value $block
         Log-Ok ".wslconfig: wrote [wsl2] -- $($HW.RamGB)GB RAM, $($HW.Cpus) CPUs, mirrored"
     } else {
-        # [wsl2] exists -- patch each required key in place; append missing ones
+        # [wsl2] exists -- patch each required key in place; append missing ones.
+        # Also actively REMOVE deprecated keys that conflict with the new
+        # required set (e.g., localhostForwarding once mirrored mode is on).
+        # Without this, every install that started in the localhostForwarding
+        # era keeps that line forever, triggering the wsl.exe parse-warning
+        # at every distro start.
+        $deprecatedKeys = @('localhostForwarding')
+
         $lines    = (Get-Content $wslCfg)
         $inWsl2   = $false
         $patched  = [System.Collections.Generic.List[string]]::new()
@@ -8523,6 +8554,10 @@ fi
 
             if ($inWsl2 -and $line -match "^(\w+)\s*=") {
                 $key = $Matches[1]
+                if ($deprecatedKeys -contains $key) {
+                    # Drop the line entirely; never re-add it.
+                    continue
+                }
                 if ($requiredKeys.Contains($key)) {
                     $patched.Add("$key=$($requiredKeys[$key])")
                     $null = $inserted.Add($key)
