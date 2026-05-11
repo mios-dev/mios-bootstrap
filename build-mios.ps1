@@ -4267,6 +4267,57 @@ fi
 sudo install -d -m 0755 /var/lib/mios
 sudo touch "$SENTINEL"
 
+# ── Dev-VM host networking drop-ins ──────────────────────────────────
+# Operator-flagged 2026-05-11: localhost:3000 / :8888 from Windows
+# (and from inside the dev VM) timed out even though the containers
+# were `Up` per `podman ps` and bound 0.0.0.0:NNNN per `ss -tlnp`.
+# Root cause: netavark was installed at /usr/libexec/podman/netavark
+# but failed to install its per-container DNAT chain in the nat table
+# (probably due to firewall_driver=iptables vs iptables-nft +
+# nftables-only ruleset on the podman-machine-os base). conmon's host
+# proxy listener accepted TCP but had no DNAT rule to forward to the
+# container netns -> HTTP request hangs.
+#
+# Workaround that actually works on the dev VM: Network=host. The
+# container shares the VM's main netns, listens directly on
+# 0.0.0.0:NNNN, and wslrelay (Windows-side) picks up the listener via
+# /proc/net/tcp scanning + forwards Windows localhost:NNNN -> VM port.
+# This is the standard practice for single-tenant dev VMs.
+#
+# The deployed MiOS image (real Fedora bootc) doesn't have this
+# problem -- netavark is wired through systemd-networkd and the
+# firewall driver matches the host firewall backend. So the drop-ins
+# below ONLY land on the dev VM (their parent units are guarded by
+# the existing overlay flow, which only runs in podman-MiOS-DEV).
+#
+# Per-container port overrides for the env vars each upstream image
+# reads to choose its bind port -- needed because in host-netns mode
+# every container would default-bind on 8080 and collide. SSOT is
+# mios.toml [ports].* (default vendor values baked here).
+echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward workaround)"
+for svc_pair in \
+    "mios-forge:" \
+    "mios-ai:" \
+    "mios-searxng:Environment=BIND_ADDRESS=0.0.0.0:8888" \
+    "mios-webui:Environment=PORT=3030" \
+    "mios-hermes:Environment=PORT=8642" \
+    "mios-cockpit-link:" \
+    "ollama:" \
+    "mios-forgejo-runner:" \
+; do
+    svc="${svc_pair%%:*}"
+    extra="${svc_pair#*:}"
+    [ "$extra" = "$svc" ] && extra=""
+    sudo install -d -m 0755 "/etc/containers/systemd/${svc}.container.d"
+    {
+        echo "[Container]"
+        echo "Network="
+        echo "Network=host"
+        [ -n "$extra" ] && echo "$extra"
+    } | sudo tee "/etc/containers/systemd/${svc}.container.d/10-mios-dev-host-network.conf" >/dev/null
+done
+sudo systemctl daemon-reload
+
 active=$($NS systemctl --no-legend list-units 'mios-*' 2>/dev/null | wc -l)
 echo "[quadlet-overlay] done -- $active mios-* units active"
 echo "[quadlet-overlay] Cockpit:        https://localhost:9090/  (host LAN reachable via mirrored networking)"
