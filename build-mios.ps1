@@ -4449,6 +4449,36 @@ if [[ -r /usr/lib/systemd/system-preset/90-mios.preset ]]; then
         done
 fi
 
+# Mask dev-VM-hostile services. These are baked into mios.git for the
+# bare-metal bootc image but cannot work in podman-machine-os WSL:
+#   * audit-rules / auditd       -- WSL2 kernel has no audit subsystem
+#   * fapolicyd                  -- needs kernel fanotify FAN_REPORT_FID
+#   * usbguard                   -- no USB devices in WSL
+#   * bootloader-update          -- no bootloader on WSL distros
+#   * greenboot-healthcheck      -- bootc-specific rollback machinery
+#   * mios-aichat-build          -- builds a Distrobox image that doesn't
+#                                   apply on dev VM (used on bare metal)
+#   * mios-wslg-permissions-fix  -- chmod /mnt/wslg fires before WSLg is
+#                                   mounted on this machine-os build;
+#                                   harmless to mask, Quadlets handle
+#                                   /tmp/.X11-unix via /etc/profile.d.
+#   * mios-wsl-init              -- the legacy first-boot init shim;
+#                                   superseded by mios-cdi-detect +
+#                                   mios-wsl-runtime-dir on the dev VM.
+# Each shows up as "Failed to start" in cockpit's Services panel
+# otherwise, which is operator-visible noise that suggests the
+# install is broken. Masking is idempotent and reversible
+# (systemctl unmask <unit>). Operator-flagged 2026-05-11.
+for _hostile in audit-rules.service auditd.service fapolicyd.service usbguard.service \
+                bootloader-update.service greenboot-healthcheck.service \
+                mios-aichat-build.service mios-wslg-permissions-fix.service \
+                mios-wsl-init.service; do
+    if $NS systemctl cat "$_hostile" >/dev/null 2>&1; then
+        $NS systemctl stop "$_hostile" 2>/dev/null || true
+        $NS systemctl mask "$_hostile" 2>&1 | sed 's/^/[quadlet-overlay]   /'
+    fi
+done
+
 active=$($NS systemctl --no-legend list-units 'mios-*' 2>/dev/null | wc -l)
 echo "[quadlet-overlay] done -- $active mios-* units active"
 echo "[quadlet-overlay] Cockpit:        https://localhost:9090/  (host LAN reachable via mirrored networking)"
@@ -5194,15 +5224,26 @@ function Set-MiosWslConfig {
     param([int]$RamGB, [int]$Cpus)
 
     $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
+    # Networking: NAT + localhostForwarding (NOT mirrored). MS labels
+    # mirrored as "beta" and operator confirmed 2026-05-11 on Windows
+    # build 28020 (Canary): mirrored sets up the VM IP correctly
+    # (vm-side `ip addr` shows Windows' Wi-Fi + Tailscale IPs), but
+    # the documented localhost-forwarding silently breaks -- every
+    # container port times out from Windows. NAT mode + the legacy
+    # localhostForwarding=true bridge is what reliably forwards
+    # 0.0.0.0:NNNN binds inside the VM to Windows' loopback. LAN-side
+    # access from phone/other devices is then handled by the Windows
+    # Firewall rules + netsh portproxy (added by Set-MiosLanFirewall
+    # Rules + Set-MiosLanPortProxy in Phase 4).
     $requiredKeys = [ordered]@{
-        memory          = "${RamGB}GB"
-        processors      = "$Cpus"
-        swap            = "4GB"
-        networkingMode  = "mirrored"
-        firewall        = "false"
-        dnsTunneling    = "true"
-        autoProxy       = "true"
-        guiApplications = "true"
+        memory              = "${RamGB}GB"
+        processors          = "$Cpus"
+        swap                = "4GB"
+        networkingMode      = "NAT"
+        localhostForwarding = "true"
+        dnsTunneling        = "true"
+        autoProxy           = "true"
+        guiApplications     = "true"
     }
 
     $cfgRaw = if (Test-Path $wslCfg) { Get-Content $wslCfg -Raw } else { "" }
@@ -5215,7 +5256,12 @@ function Set-MiosWslConfig {
         return
     }
 
-    $deprecatedKeys = @('localhostForwarding')
+    # `firewall` is mirrored-mode-specific and useless in NAT mode;
+    # strip it on every merge so .wslconfig stays small. (Switch back
+    # to ('localhostForwarding',) the day mirrored mode is the default
+    # again -- right now NAT + localhostForwarding is the reliable
+    # combo per operator's 2026-05-11 testing on Win 11 build 28020.)
+    $deprecatedKeys = @('firewall')
     $lines    = (Get-Content $wslCfg)
     $inWsl2   = $false
     $patched  = [System.Collections.Generic.List[string]]::new()
@@ -5499,12 +5545,22 @@ function Rename-PodmanDevDistro {
     }
 }
 
-function New-Shortcut([string]$Path,[string]$Target,[string]$Args="",[string]$Desc="",[string]$Dir="") {
+function New-Shortcut([string]$Path,[string]$Target,[string]$ArgList="",[string]$Desc="",[string]$Dir="") {
+    # IMPORTANT: parameter was previously named $Args, which is one of
+    # PowerShell's reserved superglobals (automatically populated with
+    # the function's UNBOUND positional args). Inside the function body
+    # $Args was therefore ALWAYS empty -- the test `if ($Args)` failed
+    # and Arguments never made it onto the .lnk. Symptom 2026-05-11:
+    # MiOS Linux Apps Start Menu shortcuts had TargetPath=wsl.exe but
+    # Arguments="" so clicking "Files" / "Web" / etc. launched a bare
+    # wsl.exe shell instead of `wsl -d podman-MiOS-DEV --user mios --
+    # flatpak run <appid>`. Renamed to $ArgList so callers' --Args
+    # passes actually land on the shortcut.
     $ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut($Path)
     $sc.TargetPath = $Target
-    if ($Args) { $sc.Arguments = $Args }
-    if ($Desc) { $sc.Description = $Desc }
-    if ($Dir)  { $sc.WorkingDirectory = $Dir }
+    if ($ArgList) { $sc.Arguments = $ArgList }
+    if ($Desc)    { $sc.Description = $Desc }
+    if ($Dir)     { $sc.WorkingDirectory = $Dir }
     $sc.Save()
 }
 
@@ -7373,7 +7429,7 @@ $endMark
             try {
                 New-Shortcut -Path $_lnk `
                     -Target $wslExe `
-                    -Args ("-d {0} --user mios -- flatpak run {1}" -f $linuxDistro, $_appId) `
+                    -ArgList ("-d {0} --user mios -- flatpak run {1}" -f $linuxDistro, $_appId) `
                     -Desc ("MiOS Linux app: {0} ({1}) on {2}" -f $_friendly, $_appId, $linuxDistro) `
                     -Dir ([Environment]::GetFolderPath('Desktop'))
                 $linuxShortcutsCreated++
@@ -7393,7 +7449,7 @@ $endMark
             try {
                 New-Shortcut -Path $_lnk `
                     -Target $wslExe `
-                    -Args ("-d {0} --user mios -- bash -lc `"{1}`"" -f $linuxDistro, $_sa.Cmd) `
+                    -ArgList ("-d {0} --user mios -- bash -lc `"{1}`"" -f $linuxDistro, $_sa.Cmd) `
                     -Desc ("MiOS Linux app: {0} ({1}) on {2}" -f $_sa.Name, $_sa.Cmd, $linuxDistro) `
                     -Dir ([Environment]::GetFolderPath('Desktop'))
                 $linuxShortcutsCreated++

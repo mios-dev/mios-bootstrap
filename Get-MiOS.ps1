@@ -5194,15 +5194,18 @@ try { Add-MiosDefenderExclusions } catch { Write-Host "  [!] Defender exclusion 
 # work even after the reap's wsl.exe calls.
 $_wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
 $_wslCfgRaw = if (Test-Path $_wslCfg) { Get-Content $_wslCfg -Raw } else { "" }
-if ($_wslCfgRaw -notmatch 'networkingMode\s*=\s*mirrored' -or $_wslCfgRaw -notmatch 'firewall\s*=\s*false') {
+if ($_wslCfgRaw -notmatch 'networkingMode\s*=\s*NAT' -or $_wslCfgRaw -notmatch 'localhostForwarding\s*=\s*true') {
     $_baseline = @"
 
 [wsl2]
-# MiOS pre-Phase-0 minimum -- ensures the utility VM boots in mirrored
-# mode for the rest of this install. Phase 4 of build-mios.ps1 overlays
-# RAM/CPU/swap/dnsTunneling/autoProxy from detected host hardware.
-networkingMode=mirrored
-firewall=false
+# MiOS pre-Phase-0 minimum -- ensures the utility VM boots with NAT
+# networking + localhostForwarding so dev VM container ports reach
+# Windows' localhost reliably. (Mirrored mode is MS-labelled beta and
+# silently breaks loopback forwarding on Windows build 28020 Canary
+# -- operator-confirmed 2026-05-11.) Phase 4 of build-mios.ps1
+# overlays RAM/CPU/swap/dnsTunneling/autoProxy from host hardware.
+networkingMode=NAT
+localhostForwarding=true
 guiApplications=true
 "@
     if ($_wslCfgRaw -notmatch "\[wsl2\]") {
@@ -5211,6 +5214,8 @@ guiApplications=true
         # [wsl2] section exists but missing one or both required keys --
         # build-mios.ps1's Set-MiosWslConfig handles the full merge.
         # Here we just inject the two networking keys via a quick patch.
+        # Strip mirrored-mode keys (networkingMode=mirrored, firewall=)
+        # as we go, so prior installs that wrote those get cleaned up.
         $_lines = Get-Content $_wslCfg
         $_in    = $false
         $_out   = [System.Collections.Generic.List[string]]::new()
@@ -5219,18 +5224,18 @@ guiApplications=true
             if ($_l -match '^\[wsl2\]') {
                 $_in = $true; $_out.Add($_l)
                 if (-not $_added) {
-                    if ($_wslCfgRaw -notmatch 'networkingMode\s*=\s*mirrored') { $_out.Add('networkingMode=mirrored') }
-                    if ($_wslCfgRaw -notmatch 'firewall\s*=\s*false')          { $_out.Add('firewall=false') }
+                    if ($_wslCfgRaw -notmatch 'networkingMode\s*=\s*NAT')        { $_out.Add('networkingMode=NAT') }
+                    if ($_wslCfgRaw -notmatch 'localhostForwarding\s*=\s*true')  { $_out.Add('localhostForwarding=true') }
                     $_added = $true
                 }
                 continue
             } elseif ($_l -match '^\[') { $_in = $false }
-            if ($_in -and $_l -match '^(networkingMode|firewall)\s*=') { continue }
+            if ($_in -and $_l -match '^(networkingMode|localhostForwarding|firewall)\s*=') { continue }
             $_out.Add($_l)
         }
         Set-Content -Path $_wslCfg -Value $_out -Encoding UTF8
     }
-    Write-Host "  [+] .wslconfig: mirrored + firewall=false ensured (pre-Phase-0)" -ForegroundColor Green
+    Write-Host "  [+] .wslconfig: NAT + localhostForwarding ensured (pre-Phase-0)" -ForegroundColor Green
     & wsl.exe --shutdown 2>$null | Out-Null
 }
 
