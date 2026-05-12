@@ -1480,6 +1480,186 @@ function Install-MiOSGeistFont {
     }
 }
 
+function Install-MiOSBibataCursor {
+    # Install Bibata-Modern-Classic as the Windows-wide cursor scheme.
+    # Operator-flagged 2026-05-11 "cursor is still not bibata GLOBALLY".
+    # Linux dev VM Bibata install runs separately inside the WSL distro
+    # (build-mios.ps1's Set-Step "Installing Bibata-Modern-Classic
+    # cursor"). This Windows-side complement covers the desktop chrome
+    # so the operator sees the same cursor on hover/click outside WT.
+    #
+    # Mechanism:
+    #   1. Fetch ful1e5/Bibata_Cursor latest "Bibata-Modern-Classic-
+    #      Windows.tar.gz" release asset.
+    #   2. Extract to M:\MiOS\cursors\Bibata-Modern-Classic (per the
+    #      everything-on-M:\ invariant).
+    #   3. Set HKCU\Control Panel\Cursors values to the extracted
+    #      .cur / .ani paths so Windows uses Bibata in every app.
+    #   4. Register the scheme under HKCU\Control Panel\Cursors\Schemes
+    #      so it appears in Settings -> Mouse -> Additional pointer
+    #      options and survives operator scheme switches.
+    #   5. Broadcast SystemParametersInfo(SPI_SETCURSORS) so the running
+    #      desktop picks up the new pointers without a logoff.
+    #
+    # Idempotent: if Bibata is already installed AND the active
+    # `(Default)` scheme is "Bibata Modern Classic", short-circuit.
+    $schemeName = 'Bibata Modern Classic'
+    $cursorsKey = 'HKCU:\Control Panel\Cursors'
+    $current = (Get-ItemProperty -Path $cursorsKey -ErrorAction SilentlyContinue).'(default)'
+    if (-not $current) { $current = (Get-ItemProperty -Path $cursorsKey -Name '(default)' -ErrorAction SilentlyContinue).'(default)' }
+    $installRoot = if (Test-Path 'M:\') { 'M:\MiOS\cursors\Bibata-Modern-Classic' }
+                   else { Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Cursors\Bibata-Modern-Classic' }
+    if ($current -eq $schemeName -and (Test-Path -LiteralPath (Join-Path $installRoot 'Default.cur'))) {
+        Write-Host "  [+] Bibata cursor already installed + active: $installRoot" -ForegroundColor DarkGray
+        return $true
+    }
+
+    Write-Host "  [*] Installing Bibata-Modern-Classic Windows cursor..." -ForegroundColor Cyan
+    $tmpDir   = Join-Path $env:TEMP ("mios-bibata-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+    $zipPath  = Join-Path $tmpDir 'Bibata-Modern-Classic-Windows.zip'
+    try {
+        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+
+        # Resolve latest release tag from GitHub's API.
+        $tag = 'v2.0.7'
+        try {
+            $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest' `
+                       -Headers @{ 'User-Agent' = 'MiOS-Bootstrap' } -ErrorAction Stop
+            if ($rel.tag_name) { $tag = $rel.tag_name }
+        } catch {}
+        $assetUrl = "https://github.com/ful1e5/Bibata_Cursor/releases/download/$tag/Bibata-Modern-Classic-Windows.zip"
+        Write-Host "  [*] Bibata $tag : $assetUrl" -ForegroundColor DarkGray
+
+        Invoke-WebRequest -Uri $assetUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
+        $zipSize = (Get-Item $zipPath).Length
+        if ($zipSize -lt 100000) {
+            Write-Host "  [!] Bibata download too small ($zipSize bytes) -- likely 404." -ForegroundColor Yellow
+            return $false
+        }
+
+        # Extract with Expand-Archive (handles zip natively). Strip
+        # the top-level dir Bibata's zip uses ("Bibata-Modern-Classic")
+        # so cursor files land directly under $installRoot.
+        if (Test-Path -LiteralPath $installRoot) { Remove-Item -LiteralPath $installRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+        $extractTmp = Join-Path $tmpDir 'extract'
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $extractTmp -Force -ErrorAction Stop
+        $extractedRoot = Get-ChildItem -LiteralPath $extractTmp -Directory | Select-Object -First 1
+        if ($extractedRoot) {
+            Get-ChildItem -LiteralPath $extractedRoot.FullName -File | Move-Item -Destination $installRoot -Force
+        } else {
+            Get-ChildItem -LiteralPath $extractTmp -File | Move-Item -Destination $installRoot -Force
+        }
+        $curFiles = @(Get-ChildItem -LiteralPath $installRoot -Recurse -File -Include '*.cur','*.ani' -ErrorAction SilentlyContinue)
+        if ($curFiles.Count -lt 10) {
+            Write-Host "  [!] Bibata extraction produced only $($curFiles.Count) cursor files (expected 15+)." -ForegroundColor Yellow
+            return $false
+        }
+        Write-Host "  [+] Extracted $($curFiles.Count) Bibata cursors to $installRoot" -ForegroundColor Green
+
+        # Map Bibata filenames -> Windows cursor registry value names.
+        # Sourced from Bibata's shipped install.inf (clickgen-generated
+        # Wreg section). Notable rename from older Bibata releases:
+        # - Pointer.cur (not Default.cur) for Arrow
+        # - Work.ani (not Working.ani) for AppStarting
+        # - Vert.cur / Horz.cur / Dgn1.cur / Dgn2.cur (compact names)
+        # - Alternate.cur for UpArrow (no -Select suffix)
+        $cursorMap = [ordered]@{
+            'Arrow'         = 'Pointer.cur'
+            'Help'          = 'Help.cur'
+            'AppStarting'   = 'Work.ani'
+            'Wait'          = 'Busy.ani'
+            'Crosshair'     = 'Cross.cur'
+            'precisionhair' = 'Cross.cur'   # alias in Bibata install.inf
+            'IBeam'         = 'Text.cur'
+            'NWPen'         = 'Handwriting.cur'
+            'No'            = 'Unavailable.cur'
+            'SizeNS'        = 'Vert.cur'
+            'SizeWE'        = 'Horz.cur'
+            'SizeNWSE'      = 'Dgn1.cur'
+            'SizeNESW'      = 'Dgn2.cur'
+            'Grab'          = 'Move.cur'
+            'SizeAll'       = 'Move.cur'
+            'UpArrow'       = 'Alternate.cur'
+            'Hand'          = 'Link.cur'
+            'Pin'           = 'Pin.cur'
+            'Person'        = 'Person.cur'
+            'Pan'           = 'Pan.cur'
+            'Grabbing'      = 'Grabbing.cur'
+            'Zoom-in'       = 'Zoom-in.cur'
+            'Zoom-out'      = 'Zoom-out.cur'
+        }
+        # Locate each file (Bibata's zip may extract files into a
+        # nested cursors/ dir depending on packaging; walk to find them).
+        $byName = @{}
+        foreach ($f in $curFiles) { $byName[$f.Name] = $f.FullName }
+
+        if (-not (Test-Path $cursorsKey)) { New-Item -Path $cursorsKey -Force | Out-Null }
+        # Build CSV for HKCU\Control Panel\Cursors\Schemes value --
+        # 21 comma-separated paths in install.inf's canonical order
+        # (pointer, help, work, busy, cross, text, handwriting,
+        # unavailable, vert, horz, dgn1, dgn2, move, alternate, link,
+        # pin, person, pan, grabbing, zoom-in, zoom-out).
+        $schemeFiles = @('Pointer.cur','Help.cur','Work.ani','Busy.ani','Cross.cur',
+                         'Text.cur','Handwriting.cur','Unavailable.cur','Vert.cur',
+                         'Horz.cur','Dgn1.cur','Dgn2.cur','Move.cur','Alternate.cur',
+                         'Link.cur','Pin.cur','Person.cur','Pan.cur','Grabbing.cur',
+                         'Zoom-in.cur','Zoom-out.cur')
+        $schemePaths = foreach ($f in $schemeFiles) {
+            if ($byName.ContainsKey($f)) { $byName[$f] } else { '' }
+        }
+        $schemeCsv = $schemePaths -join ','
+
+        # Set individual pointer registry values.
+        foreach ($k in $cursorMap.Keys) {
+            $file = $cursorMap[$k]
+            if ($byName.ContainsKey($file)) {
+                Set-ItemProperty -Path $cursorsKey -Name $k -Value $byName[$file] -Type ExpandString -Force
+            }
+        }
+        # Active scheme name (Windows reads `(default)` for the display
+        # label in Mouse Properties).
+        Set-ItemProperty -Path $cursorsKey -Name '(default)' -Value $schemeName -Force
+
+        # CursorBaseSize controls the rendered pixel size of the active
+        # cursor (Windows picks the matching variant from the multi-image
+        # .cur file). Bibata's Windows release embeds 5 sizes per .cur
+        # (32, 48, 64, 96, 128); even the smallest 32px variant renders
+        # visibly larger than typical Windows cursors because the
+        # bibata glyph fills more of the 32x32 canvas. Operator-flagged
+        # 2026-05-11 "windows bibata is too large" -- lowering the base
+        # size to 24 forces Windows to downscale the 32px source to
+        # match the visual weight of the default Aero cursor.
+        # Operator-overridable via mios.toml [theme.cursor_windows].base_size.
+        $_cursorSize = 24
+        try { $_cursorSize = [int](Get-MiosTomlValue -Section 'theme.cursor_windows' -Key 'base_size' -Default 24) } catch {}
+        if ($_cursorSize -lt 16 -or $_cursorSize -gt 256) { $_cursorSize = 24 }
+        Set-ItemProperty -Path $cursorsKey -Name 'CursorBaseSize' -Value $_cursorSize -Type DWord -Force
+
+        # Register the scheme in HKCU\...\Schemes so it appears in the
+        # mouse properties dialog dropdown alongside Windows Default.
+        $schemesKey = 'HKCU:\Control Panel\Cursors\Schemes'
+        if (-not (Test-Path $schemesKey)) { New-Item -Path $schemesKey -Force | Out-Null }
+        Set-ItemProperty -Path $schemesKey -Name $schemeName -Value $schemeCsv -Type ExpandString -Force
+
+        # Broadcast SystemParametersInfo so the running desktop reloads
+        # cursors immediately (no logoff). 0x57 = SPI_SETCURSORS.
+        Add-Type -Namespace MiosWin -Name SPI -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, System.IntPtr pvParam, uint fWinIni);
+'@ -ErrorAction SilentlyContinue
+        try { [MiosWin.SPI]::SystemParametersInfo(0x0057, 0, [IntPtr]::Zero, 0x03) | Out-Null } catch {}
+
+        Write-Host "  [+] Bibata-Modern-Classic active. Cursor scheme: '$schemeName'." -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "  [!] Bibata install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    } finally {
+        if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 # Resolve the WT settings.json path. Per operator: target the BASE
 # (Stable) Windows Terminal install. Returns $null if WT Stable isn't
 # installed (caller should run Install-MiOSWindowsTerminal first).
@@ -4422,6 +4602,213 @@ function Require-Cmd {
     }
 }
 
+function Ensure-Winget {
+    # Bootstrap winget (Microsoft.DesktopAppInstaller) on a Windows host
+    # that doesn't ship it. Win11 has it preinstalled; Win10 22H2 also
+    # ships it; but Windows Server, Sandbox, debloated images, and very
+    # fresh OOBE machines sometimes don't. winget is the prerequisite
+    # for every package install downstream (WSL, Podman, Windows Terminal,
+    # PowerShell 7, oh-my-posh, fastfetch, etc.) so failing here means
+    # NOTHING else installs.
+    #
+    # Operator directive 2026-05-12: "Make sure the irm|iex installer
+    # can STILL install on a fresh Windows System with NOTHING installed".
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        $v = (& winget --version 2>&1) -join ' '
+        Write-Host "  [+] winget already present ($v)" -ForegroundColor DarkGray
+        return $true
+    }
+
+    Write-Host "  [*] winget not found -- bootstrapping Microsoft.DesktopAppInstaller..." -ForegroundColor Cyan
+
+    # Path A: Add-AppxPackage from the official Microsoft delivery URL.
+    # The bundle includes winget + its dependencies (UI.Xaml, VCLibs).
+    # URL is the documented one Microsoft Learn points operators at.
+    $appxUrl = 'https://aka.ms/getwinget'
+    $tmpMsix = Join-Path $env:TEMP "mios-winget-bootstrap-$(Get-Random).msixbundle"
+    try {
+        Write-Host "    [.] Downloading $appxUrl -> $tmpMsix" -ForegroundColor DarkGray
+        Invoke-WebRequest -Uri $appxUrl -OutFile $tmpMsix -UseBasicParsing -ErrorAction Stop
+        Add-AppxPackage -Path $tmpMsix -ErrorAction Stop
+        Write-Host "  [+] winget installed via Add-AppxPackage" -ForegroundColor Green
+        Remove-Item -LiteralPath $tmpMsix -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "  [!] Add-AppxPackage Microsoft.DesktopAppInstaller failed: $($_.Exception.Message)" -ForegroundColor Yellow
+
+        # Path B: PowerShell module fallback. Microsoft.WinGet.Client
+        # ships a Repair-WinGetPackageManager cmdlet that mirrors the
+        # MSIX bootstrap and handles dependency ordering on Server SKUs.
+        try {
+            Write-Host "    [.] Falling back to Microsoft.WinGet.Client module..." -ForegroundColor DarkGray
+            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser -ErrorAction Stop | Out-Null
+            Install-Module -Name Microsoft.WinGet.Client -Force -Scope CurrentUser -AcceptLicense -ErrorAction Stop
+            Import-Module Microsoft.WinGet.Client -ErrorAction Stop
+            Repair-WinGetPackageManager -AllUsers -ErrorAction Stop
+            Write-Host "  [+] winget installed via Microsoft.WinGet.Client" -ForegroundColor Green
+        } catch {
+            Write-Host "  [!] All winget bootstrap paths failed: $($_.Exception.Message)" -ForegroundColor Red
+            return $false
+        }
+    }
+
+    # Verify it's now on PATH (Add-AppxPackage doesn't refresh the
+    # current process's PATH; load the AppX path explicitly).
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        $appxPath = (Get-AppxPackage Microsoft.DesktopAppInstaller -ErrorAction SilentlyContinue).InstallLocation
+        if ($appxPath -and (Test-Path "$appxPath\winget.exe")) {
+            $env:PATH = "$appxPath;$env:PATH"
+            Write-Host "  [+] winget added to current-process PATH ($appxPath)" -ForegroundColor DarkGray
+        }
+    }
+
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        return $true
+    }
+    Write-Host "  [!] winget still not on PATH -- next-session reboot will surface it." -ForegroundColor Yellow
+    return $false
+}
+
+function Enable-MiOSWindowsFeatures {
+    # Detect + enable the OS-level features MiOS needs:
+    #   Microsoft-Windows-Subsystem-Linux   -- WSL substrate
+    #   VirtualMachinePlatform              -- WSL2 (HCS) + Hyper-V hypervisor
+    #   Microsoft-Hyper-V                   -- Hyper-V Manager + VMs (Pro/Ent)
+    #
+    # All require admin (DISM-level feature toggles). Caller is responsible
+    # for admin context -- Get-MiOS.ps1 self-elevates via UAC before any
+    # call site reaches this function, so we hard-fail with a clear message
+    # rather than silently skipping if we somehow land here as a normal user.
+    #
+    # Operator 2026-05-11: "pwsh7+, podman, wsl, hyper-v, etc-etc are all
+    # fecthed and installed during irm|iex installations -- THE FIRST
+    # STEPS AFTER DISK CREATION". This function is Step 0.6 in Pass-2,
+    # immediately after Initialize-DataDisk + Set-PodmanMachineStorageOnM
+    # + Set-WingetStorageOnM + mios.toml promotion to M:\.
+    #
+    # Reboot policy: enables with -NoRestart and aggregates which features
+    # required a reboot. Surfaces a clear warning at the end if any
+    # reboot is pending; doesn't reboot automatically (operator-flagged:
+    # NO automatic mid-install reboots).
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        Write-Host "  [!] Enable-MiOSWindowsFeatures needs admin -- deferring (auto-elevation will rerun this)." -ForegroundColor Yellow
+        return $false
+    }
+
+    $features = [ordered]@{
+        'Microsoft-Windows-Subsystem-Linux' = 'Windows Subsystem for Linux'
+        'VirtualMachinePlatform'            = 'Virtual Machine Platform (WSL2 + Hyper-V hypervisor)'
+        'Microsoft-Hyper-V'                 = 'Hyper-V (manager + VMs)'
+    }
+
+    $rebootPending = $false
+    foreach ($name in $features.Keys) {
+        $label = $features[$name]
+        try {
+            $state = Get-WindowsOptionalFeature -Online -FeatureName $name -ErrorAction Stop
+        } catch {
+            # Feature not present on this Windows edition (e.g. Hyper-V
+            # absent on Home). Continue with the rest.
+            Write-Host "  [-] $label not available on this Windows edition -- skipping." -ForegroundColor DarkGray
+            continue
+        }
+        if ($state.State -eq 'Enabled') {
+            Write-Host "  [+] $label already enabled." -ForegroundColor DarkGray
+            continue
+        }
+        Write-Host "  [*] Enabling $label..." -ForegroundColor Cyan
+        try {
+            $r = Enable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart -ErrorAction Stop
+            if ($r.RestartNeeded) { $rebootPending = $true }
+            Write-Host "  [+] $label enabled." -ForegroundColor Green
+        } catch {
+            Write-Host "  [!] Enable-WindowsOptionalFeature $name failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    # ─── WSL bootstrap on fresh Windows ──────────────────────────────────
+    # Fresh Windows 11 doesn't ship wsl.exe -- it's a separate Store-distributed
+    # MSIX app since 2022. On a clean machine, DISM enables the Windows feature
+    # ("Microsoft-Windows-Subsystem-Linux") but the actual wsl.exe binary +
+    # the WSL kernel are downloaded from the Store. `wsl --install` (DISM-era
+    # path) auto-pulls them on first run; we drive it explicitly so the
+    # operator sees a known transcript instead of waiting on opaque downloads.
+    #
+    # Operator-flagged 2026-05-12: "MiOS should be running preview builds
+    # of WSL. Make sure the irm|iex installer can STILL install on a fresh
+    # Windows System with NOTHING installed".
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+        Write-Host "  [*] wsl.exe not on PATH -- installing WSL (Microsoft Store MSIX)..." -ForegroundColor Cyan
+        # Path A: winget install Microsoft.WSL  (preferred on Win11; pulls
+        # the Store version + dependencies)
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            try {
+                & winget install --id Microsoft.WSL --silent --accept-source-agreements --accept-package-agreements 2>&1 |
+                    ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+            } catch {
+                Write-Host "  [!] winget install Microsoft.WSL: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+        # Path B: fallback to `wsl --install --no-distribution` (works on
+        # any Win10 22H2+ / Win11 with the Windows-feature already enabled).
+        if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+            try {
+                $sysWsl = Join-Path $env:SystemRoot 'System32\wsl.exe'
+                if (Test-Path $sysWsl) {
+                    Write-Host "  [*] Falling back to '$sysWsl --install --no-distribution'..." -ForegroundColor Cyan
+                    & $sysWsl --install --no-distribution --web-download 2>&1 |
+                        ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+                }
+            } catch {
+                Write-Host "  [!] wsl --install fallback failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    # WSL kernel update + opt into PRE-RELEASE channel (preview builds).
+    # `wsl --update` pulls the latest MSIX kernel from Microsoft Store;
+    # `--pre-release` flag (added in WSL 2.0.0, available on every modern
+    # Windows + WSL combo) opts into the preview build channel which has
+    # the newer compositor + gnome-shell --nested fixes operator needs
+    # for the Enhanced Session full-desktop path.
+    # `--set-default-version 2` ensures wsl --install / `wsl --import`
+    # use WSL2 (HCS via VirtualMachinePlatform) by default.
+    if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
+        try {
+            Write-Host "  [*] Running 'wsl --update --pre-release' (preview channel)..." -ForegroundColor Cyan
+            & wsl.exe --update --pre-release 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+            & wsl.exe --set-default-version 2 2>&1 | Out-Null
+            Write-Host "  [+] WSL: preview channel + default version 2" -ForegroundColor Green
+            # Surface what we actually got
+            try {
+                $verOut = (& wsl.exe --version 2>&1) -join "`n"
+                Write-Host "  [.] wsl --version:" -ForegroundColor DarkGray
+                $verOut -split "`n" | ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
+            } catch {}
+        } catch {
+            Write-Host "  [!] wsl --update --pre-release: $($_.Exception.Message)" -ForegroundColor Yellow
+            # Fallback: try without --pre-release in case the flag isn't
+            # supported by the very-old WSL kernel installed.
+            try { & wsl.exe --update 2>&1 | Out-Null } catch {}
+            try { & wsl.exe --set-default-version 2 2>&1 | Out-Null } catch {}
+        }
+    } else {
+        Write-Host "  [-] wsl.exe still not on PATH after install attempts -- next-session reboot may surface it." -ForegroundColor DarkGray
+        $rebootPending = $true
+    }
+
+    if ($rebootPending) {
+        Write-Host ''
+        Write-Host '  +==============================================================+' -ForegroundColor Yellow
+        Write-Host '  | REBOOT PENDING -- Windows features enabled this session need |' -ForegroundColor Yellow
+        Write-Host '  | a reboot to take full effect. The dev VM may fail to start   |' -ForegroundColor Yellow
+        Write-Host '  | until you reboot. Bootstrap continues with what is usable.   |' -ForegroundColor Yellow
+        Write-Host '  +==============================================================+' -ForegroundColor Yellow
+        Write-Host ''
+    }
+    return $true
+}
+
 function Ensure-PodmanDesktop {
     if (Get-Command podman -ErrorAction SilentlyContinue) {
         Write-Good "Podman already installed ($((podman --version) 2>&1))"
@@ -5308,10 +5695,56 @@ try {
     Write-Info $_msgPodmanRedirect
     Set-PodmanMachineStorageOnM
 } catch { Write-Host ('  ' + ($_msgPodmanFailed -f $_.Exception.Message)) -ForegroundColor Yellow }
+
+# Bootstrap winget on hosts that don't have it before any winget-consuming
+# step runs (Set-WingetStorageOnM, Enable-MiOSWindowsFeatures' WSL Store
+# install, Ensure-PodmanDesktop, Windows Terminal install, etc.).
+# Fresh Win11 has it preinstalled; Server / Win10 / debloated images may not.
+try { Ensure-Winget | Out-Null } catch { Write-Host "  [!] Ensure-Winget failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+
 try {
     Write-Info $_msgWingetRedirect
     Set-WingetStorageOnM
 } catch { Write-Host ('  ' + ($_msgWingetFailed -f $_.Exception.Message)) -ForegroundColor Yellow }
+
+# Step 0.5: Promote the fetched vendor mios.toml to BOTH M:\usr\share\mios
+# and M:\etc\mios so the Windows-side dashboard / wrappers / Show-MiosDashboard
+# read the same [dashboard].rows / [colors] / [ports] / [packages.windows]
+# as the Linux side. Without this step Show-MiosDashboard falls back to its
+# vendor row-layout when M:\etc\mios\mios.toml is missing or stale, and
+# operator sees a different dashboard layout in pwsh vs in MiOS-DEV bash
+# (operator-flagged 2026-05-11 "MIOS.TOML ISN'T USED GLOBALLY"). Idempotent:
+# overwrites the M:\ overlay on every install with the live origin/main
+# fetch so a re-run always picks up the latest configurator edits.
+try {
+    $_miosTomlText = Resolve-MiosTomlText
+    if ($_miosTomlText) {
+        foreach ($_tomlDst in @('M:\usr\share\mios\mios.toml', 'M:\etc\mios\mios.toml')) {
+            $_tomlDstDir = Split-Path -Parent $_tomlDst
+            if (-not (Test-Path -LiteralPath $_tomlDstDir)) {
+                New-Item -ItemType Directory -Path $_tomlDstDir -Force | Out-Null
+            }
+            [IO.File]::WriteAllText($_tomlDst, $_miosTomlText, (New-Object System.Text.UTF8Encoding($false)))
+        }
+        Write-Host "  [+] mios.toml promoted to M:\usr\share\mios + M:\etc\mios (Windows = Linux dash parity)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  [!] mios.toml fetch returned empty -- M:\ overlay not promoted (Show-MiosDashboard will use vendor defaults)" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host ("  [!] mios.toml promotion to M:\ failed: $($_.Exception.Message)") -ForegroundColor Yellow
+}
+
+# Step 0.6: Enable Windows OS-level features MiOS depends on (WSL +
+# VirtualMachinePlatform + Hyper-V). Operator 2026-05-11: "pwsh7+,
+# podman, wsl, hyper-v, etc-etc are all fecthed and installed during
+# irm|iex installations -- THE FIRST STEPS AFTER DISK CREATION". This
+# runs as Step 0.6 -- after Initialize-DataDisk + the storage redirects
+# + mios.toml M:\ promotion, before Pass-1 Windows-user-scope setup.
+# Requires admin; function self-checks and defers cleanly otherwise.
+$_msgStep06 = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_0_6_features' -Default '[*] Step 0.6: Enabling Windows features (WSL + VirtualMachinePlatform + Hyper-V)...'
+Write-Host ''
+Write-Host "  $_msgStep06" -ForegroundColor Cyan
+try { Enable-MiOSWindowsFeatures | Out-Null } catch { Write-Host "  [!] Enable-MiOSWindowsFeatures failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 
 if ($true) {
     $isAdmin = $_isAdmin
@@ -5400,6 +5833,25 @@ if ($true) {
     Install-MiOSTerminalProfile     | Out-Null
     Write-Host "  $_msgStep4" -ForegroundColor Cyan
     Install-MiOSGeistFont           | Out-Null
+    # Bibata cursor rides alongside the font install -- both are
+    # operator-visible "global desktop chrome" touches that don't fit
+    # neatly into a separate numbered step. Operator 2026-05-11:
+    # "cursor is still not bibata GLOBALLY".
+    Install-MiOSBibataCursor        | Out-Null
+    # Start Menu shortcuts for every Linux .desktop entry in the dev
+    # VM (flatpak apps + native rpm apps + MiOS service launchers).
+    # Uses Microsoft WSL's native shortcut pattern (wslg.exe target,
+    # no console flash, .ico icons in %LOCALAPPDATA%\Temp\WSLDVCPlugin\
+    # <distro>\) so apps appear in Windows search / Start with their
+    # proper icons. Operator-flagged 2026-05-11: "opening WSL apps in
+    # windows is NOT native WSL behaviour ... icons should be visible
+    # for each application NATIVELY".
+    try {
+        $_shortcutScript = 'C:\MiOS\usr\libexec\mios\Update-MiOSStartMenuShortcuts.ps1'
+        if (Test-Path $_shortcutScript) {
+            & $_shortcutScript | Out-Null
+        }
+    } catch { Write-Host "  [!] Update-MiOSStartMenuShortcuts failed: $($_.Exception.Message)" -ForegroundColor Yellow }
     Write-Host "  $_msgStep5" -ForegroundColor Cyan
     Install-MiOSFastfetch           | Out-Null
     Write-Host "  $_msgStep6" -ForegroundColor Cyan

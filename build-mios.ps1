@@ -1840,25 +1840,29 @@ function Read-Line([string]$Prompt, [string]$Default = "") {
     if ([string]::IsNullOrWhiteSpace($v)) { return $Default } else { return $v }
 }
 
-function Read-Model([string]$Default = "qwen3.5:2b") {
+function Read-Model([string]$Default = "granite4.1:3b") {
     # AI model menu prompt -- feature parity with build-mios.sh's
     # prompt_model. Drives MIOS_OLLAMA_BAKE_MODELS at build time and
     # MIOS_AI_MODEL in install.env at runtime. Same auto-accept
-    # semantics as the rest of the Phase-6 prompts.
+    # semantics as the rest of the Phase-6 prompts. Keep the menu in
+    # sync with mios.toml [[ai.catalog]] -- both define the operator-
+    # facing model lineup.
     Move-BelowDash
     Write-Host ""
     Write-Host "  AI model (Architectural Law 5 -- baked into the image):" -ForegroundColor White
-    Write-Host "    1) qwen3.5:2b   -- 12 GB RAM, code-specialized, default" -ForegroundColor DarkGray
-    Write-Host "    2) qwen2.5-coder:14b  -- 24+ GB RAM, larger code reasoning" -ForegroundColor DarkGray
-    Write-Host "    3) llama3.2:3b        -- 8 GB RAM, fast" -ForegroundColor DarkGray
-    Write-Host "    4) custom             -- enter your own ollama model id" -ForegroundColor DarkGray
-    $choice = Read-Line "Choice [1-4]" "1"
+    Write-Host "    1) granite4.1:3b     -- 8 GB RAM, low-RAM default" -ForegroundColor DarkGray
+    Write-Host "    2) gpt-oss:20b       -- 16 GB RAM, agent-tuned MoE" -ForegroundColor DarkGray
+    Write-Host "    3) granite4.1:30b    -- 24+ GB RAM, MoE, big-RAM auto-pick" -ForegroundColor DarkGray
+    Write-Host "    4) qwen3-coder:30b   -- 24+ GB RAM, code-focused MoE" -ForegroundColor DarkGray
+    Write-Host "    5) custom            -- enter your own ollama model id" -ForegroundColor DarkGray
+    $choice = Read-Line "Choice [1-5]" "1"
     switch ($choice) {
-        "1"     { return "qwen3.5:2b" }
-        ""      { return "qwen3.5:2b" }
-        "2"     { return "qwen2.5-coder:14b" }
-        "3"     { return "llama3.2:3b" }
-        "4"     { return (Read-Line "Custom model id (e.g. mistral:7b)" $Default) }
+        "1"     { return "granite4.1:3b" }
+        ""      { return "granite4.1:3b" }
+        "2"     { return "gpt-oss:20b" }
+        "3"     { return "granite4.1:30b" }
+        "4"     { return "qwen3-coder:30b" }
+        "5"     { return (Read-Line "Custom model id (e.g. mistral-small3:24b)" $Default) }
         default { Write-Host "  invalid choice '$choice'; using default '$Default'" -ForegroundColor Yellow; return $Default }
     }
 }
@@ -1871,9 +1875,9 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
     # interactive prompt without re-cloning. Pure regex parser; no TOML
     # library dependency. Returns a hashtable -- caller picks fields.
     $defaults = @{
-        Model       = "qwen3.5:2b"
+        Model       = "granite4.1:3b"
         EmbedModel  = "nomic-embed-text"
-        BakeModels  = "qwen3.5:2b,nomic-embed-text"
+        BakeModels  = "granite4.1:3b,nomic-embed-text"
     }
     $layers = @()
     foreach ($p in @(
@@ -2207,11 +2211,11 @@ function Get-Hardware {
     # AI model auto-pick by host RAM. Thresholds + model IDs from mios.toml
     # [ai.host_thresholds] (NEW). Operators tune the cutoffs or swap to a
     # different family (mistral / llama / etc.) via mios.html.
-    $_aiBig    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_gb'        -Default 32
-    $_aiMid    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_gb'        -Default 12
-    $_aiBigM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_model'     -Default 'qwen2.5-coder:14b'
-    $_aiMidM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_model'     -Default 'qwen3.5:2b'
-    $_aiSmallM = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'small_ram_model'   -Default 'phi4-mini:3.8b-q4_K_M'
+    $_aiBig    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_gb'        -Default 24
+    $_aiMid    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_gb'        -Default 16
+    $_aiBigM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_model'     -Default 'granite4.1:30b'
+    $_aiMidM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_model'     -Default 'gpt-oss:20b'
+    $_aiSmallM = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'small_ram_model'   -Default 'granite4.1:3b'
     $aiModel   = if ($hostRamGB -ge $_aiBig) { $_aiBigM } elseif ($hostRamGB -ge $_aiMid) { $_aiMidM } else { $_aiSmallM }
 
     # Free space on the data disk (M:\ if provisioned, else C:\). The
@@ -3911,8 +3915,9 @@ done
 #                     pipeline only baked models too; for the dev
 #                     overlay we want the binary only -- the .container
 #                     pulls models on first run)
-echo "[quadlet-overlay] running canonical fetchers (fonts + oh-my-posh + ollama)..."
+echo "[quadlet-overlay] running canonical fetchers (fonts + oh-my-posh + ollama + xrdp Enhanced Session)..."
 for script in /automation/09-fonts.sh \
+              /automation/35-xrdp-enhanced-session.sh \
               /automation/38-oh-my-posh.sh; do
     if [[ -x "$script" ]]; then
         echo "[quadlet-overlay] => $script"
@@ -4410,10 +4415,28 @@ sudo tee /etc/mios/hermes/config.local.yaml >/dev/null <<'CFGLOCAL'
 backend:
   base_url: http://localhost:11434
 auxiliary:
-  base_url: http://localhost:8080/v1
+  # Ollama's OpenAI-compatible surface for compression / summarization /
+  # memory flush. Port 8080 was the legacy LocalAI bind -- after the
+  # LocalAI purge, 8080 is code-server, so the previous default 8080/v1
+  # made Hermes 401 against code-server then fall through to its
+  # openrouter auto-detect (which also 401'd without an API key).
+  base_url: http://localhost:11434/v1
 tools:
   web_search:
     base_url: http://localhost:8888
+
+# model / custom_providers / agent are intentionally NOT defined here.
+# mios-hermes-firstboot seeds /var/lib/mios/hermes/config.yaml (=
+# /opt/data/config.yaml inside the container) with values resolved
+# from mios.toml [ai].model + [[ai.catalog]] + [ai.host_thresholds]
+# auto-pick. That seeded file is what Hermes loads as $HERMES_HOME/
+# config.yaml -- it pins model.provider=custom:local-ollama and
+# model.default=<resolved>. Duplicating those keys here would
+# overwrite the SSOT-derived value with whatever build-time guess
+# build-mios.ps1 has hardcoded -- exactly the regression
+# operator hit 2026-05-12 ("MiOS-Hermes agent isn't trying hard
+# enough and is not capable"). Keep config.local.yaml limited to
+# host-network URL overrides only.
 CFGLOCAL
 
 echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward workaround)"
@@ -4426,6 +4449,7 @@ for svc_pair in \
     "mios-forge:Environment=FORGEJO__server__HTTP_ADDR=127.0.0.1|Environment=GITEA__server__HTTP_ADDR=127.0.0.1" \
     "mios-searxng:Environment=GRANIAN_HOST=0.0.0.0|Environment=GRANIAN_PORT=8888|Environment=SEARXNG_BIND_ADDRESS=0.0.0.0:8888|Environment=BIND_ADDRESS=0.0.0.0:8888" \
     "mios-hermes:Environment=PORT=8642|Environment=HERMES_BACKEND_BASE_URL=http://localhost:11434|Environment=HOME=/opt/data|Environment=UV_CACHE_DIR=/opt/data/.cache/uv|Environment=XDG_CACHE_HOME=/opt/data/.cache|WorkingDir=/opt/data|User=0|Group=0" \
+    "mios-hermes-dashboard:Environment=HOME=/opt/data|Environment=UV_CACHE_DIR=/opt/data/.cache/uv|Environment=XDG_CACHE_HOME=/opt/data/.cache|WorkingDir=/opt/data|User=0|Group=0" \
     "mios-hermes-workspace:Environment=PORT=3030|Environment=COOKIE_SECURE=0|Environment=HERMES_API_URL=http://localhost:8642" \
     "mios-cockpit-link:" \
     "ollama:Environment=HOME=/var/lib/ollama|Environment=OLLAMA_HOST=127.0.0.1:11434" \
@@ -4623,9 +4647,9 @@ function Invoke-GhcrLogin([string]$Token) {
 # legacy callers; a follow-up commit will delete them outright.
 # ============================================================================
 function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [string]$MiosHostname,
-                                   [string]$AiModel = "qwen3.5:2b",
+                                   [string]$AiModel = "granite4.1:3b",
                                    [string]$EmbedModel = "nomic-embed-text",
-                                   [string]$BakeModels = "qwen3.5:2b,nomic-embed-text") {
+                                   [string]$BakeModels = "granite4.1:3b,nomic-embed-text") {
     # mios.git is now overlaid AT $MiosRepoDir root (M:\), per the
     # 2026-05-06 directive. The build context IS the overlay root.
     $repoPath = $MiosRepoDir
@@ -5418,6 +5442,77 @@ function Set-MiosLanFirewallRules {
     if ($applied.Count -gt 0) {
         Log-Ok ("Windows Firewall: LAN inbound rules on $($_profiles -join '+') for " + ($applied -join ', '))
     }
+}
+
+function Set-MiosLanPortProxy {
+    # Windows-side `netsh interface portproxy` mappings so OTHER devices
+    # on the LAN can reach the dev VM's container ports.
+    #
+    # Why this is needed alongside Set-MiosLanFirewallRules:
+    # In NAT networking mode (.wslconfig networkingMode=NAT, which MiOS
+    # uses because mirrored mode silently breaks loopback forwarding on
+    # the operator's Win11 build 28020), services bound to 0.0.0.0
+    # inside the dev VM are reachable ONLY at Windows-side 127.0.0.1
+    # (via the localhostForwarding=true bridge). The host's external
+    # NIC (Wi-Fi / Ethernet) has nothing listening on those ports, so
+    # connections from a phone on the same Wi-Fi hang on connect.
+    # netsh portproxy makes Windows listen on 0.0.0.0:<port> and
+    # forward to 127.0.0.1:<port>, which then bounces into the dev VM
+    # via WSL's loopback bridge. Net effect: phone -> Win NIC ->
+    # portproxy -> WSL distro container.
+    #
+    # Operator-flagged 2026-05-11: "none of my services are available
+    # on my local wifi network".
+    #
+    # SSOT: same [ports].* + [ports.lan_firewall].expose list as the
+    # firewall rules above, so opening / closing a service in mios.html
+    # affects BOTH layers in lock-step. Idempotent: deletes the old
+    # mapping before adding so re-runs converge cleanly without
+    # accumulating duplicate listeners.
+    $_defaultPorts = [ordered]@{
+        forge            = 3000
+        webui            = 3030
+        ai               = 8080
+        hermes           = 8642
+        searxng          = 8888
+        cockpit          = 9090
+        hermes_dashboard = 9119
+        ollama           = 11434
+    }
+    $_ports = [ordered]@{}
+    foreach ($k in $_defaultPorts.Keys) {
+        $_ports[$k] = [int](Get-MiosTomlValue -Section 'ports' -Key $k -Default $_defaultPorts[$k])
+    }
+    $_expose = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose' -Default @($_defaultPorts.Keys))
+    if ($_expose.Count -eq 0) { $_expose = @($_defaultPorts.Keys) }
+
+    foreach ($svc in $_expose) {
+        if (-not $_ports.Contains($svc)) { continue }
+        $port = [int]$_ports[$svc]
+        if ($port -lt 1 -or $port -gt 65535) { continue }
+        # Drop any prior rule on this listenport (operator may have
+        # adjusted port numbers via mios.html between bootstraps).
+        & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port 2>&1 | Out-Null
+        $r = & netsh interface portproxy add v4tov4 `
+                  listenaddress=0.0.0.0 listenport=$port `
+                  connectaddress=127.0.0.1 connectport=$port 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log "portproxy: 0.0.0.0:$port -> 127.0.0.1:$port ($svc)"
+        } else {
+            Log-Warn "portproxy add for $svc :$port failed: $($r -join ' ')"
+        }
+    }
+
+    # Ensure the ipv4-listen helper service is up (netsh portproxy
+    # depends on IPHelper running -- a fresh Server SKU sometimes
+    # ships it Disabled).
+    try {
+        $svc = Get-Service -Name iphlpsvc -ErrorAction SilentlyContinue
+        if ($svc -and $svc.Status -ne 'Running') {
+            Set-Service -Name iphlpsvc -StartupType Automatic -ErrorAction SilentlyContinue
+            Start-Service -Name iphlpsvc -ErrorAction SilentlyContinue
+        }
+    } catch {}
 }
 
 function Restore-PodmanPrefix {
@@ -6855,7 +6950,7 @@ if (-not $query) { return }
 
 # Endpoint + model + key resolved from env > install.env > mios.toml fallback.
 $endpoint = if ($env:MIOS_AI_ENDPOINT) { $env:MIOS_AI_ENDPOINT } else { 'http://localhost:8642/v1' }
-$model    = if ($env:MIOS_AI_MODEL)    { $env:MIOS_AI_MODEL }    else { 'qwen3.5:2b' }
+$model    = if ($env:MIOS_AI_MODEL)    { $env:MIOS_AI_MODEL }    else { 'granite4.1:3b' }
 $apiKey   = if ($env:MIOS_AI_KEY)      { $env:MIOS_AI_KEY }      else { '' }
 
 # If no env key, scrape /etc/mios/install.env on M:\ for the key.
@@ -9305,6 +9400,7 @@ exit 0
     # device (phone, tablet, second laptop). Operator-flagged 2026-05-11.
     Set-Step "Adding Windows Firewall LAN inbound rules for MiOS service ports..."
     try { Set-MiosLanFirewallRules } catch { Log-Warn "Set-MiosLanFirewallRules: $($_.Exception.Message)" }
+    try { Set-MiosLanPortProxy }     catch { Log-Warn "Set-MiosLanPortProxy: $($_.Exception.Message)" }
 
     End-Phase 4
 
