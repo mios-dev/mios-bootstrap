@@ -5486,18 +5486,56 @@ function Set-MiosLanPortProxy {
     $_expose = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose' -Default @($_defaultPorts.Keys))
     if ($_expose.Count -eq 0) { $_expose = @($_defaultPorts.Keys) }
 
+    # CRITICAL FIX 2026-05-12 -- prior listen=0.0.0.0 + connect=127.0.0.1
+    # broke Windows-host localhost reach by hijacking the same address
+    # WSL2's wslhost relay needs (0.0.0.0:PORT). Result: every Windows-
+    # host curl http://localhost:PORT/ timed out because the portproxy
+    # forwarded to a dead 127.0.0.1:PORT (the actual service is in WSL,
+    # not on Windows-host loopback). Fix:
+    #  - listen on the LAN-facing adapter IP (auto-detected from
+    #    Get-NetIPAddress, prefers Ethernet/Wi-Fi over WSL/loopback/APIPA),
+    #    NOT 0.0.0.0 -- so wslhost retains 0.0.0.0:PORT for its native
+    #    localhostForwarding bridge into the WSL VM.
+    #  - connect to the WSL VM's eth0 IP (not 127.0.0.1) so the LAN
+    #    forward path doesn't depend on wslhost being healthy.
+    # Net effect: Windows-host localhost:PORT works via wslhost (NAT
+    # native); LAN client at <windows-host-lan-ip>:PORT works via this
+    # portproxy. Both paths reach the WSL service. Operator-confirmed
+    # 2026-05-12 regression: services worked from inside dev VM, failed
+    # from Windows-host browser AND LAN -- root caused to the prior
+    # 0.0.0.0/127.0.0.1 portproxy hijack.
+    $_lanIp = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -notlike '127.*' -and
+            $_.IPAddress -notlike '169.254.*' -and
+            $_.IPAddress -notlike '172.[16-31].*' -and
+            $_.InterfaceAlias -notmatch 'WSL|Loopback'
+        } | Select-Object -First 1 -ExpandProperty IPAddress)
+    $_wslIp = $null
+    try {
+        $_wslIp = (& wsl.exe -d $DevDistro --user root -- bash -lc "ip -4 -o addr show eth0 | awk '{print `$4}' | cut -d/ -f1" 2>$null) -replace "`r`n",'' -replace "`n",''
+        $_wslIp = $_wslIp.Trim()
+    } catch {}
+    if (-not $_lanIp -or -not $_wslIp) {
+        Log-Warn "portproxy: could not resolve LAN IP ($_lanIp) or WSL VM IP ($_wslIp) -- skipping LAN forwarding"
+        Log-Warn "          Windows-host localhost:PORT still works via WSL2 native localhostForwarding"
+        return
+    }
+    Write-Log "portproxy: LAN ip = $_lanIp ; WSL VM ip = $_wslIp"
+
     foreach ($svc in $_expose) {
         if (-not $_ports.Contains($svc)) { continue }
         $port = [int]$_ports[$svc]
         if ($port -lt 1 -or $port -gt 65535) { continue }
-        # Drop any prior rule on this listenport (operator may have
-        # adjusted port numbers via mios.html between bootstraps).
+        # Drop any prior rule on EITHER listenaddress (cleans up the
+        # broken 0.0.0.0 entries from pre-2026-05-12 bootstraps).
         & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port 2>&1 | Out-Null
+        & netsh interface portproxy delete v4tov4 listenaddress=$_lanIp listenport=$port 2>&1 | Out-Null
         $r = & netsh interface portproxy add v4tov4 `
-                  listenaddress=0.0.0.0 listenport=$port `
-                  connectaddress=127.0.0.1 connectport=$port 2>&1
+                  listenaddress=$_lanIp listenport=$port `
+                  connectaddress=$_wslIp connectport=$port 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Log "portproxy: 0.0.0.0:$port -> 127.0.0.1:$port ($svc)"
+            Write-Log "portproxy: ${_lanIp}:$port -> ${_wslIp}:$port ($svc)"
         } else {
             Log-Warn "portproxy add for $svc :$port failed: $($r -join ' ')"
         }
@@ -5589,9 +5627,26 @@ function Rename-PodmanDevDistro {
     #
     # Idempotent: if `podman-$DevDistro` is already absent and
     # `$DevDistro` is registered, skip with a no-op.
-    # Bypass: $env:MIOS_SKIP_DISTRO_RENAME=1.
-    if ($env:MIOS_SKIP_DISTRO_RENAME -in @('1','true','TRUE','yes')) {
-        Log-Warn "MIOS_SKIP_DISTRO_RENAME set -- WSL distro rename skipped"
+    #
+    # Default behavior INVERTED 2026-05-12: skipping the rename is now
+    # the default. Reason: the rename breaks Podman Desktop's machine
+    # visibility (Podman Desktop tracks the distro by its podman- prefix
+    # registration; the rename + M:\ relocation orphans the machine
+    # database entry, so the dev VM appears Stopped / un-launchable in
+    # Podman Desktop even when wsl -l -v shows it Running). Operator-
+    # facing UX continues to read "MiOS-DEV" via the Windows Terminal
+    # profile name, Start Menu labels, and the `mios-dev` helper.
+    #
+    # TOML-first per AGENTS.md §3 / mios.toml is THE singular SSOT.
+    # Resolve via [bootstrap.dev_vm].rename_distro from the layered
+    # overlay; env var $MIOS_RENAME_DISTRO remains as a runtime override
+    # for ad-hoc operator use (overrides TOML when set).
+    $_renameDefault   = [string](Get-MiosTomlValue -Section 'bootstrap.dev_vm' -Key 'rename_distro' -Default 'false')
+    $_renameRequested = if ($env:MIOS_RENAME_DISTRO -in @('1','true','TRUE','yes','True')) { $true }
+                       elseif ($env:MIOS_RENAME_DISTRO -in @('0','false','FALSE','no','False')) { $false }
+                       else { ($_renameDefault -ieq 'true') }
+    if (-not $_renameRequested) {
+        Log-Ok "WSL distro rename skipped (mios.toml [bootstrap.dev_vm].rename_distro=$_renameDefault) -- preserves Podman Desktop visibility for podman-$DevDistro. Edit in mios.html or set `$env:MIOS_RENAME_DISTRO=1 to opt in."
         return
     }
     Set-Step "Renaming podman-$DevDistro -> $DevDistro (drops podman- prefix)..."
@@ -5754,11 +5809,38 @@ function Install-WindowsBranding {
     }
     Set-Step "Installing oh-my-posh + Geist + Nerd fonts under $($script:MiosInstallDir)..."
 
-    # ── 1. Fonts (per-user; no admin needed) ─────────────────────────
-    $fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+    # ── 1. Fonts (TOML-first per AGENTS.md §3) ───────────────────────
+    # Sources + install scope all resolve from mios.toml [theme.font].*
+    # so operators can pin URLs / force scope via mios.html. Geist is the
+    # MiOS GLOBAL font (operator 2026-05-12: "Linux and Windows Font is
+    # Geist font (system-wide -- terminals, apps, UI, etc-etc)") so the
+    # default scope is "auto" => system-wide when elevated.
+    $_fontVercelRepo = [string](Get-MiosTomlValue -Section 'theme.font' -Key 'vercel_repo'   -Default 'https://github.com/vercel/geist-font.git')
+    $_fontNerdMono   = [string](Get-MiosTomlValue -Section 'theme.font' -Key 'url'           -Default 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/GeistMono.zip')
+    $_fontSymbols    = [string](Get-MiosTomlValue -Section 'theme.font' -Key 'symbols_url'   -Default 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/NerdFontsSymbolsOnly.zip')
+    $_fontScope      = [string](Get-MiosTomlValue -Section 'theme.font' -Key 'install_scope' -Default 'auto')
+
+    $_isAdmin = (New-Object Security.Principal.WindowsPrincipal(
+        [Security.Principal.WindowsIdentity]::GetCurrent()
+    )).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+
+    if ($_fontScope -ieq 'system' -or ($_fontScope -ieq 'auto' -and $_isAdmin)) {
+        $fontDir   = "$env:WINDIR\Fonts"
+        $regKey    = 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+        $scopeTag  = 'system-wide'
+        if (-not $_isAdmin) {
+            Log-Warn "[theme.font].install_scope=system but not running elevated -- falling back to per-user"
+            $fontDir  = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+            $regKey   = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+            $scopeTag = 'per-user (fallback)'
+        }
+    } else {
+        $fontDir  = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+        $regKey   = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+        $scopeTag = 'per-user'
+    }
     if (-not (Test-Path $fontDir)) { New-Item -ItemType Directory -Path $fontDir -Force | Out-Null }
-    $regKey = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
-    if (-not (Test-Path $regKey)) { New-Item -Path $regKey -Force | Out-Null }
+    if (-not (Test-Path $regKey))  { New-Item -Path $regKey -Force | Out-Null }
 
     function Install-FontFile([string]$Source) {
         try {
@@ -5777,33 +5859,57 @@ function Install-WindowsBranding {
     # Geist (Vercel) -- shallow clone the upstream repo, copy *.otf + *.ttf
     $geistTmp = Join-Path $env:TEMP "mios-geist-$([guid]::NewGuid().ToString('N').Substring(0,8))"
     try {
-        $null = Invoke-NativeQuiet { git clone --depth=1 --quiet https://github.com/vercel/geist-font.git $geistTmp }
+        $null = Invoke-NativeQuiet { git clone --depth=1 --quiet $_fontVercelRepo $geistTmp }
         if (Test-Path $geistTmp) {
             $count = 0
             Get-ChildItem -Path $geistTmp -Recurse -Include '*.otf','*.ttf' | ForEach-Object {
                 if (Install-FontFile -Source $_.FullName) { $count++ }
             }
-            Log-Ok "Geist fonts installed (Windows per-user, $count new)"
-        } else { Log-Warn "Geist clone failed -- skipping Windows font install" }
+            Log-Ok "Geist (Vercel) installed ($scopeTag, $count new)"
+        } else { Log-Warn "Geist clone failed -- skipping Vercel font install" }
     } finally {
         if (Test-Path $geistTmp) { Remove-Item $geistTmp -Recurse -Force -ErrorAction SilentlyContinue }
     }
+
+    # GeistMono Nerd Font -- the canonical MiOS terminal/UI face
+    $geistMonoTmp = Join-Path $env:TEMP "mios-geistmono-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+    New-Item -ItemType Directory -Path $geistMonoTmp -Force | Out-Null
+    try {
+        $geistMonoZip = Join-Path $geistMonoTmp 'GeistMono.zip'
+        Invoke-WebRequest -Uri $_fontNerdMono -OutFile $geistMonoZip -UseBasicParsing -ErrorAction Stop
+        Expand-Archive -Path $geistMonoZip -DestinationPath $geistMonoTmp -Force
+        $count = 0
+        Get-ChildItem -Path $geistMonoTmp -Recurse -Include '*.otf','*.ttf' | ForEach-Object {
+            if (Install-FontFile -Source $_.FullName) { $count++ }
+        }
+        Log-Ok "GeistMono Nerd Font installed ($scopeTag, $count new)"
+    } catch { Log-Warn "GeistMono Nerd Font fetch failed: $($_.Exception.Message)" }
+    finally { if (Test-Path $geistMonoTmp) { Remove-Item $geistMonoTmp -Recurse -Force -ErrorAction SilentlyContinue } }
 
     # Symbols-Only Nerd Font (Powerline + Devicon glyphs the omp theme uses)
     $nerdTmp = Join-Path $env:TEMP "mios-nerd-$([guid]::NewGuid().ToString('N').Substring(0,8))"
     New-Item -ItemType Directory -Path $nerdTmp -Force | Out-Null
     try {
-        $nerdUrl = 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/NerdFontsSymbolsOnly.zip'
         $nerdZip = Join-Path $nerdTmp 'NerdFontsSymbolsOnly.zip'
-        Invoke-WebRequest -Uri $nerdUrl -OutFile $nerdZip -UseBasicParsing -ErrorAction Stop
+        Invoke-WebRequest -Uri $_fontSymbols -OutFile $nerdZip -UseBasicParsing -ErrorAction Stop
         Expand-Archive -Path $nerdZip -DestinationPath $nerdTmp -Force
         $count = 0
         Get-ChildItem -Path $nerdTmp -Recurse -Include '*.otf','*.ttf' | ForEach-Object {
             if (Install-FontFile -Source $_.FullName) { $count++ }
         }
-        Log-Ok "Symbols-Only Nerd Font installed (Windows per-user, $count new)"
+        Log-Ok "Symbols-Only Nerd Font installed ($scopeTag, $count new)"
     } catch { Log-Warn "Nerd Font fetch failed: $($_.Exception.Message)" }
     finally { if (Test-Path $nerdTmp) { Remove-Item $nerdTmp -Recurse -Force -ErrorAction SilentlyContinue } }
+
+    # System-scope installs need a GDI WM_FONTCHANGE broadcast so apps see
+    # the new fonts without logoff. Per-user installs are picked up
+    # automatically by the user's session.
+    if ($regKey -like 'HKLM:*') {
+        try {
+            Add-Type -Namespace MiosFontX -Name Native -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern int SendMessage(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, System.IntPtr lParam);' -ErrorAction SilentlyContinue
+            [void][MiosFontX.Native]::SendMessage([IntPtr]0xFFFF, 0x001D, [IntPtr]::Zero, [IntPtr]::Zero)
+        } catch {}
+    }
 
     # ── 2. oh-my-posh.exe (installed into $MiosBinDir) ───────────────
     # Single canonical install location: $MiosInstallDir\bin (= C:\MiOS\bin

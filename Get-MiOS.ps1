@@ -1288,6 +1288,60 @@ function Wait-MiOSWindowsTerminalReady {
     return $false
 }
 
+function Ensure-MiOSWinget {
+    # Bootstrap winget itself on a truly bare Windows host (Win 10 21H2,
+    # OOBE-fresh Win 11 N edition without Store, etc.) before any other
+    # Install-MiOS* function tries to use it. Operator-flagged 2026-05-12:
+    # "MiOS should automatically install EVERYTHING needed to install MiOS
+    # via irm|iex". Without this, every winget invocation on a bare host
+    # silently warns + skips, leaving the bootstrap half-installed.
+    #
+    # Resolution chain:
+    #   1. winget already on PATH -> done.
+    #   2. Microsoft.DesktopAppInstaller AppxPackage installed but PATH
+    #      stale -> refresh PATH, re-probe.
+    #   3. Download App Installer MSIXBUNDLE from mios.toml
+    #      [bootstrap.prereqs].appinstaller_url (default aka.ms/getwinget)
+    #      -> Add-AppxPackage.
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "  [+] winget already on PATH." -ForegroundColor DarkGray
+        return $true
+    }
+    try {
+        $appx = Get-AppxPackage -Name 'Microsoft.DesktopAppInstaller' -ErrorAction SilentlyContinue
+    } catch { $appx = $null }
+    if ($appx) {
+        $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
+        $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
+        $env:PATH = (@($_machPath, $_userPath) | Where-Object { $_ }) -join ';'
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Write-Host "  [+] winget surfaced after PATH refresh." -ForegroundColor Green
+            return $true
+        }
+    }
+    $_url = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'appinstaller_url' -Default 'https://aka.ms/getwinget')
+    Write-Host "  [*] winget missing -- downloading App Installer MSIXBUNDLE from $_url ..." -ForegroundColor Cyan
+    $tmp = Join-Path $env:TEMP "mios-winget-$([guid]::NewGuid().ToString('N').Substring(0,8)).msixbundle"
+    try {
+        Invoke-WebRequest -Uri $_url -OutFile $tmp -UseBasicParsing -ErrorAction Stop
+        Add-AppxPackage -Path $tmp -ErrorAction Stop
+        $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
+        $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
+        $env:PATH = (@($_machPath, $_userPath) | Where-Object { $_ }) -join ';'
+    } catch {
+        Write-Host "  [!] Ensure-MiOSWinget download/install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    } finally {
+        if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+    }
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "  [+] winget bootstrapped via App Installer MSIXBUNDLE." -ForegroundColor Green
+        return $true
+    }
+    Write-Host "  [!] winget still not on PATH after Add-AppxPackage." -ForegroundColor Yellow
+    return $false
+}
+
 function Install-MiOSWindowsTerminal {
     # Operator pivot: MiOS targets the BASE Windows Terminal install,
     # NOT Preview. We do NOT pollute the operator's globals or default
@@ -1307,9 +1361,13 @@ function Install-MiOSWindowsTerminal {
         Write-Host "      Install manually from the Microsoft Store." -ForegroundColor DarkGray
         return $false
     }
-    Write-Host "  [*] Installing Windows Terminal (base) via winget..." -ForegroundColor Cyan
+    # TOML-first per AGENTS.md §3 -- winget ID resolves from
+    # mios.toml [bootstrap.prereqs].terminal_pkg so operators can pin to
+    # WindowsTerminalPreview or a different distribution channel via mios.html.
+    $_wtPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'terminal_pkg' -Default 'Microsoft.WindowsTerminal')
+    Write-Host "  [*] Installing Windows Terminal ($_wtPkg) via winget..." -ForegroundColor Cyan
     try {
-        & winget install --id Microsoft.WindowsTerminal --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+        & winget install --id $_wtPkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
     } catch {
         Write-Host "  [!] winget install failed: $($_.Exception.Message)" -ForegroundColor Yellow
         return $false
@@ -1366,11 +1424,15 @@ function Install-MiOSPwsh7 {
         Write-Host "      WT MiOS profile will fall back to Windows PS 5.1 (broken oh-my-posh init likely)." -ForegroundColor DarkGray
         return $false
     }
-    Write-Host "  [*] Installing PowerShell 7 (Microsoft.PowerShell) via winget..." -ForegroundColor Cyan
+    # TOML-first per AGENTS.md §3 -- winget ID from mios.toml
+    # [bootstrap.prereqs].pwsh_pkg (operator can pin to PowerShell-Preview
+    # or an MSI variant via mios.html).
+    $_pwshPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'pwsh_pkg' -Default 'Microsoft.PowerShell')
+    Write-Host "  [*] Installing PowerShell 7 ($_pwshPkg) via winget..." -ForegroundColor Cyan
     try {
-        & winget install --id Microsoft.PowerShell --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+        & winget install --id $_pwshPkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
     } catch {
-        Write-Host "  [!] winget install Microsoft.PowerShell failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "  [!] winget install $_pwshPkg failed: $($_.Exception.Message)" -ForegroundColor Yellow
         return $false
     }
     if ($LASTEXITCODE -ne 0) {
@@ -2791,6 +2853,63 @@ namespace MiOS.NativeApp {
     Write-Host "  [+] MiOS installed as a native Windows app." -ForegroundColor Green
 }
 
+function Install-MiOSServiceShortcuts {
+    # Explicit Windows Start Menu shortcuts for MiOS web services. WSLg's
+    # auto-publish heuristic filters out the 10 mios-svc-*.desktop files
+    # MiOS ships in /usr/share/applications/ (Categories=System;Network;
+    # Settings; + Exec=xdg-open URL doesn't fit WSLg's app model).
+    # Operator-confirmed 2026-05-12: 0 of 10 mios-svc-* entries surfaced
+    # as Windows shortcuts despite clean Type=Application + NoDisplay=false.
+    #
+    # TOML-first per AGENTS.md §3 -- iterates mios.toml [desktop.start_menu]
+    # `publish` list and reads <key>_label, <key>_scheme, <key>_port_key
+    # for each entry. Resolves the port from [ports].<port_key>. Writes
+    # one .url Internet shortcut per entry into
+    #   %APPDATA%\Microsoft\Windows\Start Menu\Programs\podman-MiOS-DEV\
+    # so they land in the same Start Menu folder WSLg uses for the
+    # 2 apps it does auto-publish (gnome-software, winemine).
+    #
+    # Idempotent: rewrites the .url body each pass; safe to re-run.
+    # Operator removes by dropping a key from `publish` (existing .url
+    # persists until Pass-0 reap or manual delete).
+    $publishCSV = [string](Get-MiosTomlValue -Section 'desktop.start_menu' -Key 'publish' -Default 'forge,cockpit,code_server,hermes_workspace,searxng,hermes_dashboard,guacamole_web')
+    $publish = @($publishCSV -split '[,\s\[\]"'']+' | Where-Object { $_ })
+    if (-not $publish -or $publish.Count -eq 0) {
+        Write-Host "  [-] [desktop.start_menu].publish empty -- no service shortcuts created." -ForegroundColor DarkGray
+        return $false
+    }
+
+    $startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\podman-MiOS-DEV'
+    if (-not (Test-Path $startMenuDir)) { New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null }
+
+    $created = 0
+    foreach ($key in $publish) {
+        $portKey = [string](Get-MiosTomlValue -Section 'desktop.start_menu' -Key "${key}_port_key" -Default $key)
+        $port    = [int](Get-MiosTomlValue -Section 'ports' -Key $portKey -Default 0)
+        if ($port -lt 1) {
+            Write-Host "  [-] skip '$key' -- [ports].$portKey unresolved" -ForegroundColor DarkGray
+            continue
+        }
+        $label  = [string](Get-MiosTomlValue -Section 'desktop.start_menu' -Key "${key}_label"  -Default $key)
+        $scheme = [string](Get-MiosTomlValue -Section 'desktop.start_menu' -Key "${key}_scheme" -Default 'http')
+        $url    = "${scheme}://localhost:${port}/"
+
+        # .url Internet shortcut format: plain INI body, opens in default
+        # browser when launched from Start Menu. shell32.dll,14 is the
+        # generic globe icon Windows uses for unbranded web shortcuts.
+        $urlPath = Join-Path $startMenuDir "$label (MiOS-DEV).url"
+        $body = "[InternetShortcut]`r`nURL=$url`r`nIconFile=$env:SystemRoot\System32\shell32.dll`r`nIconIndex=14`r`n"
+        try {
+            Set-Content -Path $urlPath -Value $body -Encoding ASCII -Force
+            $created++
+        } catch {
+            Write-Host "  [!] $label : $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+    Write-Host "  [+] $created MiOS service shortcuts created in $startMenuDir" -ForegroundColor Green
+    return $true
+}
+
 # ========================================================================
 # Vendor content blobs (branding ASCII / fastfetch config / oh-my-posh
 # theme) USED to be embedded as heredocs in this script.  They drifted
@@ -3066,12 +3185,14 @@ function Update-MiOSOhMyPosh {
         Write-Host "  [!] winget not available; cannot install oh-my-posh." -ForegroundColor Yellow
         return $false
     }
-    Write-Host "  [*] Installing/upgrading oh-my-posh via winget..." -ForegroundColor Cyan
+    # TOML-first -- oh-my-posh winget ID from mios.toml [bootstrap.prereqs].ohmyposh_pkg
+    $_ompPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'ohmyposh_pkg' -Default 'JanDeDobbeleer.OhMyPosh')
+    Write-Host "  [*] Installing/upgrading oh-my-posh ($_ompPkg) via winget..." -ForegroundColor Cyan
     try {
         if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
-            & winget upgrade --id JanDeDobbeleer.OhMyPosh --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+            & winget upgrade --id $_ompPkg --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
         } else {
-            & winget install --id JanDeDobbeleer.OhMyPosh --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+            & winget install --id $_ompPkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
         }
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  [+] oh-my-posh installed/upgraded." -ForegroundColor Green
@@ -3137,9 +3258,11 @@ function Install-MiOSFastfetch {
             Write-Host "  [!] winget not available; cannot auto-install fastfetch." -ForegroundColor Yellow
             Write-Host "      Install manually: https://github.com/fastfetch-cli/fastfetch/releases" -ForegroundColor DarkGray
         } else {
-            Write-Host "  [*] Installing fastfetch via winget..." -ForegroundColor Cyan
+            # TOML-first -- fastfetch winget ID from mios.toml [bootstrap.prereqs].fastfetch_pkg
+            $_ffPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'fastfetch_pkg' -Default 'Fastfetch-cli.Fastfetch')
+            Write-Host "  [*] Installing fastfetch ($_ffPkg) via winget..." -ForegroundColor Cyan
             try {
-                & winget install --id Fastfetch-cli.Fastfetch --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
+                & winget install --id $_ffPkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 | Out-Null
                 if ($LASTEXITCODE -eq 0) {
                     Write-Host "  [+] fastfetch installed." -ForegroundColor Green
                 } else {
@@ -4175,7 +4298,25 @@ function mios-dev {
         Write-Host '  [!] wsl.exe not on PATH -- WSL2 may not be installed.' -ForegroundColor Yellow
         return
     }
-    & wsl.exe -d MiOS-DEV --cd / --user mios @Args
+    # Probe for the actual on-disk WSL distro name. With the default
+    # rename-skipped behavior (MIOS_RENAME_DISTRO unset), the distro is
+    # 'podman-MiOS-DEV' (preserved from podman machine init so Podman
+    # Desktop can see it). With opt-in rename, it's 'MiOS-DEV'. Either
+    # works -- we resolve at call time so the helper survives both modes.
+    `$_devDistro = `$null
+    try {
+        `$_wsl = (& wsl.exe -l -q 2>`$null) -split "`r?`n" |
+            ForEach-Object { (`$_ -replace [char]0,'').Trim() } |
+            Where-Object { `$_ }
+        foreach (`$_cand in @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')) {
+            if (`$_wsl -contains `$_cand) { `$_devDistro = `$_cand; break }
+        }
+    } catch {}
+    if (-not `$_devDistro) {
+        Write-Host '  [!] No MiOS-DEV / podman-MiOS-DEV WSL distro registered. Run irm|iex one-liner to provision.' -ForegroundColor Yellow
+        return
+    }
+    & wsl.exe -d `$_devDistro --cd / --user mios @Args
 }
 
 function mios-mini {
@@ -4695,11 +4836,15 @@ function Enable-MiOSWindowsFeatures {
         return $false
     }
 
-    $features = [ordered]@{
-        'Microsoft-Windows-Subsystem-Linux' = 'Windows Subsystem for Linux'
-        'VirtualMachinePlatform'            = 'Virtual Machine Platform (WSL2 + Hyper-V hypervisor)'
-        'Microsoft-Hyper-V'                 = 'Hyper-V (manager + VMs)'
-    }
+    # TOML-first per AGENTS.md §3 -- feature DISM names resolve from
+    # mios.toml [bootstrap.prereqs.features].* so operators can swap
+    # Hyper-V for Hyper-V-Core, add Containers/SMBDirect, etc., via
+    # mios.html. Order matters (WSL substrate before VMP before Hyper-V);
+    # use [ordered] to preserve the lookup-order from TOML.
+    $features = [ordered]@{}
+    $features[[string](Get-MiosTomlValue -Section 'bootstrap.prereqs.features' -Key 'wsl'    -Default 'Microsoft-Windows-Subsystem-Linux')] = 'Windows Subsystem for Linux'
+    $features[[string](Get-MiosTomlValue -Section 'bootstrap.prereqs.features' -Key 'vmp'    -Default 'VirtualMachinePlatform')]            = 'Virtual Machine Platform (WSL2 + Hyper-V hypervisor)'
+    $features[[string](Get-MiosTomlValue -Section 'bootstrap.prereqs.features' -Key 'hyperv' -Default 'Microsoft-Hyper-V')]                 = 'Hyper-V (manager + VMs)'
 
     $rebootPending = $false
     foreach ($name in $features.Keys) {
@@ -4738,15 +4883,18 @@ function Enable-MiOSWindowsFeatures {
     # of WSL. Make sure the irm|iex installer can STILL install on a fresh
     # Windows System with NOTHING installed".
     if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
-        Write-Host "  [*] wsl.exe not on PATH -- installing WSL (Microsoft Store MSIX)..." -ForegroundColor Cyan
-        # Path A: winget install Microsoft.WSL  (preferred on Win11; pulls
-        # the Store version + dependencies)
+        # TOML-first -- WSL Store MSIX winget ID from mios.toml
+        # [bootstrap.prereqs].wsl_pkg (operator can pin to Microsoft.WSL
+        # preview channel via mios.html).
+        $_wslPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'wsl_pkg' -Default 'Microsoft.WSL')
+        Write-Host "  [*] wsl.exe not on PATH -- installing WSL ($_wslPkg via Microsoft Store MSIX)..." -ForegroundColor Cyan
+        # Path A: winget install (preferred on Win11; pulls the Store version + dependencies)
         if (Get-Command winget -ErrorAction SilentlyContinue) {
             try {
-                & winget install --id Microsoft.WSL --silent --accept-source-agreements --accept-package-agreements 2>&1 |
+                & winget install --id $_wslPkg --silent --accept-source-agreements --accept-package-agreements 2>&1 |
                     ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
             } catch {
-                Write-Host "  [!] winget install Microsoft.WSL: $($_.Exception.Message)" -ForegroundColor Yellow
+                Write-Host "  [!] winget install $_wslPkg : $($_.Exception.Message)" -ForegroundColor Yellow
             }
         }
         # Path B: fallback to `wsl --install --no-distribution` (works on
@@ -4798,12 +4946,31 @@ function Enable-MiOSWindowsFeatures {
     }
 
     if ($rebootPending) {
+        # TOML-first -- mios.toml [bootstrap.prereqs.features].require_reboot_to_continue
+        # decides whether Pass-2 halts here (so downstream WSL-dependent
+        # steps don't cascade-fail) or surfaces a warning and continues.
+        # Operator default: halt (true), since on a truly fresh Windows
+        # the dev VM, podman machine init, and OCI build all REQUIRE the
+        # reboot; trying to run them just produces noise + half-broken
+        # state. Operator opts to "continue anyway and watch what
+        # survives" by setting it to false in mios.html.
+        $_haltOnReboot = ([string](Get-MiosTomlValue -Section 'bootstrap.prereqs.features' -Key 'require_reboot_to_continue' -Default 'true')) -ieq 'true'
         Write-Host ''
         Write-Host '  +==============================================================+' -ForegroundColor Yellow
         Write-Host '  | REBOOT PENDING -- Windows features enabled this session need |' -ForegroundColor Yellow
-        Write-Host '  | a reboot to take full effect. The dev VM may fail to start   |' -ForegroundColor Yellow
-        Write-Host '  | until you reboot. Bootstrap continues with what is usable.   |' -ForegroundColor Yellow
+        Write-Host '  | a reboot to take full effect. WSL2, the dev VM, podman       |' -ForegroundColor Yellow
+        Write-Host '  | machine init, and the OCI build will fail until you reboot.  |' -ForegroundColor Yellow
         Write-Host '  +==============================================================+' -ForegroundColor Yellow
+        if ($_haltOnReboot) {
+            Write-Host ''
+            Write-Host '  REBOOT NOW, then re-run the irm|iex one-liner. Pass-0 reaps' -ForegroundColor Cyan
+            Write-Host '  prior state automatically; the next run starts clean and'  -ForegroundColor Cyan
+            Write-Host '  proceeds straight through.' -ForegroundColor Cyan
+            Write-Host ''
+            return 'reboot-required'   # caller checks this string and halts Pass-2
+        }
+        Write-Host '  [bootstrap.prereqs.features].require_reboot_to_continue=false ' -ForegroundColor DarkGray
+        Write-Host '  -- continuing despite reboot-pending; expect cascade failures.' -ForegroundColor DarkGray
         Write-Host ''
     }
     return $true
@@ -4822,13 +4989,15 @@ function Ensure-PodmanDesktop {
     }
     # Install Podman Desktop (the GUI). It bundles podman.exe inside its
     # resources tree -- but does NOT put it on PATH by default.
-    Write-Info "Installing Podman Desktop via winget (RedHat.Podman-Desktop) ..."
-    & winget install --exact --id RedHat.Podman-Desktop `
+    # TOML-first -- Podman Desktop winget ID from mios.toml [bootstrap.prereqs].podman_pkg
+    $_podmanPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_pkg' -Default 'RedHat.Podman-Desktop')
+    Write-Info "Installing Podman Desktop via winget ($_podmanPkg) ..."
+    & winget install --exact --id $_podmanPkg `
         --silent --accept-source-agreements --accept-package-agreements `
         --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     if ($LASTEXITCODE -ne 0) {
         Write-Info "Retrying winget install at user scope ..."
-        & winget install --exact --id RedHat.Podman-Desktop `
+        & winget install --exact --id $_podmanPkg `
             --silent --accept-source-agreements --accept-package-agreements 2>&1 |
             ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     }
@@ -4837,13 +5006,15 @@ function Ensure-PodmanDesktop {
     # bundles the CLI internally but doesn't expose it on PATH; the
     # standalone CLI package does. Idempotent: winget no-ops if already
     # present.
-    Write-Info "Installing Podman CLI via winget (RedHat.Podman) ..."
-    & winget install --exact --id RedHat.Podman `
+    # TOML-first -- Podman CLI MSI ID from mios.toml [bootstrap.prereqs].podman_cli_pkg
+    $_podmanCliPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_cli_pkg' -Default 'RedHat.Podman')
+    Write-Info "Installing Podman CLI via winget ($_podmanCliPkg) ..."
+    & winget install --exact --id $_podmanCliPkg `
         --silent --accept-source-agreements --accept-package-agreements `
         --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     if ($LASTEXITCODE -ne 0) {
         Write-Info "Retrying CLI winget install at user scope ..."
-        & winget install --exact --id RedHat.Podman `
+        & winget install --exact --id $_podmanCliPkg `
             --silent --accept-source-agreements --accept-package-agreements 2>&1 |
             ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     }
@@ -5595,30 +5766,53 @@ try { Add-MiosDefenderExclusions } catch { Write-Host "  [!] Defender exclusion 
 # build-mios.ps1 Phase 3 still writes .wslconfig before podman-machine
 # init (belt-and-suspenders); this earlier write is what makes that
 # work even after the reap's wsl.exe calls.
+# Pre-Phase-0 .wslconfig writer -- TOML-first per AGENTS.md §3 / mios.toml
+# is THE singular SSOT for every operator-visible value. Resolve from the
+# layered overlay (~/.config > /etc > /usr/share); falls back to the
+# safe default (NAT + localhostForwarding) on a fresh host where mios.toml
+# isn't deployed yet. Mirrored mode opt-in: edit [wsl2].networking_mode
+# in mios.html, save, re-run irm|iex (read the [wsl2] comment block in
+# the vendor mios.toml for the prerequisites).
+$_netMode  = [string](Get-MiosTomlValue -Section 'wsl2' -Key 'networking_mode'      -Default 'NAT')
+$_lhfwd    = [string](Get-MiosTomlValue -Section 'wsl2' -Key 'localhost_forwarding' -Default 'true')
+$_fwall    = [string](Get-MiosTomlValue -Section 'wsl2' -Key 'firewall'             -Default 'false')
+$_gui      = [string](Get-MiosTomlValue -Section 'wsl2' -Key 'gui_applications'     -Default 'true')
+$_isMirror = ($_netMode -ieq 'mirrored')
+
 $_wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
 $_wslCfgRaw = if (Test-Path $_wslCfg) { Get-Content $_wslCfg -Raw } else { "" }
-if ($_wslCfgRaw -notmatch 'networkingMode\s*=\s*NAT' -or $_wslCfgRaw -notmatch 'localhostForwarding\s*=\s*true') {
-    $_baseline = @"
+
+# Build the section body from TOML-resolved values.
+$_keyLines = New-Object System.Collections.Generic.List[string]
+$_keyLines.Add("networkingMode=$_netMode")
+if ($_isMirror) {
+    if ($_fwall -ieq 'true') { $_keyLines.Add('firewall=true') }
+} else {
+    if ($_lhfwd -ieq 'true') { $_keyLines.Add('localhostForwarding=true') }
+}
+if ($_gui -ieq 'true') { $_keyLines.Add('guiApplications=true') }
+
+# Detect divergence: any required key missing or value mismatched.
+$_needWrite = $false
+foreach ($_kv in $_keyLines) {
+    $_pat = '^' + [regex]::Escape($_kv) + '\s*$'
+    if ($_wslCfgRaw -notmatch $_pat) { $_needWrite = $true; break }
+}
+if ($_needWrite) {
+    if ($_wslCfgRaw -notmatch "\[wsl2\]") {
+        $_baseline = @"
 
 [wsl2]
-# MiOS pre-Phase-0 minimum -- ensures the utility VM boots with NAT
-# networking + localhostForwarding so dev VM container ports reach
-# Windows' localhost reliably. (Mirrored mode is MS-labelled beta and
-# silently breaks loopback forwarding on Windows build 28020 Canary
-# -- operator-confirmed 2026-05-11.) Phase 4 of build-mios.ps1
-# overlays RAM/CPU/swap/dnsTunneling/autoProxy from host hardware.
-networkingMode=NAT
-localhostForwarding=true
-guiApplications=true
+# MiOS pre-Phase-0 minimum, generated from mios.toml [wsl2].* by
+# Get-MiOS.ps1 on every irm|iex. Edit values in mios.html, not here --
+# this block is regenerated.
+$($_keyLines -join "`r`n")
 "@
-    if ($_wslCfgRaw -notmatch "\[wsl2\]") {
         Add-Content -Path $_wslCfg -Value $_baseline
     } else {
-        # [wsl2] section exists but missing one or both required keys --
-        # build-mios.ps1's Set-MiosWslConfig handles the full merge.
-        # Here we just inject the two networking keys via a quick patch.
-        # Strip mirrored-mode keys (networkingMode=mirrored, firewall=)
-        # as we go, so prior installs that wrote those get cleaned up.
+        # [wsl2] section exists -- replace its keys with the TOML-resolved
+        # set. Strip ALL legacy networking keys (networkingMode,
+        # localhostForwarding, firewall) so a prior mode doesn't survive.
         $_lines = Get-Content $_wslCfg
         $_in    = $false
         $_out   = [System.Collections.Generic.List[string]]::new()
@@ -5626,19 +5820,15 @@ guiApplications=true
         foreach ($_l in $_lines) {
             if ($_l -match '^\[wsl2\]') {
                 $_in = $true; $_out.Add($_l)
-                if (-not $_added) {
-                    if ($_wslCfgRaw -notmatch 'networkingMode\s*=\s*NAT')        { $_out.Add('networkingMode=NAT') }
-                    if ($_wslCfgRaw -notmatch 'localhostForwarding\s*=\s*true')  { $_out.Add('localhostForwarding=true') }
-                    $_added = $true
-                }
+                if (-not $_added) { foreach ($_kv in $_keyLines) { $_out.Add($_kv) }; $_added = $true }
                 continue
             } elseif ($_l -match '^\[') { $_in = $false }
-            if ($_in -and $_l -match '^(networkingMode|localhostForwarding|firewall)\s*=') { continue }
+            if ($_in -and $_l -match '^(networkingMode|localhostForwarding|firewall|guiApplications)\s*=') { continue }
             $_out.Add($_l)
         }
         Set-Content -Path $_wslCfg -Value $_out -Encoding UTF8
     }
-    Write-Host "  [+] .wslconfig: NAT + localhostForwarding ensured (pre-Phase-0)" -ForegroundColor Green
+    Write-Host "  [+] .wslconfig: $_netMode mode written from mios.toml [wsl2].* (pre-Phase-0)" -ForegroundColor Green
     & wsl.exe --shutdown 2>$null | Out-Null
 }
 
@@ -5744,7 +5934,18 @@ try {
 $_msgStep06 = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_0_6_features' -Default '[*] Step 0.6: Enabling Windows features (WSL + VirtualMachinePlatform + Hyper-V)...'
 Write-Host ''
 Write-Host "  $_msgStep06" -ForegroundColor Cyan
-try { Enable-MiOSWindowsFeatures | Out-Null } catch { Write-Host "  [!] Enable-MiOSWindowsFeatures failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+try { Ensure-MiOSWinget | Out-Null } catch { Write-Host "  [!] Ensure-MiOSWinget failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+try {
+    $_featResult = Enable-MiOSWindowsFeatures
+    if ($_featResult -eq 'reboot-required') {
+        # Halt Pass-2 cleanly so downstream WSL/podman/build steps don't
+        # cascade-fail. Operator-friendly exit per mios.toml
+        # [bootstrap.prereqs.features].require_reboot_to_continue=true.
+        Write-Host '  [*] Halting Pass-2 to await reboot (TOML-driven). Re-run the' -ForegroundColor Cyan
+        Write-Host '      irm|iex one-liner after reboot to resume from clean state.' -ForegroundColor Cyan
+        exit 0
+    }
+} catch { Write-Host "  [!] Enable-MiOSWindowsFeatures failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 
 if ($true) {
     $isAdmin = $_isAdmin
@@ -6285,6 +6486,13 @@ if ($_bootstrapExit -eq 0) {
     Write-Host "  $_msgFinalStep" -ForegroundColor Cyan
     try { Install-MiOSNativeApp | Out-Null } catch {
         Write-Host "  [!] Install-MiOSNativeApp failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    # MiOS service URLs as Windows Start Menu shortcuts (Cockpit, Code,
+    # Workspace, Search, Forge, Dashboard, Guacamole). Drives the
+    # mios.toml [desktop.start_menu] catalog -- WSLg's auto-publish
+    # filter ignores xdg-open URL handlers, so we publish explicitly.
+    try { Install-MiOSServiceShortcuts | Out-Null } catch {
+        Write-Host "  [!] Install-MiOSServiceShortcuts failed: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
