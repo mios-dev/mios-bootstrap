@@ -5943,6 +5943,33 @@ $_msgStep06 = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_0_6_feature
 Write-Host ''
 Write-Host "  $_msgStep06" -ForegroundColor Cyan
 try { Ensure-MiOSWinget | Out-Null } catch { Write-Host "  [!] Ensure-MiOSWinget failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+
+# Hyper-V Firewall must allow inbound to the WSL VM. By default the WSL
+# VM Creator GUID {40E0AC32-46A5-438A-A0B2-2B479E8F2E90} is
+# NotConfigured, which inherits a deny-all-inbound policy and silently
+# drops every Windows-host -> WSL service request -- even when WSL2
+# native localhostForwarding, the in-distro firewalld, AND the netsh
+# portproxy are all open. Operator-confirmed 2026-05-13: with this
+# setting NotConfigured, every browser hit on http://localhost:PORT/
+# returned 000 across the entire MiOS stack. Setting it to Allow +
+# Enabled is what unblocks the inbound path.
+try {
+    $_hvWslGuid = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
+    if (Get-Command Set-NetFirewallHyperVVMSetting -ErrorAction SilentlyContinue) {
+        Set-NetFirewallHyperVVMSetting -Name $_hvWslGuid `
+            -Enabled True `
+            -DefaultInboundAction Allow `
+            -DefaultOutboundAction Allow `
+            -LoopbackEnabled True `
+            -AllowHostPolicyMerge True `
+            -ErrorAction Stop
+        Write-Host '  [+] Hyper-V Firewall: WSL VM creator set to Allow + LoopbackEnabled.' -ForegroundColor Green
+    } else {
+        Write-Host '  [!] Set-NetFirewallHyperVVMSetting cmdlet missing -- Windows < 11 22H2? Hyper-V firewall step skipped.' -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "  [!] Hyper-V Firewall config failed: $($_.Exception.Message)" -ForegroundColor Yellow
+}
 try {
     # Capture into [pscustomobject] -- if the function leaks ANY pipeline
     # output (shouldn't, post-2026-05-13 .Add() refactor), grab the LAST
