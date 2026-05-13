@@ -4840,11 +4840,18 @@ function Enable-MiOSWindowsFeatures {
     # mios.toml [bootstrap.prereqs.features].* so operators can swap
     # Hyper-V for Hyper-V-Core, add Containers/SMBDirect, etc., via
     # mios.html. Order matters (WSL substrate before VMP before Hyper-V);
-    # use [ordered] to preserve the lookup-order from TOML.
+    # use [ordered] to preserve insertion order. Build via .Add() (void
+    # return) instead of $features[k]=v to avoid any indexer-emit leak
+    # into the function's pipeline output (operator-confirmed 2026-05-13:
+    # the indexer-assignment form leaked the assigned value into the
+    # function's return stream, making `$_featResult -eq 'reboot-required'`
+    # filter-match a multi-element array even when rebootPending stayed
+    # $false -- spurious Pass-2 halt despite all 3 features already
+    # Enabled).
     $features = [ordered]@{}
-    $features[[string](Get-MiosTomlValue -Section 'bootstrap.prereqs.features' -Key 'wsl'    -Default 'Microsoft-Windows-Subsystem-Linux')] = 'Windows Subsystem for Linux'
-    $features[[string](Get-MiosTomlValue -Section 'bootstrap.prereqs.features' -Key 'vmp'    -Default 'VirtualMachinePlatform')]            = 'Virtual Machine Platform (WSL2 + Hyper-V hypervisor)'
-    $features[[string](Get-MiosTomlValue -Section 'bootstrap.prereqs.features' -Key 'hyperv' -Default 'Microsoft-Hyper-V')]                 = 'Hyper-V (manager + VMs)'
+    $features.Add([string](Get-MiosTomlValue -Section 'bootstrap.prereqs.features' -Key 'wsl'    -Default 'Microsoft-Windows-Subsystem-Linux'), 'Windows Subsystem for Linux')
+    $features.Add([string](Get-MiosTomlValue -Section 'bootstrap.prereqs.features' -Key 'vmp'    -Default 'VirtualMachinePlatform'),            'Virtual Machine Platform (WSL2 + Hyper-V hypervisor)')
+    $features.Add([string](Get-MiosTomlValue -Section 'bootstrap.prereqs.features' -Key 'hyperv' -Default 'Microsoft-Hyper-V'),                 'Hyper-V (manager + VMs)')
 
     $rebootPending = $false
     foreach ($name in $features.Keys) {
@@ -4967,13 +4974,14 @@ function Enable-MiOSWindowsFeatures {
             Write-Host '  prior state automatically; the next run starts clean and'  -ForegroundColor Cyan
             Write-Host '  proceeds straight through.' -ForegroundColor Cyan
             Write-Host ''
-            return 'reboot-required'   # caller checks this string and halts Pass-2
+            return [pscustomobject]@{ Status = 'ok';  RebootRequired = $true; HaltRequested = $true }
         }
         Write-Host '  [bootstrap.prereqs.features].require_reboot_to_continue=false ' -ForegroundColor DarkGray
         Write-Host '  -- continuing despite reboot-pending; expect cascade failures.' -ForegroundColor DarkGray
         Write-Host ''
+        return [pscustomobject]@{ Status = 'ok'; RebootRequired = $true; HaltRequested = $false }
     }
-    return $true
+    return [pscustomobject]@{ Status = 'ok'; RebootRequired = $false; HaltRequested = $false }
 }
 
 function Ensure-PodmanDesktop {
@@ -5936,8 +5944,13 @@ Write-Host ''
 Write-Host "  $_msgStep06" -ForegroundColor Cyan
 try { Ensure-MiOSWinget | Out-Null } catch { Write-Host "  [!] Ensure-MiOSWinget failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 try {
-    $_featResult = Enable-MiOSWindowsFeatures
-    if ($_featResult -eq 'reboot-required') {
+    # Capture into [pscustomobject] -- if the function leaks ANY pipeline
+    # output (shouldn't, post-2026-05-13 .Add() refactor), grab the LAST
+    # value (the explicit return) so the structured-result check can't be
+    # confused by stray strings/objects upstream of the return statement.
+    $_featOut = @(Enable-MiOSWindowsFeatures)
+    $_featResult = $_featOut | Where-Object { $_ -is [pscustomobject] -and $_.PSObject.Properties['HaltRequested'] } | Select-Object -Last 1
+    if ($_featResult -and $_featResult.HaltRequested) {
         # Halt Pass-2 cleanly so downstream WSL/podman/build steps don't
         # cascade-fail. Operator-friendly exit per mios.toml
         # [bootstrap.prereqs.features].require_reboot_to_continue=true.
