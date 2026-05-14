@@ -9777,7 +9777,33 @@ exit 0
     $defaultModel = if ($aiDefaults.Model) { $aiDefaults.Model } else { $HW.AiModel }
     $MiosAiModel       = Read-Model -Default $defaultModel
     $MiosAiEmbedModel  = Read-Line "AI embedding model" $aiDefaults.EmbedModel
-    $MiosOllamaBakeModels = "$MiosAiModel,$MiosAiEmbedModel"
+    # Bake-set policy: the MINIMAL set from mios.toml [ai].bake_models
+    # (small Granite + the embedding model) is ALWAYS baked into the OCI
+    # image so a fresh install is usable fully offline without bloating
+    # the image layer. Larger models stay SELECTABLE -- offered here as
+    # an opt-in. This prompt only runs in the interactive local-build
+    # path (build-mios.ps1); the Forgejo CI build sources
+    # MIOS_OLLAMA_BAKE_MODELS straight from install.env, so cloud/CI
+    # builds always get just the minimal set. If the operator's chosen
+    # default model isn't already in the minimal set, offer to bake it
+    # too; declining means it first-boot-pulls instead of bloating the
+    # image.
+    $MiosOllamaBakeModels = if ($aiDefaults.BakeModels) { $aiDefaults.BakeModels } else { "granite4.1:3b,nomic-embed-text" }
+    $_bakeList = @($MiosOllamaBakeModels -split ',' | ForEach-Object { $_.Trim() })
+    # Make sure the embedding model the operator chose is in the set.
+    if ($MiosAiEmbedModel -and ($_bakeList -notcontains $MiosAiEmbedModel)) {
+        $MiosOllamaBakeModels = "$MiosOllamaBakeModels,$MiosAiEmbedModel"
+        $_bakeList += $MiosAiEmbedModel
+    }
+    if ($MiosAiModel -and ($_bakeList -notcontains $MiosAiModel)) {
+        $_ans = Read-Line "Also bake '$MiosAiModel' into the image? (larger image, fully offline) [y/N]" "N"
+        if ($_ans -match '^[Yy]') {
+            $MiosOllamaBakeModels = "$MiosOllamaBakeModels,$MiosAiModel"
+            Write-Host "  bake set: $MiosOllamaBakeModels" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  bake set: $MiosOllamaBakeModels (minimal); '$MiosAiModel' first-boot-pulls" -ForegroundColor DarkGray
+        }
+    }
 
     Log-Ok "Identity: user=$MiosUser  host=$MiosHostname  password=(hashed)  ghcr=$tokStatus  ai=$MiosAiModel"
     $script:IdentInfo = "User:$MiosUser  Host:$MiosHostname  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')  Model:$MiosAiModel"
