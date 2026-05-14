@@ -4440,19 +4440,34 @@ tools:
 CFGLOCAL
 
 echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward workaround)"
-# mios-webui dropped 2026-05-11 (operator: hermes-workspace is the default
-# chat UI). mios-hermes-workspace added on the same port (3030). Forge
-# HTTP_ADDR=127.0.0.1 + ollama OLLAMA_HOST=127.0.0.1:11434 force AF_INET
-# binds so WSL2 NAT localhostForwarding catches them (gitea + ollama
-# upgrade 0.0.0.0 to AF_INET6 dual-stack otherwise; Windows times out).
+# MiOS-DEV is a WSL2 podman machine -- bridge networking + PublishPort
+# on this substrate binds container-loopback (127.0.0.1) on the WSL VM
+# side, which the Windows-side netsh portproxy (0.0.0.0 -> WSL-VM-eth0-IP)
+# can't reach. Network=host makes each container bind the WSL VM's real
+# eth0 + loopback directly, so wslrelay relays loopback->Windows-host
+# localhost AND the portproxy relays eth0->LAN.
+#
+# Architecture 2026-05-13/14 (operator-directed):
+#   * hermes-agent: DIRECT host install (automation/38 + hermes-agent.
+#     service) -- NOT a container, so it gets NO dropin here.
+#   * mios-hermes + mios-hermes-dashboard: container Quadlets SHELVED
+#     ([quadlets.enable]=false) -- dropped from this list.
+#   * mios-hermes-workspace: REMOVED entirely -- dropped.
+#   * mios-open-webui: the chat UI. Its container listens on 8080
+#     internally (parent Quadlet remapped host:3030->container:8080 via
+#     PublishPort). Under host-net PublishPort is a no-op, so it MUST
+#     get PORT=3030 or it binds 8080 and collides with mios-code-server
+#     ("[Errno 98] address already in use" -- operator-confirmed 2026-05-14).
+#   * Bind addresses: 0.0.0.0 everywhere (NOT 127.0.0.1). The old
+#     "127.0.0.1 forces AF_INET for localhostForwarding" theory is
+#     superseded -- the portproxy->WSL-VM-IP path needs eth0 binds.
 for svc_pair in \
-    "mios-forge:Environment=FORGEJO__server__HTTP_ADDR=127.0.0.1|Environment=GITEA__server__HTTP_ADDR=127.0.0.1" \
+    "mios-forge:Environment=FORGEJO__server__HTTP_ADDR=0.0.0.0|Environment=GITEA__server__HTTP_ADDR=0.0.0.0" \
     "mios-searxng:Environment=GRANIAN_HOST=0.0.0.0|Environment=GRANIAN_PORT=8888|Environment=SEARXNG_BIND_ADDRESS=0.0.0.0:8888|Environment=BIND_ADDRESS=0.0.0.0:8888" \
-    "mios-hermes:Environment=PORT=8642|Environment=HERMES_BACKEND_BASE_URL=http://localhost:11434|Environment=HOME=/opt/data|Environment=UV_CACHE_DIR=/opt/data/.cache/uv|Environment=XDG_CACHE_HOME=/opt/data/.cache|WorkingDir=/opt/data|User=0|Group=0" \
-    "mios-hermes-dashboard:Environment=HOME=/opt/data|Environment=UV_CACHE_DIR=/opt/data/.cache/uv|Environment=XDG_CACHE_HOME=/opt/data/.cache|WorkingDir=/opt/data|User=0|Group=0" \
-    "mios-hermes-workspace:Environment=PORT=3030|Environment=COOKIE_SECURE=0|Environment=HERMES_API_URL=http://localhost:8642" \
+    "mios-open-webui:Environment=PORT=3030" \
+    "mios-code-server:" \
     "mios-cockpit-link:" \
-    "ollama:Environment=HOME=/var/lib/ollama|Environment=OLLAMA_HOST=127.0.0.1:11434" \
+    "ollama:Environment=HOME=/var/lib/ollama|Environment=OLLAMA_HOST=0.0.0.0:11434" \
     "mios-forgejo-runner:" \
 ; do
     svc="${svc_pair%%:*}"
@@ -4471,6 +4486,29 @@ for svc_pair in \
         done
     } | sudo tee "/etc/containers/systemd/${svc}.container.d/10-mios-dev-host-network.conf" >/dev/null
 done
+
+# Open the MiOS service ports in the dev VM's firewalld. The deployed
+# bootc image runs automation/25-firewall-ports.sh at OCI build time
+# (firewall-offline-cmd), but the MiOS-DEV overlay path does NOT go
+# through an image build -- it's provisioned from podman-machine-os
+# (firewalld active, public zone: only ssh/mdns/dhcpv6) and overlaid.
+# Without this, every MiOS port is dropped on eth0 -- services bind but
+# are unreachable from the WSL-VM-IP, so the Windows-side portproxy
+# (0.0.0.0 -> WSL-VM-IP) hits a closed door (operator-confirmed
+# 2026-05-14: LAN access dead until firewalld was opened by hand).
+# firewall-cmd (online) here mirrors what 25-firewall-ports.sh bakes
+# offline. Tolerant: no-op if firewalld isn't running.
+if systemctl is-active --quiet firewalld 2>/dev/null; then
+    echo "[quadlet-overlay] opening MiOS service ports in dev VM firewalld"
+    for _p in 22 2222 3000 3030 6333 6334 8080 8642 8888 9090 9119 11434 19090; do
+        sudo firewall-cmd --permanent --add-port="${_p}/tcp" >/dev/null 2>&1
+    done
+    sudo firewall-cmd --reload >/dev/null 2>&1
+    echo "[quadlet-overlay]   firewalld ports: $(sudo firewall-cmd --list-ports 2>/dev/null)"
+else
+    echo "[quadlet-overlay] firewalld inactive in dev VM -- no ports to open"
+fi
+
 # Use $NS (nsenter into systemd's namespace) instead of bare `sudo` so
 # the reload reaches the running PID 1's bus. Bare `sudo systemctl
 # daemon-reload` runs in the OUTER WSL ns and gets "Transport endpoint
@@ -5502,13 +5540,26 @@ function Set-MiosLanPortProxy {
     #     hit the portproxy and forward into the WSL VM. Operator-
     #     confirmed 2026-05-13: 8/8 MiOS services reachable from
     #     Windows browser via this rule shape.
+    # WSL VM eth0 IP resolution. wsl.exe emits UTF-16LE by default --
+    # capturing that in PowerShell mangles it (operator-confirmed
+    # 2026-05-14: produced "20172.21.194.158", a garbage-prefixed IP, in
+    # the live netsh portproxy table -> every LAN connect failed).
+    # Two-part fix:
+    #   1. $env:WSL_UTF8=1 makes wsl.exe emit clean UTF-8.
+    #   2. [regex] extracts ONLY a valid dotted-quad from the output --
+    #      belt-and-suspenders against any stray byte that still slips
+    #      through, so connectaddress is ALWAYS a clean N.N.N.N or empty.
     $_wslIp = $null
     try {
-        $_wslIp = (& wsl.exe -d $DevDistro --user root -- bash -lc "ip -4 -o addr show eth0 | awk '{print `$4}' | cut -d/ -f1" 2>$null) -replace "`r`n",'' -replace "`n",''
-        $_wslIp = $_wslIp.Trim()
+        $_prevWslUtf8 = $env:WSL_UTF8
+        $env:WSL_UTF8 = '1'
+        $_raw = (& wsl.exe -d $DevDistro --user root -- sh -c "ip -4 -o addr show eth0" 2>$null) -join "`n"
+        $env:WSL_UTF8 = $_prevWslUtf8
+        $_m = [regex]::Match($_raw, '\binet\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b')
+        if ($_m.Success) { $_wslIp = $_m.Groups[1].Value }
     } catch {}
-    if (-not $_wslIp) {
-        Log-Warn "portproxy: could not resolve WSL VM IP -- skipping forwarding"
+    if (-not $_wslIp -or $_wslIp -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+        Log-Warn "portproxy: could not resolve a clean WSL VM IP (got: '$_wslIp') -- skipping forwarding"
         return
     }
     Write-Log "portproxy: WSL VM ip = $_wslIp"
