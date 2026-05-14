@@ -7024,6 +7024,51 @@ Start-Process $url | Out-Null
 '@
     Set-Content -Path $codePath -Value $codeScript -Encoding UTF8
 
+    # mios-ai.ps1 -- `mios ai` verb. Opens Open WebUI in the
+    # operator's default browser.
+    $aiPath = Join-Path $MiosBinDir 'mios-ai.ps1'
+    $aiScript = @'
+# <MiOSRoot>\bin\mios-ai.ps1 -- the `mios ai` verb.
+# Opens Open WebUI (rich LLM interface) in the default browser.
+# Resolves the URL via mios.toml [ports].open_webui (default 3030).
+param([Parameter(ValueFromRemainingArguments)] $Args)
+$ErrorActionPreference = 'SilentlyContinue'
+$port = 3030
+foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+    if (Test-Path -LiteralPath $_t) {
+        try {
+            $_txt = [IO.File]::ReadAllText($_t, (New-Object System.Text.UTF8Encoding($false)))
+            $_m = [regex]::Match($_txt, '(?ms)^\[ports\].*?^\s*open_webui\s*=\s*(\d+)')
+            if ($_m.Success) { $port = [int]$_m.Groups[1].Value; break }
+        } catch {}
+    }
+}
+$url = "http://localhost:$port/"
+Write-Host "  Opening $url" -ForegroundColor DarkGray
+Start-Process $url | Out-Null
+'@
+    Set-Content -Path $aiPath -Value $aiScript -Encoding UTF8
+
+    # System verbs -- forward to the dev VM via wsl.exe.
+    $systemVerbs = @('xbox','virt','vfio','tune','summary','profile','assess','iommu','theme','user')
+    foreach ($v in $systemVerbs) {
+        $vPath = Join-Path $MiosBinDir "mios-$v.ps1"
+        $vScript = @"
+# <MiOSRoot>\bin\mios-$v.ps1 -- the `mios $v` verb.
+# Forwards the command to the MiOS-DEV WSL distro.
+param([Parameter(ValueFromRemainingArguments)] `$Args)
+`$_distro = 'podman-MiOS-DEV'
+try {
+    `$_wsl = (& wsl.exe -l -q 2>`$null) -split "``r?`n" | ForEach-Object { (`$_ -replace [char]0,'').Trim() } | Where-Object { `$_ }
+    foreach (`$_cand in @('podman-MiOS-DEV','MiOS-DEV')) {
+        if (`$_wsl -contains `$_cand) { `$_distro = `$_cand; break }
+    }
+} catch {}
+& wsl.exe -d `$_distro --user mios -- mios $v @Args
+"@
+        Set-Content -Path $vPath -Value $vScript -Encoding UTF8
+    }
+
     # mios-ask.ps1 -- free-form Hermes-Agent chat from the Windows
     # PowerShell terminal. Invoked by the `mios` dispatcher whenever
     # the first arg isn't a known verb. POSTs to MIOS_AI_ENDPOINT

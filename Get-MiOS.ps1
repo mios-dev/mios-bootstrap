@@ -4416,9 +4416,12 @@ function mios-help {
     Write-Host '  mios update   re-run Get-MiOS.ps1 (refresh terminal install)' -ForegroundColor White
     Write-Host '  mios pull     git fetch + hard reset M:\ to origin/main' -ForegroundColor White
     Write-Host '  mios config   open the HTML configurator (mios.toml editor)' -ForegroundColor White
+    Write-Host '  mios ai       open Open WebUI (rich LLM interface) in your browser' -ForegroundColor White
     Write-Host '  mios dev      wsl into the MiOS-DEV distro (root /, user mios)' -ForegroundColor White
-    Write-Host '  mios mini     compact 80x20 framed banner + fastfetch (auto on shell spawn)' -ForegroundColor White
     Write-Host '  mios dash     FULL dashboard: ASCII banner + services + extended sys specs' -ForegroundColor White
+    Write-Host '  mios xbox     Xbox VM Secure Boot / XML repair' -ForegroundColor White
+    Write-Host '  mios virt     apply optimized VM config + CPU pinning' -ForegroundColor White
+    Write-Host '  mios vfio     configure GPU/USB passthrough (Isolation)' -ForegroundColor White
     Write-Host '  mios help     this list' -ForegroundColor White
     Write-Host ''
 }
@@ -4431,7 +4434,7 @@ function mios-help {
 # Anything that isn't a known verb is routed to Hermes-Agent at
 # MIOS_AI_ENDPOINT as a chat completion, so `mios how do I bootc switch`
 # works from any PowerShell terminal without a separate `ask` verb.
-`$Script:MiosKnownVerbs = @('build','update','pull','config','dev','dash','mini','help','code')
+`$Script:MiosKnownVerbs = @('build','update','pull','config','ai','dev','dash','mini','help','code','xbox','virt','vfio','tune','summary','profile','assess','iommu','theme','user')
 
 function mios {
     [CmdletBinding()]
