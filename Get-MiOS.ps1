@@ -4022,6 +4022,69 @@ if (`$true) {
                 Write-Host (_Frame "  [dashboard row render failed]")
             }
         }
+        # ── MiOS services block ──────────────────────────────────
+        # 2026-05-18 refresh: parity with the Linux-side
+        # mios-dashboard.sh services grid. Each cell is a
+        # <dot> <name> :<port> probe row. Endpoints reachable from
+        # the Windows host go through localhost (WSL2's
+        # localhostForwarding mirrors the dev VM's listening sockets
+        # to the Windows loopback automatically). When a probe
+        # fails -- service is down OR forwarding misses (a known
+        # WSL2 networking flake) -- we show the dot as off and
+        # carry the row anyway so the layout stays stable.
+        function _ProbeEp {
+            param([string]`$Url, [int]`$TimeoutMs = 1500)
+            try {
+                `$req = [System.Net.WebRequest]::Create(`$Url)
+                `$req.Timeout = `$TimeoutMs
+                `$req.Method  = "GET"
+                `$req.ServicePoint.Expect100Continue = `$false
+                try { `$resp = `$req.GetResponse(); `$resp.Close() } catch {
+                    if (`$_.Exception -is [System.Net.WebException] -and
+                        `$_.Exception.Response -ne `$null) { return `$true }
+                    return `$false
+                }
+                return `$true
+            } catch { return `$false }
+        }
+        function _ServiceCell {
+            param([string]`$Name, [int]`$Port, [string]`$Probe = "/",
+                  [bool]`$Https = `$false)
+            `$scheme = if (`$Https) { "https" } else { "http" }
+            `$url = "`$scheme`://localhost:`$Port`$Probe"
+            `$up  = _ProbeEp -Url `$url
+            `$dot = if (`$up) { "`$_esc[32m*`$_esc[0m" } else { "`$_esc[90m-`$_esc[0m" }
+            `$nm = `$Name.PadRight(11)
+            "`$dot `$nm :`$(`$Port.ToString().PadRight(5))"
+        }
+        function _ServiceRow {
+            param([string]`$L, [string]`$R)
+            Write-Host (_Frame ("  `$L  `$R")) -ForegroundColor Blue
+        }
+        Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
+        Write-Host (_Frame "  `$_esc[1m`$_esc[36mAI surface`$_esc[0m") -ForegroundColor Blue
+        `$_c_agent  = _ServiceCell -Name "Agent-Pipe"  -Port 8640 -Probe "/health"
+        `$_c_herm   = _ServiceCell -Name "Hermes"      -Port 8642 -Probe "/health"
+        `$_c_sdb    = _ServiceCell -Name "SurrealDB"   -Port 8000 -Probe "/health"
+        `$_c_dash   = _ServiceCell -Name "Dash-AI"     -Port 9119
+        `$_c_oll    = _ServiceCell -Name "Ollama"      -Port 11434
+        `$_c_olli   = _ServiceCell -Name "Ollama-iGPU" -Port 11435
+        _ServiceRow `$_c_agent `$_c_herm
+        _ServiceRow `$_c_sdb   `$_c_dash
+        _ServiceRow `$_c_oll   `$_c_olli
+        Write-Host (_Frame "  `$_esc[1m`$_esc[36mUser surface`$_esc[0m") -ForegroundColor Blue
+        `$_c_webui  = _ServiceCell -Name "WebUI"       -Port 3030
+        `$_c_cock   = _ServiceCell -Name "Cockpit"     -Port 9090 -Https `$true
+        `$_c_code   = _ServiceCell -Name "Code"        -Port 8080
+        `$_c_forge  = _ServiceCell -Name "Forge"       -Port 3000
+        `$_c_srch   = _ServiceCell -Name "Search"      -Port 8888
+        `$_c_ttyb   = _ServiceCell -Name "ttyd-bash"   -Port 7681
+        `$_c_ttyp   = _ServiceCell -Name "ttyd-PS"     -Port 7682
+        _ServiceRow `$_c_webui `$_c_cock
+        _ServiceRow `$_c_code  `$_c_forge
+        _ServiceRow `$_c_srch  `$_c_ttyb
+        _ServiceRow `$_c_ttyp  (' ' * 20)
+
         # ── Command hints rows ───────────────────────────────────
         # Verb list resolves through mios.toml [verbs] at RUNTIME (SSOT).
         # The dashboard re-reads on every render so an operator edit via
