@@ -430,8 +430,44 @@ function Configure-MiosBrowserAI {
         Log-Ok ("browser_ai: {0} already present" -f $pkg)
     }
 
+    # PRIMARY method (reliable, no admin): a per-profile user.js. Research
+    # 2026-05-20 -- some browser.ml.chat.* prefs do NOT apply via policies.json,
+    # and Program Files\...\distribution needs elevation; user.js is
+    # user-writable and Zen reads it on every startup. Covers EXISTING profiles
+    # (re-runs after the operator has launched Zen once); the policies.json
+    # below is the best-effort fallback for profiles Zen creates later. Also
+    # clears a stale parent.lock (a common "Zen won't open" cause) when Zen
+    # isn't running.
+    $ujLines = @('// MiOS: Firefox/Zen AI chatbot sidebar -> local OWUI / MiOS-Agent pipeline.')
+    foreach ($p in $prefStrings) {
+        $parts = $p -split '\|', 3
+        if ($parts.Count -ne 3) { continue }
+        $n = $parts[0].Trim(); $t = $parts[1].Trim().ToLower(); $r = $parts[2].Trim()
+        $v = switch ($t) {
+            'bool'  { if ($r -match '^(true|1|yes)$') { 'true' } else { 'false' } }
+            'int'   { [string][int]$r }
+            default { '"' + $r + '"' }
+        }
+        $ujLines += ('user_pref("{0}", {1});' -f $n, $v)
+    }
+    $ujLines += ('user_pref("browser.ml.chat.provider", "{0}");' -f $providerUrl)
+    $uj = ($ujLines -join "`r`n")
+    $zenRunning = @(Get-Process zen -ErrorAction SilentlyContinue).Count -gt 0
+    foreach ($proot in @("$env:APPDATA\zen\Profiles", "$env:APPDATA\zen-twilight\Profiles") |
+                       Where-Object { Test-Path -LiteralPath $_ }) {
+        foreach ($pd in (Get-ChildItem $proot -Directory -ErrorAction SilentlyContinue)) {
+            [IO.File]::WriteAllText((Join-Path $pd.FullName 'user.js'), $uj, (New-Object System.Text.UTF8Encoding($false)))
+            Log-Ok ("browser_ai: user.js -> {0}" -f $pd.Name)
+            if (-not $zenRunning) {
+                $lk = Join-Path $pd.FullName 'parent.lock'
+                if (Test-Path $lk) { Remove-Item $lk -Force -ErrorAction SilentlyContinue; Log-Ok ("browser_ai: cleared stale parent.lock in {0}" -f $pd.Name) }
+            }
+        }
+    }
+
     # Locate zen.exe so policies.json can be dropped beside it (Firefox/Zen reads
-    # <install-dir>\distribution\policies.json at startup, for every profile).
+    # <install-dir>\distribution\policies.json at startup, for every profile --
+    # best-effort fallback for profiles that don't exist yet at install time).
     $zenExe = $null
     foreach ($root in @(
         (Join-Path $env:LOCALAPPDATA 'Programs'),
