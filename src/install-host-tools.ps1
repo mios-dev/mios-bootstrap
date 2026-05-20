@@ -386,4 +386,90 @@ function Install-MiosWindowsTools {
     } else {
         Log-Warn "btop config source not found (probed: $($_btopSrcCandidates -join ', ')) -- skipping btop theme stage"
     }
+
+    # Wire Zen/Firefox's AI sidebar to the MiOS OWUI pipeline (SSOT [browser_ai]).
+    Configure-MiosBrowserAI
+}
+
+function Configure-MiosBrowserAI {
+    # Install Zen Browser (Twilight, Firefox-based) and wire its built-in AI
+    # chatbot SIDEBAR to the local OWUI / MiOS-Agent pipeline -- MiOS AI, natively
+    # in the browser. Everything resolves from mios.toml [browser_ai] (SSOT): the
+    # winget package id, the provider URL, and the Firefox/Zen prefs. We install
+    # via winget, then write a managed policies.json into the Zen install's
+    # distribution/ dir so every profile inherits the config.
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Log-Warn "browser_ai: winget unavailable -- skipping Zen + AI sidebar setup"
+        return
+    }
+    $enable = "$(Get-MiosTomlValue -Section 'browser_ai' -Key 'enable' -Default 'true')"
+    if ($enable -notmatch '^(true|1|yes)$') {
+        Log-Ok "browser_ai disabled in SSOT -- skipping Zen AI sidebar setup"
+        return
+    }
+    $pkg         = "$(Get-MiosTomlValue -Section 'browser_ai' -Key 'package' -Default 'Zen-Team.Zen-Browser.Twilight')"
+    $providerUrl = "$(Get-MiosTomlValue -Section 'browser_ai' -Key 'provider_url' -Default 'http://localhost:3030')"
+    $prefStrings = @(Get-MiosTomlValue -Section 'browser_ai' -Key 'prefs' -Default @(
+        'browser.ml.chat.enabled|bool|true',
+        'browser.ml.chat.hideLocalhost|bool|false',
+        'browser.ml.chat.sidebar|bool|true'
+    ))
+
+    # Install Zen (idempotent: skip when winget already sees it).
+    $seen = (& winget list --id $pkg --exact 2>$null)
+    if (-not ($LASTEXITCODE -eq 0 -and (($seen -join "`n") -match [regex]::Escape($pkg)))) {
+        Log-Ok ("browser_ai: installing {0} via winget..." -f $pkg)
+        & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget --scope user 2>&1 |
+            ForEach-Object { Write-Log ("winget[{0}]: {1}" -f $pkg, $_) }
+        if ($LASTEXITCODE -ne 0) {
+            Log-Warn ("browser_ai: winget {0} user-scope exit {1} -- retrying without --scope" -f $pkg, $LASTEXITCODE)
+            & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 |
+                ForEach-Object { Write-Log ("winget[{0}-retry]: {1}" -f $pkg, $_) }
+        }
+    } else {
+        Log-Ok ("browser_ai: {0} already present" -f $pkg)
+    }
+
+    # Locate zen.exe so policies.json can be dropped beside it (Firefox/Zen reads
+    # <install-dir>\distribution\policies.json at startup, for every profile).
+    $zenExe = $null
+    foreach ($root in @(
+        (Join-Path $env:LOCALAPPDATA 'Programs'),
+        $env:LOCALAPPDATA,
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)}
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }) {
+        $c = Get-ChildItem -LiteralPath $root -Recurse -Filter 'zen.exe' -File -Depth 4 -ErrorAction SilentlyContinue |
+             Select-Object -First 1
+        if ($c) { $zenExe = $c.FullName; break }
+    }
+    if (-not $zenExe) {
+        Log-Warn "browser_ai: zen.exe not found after install -- cannot write the AI-sidebar policy (re-run after Zen is present)"
+        return
+    }
+
+    # Build policies.json Preferences from the SSOT prefs + provider_url.
+    $prefsObj = [ordered]@{}
+    foreach ($p in $prefStrings) {
+        $parts = $p -split '\|', 3
+        if ($parts.Count -ne 3) { continue }
+        $name = $parts[0].Trim(); $ptype = $parts[1].Trim().ToLower(); $raw = $parts[2].Trim()
+        switch ($ptype) {
+            'bool'  { $val = ($raw -match '^(true|1|yes)$') }
+            'int'   { $val = [int]$raw }
+            default { $val = $raw }
+        }
+        $prefsObj[$name] = [ordered]@{ Value = $val; Status = 'default' }
+    }
+    # provider_url -> the AI chatbot provider (OWUI = the MiOS AI pipeline).
+    $prefsObj['browser.ml.chat.provider'] = [ordered]@{ Value = $providerUrl; Status = 'default' }
+
+    $distDir = Join-Path (Split-Path $zenExe -Parent) 'distribution'
+    if (-not (Test-Path -LiteralPath $distDir)) {
+        New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+    }
+    $json = (@{ policies = @{ Preferences = $prefsObj } } | ConvertTo-Json -Depth 8)
+    $dst  = Join-Path $distDir 'policies.json'
+    [IO.File]::WriteAllText($dst, $json, (New-Object System.Text.UTF8Encoding($false)))
+    Log-Ok ("browser_ai: Zen AI sidebar wired to {0} -> {1}" -f $providerUrl, $dst)
 }
