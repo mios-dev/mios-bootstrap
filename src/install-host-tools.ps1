@@ -285,6 +285,45 @@ function Install-MiosWindowsTools {
         } catch { Log-Warn ("{0} direct-download failed: {1}" -f $db.Cmd, $_.Exception.Message) }
     }
 
+    # ── Python: make the REAL interpreter win over the Windows Store
+    # "python.exe" App Execution Alias stub. winget installs the
+    # python.org build (the id "Python.Python.3.14" comes from
+    # [packages.windows].pkgs -- SSOT, no hardcode here) but does NOT
+    # reliably prepend it to PATH, and the 0-byte stub at
+    # %LOCALAPPDATA%\Microsoft\WindowsApps\python.exe shadows bare
+    # `python` with a "install from the Store" message (operator
+    # 2026-05-20: host had no usable python/py/python3 even though the
+    # MiOS tooling needs it). Locate the real interpreter and PREPEND its
+    # dir + Scripts to PATH so `python` resolves to it, not the stub.
+    $_pyExe   = $null
+    $_pyRoots = @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python'),
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)},
+        'C:\'
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+    foreach ($_root in $_pyRoots) {
+        $_cand = Get-ChildItem -LiteralPath $_root -Filter 'Python3*' -Directory -ErrorAction SilentlyContinue |
+                 ForEach-Object { Join-Path $_.FullName 'python.exe' } |
+                 Where-Object { (Test-Path -LiteralPath $_) -and ($_ -notmatch 'WindowsApps') } |
+                 Sort-Object -Descending | Select-Object -First 1
+        if ($_cand) { $_pyExe = $_cand; break }
+    }
+    if ($_pyExe) {
+        $_pyDir     = Split-Path $_pyExe -Parent
+        $_pyPrepend = @($_pyDir, (Join-Path $_pyDir 'Scripts')) | Where-Object { Test-Path -LiteralPath $_ }
+        $env:PATH   = ($_pyPrepend + ($env:PATH -split ';')) -join ';'
+        try {
+            $_uPath  = [System.Environment]::GetEnvironmentVariable('PATH','User')
+            $_uParts = if ($_uPath) { $_uPath -split ';' | Where-Object { $_ -and ($_pyPrepend -notcontains $_) } } else { @() }
+            [System.Environment]::SetEnvironmentVariable('PATH', (($_pyPrepend + $_uParts) -join ';'), 'User')
+            $_pyVer = (& $_pyExe --version 2>&1) -join ' '
+            Log-Ok ("python: prepended '{0}' to User PATH (beats Store stub) -- {1}" -f $_pyDir, $_pyVer)
+        } catch { Log-Warn ("python PATH prepend failed: {0}" -f $_.Exception.Message) }
+    } else {
+        Log-Warn 'python: no real interpreter found under Programs\Python or Program Files -- winget install of Python.Python.3.14 may have failed; bare `python` may still hit the Windows Store stub'
+    }
+
     # Final PATH refresh -- pick up direct-download binaries.
     try {
         $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
