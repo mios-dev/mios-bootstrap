@@ -3650,6 +3650,16 @@ count=$(sudo git -C / ls-tree -r --name-only HEAD 2>/dev/null | wc -l)
 echo "[quadlet-overlay] / now contains $count tracked mios.git files"
 echo "[quadlet-overlay] / HEAD: $(sudo git -C / rev-parse --short HEAD 2>/dev/null)"
 
+# Restore the executable bit on MiOS scripts. mios.git is authored on Windows
+# where git core.filemode is off, so the checkout to / lands libexec/bin scripts
+# as 0644 -- systemd ExecStart then 203/EXECs "Permission denied" (2026-06-05:
+# hermes-agent + cdi-detect + every firstboot failed this way). chmod +x the
+# script trees; data files (py/json/yaml/md) stay untouched.
+echo "[quadlet-overlay] restoring +x on MiOS scripts (Windows git checkout drops it)"
+sudo chmod -R +x /usr/libexec/mios/ 2>/dev/null || true
+sudo find /usr/lib/mios -type f \( -name "*.sh" -o -name "mios-*" \) ! -name "*.py" ! -name "*.json" ! -name "*.yaml" ! -name "*.md" -exec chmod +x {} + 2>/dev/null || true
+sudo find /usr/bin /usr/local/bin -maxdepth 1 -name "mios-*" -type f -exec chmod +x {} + 2>/dev/null || true
+
 # Sanity: the smoke test expects /usr/share/mios. If git reset
 # succeeded but the dir isn't there, surface that loudly so we
 # don't silently ship a half-applied overlay.
@@ -3865,7 +3875,7 @@ fi
 # `systemctl enable` on them errors with "transient or generated" -- use
 # `start` instead. Native systemd units (cockpit.socket, mios-cdi-detect,
 # nvidia-cdi-refresh.path) take the standard `enable --now` path.
-NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-ollama-firstboot.service)
+NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-ollama-firstboot.service mios-ai-firstboot.service)
 
 # Operator 2026-05-10: "now to finally fix none of the containers
 # existing or properly launching on boot.. in podman-MiOS-DEV".
