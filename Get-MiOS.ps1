@@ -77,6 +77,26 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Disable console QuickEdit immediately so an accidental click/select in the
+# (elevated) window can't freeze the installer on its next write -- Windows
+# "mark" mode blocks the process until Enter/Esc is pressed (2026-06-05: a click
+# during the long install read as a dead hang). build-mios.ps1 re-applies this;
+# the type guard makes the second call a no-op. Best-effort; never fatal.
+function Disable-ConsoleQuickEdit {
+    try {
+        if (-not ('MiosConsole.Win32' -as [type])) {
+            Add-Type -Namespace MiosConsole -Name Win32 -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)] public static extern System.IntPtr GetStdHandle(int nStdHandle); [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetConsoleMode(System.IntPtr hConsoleHandle, out uint lpMode); [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleMode(System.IntPtr hConsoleHandle, uint dwMode);' -ErrorAction Stop
+        }
+        $h = [MiosConsole.Win32]::GetStdHandle(-10)   # STD_INPUT_HANDLE
+        [uint32]$mode = 0
+        if ([MiosConsole.Win32]::GetConsoleMode($h, [ref]$mode)) {
+            $mode = ($mode -band (-bnot [uint32]0x40)) -bor [uint32]0x80   # -QUICK_EDIT +EXTENDED_FLAGS
+            [void][MiosConsole.Win32]::SetConsoleMode($h, $mode)
+        }
+    } catch {}
+}
+Disable-ConsoleQuickEdit
+
 # ── Self-cache-bust on entry ────────────────────────────────────────────────
 # raw.githubusercontent.com is fronted by Fastly with `Cache-Control: max-age=300`,
 # so the canonical Run-dialog paste:
