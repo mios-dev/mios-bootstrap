@@ -5945,8 +5945,15 @@ function Install-WindowsBranding {
     # automatically by the user's session.
     if ($regKey -like 'HKLM:*') {
         try {
-            Add-Type -Namespace MiosFontX -Name Native -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern int SendMessage(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, System.IntPtr lParam);' -ErrorAction SilentlyContinue
-            [void][MiosFontX.Native]::SendMessage([IntPtr]0xFFFF, 0x001D, [IntPtr]::Zero, [IntPtr]::Zero)
+            # SendMessageTimeout, NOT SendMessage: a synchronous HWND_BROADCAST of
+            # WM_FONTCHANGE blocks the installer FOREVER if ANY top-level window is
+            # hung/unresponsive -- the 2026-06-05 stuck-install root cause (hung after
+            # "Symbols-Only Nerd Font installed"). SMTO_ABORTIFHUNG|SMTO_NORMAL (0x0002)
+            # + 1000ms/window makes the broadcast non-blocking. 0xFFFF=HWND_BROADCAST,
+            # 0x001D=WM_FONTCHANGE.
+            Add-Type -Namespace MiosFontX -Name Native -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll", CharSet=System.Runtime.InteropServices.CharSet.Auto)] public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, System.IntPtr lParam, uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);' -ErrorAction SilentlyContinue
+            $_fcRes = [System.UIntPtr]::Zero
+            [void][MiosFontX.Native]::SendMessageTimeout([IntPtr]0xFFFF, 0x001D, [IntPtr]::Zero, [IntPtr]::Zero, [uint32]0x0002, [uint32]1000, [ref]$_fcRes)
         } catch {}
     }
 
@@ -8232,14 +8239,71 @@ $script:IdentInfo = "Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:'
 Show-Dashboard -Force
 
 $preOk = $true
-# Auto-install Phase 0 prerequisites via winget. Per operator: "the
-# irm|iex web invoke should also install all windows side pre-requisites".
-# Phase 0 used to JUST CHECK + fail. Now we winget-install on miss
-# so a fresh-system irm|iex carries the bootstrap end-to-end. The
-# prereq catalog resolves through mios.toml [bootstrap.prereqs] (SSOT)
-# so operators can swap to alternative implementations (Mercurial
-# instead of Git, Hyper-V instead of WSL2 -- not that we recommend
-# either, but the SSOT lets it happen) via mios.html.
+
+# NO-LOCAL-DEPS direct installer for the Phase-0 platform prereqs (operator
+# 2026-06-05 "without ANY local dependencies"). Used when winget is absent OR
+# its install failed -- everything pulls from upstream GitHub releases or the
+# built-in `wsl --install`, so a clean machine bootstraps with nothing
+# pre-installed. Fail-soft: returns $false on any miss so the caller falls
+# through to the existing required-prereq failure (never worse than before).
+function Install-MiosPrereqDirect {
+    param([string]$Cmd, [string]$Label)
+    $_root = Join-Path $env:LOCALAPPDATA 'MiOS'
+    try {
+        switch ($Cmd) {
+            'git' {
+                # PortableGit self-extracting 7-Zip archive from git-for-windows.
+                $rel = Invoke-RestMethod 'https://api.github.com/repos/git-for-windows/git/releases/latest' -Headers @{'User-Agent'='mios-bootstrap'} -ErrorAction Stop
+                $asset = $rel.assets | Where-Object { $_.name -match '^PortableGit-.*-64-bit\.7z\.exe$' } | Select-Object -First 1
+                if (-not $asset) { Log-Warn 'git: no PortableGit 64-bit asset in latest git-for-windows release'; return $false }
+                $sfx = Join-Path $env:TEMP "PortableGit-$(Get-Random).7z.exe"
+                Invoke-WebRequest $asset.browser_download_url -OutFile $sfx -UseBasicParsing -ErrorAction Stop
+                $gitDir = Join-Path $_root 'PortableGit'
+                if (Test-Path $gitDir) { Remove-Item $gitDir -Recurse -Force -ErrorAction SilentlyContinue }
+                New-Item -ItemType Directory -Path $gitDir -Force | Out-Null
+                & $sfx "-o$gitDir" -y | Out-Null   # 7-Zip SFX: silent extract to -o<dir>
+                Remove-Item $sfx -Force -ErrorAction SilentlyContinue
+                $gitCmd = Join-Path $gitDir 'cmd'
+                if (Test-Path (Join-Path $gitCmd 'git.exe')) {
+                    $_u = [Environment]::GetEnvironmentVariable('Path','User')
+                    if (-not (($_u -split ';') | Where-Object { $_ -ieq $gitCmd })) {
+                        [Environment]::SetEnvironmentVariable('Path', "$_u;$gitCmd", 'User')
+                    }
+                    $env:PATH = "$env:PATH;$gitCmd"
+                    return $true
+                }
+                return $false
+            }
+            'wsl' {
+                # `wsl --install` ships with Windows 10 2004+/11 -- no download
+                # needed; needs admin + likely a reboot before wsl.exe surfaces.
+                & wsl.exe --install --no-distribution 2>&1 | ForEach-Object { Write-Log "wsl-install: $_" }
+                return ($LASTEXITCODE -eq 0)
+            }
+            'podman' {
+                # Podman for Windows installer from containers/podman releases.
+                $rel = Invoke-RestMethod 'https://api.github.com/repos/containers/podman/releases/latest' -Headers @{'User-Agent'='mios-bootstrap'} -ErrorAction Stop
+                $asset = $rel.assets | Where-Object { $_.name -match '^podman-.*-setup\.exe$' } | Select-Object -First 1
+                if (-not $asset) { Log-Warn 'podman: no setup.exe asset in latest containers/podman release'; return $false }
+                $exe = Join-Path $env:TEMP "podman-setup-$(Get-Random).exe"
+                Invoke-WebRequest $asset.browser_download_url -OutFile $exe -UseBasicParsing -ErrorAction Stop
+                Start-Process -FilePath $exe -ArgumentList '/install','/quiet','/norestart' -Wait -ErrorAction Stop  # WiX burn silent
+                Remove-Item $exe -Force -ErrorAction SilentlyContinue
+                $_m = [Environment]::GetEnvironmentVariable('PATH','Machine'); $_u = [Environment]::GetEnvironmentVariable('PATH','User')
+                $env:PATH = (@($_m,$_u) | Where-Object {$_}) -join ';'
+                return ([bool](Get-Command podman -ErrorAction SilentlyContinue))
+            }
+        }
+    } catch { Log-Warn ("{0} direct-install failed: {1}" -f $Label, $_.Exception.Message) }
+    return $false
+}
+
+# Auto-install Phase 0 prerequisites. Per operator "without ANY local
+# dependencies": winget is an OPTIONAL accelerator; each prereq also has a
+# direct path (git -> PortableGit, wsl -> built-in `wsl --install`, podman ->
+# containers/podman release), so a fresh machine with no winget still
+# bootstraps end-to-end. The prereq catalog resolves through mios.toml
+# [bootstrap.prereqs] (SSOT) so operators can swap implementations via mios.html.
 $_prereqs = @(
     @{ Cmd = 'git';    Pkg = (Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'git_pkg'    -Default 'Git.Git');                 Label = 'Git';    Required = $true  }
     @{ Cmd = 'wsl';    Pkg = (Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'wsl_pkg'    -Default 'Microsoft.WSL');           Label = 'WSL2';   Required = $true  }
@@ -8258,30 +8322,38 @@ foreach ($_pq in $_prereqs) {
         Log-Ok ("{0} {1}" -f $_pq.Label, $_ver)
         continue
     }
-    if (-not (Get-Command winget -EA SilentlyContinue)) {
-        Log-Fail ("{0} not found and winget unavailable -- cannot auto-install. Install {1} manually." -f $_pq.Label, $_pq.Pkg)
-        if ($_pq.Required) { $preOk = $false }
-        continue
+    $_done = $false
+    # 1) winget -- OPTIONAL accelerator, only if present.
+    if (Get-Command winget -EA SilentlyContinue) {
+        Log-Ok ("{0} not found -- winget installing {1}..." -f $_pq.Label, $_pq.Pkg)
+        & winget install --id $_pq.Pkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 |
+            ForEach-Object { Write-Log ("winget[{0}]: {1}" -f $_pq.Cmd, $_) }
+        $_rc = $LASTEXITCODE
+        try {
+            $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
+            $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
+            $env:PATH  = (@($_machPath, $_userPath) | Where-Object { $_ }) -join ';'
+        } catch {}
+        if (Get-Command $_pq.Cmd -EA SilentlyContinue) {
+            Log-Ok ("{0} installed via winget" -f $_pq.Label); $_done = $true
+        } elseif ($_pq.Cmd -eq 'wsl' -and $_rc -eq 0) {
+            Log-Warn ("{0} installed via winget -- a reboot may be required for wsl.exe to surface" -f $_pq.Label); $_done = $true
+        }
     }
-    Log-Ok ("{0} not found -- winget installing {1}..." -f $_pq.Label, $_pq.Pkg)
-    & winget install --id $_pq.Pkg --silent --accept-package-agreements --accept-source-agreements --source winget 2>&1 |
-        ForEach-Object { Write-Log ("winget[{0}]: {1}" -f $_pq.Cmd, $_) }
-    $_rc = $LASTEXITCODE
-    # Refresh PATH so the just-installed tool is reachable in this session
-    # (winget appends to the user's PATH but only NEW shells see it).
-    try {
-        $_machPath = [System.Environment]::GetEnvironmentVariable('PATH','Machine')
-        $_userPath = [System.Environment]::GetEnvironmentVariable('PATH','User')
-        $env:PATH  = (@($_machPath, $_userPath) | Where-Object { $_ }) -join ';'
-    } catch {}
-    if (Get-Command $_pq.Cmd -EA SilentlyContinue) {
-        Log-Ok ("{0} installed via winget" -f $_pq.Label)
-    } elseif ($_pq.Cmd -eq 'wsl' -and $_rc -eq 0) {
-        # WSL install often requires a reboot; the wsl.exe stub may not be
-        # on PATH until then, but the install itself succeeded.
-        Log-Warn ("{0} installed -- a reboot may be required for wsl.exe to surface on PATH" -f $_pq.Label)
-    } else {
-        Log-Fail ("{0} winget install exit {1} -- bootstrap cannot proceed without {2}" -f $_pq.Label, $_rc, $_pq.Cmd)
+    # 2) NO-LOCAL-DEPS direct install -- winget absent OR failed.
+    if (-not $_done) {
+        Log-Ok ("{0}: installing via direct download (no winget dependency)..." -f $_pq.Label)
+        if (Install-MiosPrereqDirect -Cmd $_pq.Cmd -Label $_pq.Label) {
+            if ($_pq.Cmd -eq 'wsl') {
+                Log-Warn ("{0} installed direct -- a reboot may be required for wsl.exe to surface" -f $_pq.Label)
+            } else {
+                Log-Ok ("{0} installed direct" -f $_pq.Label)
+            }
+            $_done = $true
+        }
+    }
+    if (-not $_done) {
+        Log-Fail ("{0} could not be installed (winget + direct both unavailable/failed) -- bootstrap needs {1}" -f $_pq.Label, $_pq.Cmd)
         if ($_pq.Required) { $preOk = $false }
     }
 }

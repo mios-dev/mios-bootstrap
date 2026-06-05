@@ -23,12 +23,17 @@ function Install-MiosWindowsTools {
     # Microsoft.PowerShell (pwsh 7), fastfetch, btop, sharkdp.bat/.fd,
     # ripgrep, fzf, jq, gh, etc. -- everything the MiOS terminal
     # experience depends on.
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Log-Warn "winget not available -- [packages.windows] CLI tools NOT installed (fastfetch / btop / pwsh / etc. will be missing)"
-        return
+    # NO-LOCAL-DEPS (operator 2026-06-05 "without ANY local dependencies"): winget
+    # is an OPTIONAL accelerator, NEVER a requirement. Every CLI tool below has a
+    # direct GitHub-release download path, so a clean machine with no winget still
+    # gets the full MiOS terminal toolset -- everything pulls from upstream/MiOS
+    # repos, nothing assumed pre-installed.
+    $haveWinget = [bool](Get-Command winget -ErrorAction SilentlyContinue)
+    if (-not $haveWinget) {
+        Log-Warn "winget absent -- installing every [packages.windows] tool via DIRECT download (no local dependency)"
     }
 
-    Set-Step "Installing [packages.windows] CLI tools via winget (SSOT: mios.toml)..."
+    Set-Step "Installing [packages.windows] CLI tools (direct-download primary; winget optional)..."
 
     # Resolve [packages.windows].pkgs from mios.toml. Layered overlay:
     # operator host override > vendor on M:\ > bootstrap shadow.
@@ -62,6 +67,9 @@ function Install-MiosWindowsTools {
         throw "Cannot resolve [packages.windows].pkgs from any of: $($candidates -join ', '). Per operator SSOT directive 'ALL values source from the toml' there is no hardcoded fallback. Verify [packages.windows] section is intact in mios.toml (vendor copy at M:\usr\share\mios\mios.toml is canonical -- run 'mios pull' to refresh, or re-run the irm|iex one-liner)."
     }
     Log-Ok "[packages.windows] resolved $($pkgs.Count) package(s) from $sourceOk"
+    # No winget -> skip the winget loop entirely; the direct-download block below
+    # installs every tool. (winget present -> best-effort accelerator, gaps filled.)
+    if (-not $haveWinget) { $pkgs = @() }
 
     # SSOT: package-ID -> expected-bin map resolves through mios.toml
     # [packages.windows].bin_map (pipe-separated "pkg-id|bin" strings)
@@ -238,12 +246,16 @@ function Install-MiosWindowsTools {
         } catch { Log-Warn ("btop: could not remove stale {0}: {1}" -f $stale, $_.Exception.Message) }
     }
 
+    # Direct-download cohort (single self-contained .exe -> $MiosBinDir). gh added
+    # for no-local-deps: gh.exe is a self-contained Go binary inside the zip's bin/.
+    # (pwsh + python need their runtime tree, handled as dedicated blocks below.)
     $directBins = @(
         @{ Cmd='rg';  Repo='BurntSushi/ripgrep';                        AssetRx='ripgrep-.*-x86_64-pc-windows-msvc\.zip$';   ExeRx='^rg\.exe$' }
         @{ Cmd='fzf'; Repo='junegunn/fzf';                              AssetRx='fzf-.*-windows_amd64\.zip$';                ExeRx='^fzf\.exe$' }
         @{ Cmd='jq';  Repo='jqlang/jq';            DirectAsset='jq-windows-amd64.exe'; ExeName='jq.exe' }
         @{ Cmd='bat'; Repo='sharkdp/bat';                               AssetRx='bat-.*-x86_64-pc-windows-msvc\.zip$';       ExeRx='^bat\.exe$' }
         @{ Cmd='fd';  Repo='sharkdp/fd';                                AssetRx='fd-.*-x86_64-pc-windows-msvc\.zip$';        ExeRx='^fd\.exe$' }
+        @{ Cmd='gh';  Repo='cli/cli';                                   AssetRx='gh_.*_windows_amd64\.zip$';                 ExeRx='^gh\.exe$' }
     )
     foreach ($db in $directBins) {
         if (Get-Command $db.Cmd -ErrorAction SilentlyContinue) { continue }
@@ -285,6 +297,39 @@ function Install-MiosWindowsTools {
         } catch { Log-Warn ("{0} direct-download failed: {1}" -f $db.Cmd, $_.Exception.Message) }
     }
 
+    # ── pwsh 7 (PowerShell) -- direct download, NO winget ─────────────
+    # Needs its whole runtime tree (DLLs), so extract the full zip to
+    # <install>\pwsh and PATH the folder (not a single-exe $MiosBinDir copy
+    # like the cohort above). The MiOS Windows Terminal profile launches
+    # pwsh; without it WT falls back to Windows PowerShell 5.1.
+    if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+        Log-Ok 'pwsh: direct download from GitHub releases (PowerShell/PowerShell)...'
+        try {
+            $api   = 'https://api.github.com/repos/PowerShell/PowerShell/releases/latest'
+            $rel   = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent'='mios-bootstrap' } -ErrorAction Stop
+            $asset = $rel.assets | Where-Object { $_.name -match '^PowerShell-.*-win-x64\.zip$' } | Select-Object -First 1
+            if ($asset) {
+                $zip = Join-Path $env:TEMP "pwsh-$(Get-Random).zip"
+                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing -ErrorAction Stop
+                $pwshDir = Join-Path (Split-Path $MiosBinDir -Parent) 'pwsh'
+                if (Test-Path $pwshDir) { Remove-Item $pwshDir -Recurse -Force -ErrorAction SilentlyContinue }
+                New-Item -ItemType Directory -Path $pwshDir -Force | Out-Null
+                Expand-Archive -LiteralPath $zip -DestinationPath $pwshDir -Force
+                Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+                if (Test-Path (Join-Path $pwshDir 'pwsh.exe')) {
+                    $_adm   = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+                    $_scope = if ($_adm) { 'Machine' } else { 'User' }
+                    $_p     = [Environment]::GetEnvironmentVariable('Path', $_scope)
+                    if (-not (($_p -split ';') | Where-Object { $_ -ieq $pwshDir })) {
+                        [Environment]::SetEnvironmentVariable('Path', "$_p;$pwshDir", $_scope)
+                    }
+                    $env:PATH = "$env:PATH;$pwshDir"
+                    Log-Ok ("pwsh installed direct: {0} -> {1}" -f $asset.name, (Join-Path $pwshDir 'pwsh.exe'))
+                } else { Log-Warn 'pwsh: pwsh.exe missing after extract' }
+            } else { Log-Warn 'pwsh: no PowerShell-*-win-x64.zip asset in latest release' }
+        } catch { Log-Warn ("pwsh direct-download failed: {0}" -f $_.Exception.Message) }
+    }
+
     # ── Python: make the REAL interpreter win over the Windows Store
     # "python.exe" App Execution Alias stub. winget installs the
     # python.org build (the id "Python.Python.3.14" comes from
@@ -321,7 +366,41 @@ function Install-MiosWindowsTools {
             Log-Ok ("python: prepended '{0}' to User PATH (beats Store stub) -- {1}" -f $_pyDir, $_pyVer)
         } catch { Log-Warn ("python PATH prepend failed: {0}" -f $_.Exception.Message) }
     } else {
-        Log-Warn 'python: no real interpreter found under Programs\Python or Program Files -- winget install of Python.Python.3.14 may have failed; bare `python` may still hit the Windows Store stub'
+        # NO-LOCAL-DEPS: no winget-installed python -> direct-download a portable
+        # CPython from python-build-standalone (GitHub releases; self-contained,
+        # ships pip). Extract to <install>\python and PATH it. Win10+ ships tar.exe
+        # (bsdtar) so no extra dependency to unpack the .tar.gz.
+        Log-Ok 'python: not found -- direct download from python-build-standalone (GitHub)...'
+        try {
+            $rel   = Invoke-RestMethod -Uri 'https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest' -Headers @{ 'User-Agent'='mios-bootstrap' } -ErrorAction Stop
+            # 3.1[0-9] keeps all candidates the same string length so lexical
+            # descending == newest version (avoids "3.9" > "3.14" string-sort bug).
+            $asset = $rel.assets |
+                     Where-Object { $_.name -match '^cpython-3\.1[0-9]\.[0-9]+\+.*-x86_64-pc-windows-msvc-install_only\.tar\.gz$' } |
+                     Sort-Object name -Descending | Select-Object -First 1
+            if ($asset) {
+                $tgz = Join-Path $env:TEMP "cpython-$(Get-Random).tar.gz"
+                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tgz -UseBasicParsing -ErrorAction Stop
+                $pyRoot = Join-Path (Split-Path $MiosBinDir -Parent) 'python'
+                if (Test-Path $pyRoot) { Remove-Item $pyRoot -Recurse -Force -ErrorAction SilentlyContinue }
+                New-Item -ItemType Directory -Path $pyRoot -Force | Out-Null
+                & tar.exe -xzf $tgz -C $pyRoot 2>&1 | Out-Null
+                Remove-Item -LiteralPath $tgz -Force -ErrorAction SilentlyContinue
+                $_pyExe2 = Get-ChildItem -Path $pyRoot -Recurse -Filter 'python.exe' -File -ErrorAction SilentlyContinue |
+                           Where-Object { $_.FullName -notmatch '\\(Lib|Scripts|tcl)\\' } | Select-Object -First 1
+                if ($_pyExe2) {
+                    $_pyDir2 = Split-Path $_pyExe2.FullName -Parent
+                    $_pp     = @($_pyDir2, (Join-Path $_pyDir2 'Scripts')) | Where-Object { Test-Path -LiteralPath $_ }
+                    $env:PATH = ($_pp + ($env:PATH -split ';')) -join ';'
+                    try {
+                        $_u  = [System.Environment]::GetEnvironmentVariable('PATH','User')
+                        $_up = if ($_u) { $_u -split ';' | Where-Object { $_ -and ($_pp -notcontains $_) } } else { @() }
+                        [System.Environment]::SetEnvironmentVariable('PATH', (($_pp + $_up) -join ';'), 'User')
+                    } catch {}
+                    Log-Ok ("python installed direct: {0} -> {1}" -f $asset.name, $_pyExe2.FullName)
+                } else { Log-Warn 'python: python.exe not found after extract' }
+            } else { Log-Warn 'python: no matching cpython install_only asset in latest python-build-standalone release' }
+        } catch { Log-Warn ("python direct-download failed: {0}" -f $_.Exception.Message) }
     }
 
     # Final PATH refresh -- pick up direct-download binaries.
