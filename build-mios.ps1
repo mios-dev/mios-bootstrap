@@ -9612,7 +9612,14 @@ fi
             if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                 $PSNativeCommandUseErrorActionPreference = $false
             }
-            $script:_bibataOutput = & wsl.exe -d $_wslDistroForTerm --user root -- bash -c '
+            # Base64-wrap the bibata script. Passed inline, its embedded
+            # double-quotes/parens/$(...) get mangled by PowerShell's native-arg
+            # quoting into bash syntax errors (2026-06-05: "unexpected token ("
+            # on the size echo). Encoding the whole script means ONLY base64 chars
+            # reach the bash -c argument -- nothing to mangle. LF-normalize first.
+            # Also guards the version/download/tar steps with || (a bare
+            # `var=$(pipeline)` exits under set -e when the pipeline fails).
+            $_bibataScript = @'
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 set -e
 if [ -d /usr/share/icons/Bibata-Modern-Classic ] && [ -n "$(ls -A /usr/share/icons/Bibata-Modern-Classic/cursors 2>/dev/null)" ]; then
@@ -9621,30 +9628,33 @@ if [ -d /usr/share/icons/Bibata-Modern-Classic ] && [ -n "$(ls -A /usr/share/ico
 fi
 command -v curl >/dev/null || { echo "curl missing in dev VM"; exit 127; }
 command -v tar  >/dev/null || { echo "tar missing in dev VM";  exit 127; }
-VER=$(curl -sSL -H "Accept: application/vnd.github+json" https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest 2>/dev/null | grep -oE "\"tag_name\":\\s*\"v[0-9.]+\"" | head -1 | grep -oE "v[0-9.]+" | sed "s/^v//")
+VER=$(curl -sSL -H "Accept: application/vnd.github+json" https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest 2>/dev/null | grep -oE "\"tag_name\":\\s*\"v[0-9.]+\"" | head -1 | grep -oE "v[0-9.]+" | sed "s/^v//") || VER=""
 [ -z "$VER" ] && VER="2.0.7"
 URL="https://github.com/ful1e5/Bibata_Cursor/releases/download/v${VER}/Bibata-Modern-Classic.tar.xz"
 echo "Bibata v${VER}: ${URL}"
 TARBALL=$(mktemp --suffix=.tar.xz)
-curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$TARBALL" "$URL"
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$TARBALL" "$URL" || { echo "Bibata download failed"; rm -f "$TARBALL"; exit 1; }
 SIZE=$(stat -c %s "$TARBALL" 2>/dev/null || echo 0)
 echo "Bibata tarball downloaded: ${SIZE} bytes"
 if [ "${SIZE:-0}" -lt 100000 ]; then
-    echo "Bibata tarball too small (${SIZE} bytes); aborting" >&2
+    echo "Bibata tarball too small: ${SIZE} bytes - aborting" >&2
     rm -f "$TARBALL"
     exit 1
 fi
 mkdir -p /usr/share/icons
-tar -xJf "$TARBALL" -C /usr/share/icons/
+tar -xJf "$TARBALL" -C /usr/share/icons/ || { echo "Bibata tar extract failed"; rm -f "$TARBALL"; exit 1; }
 rm -f "$TARBALL"
 if [ ! -d /usr/share/icons/Bibata-Modern-Classic/cursors ] || [ -z "$(ls -A /usr/share/icons/Bibata-Modern-Classic/cursors 2>/dev/null)" ]; then
     echo "Bibata extraction failed -- cursors dir empty" >&2
     exit 1
 fi
-echo "Bibata installed: $(ls /usr/share/icons/Bibata-Modern-Classic/cursors | wc -l) cursors"
+CURSORN=$(ls /usr/share/icons/Bibata-Modern-Classic/cursors | wc -l)
+echo "Bibata installed: ${CURSORN} cursors"
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache /usr/share/icons/Bibata-Modern-Classic 2>&1 || true
 exit 0
-' 2>&1
+'@
+            $_bibataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($_bibataScript -replace "`r`n","`n")))
+            $script:_bibataOutput = & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "echo $_bibataB64 | base64 -d | bash" 2>&1
             $script:_bibataExit = $LASTEXITCODE
         }
         foreach ($_line in $script:_bibataOutput) { Write-Log "mios-bibata: $_line" }
