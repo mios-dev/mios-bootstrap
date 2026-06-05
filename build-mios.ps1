@@ -3660,6 +3660,17 @@ sudo chmod -R +x /usr/libexec/mios/ 2>/dev/null || true
 sudo find /usr/lib/mios -type f \( -name "*.sh" -o -name "mios-*" \) ! -name "*.py" ! -name "*.json" ! -name "*.yaml" ! -name "*.md" -exec chmod +x {} + 2>/dev/null || true
 sudo find /usr/bin /usr/local/bin -maxdepth 1 -name "mios-*" -type f -exec chmod +x {} + 2>/dev/null || true
 
+# Statically enable mios-ai-firstboot via a .wants symlink rather than
+# `systemctl enable --now`. During the overlay the VM's system bus is
+# transitional ("Transport endpoint is not connected"), so enable --now for
+# this long-running oneshot fails; a symlink is D-Bus-independent and lets the
+# firstboot run on the FIRST CLEAN BOOT, when the bus + ollama are up. It
+# self-heals (sentinel only on full success) and builds the venv + GGUFs there.
+sudo install -d -m 0755 /usr/lib/systemd/system/multi-user.target.wants 2>/dev/null || true
+sudo ln -sf ../mios-ai-firstboot.service /usr/lib/systemd/system/multi-user.target.wants/mios-ai-firstboot.service 2>/dev/null \
+    && echo "[quadlet-overlay] mios-ai-firstboot enabled via .wants symlink (runs on first boot)" \
+    || echo "[quadlet-overlay] WARN: could not symlink mios-ai-firstboot.service"
+
 # Sanity: the smoke test expects /usr/share/mios. If git reset
 # succeeded but the dir isn't there, surface that loudly so we
 # don't silently ship a half-applied overlay.
@@ -3875,7 +3886,7 @@ fi
 # `systemctl enable` on them errors with "transient or generated" -- use
 # `start` instead. Native systemd units (cockpit.socket, mios-cdi-detect,
 # nvidia-cdi-refresh.path) take the standard `enable --now` path.
-NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-ollama-firstboot.service mios-ai-firstboot.service)
+NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-ollama-firstboot.service)
 
 # Operator 2026-05-10: "now to finally fix none of the containers
 # existing or properly launching on boot.. in podman-MiOS-DEV".
