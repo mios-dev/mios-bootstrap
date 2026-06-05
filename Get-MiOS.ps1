@@ -6643,8 +6643,16 @@ if ($_bootstrapExit -eq 0) {
         # Restart-Service requires admin; the irm|iex caller already
         # elevated, so this works. Failure is non-fatal -- shutdown
         # alone is usually enough.
-        try { Restart-Service -Name LxssManager -Force -ErrorAction Stop } catch {
-            Write-Host "  [!] LxssManager restart skipped: $($_.Exception.Message)" -ForegroundColor DarkGray
+        # WSL service name differs by Windows build: 'WslService' on Win11
+        # Store/inbox WSL, 'LxssManager' on legacy Win10. Try both; skip
+        # gracefully if neither exists (2026-06-05: 'Cannot find any service
+        # with service name LxssManager' on Win11).
+        $_wslSvcRestarted = $false
+        foreach ($_svc in @('WslService','LxssManager')) {
+            try { Restart-Service -Name $_svc -Force -ErrorAction Stop; $_wslSvcRestarted = $true; break } catch {}
+        }
+        if (-not $_wslSvcRestarted) {
+            Write-Host "  [!] WSL service restart skipped: neither WslService nor LxssManager present (non-fatal)." -ForegroundColor DarkGray
         }
         Write-Host '  [+] WSLg reset complete -- next MiOS terminal launch starts with fresh RDP-RAIL state.' -ForegroundColor Green
     } catch {

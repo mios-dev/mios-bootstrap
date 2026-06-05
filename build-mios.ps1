@@ -5155,11 +5155,21 @@ function Test-MiosDevDistroHealthy {
         return $false
     }
 
-    # 1. Basic responsiveness.
+    # 1. Basic responsiveness. Retried with backoff: Phase 3's wsl --shutdown
+    # restarts the distro right before this smoke check, so the FIRST echo-ready
+    # probe races the VM cold-start (operator-flagged 2026-06-05: smoke warned
+    # "did not respond to echo ready" on a freshly-shutdown distro). Match the
+    # systemd/podman probes' retry pattern. SSOT: [smoke_tests].
     $echoOut = ""
-    try { $echoOut = (& wsl.exe -d $name -- /bin/sh -c 'echo ready' 2>&1) -join "" } catch {}
+    $echoAttempts = [int](Get-MiosTomlValue -Section 'smoke_tests' -Key 'echo_attempts'    -Default 15)
+    $echoIntSec   = [int](Get-MiosTomlValue -Section 'smoke_tests' -Key 'interval_seconds' -Default 2)
+    for ($i = 1; $i -le $echoAttempts; $i++) {
+        try { $echoOut = (& wsl.exe -d $name -- /bin/sh -c 'echo ready' 2>&1) -join "" } catch {}
+        if ($echoOut.Trim() -eq 'ready') { break }
+        if ($i -lt $echoAttempts) { Start-Sleep -Seconds $echoIntSec }
+    }
     if ($echoOut.Trim() -ne 'ready') {
-        Log-Warn "smoke: $name did not respond to 'echo ready' (got: '$echoOut')"
+        Log-Warn "smoke: $name did not respond to 'echo ready' (got: '$echoOut') after $echoAttempts attempts"
         return $false
     }
     Log-Ok ((Get-MiosTomlValue -Section 'messages.steps' -Key 'smoke_responsive_template' -Default "smoke 1/4: {name} is responsive") -replace '\{name\}', $name)
@@ -5483,6 +5493,18 @@ function Set-MiosLanFirewallRules {
 }
 
 function Set-MiosLanPortProxy {
+    # Skip entirely under WSL2 mirrored networking: there is no distinct VM
+    # eth0 to resolve and Windows already exposes container ports on the host,
+    # so netsh portproxy is both impossible and unnecessary (2026-06-05: the
+    # "could not resolve a clean WSL VM IP" warning came from mirrored mode --
+    # the .wslconfig the installer writes now uses networkingMode=mirrored).
+    try {
+        $_wslCfg = Join-Path $env:USERPROFILE '.wslconfig'
+        if ((Test-Path $_wslCfg) -and ((Get-Content -LiteralPath $_wslCfg -Raw -ErrorAction SilentlyContinue) -match '(?im)^\s*networkingMode\s*=\s*mirrored\b')) {
+            Log-Ok "portproxy: skipped (networkingMode=mirrored exposes container ports on the host directly)"
+            return
+        }
+    } catch {}
     # Windows-side `netsh interface portproxy` mappings so OTHER devices
     # on the LAN can reach the dev VM's container ports.
     #
@@ -9121,7 +9143,13 @@ if ($activeDistro) {
                             if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                 $PSNativeCommandUseErrorActionPreference = $false
                             }
-                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- flatpak install -y --noninteractive --or-update --system flathub org.gnome.Platform//master org.gnome.Sdk//master 2>&1 | tail -20" 2>&1 |
+                            # Refresh flathub's appstream so the per-app loop resolves
+                            # cleanly. The old explicit `org.gnome.Platform//master` pre-pull
+                            # errored "Nothing matches org.gnome.Platform in remote flathub"
+                            # (//master is a gnome-nightly branch, NOT flathub -- flathub uses
+                            # versioned branches; 2026-06-05). Runtimes are pulled as deps by
+                            # each per-app install below, so the pre-pull was redundant anyway.
+                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- sh -c 'flatpak update --system --appstream flathub 2>&1 | tail -3 || true' 2>&1 | tail -20" 2>&1 |
                                 ForEach-Object { Write-Log "mios-flatpak-runtime: $_" }
                         }
                         # Ensure ALL configured remotes are added before the
@@ -9527,7 +9555,11 @@ fi
         # and stall the entire install. dconf is in $PATH at /bin/dconf
         # without login-shell PATH-extension.
         # Operator-flagged 2026-05-10: install "stuck here" at this step.
-        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c 'command -v dconf >/dev/null 2>&1 && dconf update 2>&1 || echo "dconf binary missing -- skipping system-db compile (theme defaults apply on first GTK app launch via xdg-config/gtk-{3,4}.0)"; ls /etc/dconf/db/local 2>&1 | head -1' 2>&1 |
+        # NOTE: keep this bash -c free of embedded double-quotes and parens --
+        # PowerShell's native-arg quoting mangles them passing to wsl.exe (the
+        # 2026-06-05 'syntax error near unexpected token (' came from the old
+        # echo message's "(...)"). Plain words only.
+        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c 'command -v dconf >/dev/null 2>&1 && dconf update 2>&1 || echo dconf-binary-missing-skipped; ls /etc/dconf/db/local 2>&1 | head -1' 2>&1 |
             ForEach-Object { Write-Log "mios-dconf: $_" }
     }
     Log-Ok "MiOS dconf system-db compiled (adw-gtk3-dark + prefer-dark active for all user-bus sessions)"
@@ -9566,9 +9598,7 @@ if [ -d /usr/share/icons/Bibata-Modern-Classic ] && [ -n "$(ls -A /usr/share/ico
 fi
 command -v curl >/dev/null || { echo "curl missing in dev VM"; exit 127; }
 command -v tar  >/dev/null || { echo "tar missing in dev VM";  exit 127; }
-VER=$(curl -sSL -H "Accept: application/vnd.github+json" \
-  https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest 2>/dev/null \
-  | grep -oE "\"tag_name\":\\s*\"v[0-9.]+\"" | head -1 | grep -oE "v[0-9.]+" | sed "s/^v//")
+VER=$(curl -sSL -H "Accept: application/vnd.github+json" https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest 2>/dev/null | grep -oE "\"tag_name\":\\s*\"v[0-9.]+\"" | head -1 | grep -oE "v[0-9.]+" | sed "s/^v//")
 [ -z "$VER" ] && VER="2.0.7"
 URL="https://github.com/ful1e5/Bibata_Cursor/releases/download/v${VER}/Bibata-Modern-Classic.tar.xz"
 echo "Bibata v${VER}: ${URL}"
@@ -9584,8 +9614,7 @@ fi
 mkdir -p /usr/share/icons
 tar -xJf "$TARBALL" -C /usr/share/icons/
 rm -f "$TARBALL"
-if [ ! -d /usr/share/icons/Bibata-Modern-Classic/cursors ] || \
-   [ -z "$(ls -A /usr/share/icons/Bibata-Modern-Classic/cursors 2>/dev/null)" ]; then
+if [ ! -d /usr/share/icons/Bibata-Modern-Classic/cursors ] || [ -z "$(ls -A /usr/share/icons/Bibata-Modern-Classic/cursors 2>/dev/null)" ]; then
     echo "Bibata extraction failed -- cursors dir empty" >&2
     exit 1
 fi
