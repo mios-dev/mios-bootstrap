@@ -3906,12 +3906,17 @@ QUADLET_OPTIN=( __MIOS_QUADLET_OPTIN__ )
 # carry newer ones than the live systemd state.
 $NS systemctl daemon-reload 2>&1 | grep -vE 'created symlink' || true
 
+# Belt-and-suspenders reload, then enable each unit DIRECTLY. The previous
+# `list-unit-files | grep` gate gave a FALSE "not present" for units checked out
+# in this same overlay pass (2026-06-05: mios-ai-firstboot.service was on disk +
+# /usr/lib/systemd/system writable, but the gate skipped it so the AI never
+# auto-provisioned). enable is the authoritative existence check.
+$NS systemctl daemon-reload 2>/dev/null || true
 for svc in "${NATIVE_SET[@]}"; do
-    if $NS systemctl list-unit-files "$svc" 2>/dev/null | grep -q "$svc"; then
-        echo "[quadlet-overlay] enable --now $svc"
-        $NS systemctl enable --now "$svc" 2>&1 | grep -vE 'created symlink' || true
+    if $NS systemctl enable --now "$svc" >/dev/null 2>&1; then
+        echo "[quadlet-overlay] enabled $svc"
     else
-        echo "[quadlet-overlay] skip $svc (unit not present -- pkg may be missing)"
+        echo "[quadlet-overlay] skip $svc (enable failed -- unit absent or start error; non-fatal)"
     fi
 done
 
