@@ -1,0 +1,95 @@
+# /usr/share/mios/profile-headless.toml -- MiOS HEADLESS / SERVER profile (R14)
+#
+# A server-posture variant of the default profile (etc/mios/profile.toml) for an
+# orchestration / inference node that should NOT run the GNOME desktop, Guacamole
+# remote-desktop, or Looking-Glass layer. Closes the "no headless/server profile
+# variant -- you take the whole kitchen sink" gap from the 2026-06 maturity review.
+#
+# USE: copy this over the host profile BEFORE installing, then bootstrap normally:
+#     sudo cp /usr/share/mios/profile-headless.toml /etc/mios/profile.toml
+#   (the 3-layer overlay makes /etc/mios/profile.toml win over the vendor default.)
+#
+# WHAT IS / ISN'T GUARANTEED:
+#   * [quadlets.enable] flags set to `false` ARE honored -- the bootstrap
+#     force-disables those services, so the desktop/remote-desktop sidecars never
+#     start on this node. (The default profile documents this contract.)
+#   * [desktop] keys here express intent (no auto-started GNOME session, no
+#     desktop flatpaks). GNOME 50 is still PRESENT in the image (it ships in
+#     mios.git, not the installer) -- this profile just avoids starting/seeding
+#     the desktop layer. For a truly minimal headless IMAGE (no GNOME at all),
+#     build with a headless MIOS_BASE_IMAGE; that is a separate image build, not
+#     a profile choice. Verify session handling on first boot.
+#
+# Format: TOML 1.0. Mirrors etc/mios/profile.toml field-for-field; only the
+# desktop/quadlet/flatpak posture differs.
+
+[identity]
+username  = "mios"
+fullname  = "MiOS Server"
+hostname  = "mios-node"
+shell     = "/bin/bash"
+groups    = ["wheel", "libvirt", "kvm", "video", "render", "input", "dialout", "docker"]
+
+[locale]
+timezone        = "UTC"
+keyboard_layout = "us"
+language        = "en_US.UTF-8"
+
+[auth]
+ssh_key_type     = "ed25519"
+ssh_key_action   = "generate"
+existing_ssh_key = ""
+password_policy  = "interactive"
+password_hash    = ""
+luks_passphrase  = ""
+github_pat       = ""
+
+[network]
+firewalld_default_zone = "drop"
+allow_ssh              = true
+allow_cockpit          = true   # server management UI (9090/tcp) -- kept for headless admin
+allow_libvirt_bridge   = true
+
+[ai]
+endpoint        = "http://localhost:8080/v1"
+model           = "qwen3.5:2b"
+embed_model     = "nomic-embed-text"
+api_key         = ""
+enable_ollama   = true
+enable_localai  = true
+mcp_registry    = "/usr/share/mios/ai/mcp.json"
+
+#------------------------------------------------------------------------------
+# Desktop session -- HEADLESS: no auto-started GNOME session, no desktop apps.
+#------------------------------------------------------------------------------
+[desktop]
+session       = "headless"   # not "gnome" -- do not auto-start a graphical session
+color_scheme  = "prefer-dark"
+flatpaks      = []           # no desktop flatpaks on a server node
+
+[image]
+ref    = "ghcr.io/mios-dev/mios:latest"
+branch = "main"
+
+[bootstrap]
+mode             = "auto"
+mios_repo        = "https://github.com/mios-dev/mios.git"
+bootstrap_repo   = "https://github.com/mios-dev/mios-bootstrap.git"
+install_packages = true
+reboot_on_finish = true
+
+#------------------------------------------------------------------------------
+# Sidecar Quadlets -- HEADLESS: desktop / remote-desktop layers OFF, the
+# server/inference stack ON. (`false` here force-disables regardless of the
+# Quadlet's own Condition gating.)
+#------------------------------------------------------------------------------
+[quadlets.enable]
+mios-ai            = true    # local inference -- the point of the node
+mios-ceph          = true    # storage
+mios-k3s           = true    # orchestration
+crowdsec-dashboard = false   # web dashboard -- headless: off (IPS itself still runs)
+ollama             = true
+cloudws-guacamole  = false   # remote-desktop gateway -- headless: off
+cloudws-pxe-hub    = false   # netboot hub -- opt-in only
+guacamole-postgres = false   # Guacamole backing store -- off with Guacamole
+guacd              = false   # Guacamole daemon -- off with Guacamole
