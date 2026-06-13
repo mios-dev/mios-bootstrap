@@ -776,6 +776,91 @@ stage_user_profile_artifacts() {
 # init is the equivalent of "build the running system from the merged tree";
 # on bootc hosts Phase-2 is `bootc switch` to a pre-built image.
 # ============================================================================
+# ============================================================================
+# mios.toml package helpers (mirroring automation/lib/packages.sh SSOT)
+# ============================================================================
+_resolve_mios_toml() {
+    local f
+    for f in "/etc/mios/mios.toml" "/usr/share/mios/mios.toml"; do
+        if [[ -f "$f" ]]; then
+            echo "$f"
+            return 0
+        fi
+    done
+    return 1
+}
+
+get_packages_from_toml() {
+    local category="$1"
+    local toml_path
+    toml_path="$(_resolve_mios_toml)" || return 1
+
+    awk -v section="packages.${category}" '
+        /^\[/ {
+            in_section = 0
+            collecting = 0
+            line = $0
+            sub(/^\[/, "", line); sub(/\][[:space:]]*$/, "", line)
+            gsub(/[[:space:]]/, "", line)
+            if (line == section) in_section = 1
+            next
+        }
+        in_section && /^[[:space:]]*pkgs[[:space:]]*=/ {
+            sub(/^[^=]*=[[:space:]]*/, "", $0)
+            collecting = 1
+        }
+        collecting {
+            print
+            if ($0 ~ /\][[:space:]]*$/) { collecting = 0 }
+        }
+    ' "$toml_path" \
+        | tr -d '[]' \
+        | tr ',' '\n' \
+        | sed -E "s/[[:space:]]*\"([^\"]*)\"[[:space:]]*\$/\\1/" \
+        | sed '/^[[:space:]]*$/d' \
+        | sed -E 's/[[:space:]]*#.*$//' \
+        | tr '\n' ' '
+}
+
+get_all_packages_except() {
+    local toml_path
+    toml_path="$(_resolve_mios_toml)" || return 1
+    # Exclude: repos + the standard excluded ones
+    local excl="^(repos|kernel|k3s-selinux-build|looking-glass-build|cockpit-plugins-build|self-build|build-toolchain)$"
+
+    awk -v excl="$excl" '
+        /^\[/ {
+            in_section = 0
+            collecting = 0
+            line = $0
+            sub(/^\[/, "", line); sub(/\][[:space:]]*$/, "", line)
+            gsub(/[[:space:]]/, "", line)
+            if (line ~ /^packages\./) {
+                category = line
+                sub(/^packages\./, "", category)
+                if (category !~ excl) {
+                    in_section = 1
+                }
+            }
+            next
+        }
+        in_section && /^[[:space:]]*pkgs[[:space:]]*=/ {
+            sub(/^[^=]*=[[:space:]]*/, "", $0)
+            collecting = 1
+        }
+        collecting {
+            print
+            if ($0 ~ /\][[:space:]]*$/) { collecting = 0 }
+        }
+    ' "$toml_path" \
+        | tr -d '[]' \
+        | tr ',' '\n' \
+        | sed -E "s/[[:space:]]*\"([^\"]*)\"[[:space:]]*\$/\\1/" \
+        | sed '/^[[:space:]]*$/d' \
+        | sed -E 's/[[:space:]]*#.*$//' \
+        | tr '\n' ' '
+}
+
 trigger_mios_install() {
     log_phase "Phase-1 -- Total Root Merge"
     
@@ -842,53 +927,29 @@ trigger_mios_install() {
             rm -rf "${bootstrap_tmp}"
             log_ok "MiOS-bootstrap overlays applied"
 
-            # 3. Phase-2: RPM package install from PACKAGES.md SSOT.
+            # 3. Phase-2: RPM package install from mios.toml SSOT.
             # Build-only blocks (kernel kmods, selinux policy source, looking-glass
             # build deps, cockpit plugin build deps) are excluded -- they only make
             # sense inside the OCI build pipeline, not on a running FHS host.
-            log_phase "Phase-2 -- FHS package install (from PACKAGES.md)"
-            local packages_md="/usr/share/mios/PACKAGES.md"
-            if [[ -f "$packages_md" ]]; then
-                # Excluded block names: build-time / image-only groups
-                local -a exclude_blocks=(
-                    packages-kernel
-                    packages-k3s-selinux-build
-                    packages-looking-glass-build
-                    packages-cockpit-plugins-build
-                    packages-self-build
-                    packages-build-toolchain
-                )
-                local exclude_pat
-                exclude_pat=$(printf '|%s' "${exclude_blocks[@]}")
-                exclude_pat="${exclude_pat:1}"   # strip leading |
+            log_phase "Phase-2 -- FHS package install (from mios.toml)"
+            local toml_path
+            toml_path="$(_resolve_mios_toml)"
+            if [[ -n "$toml_path" ]]; then
+                local repo_pkgs
+                repo_pkgs=$(get_packages_from_toml "repos")
+                if [[ -n "$repo_pkgs" ]]; then
+                    log_info "Setting up additional repos..."
+                    spin_start "Installing repo packages"
+                    # shellcheck disable=SC2086
+                    $dnf_cmd install -y --skip-unavailable $repo_pkgs 2>&1 | grep -E '^(Install|Upgrade|Error|Warning|Failed)' || true
+                    spin_stop
+                    $dnf_cmd makecache --refresh 2>/dev/null || true
+                    log_ok "Repos configured"
+                fi
 
                 local pkgs
-                pkgs=$(awk -v excl="$exclude_pat" '
-                    /^```packages-/ {
-                        block = $0; sub(/^```/,"",block); sub(/[[:space:]].*$/,"",block)
-                        if (block ~ excl) { skip=1 } else { skip=0 }
-                        next
-                    }
-                    /^```$/ { skip=0; next }
-                    skip || /^#/ || /^$/ { next }
-                    { print }
-                ' "$packages_md" | tr '\n' ' ')
-
+                pkgs=$(get_all_packages_except)
                 if [[ -n "$pkgs" ]]; then
-                    # Install repos meta-packages first so that subsequent packages
-                    # can resolve from RPMFusion, CrowdSec, Terra, etc.
-                    local repo_pkgs
-                    repo_pkgs=$(sed -n '/^```packages-repos/,/^```$/{/^```/d;/^#/d;/^$/d;p}' "$packages_md" | tr '\n' ' ')
-                    if [[ -n "$repo_pkgs" ]]; then
-                        log_info "Setting up additional repos..."
-                        spin_start "Installing repo packages"
-                        # shellcheck disable=SC2086
-                        $dnf_cmd install -y --skip-unavailable $repo_pkgs 2>&1 | grep -E '^(Install|Upgrade|Error|Warning|Failed)' || true
-                        spin_stop
-                        $dnf_cmd makecache --refresh 2>/dev/null || true
-                        log_ok "Repos configured"
-                    fi
-
                     log_info "Installing full 'MiOS' component stack..."
                     spin_start "dnf install (this takes several minutes)"
                     # shellcheck disable=SC2086
@@ -897,10 +958,10 @@ trigger_mios_install() {
                     spin_stop
                     log_ok "Package installation complete"
                 else
-                    log_warn "No packages extracted from PACKAGES.md"
+                    log_warn "No packages extracted from mios.toml"
                 fi
             else
-                log_err "PACKAGES.md not found at ${packages_md} -- package installation skipped"
+                log_err "mios.toml not found -- package installation skipped"
             fi
 
             # 4. Phase-3: systemd-sysusers, systemd-tmpfiles, daemon-reload.

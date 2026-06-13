@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 # 'MiOS' Unified Installer & Builder -- Windows 11 / PowerShell
 #
 #   irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.ps1 | iex
@@ -3169,7 +3169,7 @@ function New-BuilderDistro([hashtable]$HW) {
 function Invoke-MiosOverlaySeed {
     # DEPRECATED 2026-05-06: bare invocation is a silent no-op.
     #
-    # Original purpose: read PACKAGES.md fenced ```packages-*``` blocks
+    # Original purpose: read mios.toml packages.* sections
     # from the cloned mios.git checkout and run `dnf5 install` per
     # block inside MiOS-DEV. Replaced by Invoke-MiosQuadletOverlay
     # (which makes / a git working tree of mios.git) plus
@@ -3188,18 +3188,15 @@ function Invoke-MiosOverlaySeed {
     if ($env:MIOS_FORCE_LEGACY_PACKAGES_MD -ne '1') {
         return
     }
-    Log-Warn "MIOS_FORCE_LEGACY_PACKAGES_MD=1 -- running deprecated PACKAGES.md overlay seed (you are off the canonical path)"
+    Log-Warn "MIOS_FORCE_LEGACY_PACKAGES_MD=1 -- running deprecated mios.toml overlay seed (you are off the canonical path)"
     Set-Step "Seeding MiOS package overlay onto $DevDistro (LEGACY)..."
-    # Updated path: the file moved 2026-05-05 to usr/share/doc/mios/reference/.
-    # Try the new path first, fall back to the old vendor location for
-    # operators on stale checkouts.
-    # mios.git overlay puts /usr at $MiosRepoDir root.
-    $packagesMd = Join-Path $MiosRepoDir "usr\share\doc\mios\reference\PACKAGES.md"
-    if (-not (Test-Path $packagesMd)) {
-        $packagesMd = Join-Path $MiosRepoDir "usr\share\mios\PACKAGES.md"
+    # Updated path: check mios.toml instead of PACKAGES.md.
+    $tomlPath = Join-Path $MiosRepoDir "mios.toml"
+    if (-not (Test-Path $tomlPath)) {
+        $tomlPath = Join-Path $MiosRepoDir "usr\share\mios\mios.toml"
     }
-    if (-not (Test-Path $packagesMd)) {
-        Log-Warn "PACKAGES.md not found in either canonical location -- legacy overlay seed skipped"
+    if (-not (Test-Path $tomlPath)) {
+        Log-Warn "mios.toml not found in either canonical location -- legacy overlay seed skipped"
         return
     }
     $wslDistro = "podman-$DevDistro"
@@ -3217,32 +3214,12 @@ function Invoke-MiosOverlaySeed {
         return
     }
 
-    # Stage PACKAGES.md + the highest-precedence mios.toml + the overlay
-    # installer inside the distro's /tmp. Using `wsl --exec cp` from the
-    # Windows path avoids podman-machine-cp's rootful permission quirks.
-    # The bash overlay reads [packages.dev_overlay].sections from
-    # /tmp/mios.toml -- this is what consolidates the SSOT (no longer
-    # blanket-installs every PACKAGES.md section; honors operator's
-    # configurator-saved selection).
-    $drive = $packagesMd.Substring(0,1).ToLower()
-    $packagesWslPath = "/mnt/$drive" + ($packagesMd.Substring(2) -replace '\\','/')
-
-    $tomlSources = @(
-        (Join-Path $env:APPDATA "MiOS\mios.toml"),
-        # Both repos are overlaid at $MiosRepoDir root, so mios.toml
-        # exists once at $MiosRepoDir\mios.toml (mios-bootstrap's copy
-        # last-write-wins via the robocopy overlay) AND once at
-        # $MiosRepoDir\usr\share\mios\mios.toml (mios.git's vendor copy).
-        (Join-Path $MiosRepoDir "mios.toml"),
-        (Join-Path $MiosRepoDir "usr\share\mios\mios.toml")
-    )
-    $tomlPath = $null
-    foreach ($t in $tomlSources) { if (Test-Path $t) { $tomlPath = $t; break } }
-    $tomlWslPath = ""
-    if ($tomlPath) {
-        $td = $tomlPath.Substring(0,1).ToLower()
-        $tomlWslPath = "/mnt/$td" + ($tomlPath.Substring(2) -replace '\\','/')
-    }
+    # Stage the highest-precedence mios.toml + the overlay installer inside
+    # the distro's /tmp. Using `wsl --exec cp` from the Windows path avoids
+    # podman-machine-cp's rootful permission quirks.
+    # The bash overlay reads [packages.dev_overlay].sections from mios.toml.
+    $drive = $tomlPath.Substring(0,1).ToLower()
+    $tomlWslPath = "/mnt/$drive" + ($tomlPath.Substring(2) -replace '\\','/')
 
     $overlayScript = @'
 #!/usr/bin/env bash
@@ -3251,27 +3228,26 @@ function Invoke-MiosOverlaySeed {
 set -uo pipefail
 
 SENTINEL="/var/lib/mios/.overlay-seeded"
-SRC_MD="${SRC_MD:-/tmp/PACKAGES.md}"
-PACKAGES_MD="/tmp/PACKAGES.lf.md"
+SRC_TOML="${SRC_TOML:-/tmp/mios.toml}"
 LOG_DIR="/tmp/mios-overlay-logs"
 mkdir -p "$LOG_DIR" && chmod 0777 "$LOG_DIR"
 
-# Skip if already seeded and PACKAGES.md is older than the sentinel.
-if [[ -f "$SENTINEL" && "$SENTINEL" -nt "$SRC_MD" ]]; then
-    echo "[mios-overlay] sentinel newer than PACKAGES.md -> skip"
+# Skip if already seeded and mios.toml is older than the sentinel.
+if [[ -f "$SENTINEL" && "$SENTINEL" -nt "$SRC_TOML" ]]; then
+    echo "[mios-overlay] sentinel newer than mios.toml -> skip"
     exit 0
 fi
 
 # Normalize CRLF (OneDrive-synced source).
-tr -d '\r' < "$SRC_MD" > "$PACKAGES_MD"
+TOML_LF="/tmp/mios.lf.toml"
+tr -d '\r' < "$SRC_TOML" > "$TOML_LF"
 
 # Resolve the dev-overlay section list from the user's mios.toml. The
 # layered resolver (highest wins): per-user (~/.config/mios/mios.toml),
-# host (/etc/mios/mios.toml), bootstrap clone, vendor (PACKAGES.md
-# bootstrap default). The PowerShell side stages the highest-precedence
-# layer at $SRC_TOML before invoking us. Falls back to a hardcoded
-# minimal list if no [packages.dev_overlay].sections array is present.
-SRC_TOML="${SRC_TOML:-/tmp/mios.toml}"
+# host (/etc/mios/mios.toml), bootstrap clone, vendor. The PowerShell side
+# stages the highest-precedence layer at $SRC_TOML before invoking us.
+# Falls back to a hardcoded minimal list if no [packages.dev_overlay].sections
+# array is present.
 DEFAULT_SECTIONS=(
     base security utils build-toolchain containers
     cockpit storage virt
@@ -3285,7 +3261,7 @@ DEFAULT_SECTIONS=(
 # (or [packages].dev_overlay.sections inline form). Tolerates the
 # single-line + multi-line array shapes the configurator emits.
 parse_sections_from_toml() {
-    [[ -r "$SRC_TOML" ]] || return 1
+    [[ -r "$TOML_LF" ]] || return 1
     awk '
         /^\[packages\.dev_overlay\][[:space:]]*$/ { in_block=1; next }
         in_block && /^\[/                        { in_block=0; next }
@@ -3296,7 +3272,7 @@ parse_sections_from_toml() {
             print
             if ($0 ~ /\]/) { collecting=0 }
         }
-    ' "$SRC_TOML" \
+    ' "$TOML_LF" \
         | tr -d '[]\n' \
         | tr ',' '\n' \
         | sed -E 's/^[[:space:]]*"?([^"#]*)"?[[:space:]]*$/\1/' \
@@ -3312,7 +3288,31 @@ fi
 echo "[mios-overlay] sections (${#SECTIONS[@]}, from ${SECTIONS_SOURCE}): ${SECTIONS[*]}"
 
 get_pkgs() {
-    sed -n "/^\`\`\`packages-${1}$/,/^\`\`\`$/{/^\`\`\`/d;/^$/d;/^#/d;p}" "$PACKAGES_MD"
+    local category="$1"
+    awk -v section="packages.${category}" '
+        /^\[/ {
+            in_section = 0
+            collecting = 0
+            line = $0
+            sub(/^\[/, "", line); sub(/\][[:space:]]*$/, "", line)
+            gsub(/[[:space:]]/, "", line)
+            if (line == section) in_section = 1
+            next
+        }
+        in_section && /^[[:space:]]*pkgs[[:space:]]*=/ {
+            sub(/^[^=]*=[[:space:]]*/, "", $0)
+            collecting = 1
+        }
+        collecting {
+            print
+            if ($0 ~ /\][[:space:]]*$/) { collecting = 0 }
+        }
+    ' "$TOML_LF" \
+        | tr -d '[]' \
+        | tr ',' '\n' \
+        | sed -E "s/[[:space:]]*\"([^\"]*)\"[[:space:]]*\$/\\1/" \
+        | sed '/^[[:space:]]*$/d' \
+        | sed -E 's/[[:space:]]*#.*$//'
 }
 
 # Add Fedora-version-pinned RPMFusion (free + nonfree).
@@ -3359,7 +3359,7 @@ sudo touch "$SENTINEL"
 
 # Install a wrapper at /usr/local/bin/mios-dev-seed so the operator can
 # re-run the overlay manually inside the dev distro after editing
-# PACKAGES.md (e.g. `wsl -d podman-MiOS-DEV -- sudo mios-dev-seed`).
+# mios.toml (e.g. `wsl -d podman-MiOS-DEV -- sudo mios-dev-seed`).
 sudo install -d -m 0755 /usr/local/bin
 sudo install -m 0755 /tmp/mios-overlay.sh /usr/local/bin/mios-dev-seed
 
@@ -3378,7 +3378,7 @@ echo "[mios-overlay] done -- $(rpm -qa | wc -l) packages installed"
 echo "[mios-overlay] manual refresh: sudo mios-dev-seed"
 '@
 
-    # Materialize the script + a copy of PACKAGES.md inside the distro
+    # Materialize the script + a copy of mios.toml inside the distro
     # via stdin; avoids cross-FS quoting headaches and works for both
     # /mnt/c-mounted paths and rootful machines.
     # CRLF -> LF: PowerShell @'...'@ here-strings produce CRLF on
@@ -3387,14 +3387,9 @@ echo "[mios-overlay] manual refresh: sudo mios-dev-seed"
     # directory" -> the entire overlay silently no-ops on the dev VM.
     $overlayScript = $overlayScript -replace "`r`n", "`n" -replace "`r", "`n"
     $b64Script = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($overlayScript))
-    $stageToml = ""
-    if ($tomlWslPath) {
-        $stageToml = "cp '$tomlWslPath' /tmp/mios.toml; "
-    }
     $stage = "set -e; sudo install -d -m 0777 /tmp; " +
              "echo '$b64Script' | base64 -d > /tmp/mios-overlay.sh && chmod +x /tmp/mios-overlay.sh; " +
-             "cp '$packagesWslPath' /tmp/PACKAGES.md; " +
-             $stageToml +
+             "cp '$tomlWslPath' /tmp/mios.toml; " +
              "/tmp/mios-overlay.sh"
     & wsl.exe -d $wslDistro --exec bash -c $stage 2>&1 | ForEach-Object { Write-Log "overlay-seed: $_" }
     if ($LASTEXITCODE -ne 0) {

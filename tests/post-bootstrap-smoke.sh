@@ -17,7 +17,7 @@
 # Get-MiOS.ps1's auto-chain block reports flatpaks installed, AND on
 # operator demand via `mios smoke`.
 
-set -u
+set -euo pipefail
 PASS=0; FAIL=0; WARN=0
 P0_FAIL=0
 
