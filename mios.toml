@@ -1135,12 +1135,12 @@ mios-ai            = true
 mios-ceph          = true
 mios-k3s           = true
 mios-forge         = true
-crowdsec-dashboard = true
-ollama             = true
-cloudws-guacamole  = true
-cloudws-pxe-hub    = true
-guacamole-postgres = true
-guacd              = true
+mios-crowdsec-dashboard = true
+mios-ollama             = true
+mios-guacamole  = true
+mios-pxe-hub    = true
+mios-guacamole-postgres = true
+mios-guacd              = true
 
 # ----------------------------------------------------------------------------
 # [env] -- free-form environment-variable additions. Keys must match POSIX
