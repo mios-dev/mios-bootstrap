@@ -1,3 +1,5 @@
+<!-- AI-hint: Defines the MiOS AI architecture, specifying the local inference endpoint, model catalog, and the multi-layer configuration resolution logic for agent system prompts and environment overrides.
+     AI-related: /etc/mios/profile.toml, /usr/share/mios/ai/system.md, /usr/share/mios/ai/models.json, /usr/share/mios/ai/mcp.json, /usr/share/mios/ai/vars.json, /usr/share/mios/knowledge/, /usr/share/mios/profile.toml, /etc/mios/ai/system-prompt.md, /etc/mios/ai/config.json, mios-bootstrap -->
 # 'MiOS' Bootstrap -- AI Entry Point
 
 The locally hosted MiOS AI models orchestrate all work in this stack.

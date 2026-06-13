@@ -1,3 +1,4 @@
+# AI-hint: Defines consistent coding styles, indentation, and line endings for the MiOS bootstrap environment to ensure uniform formatting across scripts, markdown, and configuration files.
 root = true
 
 [*]

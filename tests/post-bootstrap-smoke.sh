@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# AI-hint: Acceptance test script that validates the post-bootstrap contract by verifying bootc image identity, OS branding, and core service availability to ensure the environment is a functional MiOS instance.
+# AI-related: /usr/share/mios/tests/post-bootstrap-smoke.sh, /usr/libexec/mios/mios-build-driver, /etc/mios/mios.toml, /usr/share/mios/mios.toml, mios-build-driver, mios-dev, mios-flatpak-install, mios-ai, mios-ceph, mios-k3s
+# AI-functions: ok, warn, fail, hdr, toml_get_bool
 # tests/post-bootstrap-smoke.sh
 #
 # Acceptance test for the "post-bootstrap = full MiOS environment" contract

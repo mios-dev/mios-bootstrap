@@ -1,3 +1,5 @@
+<!-- AI-hint: Contains specific instructions, safety constraints, and architectural context for AI agents to navigate the MiOS bootstrap repository, manage FHS mappings, and interact with the `mios` command suite.
+     AI-related: /usr/share/mios/ai/system.md, /etc/mios/ai/system-prompt.md, /etc/mios/profile.toml, /usr/share/mios/profile.toml, mios-dev, mios-bootstrap, mios-pull, mios-ai, mios-ai.container, localhost:8080 -->
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.

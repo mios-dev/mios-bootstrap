@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# AI-hint: Legacy redirector script that forwards execution to build-mios.sh to maintain backward compatibility for curl-based installation commands while ensuring the core build logic is centralized.
+# AI-related: mios-dev, mios-bootstrap
 # 'MiOS' bootstrap installer -- legacy redirector.
 #
 # This file was renamed to build-mios.sh to align with the cross-platform

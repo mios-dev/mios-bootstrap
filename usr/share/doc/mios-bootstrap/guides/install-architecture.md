@@ -1,3 +1,5 @@
+<!-- AI-hint: Documentation of the MiOS multi-repo architecture, defining the split between build/system (mios.git) and user/AI (mios-bootstrap.git) layers, installation entry points, and the hierarchical resolution logic for AI system prompts and configs.
+     AI-related: /usr/share/mios/PACKAGES.md, /usr/share/mios/ai/, /etc/mios/profile.toml, /usr/share/mios/profile.toml, /usr/share/mios/ai/system.md, /usr/share/mios/ai/models.json, /usr/share/mios/ai/mcp.json, /etc/mios/ai/config.json, /etc/mios/ai/system-prompt.md, /usr/share/mios/memory/ -->
 # 'MiOS' Bootstrap -- Architecture Summary
 
 **Version:** v0.2.4

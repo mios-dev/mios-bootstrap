@@ -1,3 +1,5 @@
+# AI-hint: Default configuration for aichat/aichat-ng that redirects OpenAI-compatible requests to the local LocalAI Quadlet at http://localhost:8080/v1, ensuring seamless local LLM integration for all users.
+# AI-related: /etc/mios/profile.toml, mios-ai, mios-localai, mios-ai.container, localhost:8080
 # ~/.config/aichat/config.yaml -- 'MiOS' AIChat / AIChat-NG default config.
 #
 # Architectural Law 5 (UNIFIED-AI-REDIRECTS): every OpenAI-API-shaped

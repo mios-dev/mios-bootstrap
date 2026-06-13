@@ -1,3 +1,4 @@
+# AI-hint: Defines Git line-ending policies to ensure cross-platform compatibility, specifically enforcing LF for shell scripts to prevent execution errors in Linux containers while preserving CRLF for Windows-native scripts.
 # MiOS -- Force LF line endings for all text files.
 # Bash scripts with CRLF break inside containers with "bad interpreter" errors.
 # PowerShell files keep CRLF for Windows-native compatibility.

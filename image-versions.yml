@@ -1,3 +1,4 @@
+# AI-hint: Defines immutable SHA256 digests for core MiOS components (ucore-hci, bootc-image-builder, image-builder-cli) and rechunking parameters to ensure reproducible builds and stable image layers.
 # MiOS v0.2.0  Base Image Version Pinning
 # Managed by Renovate Bot  do NOT edit digests manually.
 # Renovate opens PRs when upstream images publish new digests.

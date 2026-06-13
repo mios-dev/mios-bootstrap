@@ -1,3 +1,5 @@
+<!-- AI-hint: Canonical JSON-embedded Markdown source of truth for user-configurable build parameters (usernames, hostnames, image tags, and Flatpaks) consumed by build.sh and load-user-env.sh to populate environment variables.
+     AI-related: mios-83427, mios-dev, mios-build -->
 <!-- 'MiOS' User Preferences Card -- LAW 3: JSON-embedded Markdown SSOT -->
 <!-- This file is the canonical record of user-defined build parameters.  -->
 <!-- It is read by automation/build.sh and tools/load-user-env.sh.        -->

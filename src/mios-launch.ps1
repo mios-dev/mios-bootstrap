@@ -1,3 +1,5 @@
+# AI-hint: Powershell script to launch Windows Terminal with specific MiOS profiles, enforcing focus mode, DPI awareness, and automatic window centering on the active monitor to bypass WT's position-tracking regressions.
+# AI-related: mios-launch
 # mios-launch.ps1 -- native-app launcher for MiOS / MiOS-DEV WT profiles.
 # Spawns wt.exe with the requested profile in focus mode (borderless,
 # no titlebar, no tab row), screen-centered on whichever monitor the

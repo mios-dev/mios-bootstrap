@@ -1,3 +1,5 @@
+# AI-hint: Defines the allowed file whitelist for the mios-bootstrap installer, ensuring only core scripts, build tools, and agent-discovery documentation are tracked for deployment.
+# AI-related: /etc/mios/mios.toml, /usr/share/mios/ai/system.md, mios-bootstrap, mios-launch
 # MiOS-bootstrap allow-list. Bootstrap is a small, focused installer repo --
 # only a handful of files belong here. Ignore everything, allow-list what
 # bootstrap owns.

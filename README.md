@@ -1,3 +1,5 @@
+<!-- AI-hint: Entry point for the MiOS installation workflow; defines the interactive bootstrap process, user-editable profile layers, and the deployment of system-wide configuration files and RAG knowledge.
+     AI-related: /usr/share/mios/profile.toml, /etc/mios/ai/system-prompt.md, /usr/libexec/mios/mios-build-driver, /etc/mios/install.env, /etc/mios/profile.toml, mios-build-driver, mios-bootstrap, mios-dev, mios-build, localhost:8080 -->
 # mios-bootstrap
 
 Interactive installer for MiOS. End-user entry point and the

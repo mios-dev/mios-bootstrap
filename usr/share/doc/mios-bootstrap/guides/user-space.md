@@ -1,3 +1,5 @@
+<!-- AI-hint: Documentation of user-space configuration hierarchy, detailing the layered resolution of profile TOMLs and AI system prompts, and specifying the schema for identity, auth, and AI model parameters.
+     AI-related: /etc/mios/profile.toml, /usr/share/mios/profile.toml, /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/system.md, /etc/mios/install.env, mios-dev, localhost:8080 -->
 # 'MiOS' User-Space Configuration
 
 **Version:** v0.2.4

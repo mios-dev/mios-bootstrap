@@ -1,3 +1,5 @@
+<!-- AI-hint: User-specific override for the MiOS AI system prompt, allowing users to define custom preferences, hardware context, and memory seeds that take precedence over global system defaults.
+     AI-related: /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/system.md -->
 # 'MiOS' Per-User System Prompt
 
 > Per-user overlay. Empty by default — uncomment lines below to

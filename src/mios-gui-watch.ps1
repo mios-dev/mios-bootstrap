@@ -1,3 +1,6 @@
+# AI-hint: A background PowerShell daemon that polls msrdc.exe processes to detect and resize tiny WSLg-spawned windows to a minimum usable size and center them on the screen to ensure visibility on high-resolution displays.
+# AI-related: mios-gui-watch
+# AI-functions: _ResolveTomlDim
 # mios-gui-watch.ps1 -- background watcher that auto-centers tiny WSLg
 # RDP-RAIL windows.
 #

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# AI-hint: Interactive bootstrap script for MiOS Phase-0; performs preflight checks, host detection, and captures user identity to initialize the system configuration and prepare for overlay merging.
+# AI-related: /etc/mios/ai/system-prompt.md., /etc/mios/profile.toml, /etc/mios/mios.toml, /usr/share/mios/mios.toml, /usr/share/mios/profile.toml, /usr/share/mios/configurator/mios.html, /usr/share/mios/configurator, /etc/mios/forge/admin-, /usr/libexec/mios/forge-firstboot.sh, /etc/mios/forge/admin-password.
+# AI-functions: toml_get, toml_get_array_csv, resolve_profile_layers, toml_get_layered, load_profile_defaults, log_info, log_ok, log_warn, log_err, log_phase, spin_start, spin_stop
 #
 # 'MiOS' Bootstrap -- Interactive Ignition Installer
 #

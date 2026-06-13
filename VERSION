@@ -1,1 +1,2 @@
+# AI-hint: Defines the current MiOS bootstrap version for dependency resolution and compatibility checks during the system initialization and update workflows.
 0.2.0

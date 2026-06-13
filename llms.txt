@@ -1,3 +1,5 @@
+# AI-hint: Contains the primary knowledge base and LLM context for the MiOS bootstrap process, defining the system's AI persona, model registry, and MCP server configurations for agent-assisted installation and configuration.
+# AI-related: mios-dev, mios-bootstrap, localhost:8080
 # mios-dev/mios-bootstrap
 
 > Interactive installer for 'MiOS' v0.2.2. User-facing entry point.

@@ -1,3 +1,5 @@
+# AI-hint: A server-specific configuration profile for headless/inference nodes that disables GNOME, Guacamole, and remote-desktop services while enabling local AI inference and Cockpit management.
+# AI-related: /usr/share/mios/profile-headless.toml, /etc/mios/profile.toml, /usr/share/mios/ai/mcp.json, mios-node, mios-dev, mios-bootstrap, mios-ai, mios-ceph, mios-k3s, localhost:8080
 # /usr/share/mios/profile-headless.toml -- MiOS HEADLESS / SERVER profile (R14)
 #
 # A server-posture variant of the default profile (etc/mios/profile.toml) for an

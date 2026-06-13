@@ -1,3 +1,6 @@
+# AI-hint: Powershell script to install Windows host CLI tools (e.g., pwsh, ripgrep, fzf) via winget or direct GitHub downloads based on mios.toml definitions to prepare the host environment for MiOS terminal operations.
+# AI-related: mios-bootstrap, mios-seed, localhost:3030
+# AI-functions: Install-MiosWindowsTools, Configure-MiosBrowserAI
 #Requires -Version 5.1
 # install-host-tools.ps1 -- Windows host CLI tool installation.
 #

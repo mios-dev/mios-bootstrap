@@ -1,3 +1,5 @@
+<!-- AI-hint: Defines the Gemini CLI tool configuration and prompt loading hierarchy, ensuring it routes through the local OpenAI-compatible gateway at port 8080 instead of direct Google APIs.
+     AI-related: /usr/share/mios/ai/system.md, /etc/mios/ai/system-prompt.md, localhost:8080 -->
 # GEMINI.md
 
 Per-tool stub for Gemini CLI. Canonical prompt:

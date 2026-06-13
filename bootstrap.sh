@@ -1,4 +1,6 @@
 #!/bin/bash
+# AI-hint: Legacy entry-point redirector that routes bootstrap requests to build-mios.sh or fetches it remotely via curl to initiate the MiOS installation and build process.
+# AI-related: mios-dev, mios-bootstrap
 # 'MiOS' Bootstrap (Linux / WSL2) -- legacy redirector.
 #
 # Renamed to build-mios.sh to align with the cross-platform entry-point

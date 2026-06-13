@@ -1,3 +1,5 @@
+# AI-hint: Per-user configuration file for MiOS that overrides system-wide defaults for identity, locale, AI endpoints, and desktop preferences, serving as the highest-priority configuration layer for user-specific environment settings.
+# AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, /etc/mios/mios.toml., localhost:8080
 # ~/.config/mios/mios.toml -- Per-user 'MiOS' profile (highest-priority layer).
 #
 # This is the per-user copy of the unified user-config dotfile. The full

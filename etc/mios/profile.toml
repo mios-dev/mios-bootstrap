@@ -1,3 +1,5 @@
+# AI-hint: Configuration file defining the primary user identity, locale settings, and authentication policies used by the bootstrap installer to seed system defaults and generate the initial environment.
+# AI-related: /etc/mios/profile.toml, /etc/mios/install.env, /usr/share/mios/ai/mcp.json, mios-dev, mios-bootstrap, mios-k3s, mios-ai, mios-ceph, localhost:8080
 # /etc/mios/profile.toml -- 'MiOS' User Profile Card
 #
 # Edit any field below before installing, or after at any time. The bootstrap

@@ -1,3 +1,5 @@
+<!-- AI-hint: Authoritative reference for MiOS system-wide environment variables, defining default values for identity, repository URLs, container images, and AI inference parameters used by the bootstrap and deployment scripts.
+     AI-related: /usr/share/mios/env.defaults, /usr/share/mios/ai/vars.json, /usr/share/mios/ai, /etc/mios/install.env, /usr/share/mios/PACKAGES.md, /etc/mios/profile.toml, /etc/mios/ai/system-prompt.md, /etc/mios/ai/config.json, /usr/share/mios/profile.toml, /usr/share/mios/ai/system.md -->
 # usr/share/doc/mios-bootstrap/reference/variables.md
 
 Global variable index for 'MiOS' v0.2.4. All values defined here are the single authoritative source. Change a value in `usr/share/mios/env.defaults` (Linux) or the `# Paths & constants` block of `install.ps1` (Windows) to propagate it system-wide.

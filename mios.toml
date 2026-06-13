@@ -1,3 +1,5 @@
+# AI-hint: Single source of truth (SSOT) for all MiOS system constants, including versioning, environment variables, and hardware/software preferences, resolved by Get-MiosTomlValue across three-layer configuration overlays.
+# AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, /etc/mios/mios.toml., /usr/share/mios/ai/v1/mcp.json, /etc/mios/forge/runner-token, /etc/mios/hermes/api.env, /usr/libexec/mios/install-ai-clis.sh, mios-bootstrap, mios-gui-watch, mios-cockpit-link
 # mios-bootstrap/mios.toml -- 'MiOS' User Profile (single source of user truth)
 #
 # IMPORTANT: this file is the SSOT for code, not just runtime config.

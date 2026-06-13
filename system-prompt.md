@@ -1,3 +1,5 @@
+<!-- AI-hint: Defines the core behavioral constraints and operational rules for the MiOS AI agent, enforcing FHS path grounding, local endpoint routing, and strict output sanitization for system-level interactions.
+     AI-related: /usr/share/mios/ai/system.md, localhost:8080 -->
 # 'MiOS' Host System Prompt
 
 Redirector — canonical prompt is at `/usr/share/mios/ai/system.md`.

@@ -1,3 +1,5 @@
+<!-- AI-hint: The primary entry point and source of truth for all AI agents in mios-bootstrap, defining the project identity, OpenAI-compatible interface standards, and the role of this repo as the user-facing installer layer.
+     AI-related: /etc/mios/profile.toml, /usr/share/mios/profile.toml, /usr/share/mios/ai/system.md, /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/, /etc/mios/install.env, mios-bootstrap, mios-dev, mios-pipeline, mios-pull -->
 # AGENTS.md
 
 > Canonical agent entry point for `mios-bootstrap.git` — the interactive

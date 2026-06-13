@@ -1,3 +1,6 @@
+# AI-hint: PowerShell script that overlays mios-bootstrap files onto a mios.git checkout to merge the user/AI layer into the build context, ensuring a consistent OCI image regardless of the host platform.
+# AI-related: mios-bootstrap
+# AI-functions: Write-Seed
 <#
 .SYNOPSIS
     Universal MiOS-SEED merge step (PowerShell native).
