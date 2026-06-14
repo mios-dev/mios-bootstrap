@@ -1,9 +1,27 @@
-<!-- AI-hint: Entry point for the MiOS installation workflow; defines the interactive bootstrap process, user-editable profile layers, and the deployment of system-wide configuration files and RAG knowledge.
-     AI-related: /usr/share/mios/profile.toml, /etc/mios/ai/system-prompt.md, /usr/libexec/mios/mios-build-driver, /etc/mios/install.env, /etc/mios/profile.toml, mios-build-driver, mios-bootstrap, mios-dev, mios-build, localhost:8080 -->
+<!-- AI-hint: Entry point for the MiOS installation workflow; defines the interactive bootstrap that turns a bare Windows/Fedora host into a deployed MiOS image, the three-layer user-editable profile model, and the system-wide config + RAG knowledge it seeds. MiOS is an immutable bootc/OCI Fedora workstation that is also a local agentic AI OS; this repo is its front door and user-editable layer.
+     AI-related: /usr/share/mios/profile.toml, /etc/mios/ai/system-prompt.md, /usr/libexec/mios/mios-build-driver, /etc/mios/install.env, /etc/mios/profile.toml, mios-build-driver, mios-bootstrap, mios-dev, mios-build, mios-llm-light, localhost:8080 -->
 # mios-bootstrap
 
-Interactive installer for MiOS. End-user entry point and the
-user-editable layer of the three-layer profile model.
+Interactive installer for MiOS, and the user-editable layer of its
+three-layer profile model. This is the **front door** to MiOS.
+
+**What MiOS is.** MiOS is one thing built two ways at once: an immutable,
+bootc/OCI-shaped Fedora workstation (the whole OS is a single container
+image — boot it, `bootc upgrade` it like a `git pull`, `bootc rollback`
+it like a Ctrl-Z) that is *also* a local, self-replicating, agentic AI
+operating system. The same image that ships GNOME/Wayland, NVIDIA+ROCm+iGPU
+via CDI, KVM/libvirt with VFIO passthrough, and a k3s+Ceph cluster path
+also ships a full local agent stack behind one OpenAI-compatible endpoint.
+
+**What this repo does in that whole.** The system image, FHS overlay,
+Containerfile, Quadlets, and architectural laws live in `mios.git`. This
+repo is the *user-facing entry surface*: it captures who you are (identity,
+keys, image tag) into a layered profile, merges `mios.git` into the system
+root (Phase-1 Total Root Merge), and hands off to the build pipeline that
+produces the OCI image the bootc lifecycle then carries forward. End to
+end: **bootstrap (this repo) → image build (`mios.git`) → bootc lifecycle
+on the host.** Nothing here owns runtime system files — it owns the *path
+in*.
 
 **Version:** v0.2.4
 **System repo:** <https://github.com/mios-dev/mios>
@@ -21,13 +39,17 @@ user-editable layer of the three-layer profile model.
   `install.sh:seed_user_skel_for_all_accounts` and by `useradd -m` for
   future users.
 - `system-prompt.md` -- host AI prompt redirector. Bootstrap deploys this
-  to `/etc/mios/ai/system-prompt.md`; LocalAI loads it for chat
-  completions. Per-user copies live at `~/.config/mios/system-prompt.md`.
+  to `/etc/mios/ai/system-prompt.md`; the local agent stack loads it for
+  chat completions through the unified AI endpoint (`MIOS_AI_ENDPOINT`,
+  default `http://localhost:8080/v1` — Architectural Law 5). Per-user
+  copies live at `~/.config/mios/system-prompt.md`.
 - `.env.mios` (deprecated, legacy) -- env-style user defaults; sourced
   by `install.sh` after TOML layers so explicit TOML wins. Migrate to
   `etc/mios/profile.toml`.
 - `etc/mios/{manifest.json,rag-manifest.yaml}` -- installation metadata.
-- `usr/share/mios/knowledge/*` -- RAG knowledge graphs.
+- `usr/share/mios/knowledge/*` -- RAG knowledge graphs. At runtime these
+  are embedded (`nomic-embed-text`, served by the `mios-llm-light` lane)
+  and recalled from the PostgreSQL+pgvector agent datastore.
 
 ## Install
 
@@ -56,6 +78,10 @@ no ExecutionPolicy override, no manual elevation needed.
    `mios.git` + `mios-bootstrap` onto `M:\`.
 3. **Auto-chains** into `/usr/libexec/mios/mios-build-driver` inside
    `MiOS-DEV` for the OCI build (Phase 6+: identity, OCI build, deploy).
+
+`MiOS-DEV` is THE builder: every `podman build`, BIB run, and
+`bootc switch` happens inside it, and it runs every Quadlet container
+that ships in production. Windows is provisioning + handoff only.
 
 **Equivalent shortcut: `mios.bat`** — `WinKey+R` → `mios.bat` (or double-
 click the file). The .bat invokes the same `irm | iex` one-liner above
@@ -107,10 +133,13 @@ The installer:
 1. **Phase-0** -- preflight, profile-card load (three-layer overlay),
    interactive identity capture (defaults from layered profile).
 2. **Phase-1** -- Total Root Merge: clone `mios.git` into `/`, copy
-   bootstrap overlays (`etc/`, `usr/`, `var/`) on top.
-3. **Phase-2** -- build: `dnf install` from `usr/share/mios/PACKAGES.md`
-   SSOT (FHS path) or `bootc switch ghcr.io/mios-dev/mios:latest` (bootc
-   path).
+   bootstrap overlays (`etc/`, `usr/`, `var/`) on top. This is the
+   load-bearing premise: **the repo root IS the deployed system root**,
+   so edits to `/` on a running host are edits to the source the next
+   `bootc upgrade` bakes.
+3. **Phase-2** -- build: `dnf install` from the `[packages]` SSOT in
+   `usr/share/mios/mios.toml` (FHS path) or
+   `bootc switch ghcr.io/mios-dev/mios:latest` (bootc path).
 4. **Phase-3** -- apply: `systemd-sysusers`, `systemd-tmpfiles`,
    `daemon-reload`, services; create the bootstrap user; seed every
    uid ≥ 1000 home from `/etc/skel/.config/mios/`.
@@ -118,7 +147,9 @@ The installer:
 
 ## Profile resolution
 
-Three layers, higher precedence first:
+Identity and tunables flow from one TOML with three layers, higher
+precedence first. This is the same SSOT mechanism (`mios.toml`) the rest
+of the system uses; the profile card is its identity slice.
 
 1. `~/.config/mios/profile.toml` -- per-user (seeded from
    `/etc/skel/.config/mios/profile.toml`)
@@ -128,7 +159,7 @@ Three layers, higher precedence first:
 `install.sh:resolve_profile_layers` walks all three at install time and
 field-level overlays them into the runtime defaults. User-set fields
 in higher layers win. Empty strings do NOT override non-empty values
-below them.
+below them (empty user TOML is the vendor-default state, not an error).
 
 ## Defaults
 
@@ -158,6 +189,16 @@ Operators can still set a flag to `false` to force-disable. See
 | `[image] ref` | `ghcr.io/mios-dev/mios:latest` |
 | `[ai] endpoint` | `http://localhost:8080/v1` |
 
+`[ai] endpoint` is the **single OpenAI-compatible front door** (Law 5,
+UNIFIED-AI-REDIRECTS) that every agent, tool, and editor on a deployed
+host resolves to via `MIOS_AI_ENDPOINT`. It fronts the local inference
+lanes — the primary `mios-llm-light` lane (llama.cpp behind the
+[llama-swap](https://github.com/mostlygeek/llama-swap) proxy image on
+`:11450`, serving the everyday models *and* embeddings) plus the gated
+heavy GPU lanes — so the URL stays stable while the engine behind it can
+change. No vendor-cloud URLs ever appear; the lanes speak the
+OpenAI/Ollama-compatible API, which is the only addressable contract.
+
 Pressing Enter at any prompt accepts the resolved layered default.
 
 ## What gets persisted
@@ -180,6 +221,11 @@ keys are not overwritten by the `generate` path (use a different keypair
 name to layer). `seed_user_skel_for_all_accounts` re-runs every
 install -- every uid ≥ 1000 user gets the latest
 `~/.config/mios/{profile.toml,system-prompt.md}` content.
+
+Idempotency is the bootstrap-side mirror of the OS-side promise: the same
+inputs always reproduce the same deployed state, the same way the
+single-image bootc lifecycle reproduces the same OS on every host that
+pulls the ref.
 
 ## License
 
