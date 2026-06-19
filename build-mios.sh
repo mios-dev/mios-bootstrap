@@ -516,7 +516,7 @@ gather_user_choices() {
 
     # AI model selection. Drives MIOS_OLLAMA_BAKE_MODELS (build-time)
     # and MIOS_AI_MODEL / MIOS_AI_EMBED_MODEL in install.env (runtime).
-    # The chosen pair is what mios-ollama-firstboot.service confirms on
+    # The chosen pair is what mios-ai-firstboot.service confirms on
     # first boot, so it carries through end-to-end.
     AI_MODEL_VAL="$(prompt_model "${DEFAULT_AI_MODEL}")"
     AI_EMBED_VAL="$(prompt_default 'AI embedding model' "${DEFAULT_AI_EMBED_MODEL}")"
@@ -632,7 +632,7 @@ MIOS_FORGE_ADMIN_PASSWORD=""
 # AI model selection (Architectural Law 5). MIOS_OLLAMA_BAKE_MODELS is
 # the comma-separated list 37-ollama-prep.sh consumes at build time;
 # MIOS_AI_MODEL / MIOS_AI_EMBED_MODEL are the runtime selection
-# mios-ollama-firstboot.service confirms post-deploy. Operators can
+# mios-ai-firstboot.service confirms post-deploy. Operators can
 # swap them later via /etc/mios/mios.toml [ai] without rebuilding.
 MIOS_AI_MODEL="${AI_MODEL_VAL:-${DEFAULT_AI_MODEL}}"
 MIOS_AI_EMBED_MODEL="${AI_EMBED_VAL:-${DEFAULT_AI_EMBED_MODEL}}"

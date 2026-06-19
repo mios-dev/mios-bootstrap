@@ -261,7 +261,7 @@ ai          = 8080     # LocalAI (OpenAI-compatible /v1 endpoint)
 hermes      = 8642     # Hermes-Agent OpenAI-compatible gateway
 searxng     = 8888     # SearXNG meta-search (Hermes web_search tool)
 cockpit     = 9090     # Cockpit web console (TLS; self-signed)
-ollama      = 11434    # Ollama HTTP API (raw model server)
+llm_light   = 11450    # LLM Light HTTP API (llama-swap model server)
 
 # [ports.lan_firewall] -- Windows Firewall rule scope for the ports above.
 # profiles: which Windows Firewall profiles get the inbound TCP allow rule.
@@ -275,7 +275,7 @@ ollama      = 11434    # Ollama HTTP API (raw model server)
 #   moving the port number itself.
 [ports.lan_firewall]
 profiles = ["Private", "Domain"]
-expose   = ["forge", "webui", "ai", "hermes", "searxng", "cockpit", "ollama"]
+expose   = ["forge", "webui", "ai", "hermes", "searxng", "cockpit", "llm_light"]
 
 # ----------------------------------------------------------------------------
 # [ai] -- Local AI surface (Architectural Law 5: UNIFIED-AI-REDIRECTS).
@@ -332,7 +332,7 @@ small_ram_model    = "phi4-mini:3.8b-q4_K_M"
 # file and edited in the mios.html in live environments browser".
 # ----------------------------------------------------------------------------
 [containers.quadlets]
-autostart = ["mios-cockpit-link", "mios-forge", "mios-searxng", "mios-webui", "mios-ai", "ollama"]
+autostart = ["mios-cockpit-link", "mios-forge", "mios-searxng", "mios-webui", "mios-ai", "mios-llm-light"]
 optin     = []
 # Available opt-in candidates (uncomment + add to `optin` above to enable):
 #   "mios-forgejo-runner"  -- needs /etc/mios/forge/runner-token
@@ -1136,7 +1136,7 @@ mios-ceph          = true
 mios-k3s           = true
 mios-forge         = true
 mios-crowdsec-dashboard = true
-mios-ollama             = true
+mios-llm-light          = true
 mios-guacamole  = true
 mios-pxe-hub    = true
 mios-guacamole-postgres = true

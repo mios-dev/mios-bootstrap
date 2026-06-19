@@ -1,4 +1,4 @@
-﻿# AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
+# AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
 # AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, /etc/mios/., /usr/share/mios/branding/mios.txt, /usr/share/mios/branding/mios, mios-dev, mios-bootstrap, mios-pull, mios-launch, mios-install
 # AI-functions: Disable-ConsoleQuickEdit, Resolve-MiosTomlText, Get-MiosTomlValue, Show-MiOSBanner, Show-MiOSAgreement, Invoke-MiOSAgreementGate, _Center-MiOSGateConsole, Get-MiosPalette, _hex, Test-MiOSFontInstalled, Wait-MiOSWindowsTerminalReady, Ensure-MiOSWinget
 <#
@@ -4088,13 +4088,12 @@ if (`$true) {
         Write-Host (_Frame "  `$_esc[1m`$_esc[36mAI surface`$_esc[0m") -ForegroundColor Blue
         `$_c_agent  = _ServiceCell -Name "Agent-Pipe"  -Port 8640 -Probe "/health"
         `$_c_herm   = _ServiceCell -Name "Hermes"      -Port 8642 -Probe "/health"
-        `$_c_sdb    = _ServiceCell -Name "SurrealDB"   -Port 8000 -Probe "/health"
+        `$_c_pg     = _ServiceCell -Name "pgvector"    -Port 5432
         `$_c_dash   = _ServiceCell -Name "Dash-AI"     -Port 9119
-        `$_c_oll    = _ServiceCell -Name "Ollama"      -Port 11434
-        `$_c_olli   = _ServiceCell -Name "Ollama-iGPU" -Port 11435
+        `$_c_llm    = _ServiceCell -Name "LLM-Light"   -Port 11450
         _ServiceRow `$_c_agent `$_c_herm
-        _ServiceRow `$_c_sdb   `$_c_dash
-        _ServiceRow `$_c_oll   `$_c_olli
+        _ServiceRow `$_c_pg    `$_c_dash
+        _ServiceRow `$_c_llm   (' ' * 20)
         Write-Host (_Frame "  `$_esc[1m`$_esc[36mUser surface`$_esc[0m") -ForegroundColor Blue
         `$_c_webui  = _ServiceCell -Name "WebUI"       -Port 3030
         `$_c_cock   = _ServiceCell -Name "Cockpit"     -Port 9090 -Https `$true
@@ -5856,7 +5855,7 @@ try { Add-MiosDefenderExclusions } catch { Write-Host "  [!] Defender exclusion 
 # calls implicitly boot lands in legacy NAT mode and STAYS there until
 # the next time someone explicitly stops it. Symptom the operator hit
 # 2026-05-11: every container port (cockpit 9090, forge 3000, ai 8080,
-# webui 3030, hermes 8642, searxng 8888, ollama 11434) timed out from
+# webui 3030, hermes 8642, searxng 8888, llm-light 11450) timed out from
 # Windows even though `ss -tlnp` inside MiOS-DEV showed the binds, and
 # the host showed `vEthernet (WSL (Hyper-V firewall))` (NAT-only
 # adapter) instead of the IP-mirrored topology.

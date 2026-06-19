@@ -3884,7 +3884,7 @@ fi
 # `systemctl enable` on them errors with "transient or generated" -- use
 # `start` instead. Native systemd units (cockpit.socket, mios-cdi-detect,
 # nvidia-cdi-refresh.path) take the standard `enable --now` path.
-NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-ollama-firstboot.service)
+NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-ai-firstboot.service)
 
 # Operator 2026-05-10: "now to finally fix none of the containers
 # existing or properly launching on boot.. in podman-MiOS-DEV".
@@ -4460,14 +4460,14 @@ sudo tee /etc/mios/hermes/config.local.yaml >/dev/null <<'CFGLOCAL'
 # override to /var/lib/mios/hermes/operator.yaml + adjust the
 # include path.
 backend:
-  base_url: http://localhost:11434
+  base_url: http://localhost:11450
 auxiliary:
-  # Ollama's OpenAI-compatible surface for compression / summarization /
+  # LLM Light's OpenAI-compatible surface for compression / summarization /
   # memory flush. Port 8080 was the legacy LocalAI bind -- after the
   # LocalAI purge, 8080 is code-server, so the previous default 8080/v1
   # made Hermes 401 against code-server then fall through to its
   # openrouter auto-detect (which also 401'd without an API key).
-  base_url: http://localhost:11434/v1
+  base_url: http://localhost:11450/v1
 tools:
   web_search:
     base_url: http://localhost:8888
@@ -4477,7 +4477,7 @@ tools:
 # /opt/data/config.yaml inside the container) with values resolved
 # from mios.toml [ai].model + [[ai.catalog]] + [ai.host_thresholds]
 # auto-pick. That seeded file is what Hermes loads as $HERMES_HOME/
-# config.yaml -- it pins model.provider=custom:local-ollama and
+# config.yaml -- it pins model.provider=custom:local-llm-light and
 # model.default=<resolved>. Duplicating those keys here would
 # overwrite the SSOT-derived value with whatever build-time guess
 # build-mios.ps1 has hardcoded -- exactly the regression
@@ -4514,7 +4514,7 @@ for svc_pair in \
     "mios-open-webui:Environment=PORT=3030" \
     "mios-code-server:" \
     "mios-cockpit-link:" \
-    "ollama:Environment=HOME=/var/lib/ollama|Environment=OLLAMA_HOST=0.0.0.0:11434" \
+    "mios-llm-light:Environment=HOME=/var/lib/mios/llamacpp|Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64" \
     "mios-forgejo-runner:" \
 ; do
     svc="${svc_pair%%:*}"
