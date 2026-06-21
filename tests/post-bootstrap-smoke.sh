@@ -36,24 +36,39 @@ warn() { printf '  %s[~]%s %s%s\n' "$Y" "$N" "$1" "${2:+$D ($2)$N}"; WARN=$((WAR
 fail() { printf '  %s[!]%s %s%s\n' "$R" "$N" "$1" "${2:+$D ($2)$N}"; FAIL=$((FAIL+1)); [[ "${3:-P0}" == "P0" ]] && P0_FAIL=$((P0_FAIL+1)); }
 hdr()  { printf '\n%s── %s ──%s\n' "$D" "$1" "$N"; }
 
+# Install-robustness 2026-06-21: detect the MiOS-DEV WSL builder VM. It is NOT a
+# bootc-booted host, so the bootc + os-release IDENTITY checks (§1-§2) are P0
+# only on a DEPLOYED host; on the dev VM they downgrade to P1 (warn) -- otherwise
+# the smoke, now auto-run by `mios build` inside MiOS-DEV, would always P0-fail a
+# perfectly good dev VM. MiOS-DEV ≡ MiOS for the AI/service surface, which the
+# later checks (incl. the §9 AI-plane gate) still hold at P0 everywhere.
+IS_DEVVM=0
+if grep -qiE 'microsoft|wsl' /proc/sys/kernel/osrelease 2>/dev/null && [[ ! -e /run/ostree-booted ]]; then
+    IS_DEVVM=1
+fi
+_idlvl() { if [[ "$IS_DEVVM" == 1 ]]; then echo P1; else echo P0; fi; }
+
 # ── 1. bootc status: deployed image is localhost/mios:* (or ghcr.io/mios-dev/mios:*) ─
-# P0. The whole point of the contract: dev VM ≡ MiOS, not vanilla Fedora.
+# P0 on a deployed host (dev VM ≡ MiOS, not vanilla Fedora); P1 on the dev VM.
 hdr "bootc deployment"
+if [[ "$IS_DEVVM" == 1 ]]; then
+    warn "running inside the MiOS-DEV WSL builder (not a bootc host)" "bootc/os-identity checks are advisory here"
+fi
 if ! command -v bootc >/dev/null 2>&1; then
-    fail "bootc not installed" "host isn't bootc-managed -- post-bootstrap state cannot be MiOS" P0
+    fail "bootc not installed" "host isn't bootc-managed -- post-bootstrap state cannot be MiOS" "$(_idlvl)"
 else
     deployed="$(bootc status --format=json 2>/dev/null | grep -oE '"image":[[:space:]]*"[^"]*"' | head -n1 | sed -E 's/.*"image":[[:space:]]*"([^"]*)"/\1/')"
     if [[ -z "${deployed}" ]]; then
-        fail "bootc status returned no booted image" "" P0
+        fail "bootc status returned no booted image" "" "$(_idlvl)"
     elif [[ "${deployed}" == *"localhost/mios"* ]] || [[ "${deployed}" == *"ghcr.io/mios-dev/mios"* ]] || [[ "${deployed}" == *"/mios:"* ]]; then
         ok "bootc deployed: ${deployed}"
     else
-        fail "bootc deployed image is NOT MiOS" "${deployed}" P0
+        fail "bootc deployed image is NOT MiOS" "${deployed}" "$(_idlvl)"
     fi
 fi
 
 # ── 2. fastfetch / /etc/os-release: identifies as MiOS, not bare Fedora ──────
-# P0. Branding without substance is the regression we're hunting.
+# P0 on a deployed host; P1 on the dev VM (the builder distro is Fedora userspace).
 hdr "OS identity"
 if [[ -r /etc/os-release ]]; then
     osr_pretty="$(. /etc/os-release; echo "${PRETTY_NAME:-}")"
@@ -61,10 +76,10 @@ if [[ -r /etc/os-release ]]; then
     if [[ "${osr_pretty}" == *MiOS* ]] || [[ "${osr_id}" == "mios" ]]; then
         ok "/etc/os-release identifies host as MiOS (${osr_pretty})"
     else
-        fail "/etc/os-release does not identify as MiOS" "PRETTY_NAME=${osr_pretty}" P0
+        fail "/etc/os-release does not identify as MiOS" "PRETTY_NAME=${osr_pretty}" "$(_idlvl)"
     fi
 else
-    fail "/etc/os-release missing" "" P0
+    fail "/etc/os-release missing" "" "$(_idlvl)"
 fi
 
 # ── 3. mios-flatpak-install.service oneshot completed ───────────────────────
