@@ -7063,6 +7063,16 @@ Write-Host ('  [build] handing off to {0}:/usr/libexec/mios/mios-build-driver' -
 Write-Host '  [build] (this builds the OCI image inside MiOS-DEV; first run takes 10-30 min)' -ForegroundColor DarkGray
 Write-Host ''
 & wsl.exe -d `$distro --user mios --cd / -- bash -lc '/usr/libexec/mios/mios-build-driver'
+# Install-robustness 2026-06-21: surface the driver's REAL exit code. Without
+# this the `mios build` verb reported SUCCESS even when the OCI build failed
+# inside MiOS-DEV -> the operator believed the image built and MiOS AI would come
+# up, when it never did. Propagate the failure so it is visible + scriptable.
+`$_drc = `$LASTEXITCODE
+if (`$_drc -ne 0) {
+    Write-Host ('  [build] OCI image build FAILED inside {0} (exit {1}) -- MiOS AI will NOT be operational until this build succeeds; see the log above.' -f `$distro, `$_drc) -ForegroundColor Red
+    exit `$_drc
+}
+Write-Host '  [build] OCI image build completed OK.' -ForegroundColor Green
 "@
     Set-Content -Path $buildPath -Value $buildScript -Encoding UTF8
     Log-Ok "mios-build.ps1 (the `mios build` verb) staged at $buildPath"

@@ -181,6 +181,35 @@ else
     warn "[meta].mios_version did not resolve" "vendor SSOT may be missing"
 fi
 
+# ── 9. AI plane reachability -- the "MiOS AI is operational" contract ────────
+# P0 (install-robustness 2026-06-21). The whole point of the install is that the
+# local OpenAI-compatible front door SERVES. /v1/models on the llm-light lane
+# answers as soon as llama-swap is up (it does NOT require a model to finish
+# loading), so a bounded retry confirms the lane without waiting on GGUF warm-up.
+hdr "AI plane"
+_ai_light="${MIOS_AI_LIGHT_URL:-http://127.0.0.1:11450/v1/models}"
+_ai_pipe="${MIOS_AI_PIPE_URL:-http://127.0.0.1:8640/health}"
+if ! command -v curl >/dev/null 2>&1; then
+    warn "curl not present -- skipping AI-plane reachability check"
+else
+    _ok_light=0
+    for _i in $(seq 1 20); do
+        if curl -fsS --max-time 5 "$_ai_light" >/dev/null 2>&1; then _ok_light=1; break; fi
+        sleep 3
+    done
+    if [[ "$_ok_light" == 1 ]]; then
+        ok "llm-light lane serving (/v1/models @ :11450) -- MiOS AI is reachable"
+    else
+        fail "llm-light lane NOT reachable after ~60s (:11450/v1/models)" "systemctl status mios-llm-light -- the AI plane is not operational" P0
+    fi
+    # agent-pipe front door (P1: depends on hermes + llm-light warming; warns).
+    if curl -fsS --max-time 8 "$_ai_pipe" >/dev/null 2>&1; then
+        ok "agent-pipe front door responding (:8640)"
+    else
+        warn "agent-pipe front door not yet responding (:8640)" "may still be warming -- re-run 'mios smoke'"
+    fi
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo
 printf '%s%s pass=%d fail=%d warn=%d (P0 fail=%d)%s\n' "${D}" "==============================" "${PASS}" "${FAIL}" "${WARN}" "${P0_FAIL}" "${N}"
