@@ -3709,6 +3709,25 @@ echo "[quadlet-overlay] root symlinks: /mios.toml, /configurator.html"
 # this at image-build time; the dev-VM overlay path does NOT, so
 # we run it here. Idempotent: re-runs against an already-rendered
 # .container are a no-op (envsubst sees no remaining placeholders).
+# install-robustness 2026-06-21: the dev-VM overlay never ran 36-tools.sh
+# (which deploys tools/lib/userenv.sh -> /usr/lib/mios/userenv.sh, the env-bridge
+# resolver) NOR mios-sync-env -- so /etc/mios/install.env was never generated,
+# leaving the AI plane INERT on a fresh install: empty bake_models -> no GGUFs ->
+# mios-llm-light skipped, and unresolved MIOS_PORT_* templates -> agent-pipe 502.
+# Deploy the resolver + generate the bridge HERE so 15-render-quadlets below AND
+# the firstboot services (EnvironmentFile=/etc/mios/install.env) see resolved
+# values. Both idempotent; LIVE-verified this is the keystone that brought a
+# fresh dev VM's MiOS AI fully operational on the GPU.
+if [[ -r /tools/lib/userenv.sh ]]; then
+    sudo install -D -m 0755 /tools/lib/userenv.sh /usr/lib/mios/userenv.sh \
+        && echo "[quadlet-overlay] deployed env-bridge resolver -> /usr/lib/mios/userenv.sh"
+fi
+if [[ -x /usr/libexec/mios/system-sync-env.sh ]]; then
+    echo "[quadlet-overlay] generating /etc/mios/install.env via mios-sync-env"
+    sudo /usr/libexec/mios/system-sync-env.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
+        echo "[quadlet-overlay] WARN: mios-sync-env exited non-zero (install.env may be stale)"
+fi
+
 if [[ -x /automation/15-render-quadlets.sh ]]; then
     echo "[quadlet-overlay] rendering Quadlet \${MIOS_*} placeholders via automation/15-render-quadlets.sh"
     sudo /automation/15-render-quadlets.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
