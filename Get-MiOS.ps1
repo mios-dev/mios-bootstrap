@@ -5633,12 +5633,28 @@ function Initialize-DataDisk {
     $shrinkBytes = [int64]$ShrinkMB * 1MB
     $newCSize    = $cPart.Size - $shrinkBytes
     if ($shrinkBytes -gt ($cPart.Size - $supported.SizeMin)) {
-        Write-Err "Cannot shrink ${sysLetter}: by $ShrinkMB MB."
-        Write-Err "  current ${sysLetter}: size: $([math]::Round($cPart.Size/1GB,1)) GB"
-        Write-Err "  min supported size:    $([math]::Round($supported.SizeMin/1GB,1)) GB"
-        Write-Err "  max shrinkable:         $([math]::Round(($cPart.Size-$supported.SizeMin)/1GB,1)) GB"
-        Write-Err "Free up ${sysLetter}: space (move pagefile / disable hibernation / clean up large files) and retry."
-        exit 1
+        # Install-robustness 2026-06-21: do NOT hard-exit on a box that cannot
+        # free the full 256 GB (256/512 GB laptop SSDs, or a heavily-used C:).
+        # CLAMP the data partition to the largest fittable size, down to a floor
+        # ([bootstrap.host_storage].min_shrink_mb, default 64 GB); only abort if
+        # even the floor won't fit -- and then `throw` (TRAPPABLE by the caller's
+        # try/catch) instead of a bare `exit 1` (which terminated the whole
+        # runspace, so the caller's catch + remediation never ran).
+        $minShrinkMB = [int](Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'min_shrink_mb' -Default 65536)
+        $availBytes  = $cPart.Size - $supported.SizeMin
+        if ($availBytes -ge ([int64]$minShrinkMB * 1MB)) {
+            $clampMB     = [int]([math]::Floor($availBytes / 1MB)) - 1024   # ~1 GB headroom
+            Write-Info "Requested $ShrinkMB MB exceeds the $([math]::Round($availBytes/1GB,1)) GB shrinkable on ${sysLetter}:; clamping ${DriveLetter}:\ to ~$([math]::Round($clampMB/1024,1)) GB (floor $([math]::Round($minShrinkMB/1024,1)) GB)."
+            $ShrinkMB    = $clampMB
+            $shrinkBytes = [int64]$ShrinkMB * 1MB
+            $newCSize    = $cPart.Size - $shrinkBytes
+        } else {
+            Write-Err "Cannot shrink ${sysLetter}: by even the $([math]::Round($minShrinkMB/1024,1)) GB minimum."
+            Write-Err "  current ${sysLetter}: size: $([math]::Round($cPart.Size/1GB,1)) GB"
+            Write-Err "  max shrinkable:         $([math]::Round($availBytes/1GB,1)) GB"
+            Write-Err "Free up ${sysLetter}: space (move pagefile / disable hibernation / clean up large files) and retry."
+            throw "Initialize-DataDisk: insufficient shrinkable space on ${sysLetter}: (need >= $minShrinkMB MB, have $([math]::Round($availBytes/1MB)) MB)"
+        }
     }
     $disk = Get-Disk -Number $cPart.DiskNumber
     if ($disk.PartitionStyle -notin @('GPT','MBR')) {

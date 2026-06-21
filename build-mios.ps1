@@ -8407,6 +8407,7 @@ foreach ($_pq in $_prereqs) {
             Log-Ok ("{0} installed via winget" -f $_pq.Label); $_done = $true
         } elseif ($_pq.Cmd -eq 'wsl' -and $_rc -eq 0) {
             Log-Warn ("{0} installed via winget -- a reboot may be required for wsl.exe to surface" -f $_pq.Label); $_done = $true
+            $script:WslJustInstalled = $true   # install-robustness: WSL2 substrate not live until reboot
         }
     }
     # 2) NO-LOCAL-DEPS direct install -- winget absent OR failed.
@@ -8415,6 +8416,7 @@ foreach ($_pq in $_prereqs) {
         if (Install-MiosPrereqDirect -Cmd $_pq.Cmd -Label $_pq.Label) {
             if ($_pq.Cmd -eq 'wsl') {
                 Log-Warn ("{0} installed direct -- a reboot may be required for wsl.exe to surface" -f $_pq.Label)
+                $script:WslJustInstalled = $true   # install-robustness: reboot before WSL2 substrate is live
             } else {
                 Log-Ok ("{0} installed direct" -f $_pq.Label)
             }
@@ -8426,6 +8428,33 @@ foreach ($_pq in $_prereqs) {
         if ($_pq.Required) { $preOk = $false }
     }
 }
+
+# Install-robustness 2026-06-21 (B3): if WSL2 was JUST installed this run, the
+# WSL2 substrate (and thus `podman machine init` in Phase 3) is NOT live until
+# Windows reboots. Falling through to Phase 1/3 here dies with a cryptic podman
+# error. HALT cleanly with an actionable, idempotent-re-run banner instead.
+if ($script:WslJustInstalled) {
+    End-Phase 0 -Fail
+    Log-Fail "WSL2 was just installed -- Windows MUST reboot before the WSL2 substrate (podman machine) is live."
+    Log-Fail "  -> Reboot Windows, then re-run the MiOS bootstrap (it is idempotent and resumes from here)."
+    throw "Reboot required after WSL2 install -- reboot Windows, then re-run the bootstrap."
+}
+
+# Install-robustness 2026-06-21 (B2): hardware-virtualization preflight. WSL2 +
+# `podman machine init` cannot start without VT-x/AMD-V (SVM) enabled in BIOS/
+# UEFI; without this check Phase 3 dies with a cryptic HCS 0x80370102 / "not in
+# running state after 90s". Probe firmware + hypervisor presence and fail CLEANLY
+# with remediation. (Best-effort: a CIM query failure must not block a capable box.)
+try {
+    $_virtFw = $true; $_hyperv = $true
+    try { $_virtFw = [bool](Get-CimInstance Win32_Processor -EA Stop | Select-Object -First 1 -Expand VirtualizationFirmwareEnabled) } catch {}
+    try { $_hyperv = [bool](Get-CimInstance Win32_ComputerSystem -EA Stop).HypervisorPresent } catch {}
+    if (-not $_virtFw -and -not $_hyperv) {
+        Log-Fail "Hardware virtualization is DISABLED -- WSL2 + podman machine cannot start."
+        Log-Fail "  -> Enable Intel VT-x / AMD-V (SVM) in BIOS/UEFI, then re-run the bootstrap."
+        $preOk = $false
+    }
+} catch {}
 
 if (-not $preOk) { End-Phase 0 -Fail; throw "Prerequisites missing -- see log: $LogFile" }
 

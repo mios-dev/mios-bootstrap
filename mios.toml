@@ -1087,6 +1087,12 @@ reboot_on_finish = true                   # interactive y/N prompt at end of ins
 # NTFS reserves ~16 MB for boot sector / alignment / $MFT.
 [bootstrap.host_storage]
 shrink_mb         = 262656
+# Install-robustness 2026-06-21: floor for the adaptive shrink. When C: cannot
+# free the full shrink_mb (256/512 GB SSDs, or a heavily-used C:), Initialize-
+# DataDisk clamps the MiOS-DEV partition to the largest fittable size DOWN TO this
+# floor instead of hard-aborting; only if even this won't fit does it stop (with
+# remediation). 64 GB is enough for the dev VM + a couple of OCI image builds.
+min_shrink_mb     = 65536
 drive_letter      = "M"
 volume_label      = "MIOS-DEV"
 
