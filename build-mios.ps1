@@ -7073,6 +7073,19 @@ if (`$_drc -ne 0) {
     exit `$_drc
 }
 Write-Host '  [build] OCI image build completed OK.' -ForegroundColor Green
+# Install-robustness 2026-06-21: run the post-bootstrap acceptance smoke now that
+# the image built -- it was authored to run "at the end of mios build" but was
+# never wired in, so the AI-plane "is it operational?" check never executed. The
+# smoke is best-effort here (non-fatal): a still-warming AI plane warns rather
+# than failing the build verb; `mios smoke` re-runs it on demand.
+`$_smoke = '/mnt/m/tests/post-bootstrap-smoke.sh'
+if ((& wsl.exe -d `$distro --user root -- bash -lc "test -f `$_smoke && echo y" 2>`$null) -eq 'y') {
+    Write-Host '  [build] running post-bootstrap acceptance smoke (AI-plane + parity)...' -ForegroundColor Cyan
+    & wsl.exe -d `$distro --user root -- bash `$_smoke
+    if (`$LASTEXITCODE -ne 0) { Write-Host '  [build] smoke reported issues (see above) -- re-run with: mios smoke' -ForegroundColor Yellow }
+} else {
+    Write-Host '  [build] smoke script not found at M:\tests -- skipping (run: mios smoke)' -ForegroundColor DarkGray
+}
 "@
     Set-Content -Path $buildPath -Value $buildScript -Encoding UTF8
     Log-Ok "mios-build.ps1 (the `mios build` verb) staged at $buildPath"
