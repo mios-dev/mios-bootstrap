@@ -33,7 +33,18 @@ fi
 # Fallback: pulled via curl|bash with no on-disk neighbor; fetch canonical.
 url="https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/build-mios.sh"
 if command -v curl >/dev/null 2>&1; then
-    exec bash <(curl -fsSL "$url") "$@"
+    # Install-robustness 2026-06-21: retry + timeout + body validation so a single
+    # transient network blip doesn't abort the whole curl|bash install with an
+    # empty process-substitution. --retry-connrefused covers a not-yet-up mirror;
+    # the ?cb= defeats the raw.githubusercontent CDN cache so a re-run is fresh.
+    _tmp="$(mktemp)"
+    if curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused --max-time 120 \
+            "${url}?cb=$(date +%s 2>/dev/null || echo r)" -o "$_tmp" && [ -s "$_tmp" ]; then
+        exec bash "$_tmp" "$@"
+    fi
+    rm -f "$_tmp" 2>/dev/null || true
+    echo "[FAIL] could not fetch build-mios.sh after 3 retries (network?). Re-run the curl|bash one-liner." >&2
+    exit 1
 fi
 echo "[FAIL] build-mios.sh not found and curl unavailable." >&2
 echo "       Re-clone https://github.com/mios-dev/mios-bootstrap" >&2
