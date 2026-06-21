@@ -1599,7 +1599,11 @@ function Repair-WslConfig {
         $newLines.Add($line)
     }
     if ($scrubbed -gt 0) {
-        Set-Content -Path $wslCfg -Value $newLines -Encoding UTF8
+        # BOM-free: PS 5.1 `Set-Content -Encoding UTF8` writes a UTF-8 BOM, and a
+        # leading BOM makes WSL silently IGNORE the [wsl2] section (the operator's
+        # memory/processor limits are dropped). WriteAllLines + UTF8Encoding($false)
+        # is BOM-free on 5.1 AND pwsh 7. install-robustness 2026-06-21.
+        [System.IO.File]::WriteAllLines($wslCfg, $newLines, (New-Object System.Text.UTF8Encoding($false)))
         Log-Ok ".wslconfig: scrubbed $scrubbed misplaced /etc/wsl.conf key(s) from [wsl2]"
     }
 }
@@ -5458,7 +5462,8 @@ function Set-MiosWslConfig {
             $offset++
         }
     }
-    Set-Content -Path $wslCfg -Value $patched -Encoding UTF8
+    # BOM-free (see the scrub site above): a UTF-8 BOM makes WSL ignore [wsl2].
+    [System.IO.File]::WriteAllLines($wslCfg, $patched, (New-Object System.Text.UTF8Encoding($false)))
     Log-Ok ".wslconfig: merged [wsl2] -- ${RamGB}GB RAM, $Cpus CPUs, mirrored"
 }
 
