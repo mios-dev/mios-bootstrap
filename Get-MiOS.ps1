@@ -6585,9 +6585,23 @@ if (Test-Path $RepoDir) {
     if ($parent -and -not (Test-Path $parent)) {
         New-Item -ItemType Directory -Path $parent -Force -ErrorAction SilentlyContinue | Out-Null
     }
-    $cr = Invoke-GitProc -ArgList @('clone','--branch',$Branch,'--depth','1',$RepoUrl,$RepoDir)
+    # Install-robustness 2026-06-21: retry the clone 3x with backoff. A single
+    # transient network blip (raw.githubusercontent / GitHub TLS reset) otherwise
+    # aborted the ENTIRE irm|iex install at the entry. Each retry wipes the partial
+    # clone so it starts clean.
+    $cr = $null
+    for ($_cattempt = 1; $_cattempt -le 3; $_cattempt++) {
+        if (Test-Path $RepoDir) { Remove-Item -Recurse -Force $RepoDir -ErrorAction SilentlyContinue }
+        $cr = Invoke-GitProc -ArgList @('clone','--branch',$Branch,'--depth','1',$RepoUrl,$RepoDir)
+        if ($cr.ExitCode -eq 0) { break }
+        if ($_cattempt -lt 3) {
+            $_cbk = @(2,5,10)[$_cattempt-1]
+            Write-Info "git clone attempt $_cattempt failed (exit $($cr.ExitCode)); retrying in ${_cbk}s (transient network?)..."
+            Start-Sleep -Seconds $_cbk
+        }
+    }
     if ($cr.ExitCode -ne 0) {
-        Write-Err "git clone $RepoUrl -> $RepoDir failed (exit $($cr.ExitCode))."
+        Write-Err "git clone $RepoUrl -> $RepoDir failed after 3 attempts (exit $($cr.ExitCode))."
         Write-Err "Stderr: $($cr.Stderr.Trim())"
         Write-Err "Re-run manually to see git's diagnostic output:"
         Write-Err "  git clone --branch $Branch --depth 1 $RepoUrl `"$RepoDir`""
