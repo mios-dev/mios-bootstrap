@@ -880,6 +880,20 @@ try { & chcp.com 65001 *> `$null } catch {}
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
 try { [Console]::InputEncoding  = [System.Text.UTF8Encoding]::new(`$false) } catch {}
 try { `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
+# Pass-2 transcript -- the early elevated window was historically UNLOGGED
+# (operator: "the incorrectly launched powershell window just dies silently
+# --seemingly no logs in sight!!!"). Start a transcript NOW so ANY early
+# failure (IRM fetch, scriptblock parse/throw, agreement gate, a preflight
+# 'exit', or a bare error) lands in a readable file. build-mios.ps1 opens
+# its own mios-install-*.log later; this closes the gap BEFORE that on the
+# Pass-2 critical path. install-robustness 2026-06-21.
+try {
+    `$_p2LogDir = if (Test-Path 'M:\') { 'M:\MiOS\logs' } else { Join-Path `$env:TEMP 'mios-logs' }
+    if (-not (Test-Path `$_p2LogDir)) { New-Item -ItemType Directory -Force -Path `$_p2LogDir | Out-Null }
+    `$_p2Log = Join-Path `$_p2LogDir ('mios-pass2-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+    Start-Transcript -LiteralPath `$_p2Log -Force *> `$null
+    Write-Host ('      Pass-2 log: ' + `$_p2Log) -ForegroundColor DarkGray
+} catch {}
 # Pre-UAC cursor location (captured by the launching pwsh BEFORE Start-
 # Process -Verb RunAs); use these constants instead of querying
 # Cursor.Position now (which would read at the UAC Yes-button click
@@ -996,7 +1010,21 @@ Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
 Write-Host ('      Cache-busted Get-MiOS.ps1 fetch: ' + `$_rawUri) -ForegroundColor DarkGray
 Write-Host ''
 try {
-    `$src = Invoke-RestMethod -Uri `$_rawUri -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } -ErrorAction Stop
+    # install-robustness 2026-06-21: retry the fetch 3x with backoff +
+    # body validation. A single transient blip here otherwise killed the
+    # whole elevated install with a bare Invoke-RestMethod exception.
+    `$src = `$null
+    for (`$_fa = 1; `$_fa -le 3; `$_fa++) {
+        try {
+            `$src = Invoke-RestMethod -Uri `$_rawUri -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } -TimeoutSec 60 -ErrorAction Stop
+            if (`$src -and `$src.Length -gt 200) { break }
+            `$src = `$null
+        } catch {
+            Write-Host ('  [!] Get-MiOS.ps1 fetch attempt ' + `$_fa + ' failed: ' + `$_.Exception.Message) -ForegroundColor Yellow
+        }
+        if (`$_fa -lt 3) { Start-Sleep -Seconds (@(2,5,10)[`$_fa-1]) }
+    }
+    if (-not `$src) { throw 'Could not fetch Get-MiOS.ps1 after 3 attempts (network/TLS?).' }
     # Write to a temp .ps1 and run as a CHILD pwsh process so any
     # 'exit N' calls inside Get-MiOS.ps1 terminate the child, NOT our
     # hosting elevation window. Without this, any preflight 'exit 1'
@@ -1105,6 +1133,7 @@ try {
 # has time to read the error before the elevated window closes.
 Write-Host ''
 Write-Host '$_p2PressEnter' -ForegroundColor DarkGray -NoNewline
+try { Stop-Transcript *> `$null } catch {}
 `$null = Read-Host
 "@
     # Write the inner cmd to a temp .ps1 and pass -File. Why NOT
