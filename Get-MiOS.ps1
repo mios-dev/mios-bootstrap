@@ -446,8 +446,17 @@ function Show-MiOSBanner {
     $subPad = [math]::Max(0, $inner - $sub.Length)
     $subL = ' ' * [math]::Floor($subPad / 2)
     $subR = ' ' * ($subPad - [math]::Floor($subPad / 2))
-    $top    = [char]0x256d + ([char]0x2500 * $inner) + [char]0x256e
-    $bottom = [char]0x2570 + ([char]0x2500 * $inner) + [char]0x256f
+    # PS 5.1 (Windows PowerShell -- the ONLY shell on a fresh Windows) does
+    # NOT define [char] * [int]: it throws "the operation '[System.Char] *
+    # [System.Int32]' is not defined" and kills the whole elevated bootstrap
+    # before the agreement gate can even render. pwsh 7 silently promotes the
+    # char to a string and repeats it; 5.1 does not. Cast to a string FIRST so
+    # the horizontal rule repeats identically on both shells. (char + string
+    # concatenation IS fine in 5.1 -- only the multiply was undefined.)
+    # install-robustness 2026-06-21.
+    $_hbar  = ([char]0x2500).ToString() * $inner
+    $top    = [char]0x256d + $_hbar + [char]0x256e
+    $bottom = [char]0x2570 + $_hbar + [char]0x256f
     $rows = @($top)
     foreach ($a in $art) {
         $line = $blockL + $a
