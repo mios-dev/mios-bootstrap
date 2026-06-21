@@ -3673,6 +3673,19 @@ sudo ln -sf ../mios-ai-firstboot.service /usr/lib/systemd/system/multi-user.targ
     && echo "[quadlet-overlay] mios-ai-firstboot enabled via .wants symlink (runs on first boot)" \
     || echo "[quadlet-overlay] WARN: could not symlink mios-ai-firstboot.service"
 
+# Globally enable the OPERATOR-side launcher broker (mios-launcher.service, a
+# USER unit) the same D-Bus-independent way: a .wants symlink in the GLOBAL
+# user target dir so the operator's user manager starts it (ConditionUser=mios
+# gates it to that user). Without this the broker ships DISABLED -> the socket
+# /run/mios-launcher/launcher.sock is never created -> EVERY OS-control verb
+# (open_app, etc.) fails "broker socket missing" and the agent cannot drive
+# Windows/Linux apps (operator 2026-06-21 "open notepad" -> "LIAR"). The broker
+# is what lets MiOS AI actually control the OS. install-robustness 2026-06-21.
+sudo install -d -m 0755 /etc/systemd/user/default.target.wants 2>/dev/null || true
+sudo ln -sf /usr/lib/systemd/user/mios-launcher.service /etc/systemd/user/default.target.wants/mios-launcher.service 2>/dev/null \
+    && echo "[quadlet-overlay] mios-launcher (OS-control broker) enabled via global user .wants symlink" \
+    || echo "[quadlet-overlay] WARN: could not symlink mios-launcher.service"
+
 # Sanity: the smoke test expects /usr/share/mios. If git reset
 # succeeded but the dir isn't there, surface that loudly so we
 # don't silently ship a half-applied overlay.
