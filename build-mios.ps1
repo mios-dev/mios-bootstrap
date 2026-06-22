@@ -1,4 +1,4 @@
-# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver for generating OCI images and disk formats.
+﻿# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver for generating OCI images and disk formats.
 # AI-related: 37-ollama-prep.sh, mios-btop.sh, /usr/libexec/mios/mios-build-driver, /usr/share/mios/mios.toml, /usr/libexec/mios/mios-build-driver., /etc/mios/mios.toml, /usr/share/mios/configurator/mios.html, /usr/libexec/mios/flatpak-launch, /etc/mios/hermes/config.yaml, /etc/mios/hermes/config.local.yaml
 # AI-functions: parse_sections_from_toml, get_pkgs, install_section, parse_pkgs, Disable-ConsoleQuickEdit, Resolve-MiosTomlText, Get-MiosTomlValue, Resolve-MiosInstallRoot, Update-MiosInstallPaths, Invoke-MigrateLegacyInstallRoot, Invoke-DataDiskBootstrap, Test-DashboardCanRedraw
 #Requires -Version 5.1
@@ -124,7 +124,8 @@ function Resolve-MiosTomlText {
     }
     try {
         $cb  = [int][double]::Parse((Get-Date -UFormat %s))
-        $url = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/mios.toml?cb=$cb"
+        $ref = if ($null -ne $MiosRef) { $MiosRef } else { 'main' }
+        $url = "https://raw.githubusercontent.com/mios-dev/MiOS/$ref/usr/share/mios/mios.toml?cb=$cb"
         $script:_MiosTomlCache['_text'] = Invoke-RestMethod -Uri $url `
             -Headers @{ 'Cache-Control'='no-cache, no-store, max-age=0'; 'Pragma'='no-cache' } `
             -ErrorAction Stop
@@ -347,6 +348,8 @@ $_v             = Get-MiosTomlValue -Section 'meta'      -Key 'mios_version'    
 $MiosVersion    = if ($_v -match '^v') { $_v } else { "v$_v" }
 $MiosRepoUrl    = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_repo'       -Default 'https://github.com/mios-dev/MiOS.git'
 $MiosBootstrapUrl = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_repo' -Default 'https://github.com/mios-dev/mios-bootstrap.git'
+$MiosRef          = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_ref'       -Default 'main'
+$MiosBootstrapRef = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_ref' -Default 'main'
 # Podman machine name. Backed by WSL distro `podman-MiOS-DEV` once `podman
 # machine init` runs. Locked per memory feedback_mios_distro_name_locked.md
 # (renaming breaks podman's distro discovery), so the TOML key carries
@@ -1736,7 +1739,7 @@ function Show-PostBootstrapMenu {
                 #     [error 2147942402 (0x80070002): The system cannot find the file specified.]
                 # at wt.exe spawn time. Single-line, single-quoted-on-bash-side, no escapes.
                 $driverPath = '/usr/libexec/mios/mios-build-driver'
-                $fallback   = 'https://raw.githubusercontent.com/mios-dev/mios/main/usr/libexec/mios/mios-build-driver'
+                $fallback   = "https://raw.githubusercontent.com/mios-dev/mios/$MiosRef/usr/libexec/mios/mios-build-driver"
                 $driverCmd  = "stty cols $($script:MiosCols) rows $($script:MiosRows) 2>/dev/null; if [ -x '$driverPath' ]; then exec bash '$driverPath'; else echo '[handoff] $driverPath not in $devDistro yet -- fetching latest...'; t=`$(mktemp); if curl -fsSL '$fallback' -o `"`$t`"; then chmod +x `"`$t`"; exec bash `"`$t`"; else echo '[handoff] FATAL: could not fetch driver from $fallback'; exec bash; fi; fi"
                 # wt.exe (Windows Terminal) is the canonical multi-tab host; if it's
                 # missing or the App Execution Alias is broken (per d6e8b66 / earlier
@@ -8551,57 +8554,6 @@ if ($activeDistro) {
     Log-Ok "MiOS repo found in $activeDistro"
     # mios.git is overlaid AT $MiosRepoDir root (M:\). Per 2026-05-06.
     $miosRepo = $MiosRepoDir
-    if (Test-Path (Join-Path $miosRepo ".git")) {
-        # Hard reset to origin/main -- a soft `pull --ff-only` was
-        # silently failing on dirty working trees (e.g. after a
-        # legacy-install migration kept old files at destination)
-        # and the build kept running pre-fix scripts.
-        Set-Step "Updating     # ── Repos: BOTH overlaid at $MiosRepoDir root (M:\) ──────────────────────
-    # Per the 2026-05-06 directive: M:\ root IS the mios.git working tree
-    # AND has mios-bootstrap.git's files overlaid on top. The previous
-    # "M:\MiOS\repo\mios + M:\MiOS\repo\mios-bootstrap as siblings" layout
-    # is gone. Operator opens M:\ in Explorer and sees Get-MiOS.ps1,
-    # Containerfile, automation/, install.sh, mios.toml, configurator.html,
-    # /usr/, /etc/ -- everything at root.
-    #
-    # mios.git is the PRIMARY tree (M:\.git points here). mios-bootstrap.git
-    # is cloned to $MiosBootstrapShadow (so its .git stays separate -- you
-    # can't have two .gits at the same path), and its files are robocopied
-    # onto M:\ root excluding .git.
-
-    $MiosRef = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_ref' -Default 'main'
-
-    function Invoke-GitFetchWithRetry {
-        param(
-            [string]$RepoPath,
-            [string]$Ref
-        )
-        $exitCode = 1
-        Push-Location $RepoPath
-        try {
-            for ($retry = 1; $retry -le 3; $retry++) {
-                $exitCode = Invoke-NativeQuiet { git fetch --depth=1 origin $Ref }
-                if ($exitCode -eq 0) { return 0 }
-                # Fallback to full fetch if depth=1 fails (e.g. on commit SHAs or tags)
-                $exitCode = Invoke-NativeQuiet { git fetch origin $Ref }
-                if ($exitCode -eq 0) { return 0 }
-                
-                if ($retry -lt 3) {
-                    Log-Warn "git fetch failed for ref $Ref (exit $exitCode). Retrying in 5 seconds ($retry/3)..."
-                    Start-Sleep -Seconds 5
-                }
-            }
-        } finally {
-            Pop-Location
-        }
-        return $exitCode
-    }
-
-    # ── Step 1: mios.git as the M:\ working tree ────────────────────────────
-    # `git clone` refuses non-empty target dirs (M:\ has System Volume
-    # Information / $RECYCLE.BIN / possibly $MiosInstallDir already), so
-    # use `git init + remote add + fetch + reset --hard` to bring the tree
-    # in WITHOUT touching pre-existing untracked files.
     if (Test-Path (Join-Path $MiosRepoDir ".git")) {
         Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_git_update' -Default "Updating mios.git (fetch + hard reset @ $MiosRepoDir)")
         Push-Location $MiosRepoDir
@@ -8626,43 +8578,11 @@ if ($activeDistro) {
         }
     } else {
         Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_git_init' -Default "Initializing mios.git as the $MiosRepoDir working tree")
-        # Pre-emptively whitelist M:\ as a safe.directory for git on
-        # Windows. Git 2.35+ rejects operations in repos owned by a
-        # different SID with: "fatal: detected dubious ownership in
-        # repository at 'M:\'". Admin-spawned pwsh runs under
-        # NT AUTHORITY\SYSTEM (or the elevated token's primary SID)
-        # while M:\ was created by the operator's user SID. Without
-        # this allowlist, every git operation in M:\ fails with
-        # exit 128 and the operator-reported "git fetch from
-        # https://github.com/mios-dev/MiOS.git failed (exit 128)
-        # at M:\". Use --global so the setting persists across the
-        # entire bootstrap (Phase 3+ may also git-operate at M:\).
-        # `*` allowlist is acceptable here -- this is a single-user
-        # workstation install on a freshly-shrunk partition; the
-        # operator already accepted the agreement that authorizes
-        # the bootstrap to mutate the system.
         & git config --global --add safe.directory '*' 2>&1 | ForEach-Object { Write-Log "git-safe-dir: $_" }
         & git config --global --add safe.directory $MiosRepoDir 2>&1 | ForEach-Object { Write-Log "git-safe-dir: $_" }
         Push-Location $MiosRepoDir
         try {
             $null = Invoke-NativeQuiet { git init -q }
-            # ── git-for-windows quirk: `git init` at a DRIVE ROOT (M:\)
-            # writes `core.worktree = M:/` to .git/config. That's a
-            # Windows-style absolute path that breaks the Linux side of
-            # the pipeline -- when Phase 3's quadlet-overlay-seed runs
-            # `git fetch /mnt/m/.git`, upload-pack reads `core.worktree`,
-            # tries to `chdir to 'M:/'` (literal Windows path on Linux),
-            # and dies with:
-            #     fatal: cannot chdir to 'M:/': No such file or directory
-            # which cascades into:
-            #     fatal: protocol error: bad pack header
-            #     fatal: ambiguous argument 'FETCH_HEAD'
-            #     [quadlet-overlay] / now contains 0 tracked mios.git files
-            # Unsetting worktree (or pinning to '.' relative) restores the
-            # default behavior: worktree = parent of .git dir, which on
-            # Windows is M:\ and on Linux (via /mnt/m) is /mnt/m. Both
-            # ends agree, fetch succeeds, the seed populates / inside
-            # MiOS-DEV.
             $null = Invoke-NativeQuiet { git config --unset core.worktree }
             $null = Invoke-NativeQuiet { git remote add origin $MiosRepoUrl }
             
@@ -8679,103 +8599,10 @@ if ($activeDistro) {
             }
         } finally { Pop-Location }
     }
-    # Defensive: even on the existing-clone update path, scrub a bad
-    # core.worktree that an older bootstrap may have left in config.
     Push-Location $MiosRepoDir
     try {
         $existingWt = & git config --get core.worktree 2>$null
-        if ($existingWt -and ($existingWt -match '^[A-Za-z]:[\\/]')) {
-            Log-Warn "Scrubbing stale Windows-shaped core.worktree '$existingWt' from $MiosRepoDir\.git\config"
-            $null = Invoke-NativeQuiet { git config --unset core.worktree }
-        }
-    } finally { Pop-Location }
-    Log-Ok (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_git_overlaid' -Default "mios.git overlaid at $MiosRepoDir")
-
-    # ── Step 2: mios-bootstrap.git in shadow checkout, files overlaid ──────
-    if (Test-Path (Join-Path $MiosBootstrapShadow ".git")) {
-        Set-Step "Updating mios-bootstrap.git shadow (fetch + hard reset)"
-        $fetchExit = Invoke-GitFetchWithRetry -RepoPath $MiosBootstrapShadow -Ref "main"
-        if ($fetchExit -eq 0) {
-            Push-Location $MiosBootstrapShadow
-            try {
-                $resetExit = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
-                if ($resetExit -ne 0) { Log-Warn "mios-bootstrap.git: git reset --hard returned $resetExit" }
-            } finally { Pop-Location }
-        } else {
-            Log-Warn "mios-bootstrap.git: git fetch returned $fetchExit -- shadow may be stale"
-        }
-    } else {
-        if (-not (Test-Path $MiosBootstrapShadow)) {
-            New-Item -ItemType Directory -Path $MiosBootstrapShadow -Force | Out-Null
-        }
-        Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_bootstrap_clone' -Default "Cloning mios-bootstrap.git -> shadow $MiosBootstrapShadow")
-        $cloneExit = 1
-        for ($retry = 1; $retry -le 3; $retry++) {
-            $cloneExit = Invoke-NativeQuiet { git clone --depth 1 $MiosBootstrapUrl $MiosBootstrapShadow }
-            if ($cloneExit -eq 0) { break }
-            if ($retry -lt 3) {
-                Log-Warn "git clone of mios-bootstrap.git failed (exit $cloneExit). Retrying in 5 seconds ($retry/3)..."
-                Start-Sleep -Seconds 5
-            }
-        }
-        if ($cloneExit -ne 0) {
-            throw "mios-bootstrap.git: clone from $MiosBootstrapUrl failed (exit $cloneExit)"
-        }
-    }       # ── git-for-windows quirk: `git init` at a DRIVE ROOT (M:\)
-            # writes `core.worktree = M:/` to .git/config. That's a
-            # Windows-style absolute path that breaks the Linux side of
-            # the pipeline -- when Phase 3's quadlet-overlay-seed runs
-            # `git fetch /mnt/m/.git`, upload-pack reads `core.worktree`,
-            # tries to `chdir to 'M:/'` (literal Windows path on Linux),
-            # and dies with:
-            #     fatal: cannot chdir to 'M:/': No such file or directory
-            # which cascades into:
-            #     fatal: protocol error: bad pack header
-            #     fatal: ambiguous argument 'FETCH_HEAD'
-            #     [quadlet-overlay] / now contains 0 tracked mios.git files
-            # Unsetting worktree (or pinning to '.' relative) restores the
-            # default behavior: worktree = parent of .git dir, which on
-            # Windows is M:\ and on Linux (via /mnt/m) is /mnt/m. Both
-            # ends agree, fetch succeeds, the seed populates / inside
-            # MiOS-DEV.
-            $null = Invoke-NativeQuiet { git config --unset core.worktree }
-            $null = Invoke-NativeQuiet { git remote add origin $MiosRepoUrl }
-            # Capture stderr+stdout from git fetch so a failure surfaces
-            # with diagnostic text. Wrapped in $ErrorActionPreference=
-            # 'Continue' + PSNativeCommandUseErrorActionPreference=$false
-            # so git's INFORMATIONAL stderr (the "From https://..." line
-            # that fetch always prints on success) doesn't terminate the
-            # script. Operator-reported regression: that informational
-            # line was being thrown as a PowerShell exception under the
-            # default 'Stop' preference, surfacing as
-            # `FATAL: From https://github.com/mios-dev/MiOS` even though
-            # fetch had succeeded.
-            $fetchOut  = $null
-            $fetchExit = & {
-                $ErrorActionPreference = 'Continue'
-                if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
-                    $PSNativeCommandUseErrorActionPreference = $false
-                }
-                $script:_fetchOut = & git fetch --depth=1 origin main 2>&1
-                $LASTEXITCODE
-            }
-            $fetchOut = $script:_fetchOut
-            $fetchOut | ForEach-Object { Write-Log "git-fetch: $_" }
-            if ($fetchExit -ne 0) {
-                $tail = ($fetchOut | Select-Object -Last 5) -join ' / '
-                throw "mios.git: git fetch from $MiosRepoUrl failed (exit $fetchExit) at $MiosRepoDir`n        last: $tail"
-            }
-            $null = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
-            $null = Invoke-NativeQuiet { git branch -f main FETCH_HEAD }
-            $null = Invoke-NativeQuiet { git checkout -q main }
-        } finally { Pop-Location }
-    }
-    # Defensive: even on the existing-clone update path, scrub a bad
-    # core.worktree that an older bootstrap may have left in config.
-    Push-Location $MiosRepoDir
-    try {
-        $existingWt = & git config --get core.worktree 2>$null
-        if ($existingWt -and ($existingWt -match '^[A-Za-z]:[\\/]')) {
+        if ($existingWt -and ($existingWt -match '^[A-Za-z]:[\/]')) {
             Log-Warn "Scrubbing stale Windows-shaped core.worktree '$existingWt' from $MiosRepoDir\.git\config"
             $null = Invoke-NativeQuiet { git config --unset core.worktree }
         }
@@ -8788,33 +8615,51 @@ if ($activeDistro) {
         Push-Location $MiosBootstrapShadow
         try {
             $null = Invoke-NativeQuiet { git remote set-url origin $MiosBootstrapUrl }
-            $fetchExit = Invoke-NativeQuiet { git fetch --depth=1 origin main }
-            if ($fetchExit -eq 0) {
+        } finally { Pop-Location }
+        $fetchExit = Invoke-GitFetchWithRetry -RepoPath $MiosBootstrapShadow -Ref $MiosBootstrapRef
+        if ($fetchExit -eq 0) {
+            Push-Location $MiosBootstrapShadow
+            try {
                 $resetExit = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
                 if ($resetExit -ne 0) { Log-Warn "mios-bootstrap.git: git reset --hard returned $resetExit" }
-            } else {
-                Log-Warn "mios-bootstrap.git: git fetch returned $fetchExit -- shadow may be stale"
-            }
-        } finally { Pop-Location }
+                if ($MiosBootstrapRef -match '^[0-9a-fA-F]{7,40}$') {
+                    $null = Invoke-NativeQuiet { git checkout -q FETCH_HEAD }
+                } else {
+                    $null = Invoke-NativeQuiet { git branch -f $MiosBootstrapRef FETCH_HEAD }
+                    $null = Invoke-NativeQuiet { git checkout -q $MiosBootstrapRef }
+                }
+            } finally { Pop-Location }
+        } else {
+            Log-Warn "mios-bootstrap.git: git fetch returned $fetchExit -- shadow may be stale"
+        }
     } else {
         if (-not (Test-Path $MiosBootstrapShadow)) {
             New-Item -ItemType Directory -Path $MiosBootstrapShadow -Force | Out-Null
         }
         Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_bootstrap_clone' -Default "Cloning mios-bootstrap.git -> shadow $MiosBootstrapShadow")
-        $cloneExit = Invoke-NativeQuiet { git clone --depth 1 $MiosBootstrapUrl $MiosBootstrapShadow }
-        if ($cloneExit -ne 0) {
-            throw "mios-bootstrap.git: clone from $MiosBootstrapUrl failed (exit $cloneExit)"
-        }
+        Push-Location $MiosBootstrapShadow
+        try {
+            $null = Invoke-NativeQuiet { git init -q }
+            $null = Invoke-NativeQuiet { git remote add origin $MiosBootstrapUrl }
+            $fetchExit = Invoke-GitFetchWithRetry -RepoPath $MiosBootstrapShadow -Ref $MiosBootstrapRef
+            if ($fetchExit -ne 0) {
+                throw "mios-bootstrap.git: git fetch from $MiosBootstrapUrl failed (exit $fetchExit) at $MiosBootstrapShadow"
+            }
+            $null = Invoke-NativeQuiet { git reset --hard FETCH_HEAD }
+            if ($MiosBootstrapRef -match '^[0-9a-fA-F]{7,40}$') {
+                $null = Invoke-NativeQuiet { git checkout -q FETCH_HEAD }
+            } else {
+                $null = Invoke-NativeQuiet { git branch -f $MiosBootstrapRef FETCH_HEAD }
+                $null = Invoke-NativeQuiet { git checkout -q $MiosBootstrapRef }
+            }
+        } finally { Pop-Location }
     }
 
-    # Overlay mios-bootstrap files onto $MiosRepoDir (M:\) -- excluding .git
-    # so we don't clobber mios.git's .git dir at M:\.
     Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_bootstrap_overlay' -Default "Overlaying mios-bootstrap files onto $MiosRepoDir")
     $robocopyExit = Invoke-NativeQuiet {
         robocopy $MiosBootstrapShadow $MiosRepoDir `
             /E /XD .git /NJH /NJS /NFL /NDL /NP
     }
-    # robocopy exit codes 0-7 = success; 8+ = error
     if ($robocopyExit -ge 8) {
         Log-Warn "mios-bootstrap overlay: robocopy exit $robocopyExit (>=8 means error)"
     }
