@@ -524,16 +524,24 @@ try {
     }
 } catch {}
 
-# Per-feedback_mios_m_drive_everything: every MiOS-managed file lives on
-# M:\, no LOCALAPPDATA fallbacks. Hard-fail if M:\ is missing rather than
-# silently splitting MiOS state across C:\.
-#
-# Operator-facing logs go to M:\MiOS\logs\mios-install-<stamp>.log so a
-# single mount point holds the full audit trail. $MiosConfigDir and the
-# legacy %LOCALAPPDATA%\MiOS path are FORBIDDEN per memory.
-$MiosDataDir      = 'M:\MiOS'
+# Data/log/config roots derive from the ALREADY-RESOLVED install root
+# ($script:MiosInstallDir) so logging + btop + toml work in BOTH modes:
+#   * admin / M:\ provisioned -> $script:MiosInstallDir is M:\MiOS (the
+#     early M:\ redirect / Update-MiosInstallPaths fired above), so logs
+#     land on M:\MiOS\logs exactly as before -- single mount point holds
+#     the full audit trail per feedback_mios_m_drive_everything.
+#   * non-admin (no M:\, no write to C:\) -> $script:MiosInstallDir is
+#     %LOCALAPPDATA%\MiOS, so logs/config land there instead of a
+#     non-existent M:\ (which previously hard-broke logging/btop/toml).
+# The 'M:\MiOS' literal stays only as the last-resort fallback for the
+# (theoretically unreachable) case where neither root resolved.
+$MiosDataDir      = if ($script:MiosInstallDir) { $script:MiosInstallDir } else { 'M:\MiOS' }
 $MiosLogDir       = Join-Path $MiosDataDir 'logs'
 $MiosConfigDir    = Join-Path $MiosDataDir 'config'   # was %APPDATA%\MiOS
+# Make the log dir bulletproof: ensure it exists the moment it's derived
+# (well before $LogFile is first written by [IO.File]::AppendAllText), so a
+# non-admin run never trips over a missing M:\ root.
+$null = New-Item -ItemType Directory -Path $MiosLogDir -Force -ErrorAction SilentlyContinue
 
 function Resolve-MiosInstallRoot {
     # Returns the best Windows-side install root, preferring the dedicated
@@ -4890,17 +4898,25 @@ function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
     # /tmp/mios-bootstrap, run seed-merge.sh against /, then build.
     Set-Step "Universal MiOS-SEED: overlay mios-bootstrap onto / inside $Distro"
     $bootstrapRepoUrl = if ($env:MIOS_BOOTSTRAP_REPO) { $env:MIOS_BOOTSTRAP_REPO } else { $MiosBootstrapUrl }
-    $bootstrapRef     = if ($env:MIOS_BOOTSTRAP_REF)  { $env:MIOS_BOOTSTRAP_REF  } else { "main" }
+    # Version pinning SSOT: env override wins, else mios.toml [bootstrap].bootstrap_ref
+    # (pin to a tag or SHA for a reproducible install), else "main".
+    $bootstrapRef     = if ($env:MIOS_BOOTSTRAP_REF) { $env:MIOS_BOOTSTRAP_REF } else { Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_ref' -Default 'main' }
+    # Note: NO `set -e` here -- a transient clone failure must DEGRADE
+    # (warn + skip the overlay) rather than abort the whole build. The
+    # clone is wrapped in a 3x exponential-backoff retry loop so a flaky
+    # network doesn't kill an otherwise-good build on the first failure.
     $seedScript = @"
-set -e
 if [ ! -d /tmp/mios-bootstrap/.git ]; then
-    rm -rf /tmp/mios-bootstrap
-    git clone --depth=1 --branch '$bootstrapRef' '$bootstrapRepoUrl' /tmp/mios-bootstrap
+    for i in 1 2 3; do
+        rm -rf /tmp/mios-bootstrap
+        git clone --depth=1 --branch '$bootstrapRef' '$bootstrapRepoUrl' /tmp/mios-bootstrap && break
+        [ `$i -lt 3 ] && sleep `$((i*5))
+    done
 fi
 if [ -x /tmp/mios-bootstrap/seed-merge.sh ]; then
     /tmp/mios-bootstrap/seed-merge.sh / /tmp/mios-bootstrap
 else
-    echo '[seed-merge] WARN: /tmp/mios-bootstrap/seed-merge.sh not found -- bootstrap overlay skipped' >&2
+    echo '[seed-merge] WARN: /tmp/mios-bootstrap/seed-merge.sh not found (clone may have failed) -- bootstrap overlay skipped' >&2
 fi
 "@
     if ($useSsh) {
