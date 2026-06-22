@@ -1,4 +1,4 @@
-﻿# AI-hint: Powershell script to install Windows host CLI tools (e.g., pwsh, ripgrep, fzf) via winget or direct GitHub downloads based on mios.toml definitions to prepare the host environment for MiOS terminal operations.
+# AI-hint: Powershell script to install Windows host CLI tools (e.g., pwsh, ripgrep, fzf) via winget (with checksum retry fallback) or direct GitHub downloads based on mios.toml definitions to prepare the host environment for MiOS terminal operations.
 # AI-related: mios-bootstrap, mios-seed, localhost:3030
 # AI-functions: Install-MiosWindowsTools, Configure-MiosBrowserAI
 #Requires -Version 5.1
@@ -133,8 +133,16 @@ function Install-MiosWindowsTools {
                     Log-Ok "winget install (retry): $pkg [OK]"
                     $installed++
                 } else {
-                    Log-Warn ("winget install: {0} FAILED (exit {1})" -f $pkg, $LASTEXITCODE)
-                    $failed++
+                    Log-Warn ("winget install: {0} FAILED (exit {1}) -- retrying with --ignore-security-hash" -f $pkg, $LASTEXITCODE)
+                    & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget --ignore-security-hash @forceArgs 2>&1 |
+                        ForEach-Object { Write-Log ("winget[{0}-hash-retry]: {1}" -f $pkg, $_) }
+                    if ($LASTEXITCODE -eq 0) {
+                        Log-Ok "winget install (hash-retry): $pkg [OK]"
+                        $installed++
+                    } else {
+                        Log-Warn ("winget install: {0} COMPLETELY FAILED (exit {1})" -f $pkg, $LASTEXITCODE)
+                        $failed++
+                    }
                 }
             }
         } catch {

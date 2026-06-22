@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Merges the mios-bootstrap user/AI layer onto the mios.git factory layer to create a unified build context for OCI images, ensuring consistent root filesystem content across all deployment platforms.
+# AI-hint: Merges the mios-bootstrap user/AI layer (excluding obsolete documentation) onto the mios.git factory layer to create a unified build context for OCI images, ensuring consistent root filesystem content across all deployment platforms.
 # AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, mios-bootstrap
 # AI-functions: _log
 # seed-merge.sh -- Universal MiOS-SEED merge step.
@@ -63,10 +63,9 @@ done
 # Containerfile picks them up via the new /ctx/rootfiles staging.
 ROOT_FILES=(
     mios.toml
-    CLAUDE.md AGENTS.md GEMINI.md usr/share/doc/mios-bootstrap/concepts/ai-architecture.md AGREEMENTS.md
+    CLAUDE.md AGENTS.md GEMINI.md
     .cursorrules
-    usr/share/doc/mios/reference/api.md usr/share/doc/mios/reference/credits.md system-prompt.md
-    usr/share/doc/mios-bootstrap/reference/variables.md usr/share/doc/mios-bootstrap/guides/user-space.md usr/share/doc/mios-bootstrap/guides/install-architecture.md
+    system-prompt.md
     llms.txt
     bootstrap.sh bootstrap.ps1 install.sh install.ps1
     Get-MiOS.ps1 build-mios.sh build-mios.ps1

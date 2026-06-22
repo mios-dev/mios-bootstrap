@@ -133,9 +133,9 @@ Default model auto-selection from `[ai.host_thresholds]` (VRAM-tiered; the lean 
 
 | VRAM tier | `mios.toml` key | Model |
 |---|---|---|
-| ≥ 16 GB (explicit operator pick) | `big_ram_model` | `qwen3-coder:30b` |
-| ≥ 8 GB (auto-promote) | `mid_ram_model` | `qwen3.5:9b` |
-| default / CPU-fit | `small_ram_model` | `qwen3.5:4b` (vendor default) |
+| ≥ 32 GB (explicit operator pick) | `big_ram_model` | `qwen3.5:14b` |
+| ≥ 12 GB (auto-promote) | `mid_ram_model` | `qwen3.5:2b` |
+| default / CPU-fit | `small_ram_model` | `phi4-mini:3.8b-q4_K_M` (vendor default) |
 
 AI files owned by this repo:
 

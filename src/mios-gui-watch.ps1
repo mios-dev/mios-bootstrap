@@ -1,4 +1,4 @@
-# AI-hint: A background PowerShell daemon that polls msrdc.exe processes to detect and resize tiny WSLg-spawned windows to a minimum usable size and center them on the screen to ensure visibility on high-resolution displays.
+# AI-hint: A single-instance background PowerShell daemon that polls msrdc.exe processes to detect and resize tiny WSLg-spawned windows to a minimum usable size and center them on the screen to ensure visibility on high-resolution displays.
 # AI-related: mios-gui-watch
 # AI-functions: _ResolveTomlDim
 # mios-gui-watch.ps1 -- background watcher that auto-centers tiny WSLg
@@ -42,6 +42,14 @@ param(
     [int]$PollMs     = 500,
     [switch]$Verbose
 )
+
+$mutexName = "Global\MiOS-GuiWatch"
+$createdNew = $false
+$mutex = New-Object System.Threading.Mutex($true, $mutexName, [ref]$createdNew)
+if (-not $createdNew) {
+    if ($Verbose) { Write-Host "mios-gui-watch: already running, exiting." -ForegroundColor DarkYellow }
+    exit 0
+}
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -Namespace MiosGui -Name Win -MemberDefinition @"

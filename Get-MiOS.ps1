@@ -5958,7 +5958,7 @@ if ($_needWrite) {
 # this block is regenerated.
 $($_keyLines -join "`r`n")
 "@
-        Add-Content -Path $_wslCfg -Value $_baseline
+        [System.IO.File]::WriteAllText($_wslCfg, $_baseline, (New-Object System.Text.UTF8Encoding($false)))
     } else {
         # [wsl2] section exists -- replace its keys with the TOML-resolved
         # set. Strip ALL legacy networking keys (networkingMode,
@@ -5976,7 +5976,7 @@ $($_keyLines -join "`r`n")
             if ($_in -and $_l -match '^(networkingMode|localhostForwarding|firewall|guiApplications)\s*=') { continue }
             $_out.Add($_l)
         }
-        Set-Content -Path $_wslCfg -Value $_out -Encoding UTF8
+        [System.IO.File]::WriteAllLines($_wslCfg, $_out, (New-Object System.Text.UTF8Encoding($false)))
     }
     Write-Host "  [+] .wslconfig: $_netMode mode written from mios.toml [wsl2].* (pre-Phase-0)" -ForegroundColor Green
     & wsl.exe --shutdown 2>$null | Out-Null
