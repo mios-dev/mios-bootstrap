@@ -1,4 +1,4 @@
-﻿# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver for generating OCI images and disk formats.
+# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver for generating OCI images and disk formats.
 # AI-related: 37-ollama-prep.sh, mios-btop.sh, /usr/libexec/mios/mios-build-driver, /usr/share/mios/mios.toml, /usr/libexec/mios/mios-build-driver., /etc/mios/mios.toml, /usr/share/mios/configurator/mios.html, /usr/libexec/mios/flatpak-launch, /etc/mios/hermes/config.yaml, /etc/mios/hermes/config.local.yaml
 # AI-functions: parse_sections_from_toml, get_pkgs, install_section, parse_pkgs, Disable-ConsoleQuickEdit, Resolve-MiosTomlText, Get-MiosTomlValue, Resolve-MiosInstallRoot, Update-MiosInstallPaths, Invoke-MigrateLegacyInstallRoot, Invoke-DataDiskBootstrap, Test-DashboardCanRedraw
 #Requires -Version 5.1
@@ -7112,7 +7112,7 @@ Start-Sleep -Milliseconds 800
 # becomes a no-op on subsequent re-builds.
 `$driverSrc = '/mnt/m/usr/libexec/mios/mios-build-driver'
 Write-Host ('  [build] staging mios-build-driver into {0}:/usr/libexec/mios/' -f `$distro) -ForegroundColor DarkGray
-& wsl.exe -d `$distro --user root -- bash -c "mkdir -p /usr/libexec/mios && if [ -r '`$driverSrc' ]; then cp '`$driverSrc' /usr/libexec/mios/mios-build-driver && chmod +x /usr/libexec/mios/mios-build-driver && echo '[stage] driver staged from `$driverSrc'; else echo '[stage] WARN: `$driverSrc not readable from inside `$distro -- relying on pre-staged copy'; fi"
+& wsl.exe -d `$distro --user root -- bash -c "mkdir -p /usr/libexec/mios && if [ -r '`$driverSrc' ]; then cp '`$driverSrc' /usr/libexec/mios/mios-build-driver && chmod +x /usr/libexec/mios/mios-build-driver && echo '[stage] driver staged from `$driverSrc'; else echo '[stage] WARN: `$driverSrc not readable from inside `$distro -- falling back to curl'; curl -fsSL -o /usr/libexec/mios/mios-build-driver 'https://raw.githubusercontent.com/mios-dev/MiOS/$MiosRef/usr/libexec/mios/mios-build-driver' && chmod +x /usr/libexec/mios/mios-build-driver; fi"
 
 Write-Host ''
 Write-Host ('  [build] handing off to {0}:/usr/libexec/mios/mios-build-driver' -f `$distro) -ForegroundColor Cyan
