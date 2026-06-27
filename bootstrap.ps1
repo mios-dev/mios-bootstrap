@@ -74,7 +74,7 @@ if (Test-Path $target) {
 # Running piped via irm | iex -- $PSScriptRoot is empty. Fetch the
 # canonical build-mios.ps1 from the same branch and dot-source it.
 $url = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/build-mios.ps1"
-# Install-robustness 2026-06-21: retry the fetch 3x with backoff + cache-bust +
+# Install-robustness retry the fetch 3x with backoff + cache-bust +
 # body validation. A single transient network failure here otherwise killed the
 # whole irm|iex bootstrap with a bare Invoke-RestMethod exception (the canonical
 # entry must survive a flaky connection). The ?cb= also defeats Fastly's 5-min

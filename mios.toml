@@ -62,7 +62,7 @@ frame_chars   = "╭─╮│╰╯"
 
 # ----------------------------------------------------------------------------
 # [terminal] -- entry-point WT MiOS app geometry + scrollback. Operator
-# 2026-05-09: the MiOS app window is 80 cols x 20 rows (the entry-point
+# the MiOS app window is 80 cols x 20 rows (the entry-point
 # dashboard fits in 19 rows; row 20 is the prompt). [terminal.install] is
 # the install-time dashboard window (40 rows) used during phase rendering.
 #
@@ -127,7 +127,7 @@ linux             = "mini"
 # window smaller than these dims to exactly these dims, centered
 # on the cursor monitor.
 #
-# Operator 2026-05-10: months of "GUI windows never render" was
+# months of "GUI windows never render" was
 # actually "windows render at native X11 default sizes (e.g.
 # 129x113 for xeyes) at arbitrary positions and look invisible
 # against acrylic/transparent backgrounds." Force-resizing tiny
@@ -158,7 +158,7 @@ system_backdrop   = "acrylic"
 scrollbar_state   = "hidden"
 padding           = "0"
 launch_mode       = "focus"
-cursor_shape      = "vintage"     # steady half-block (operator 2026-05-10: make terminal cursor thicker -- thin "bar" was almost too thin on 4K)
+cursor_shape      = "vintage"     # steady half-block (make terminal cursor thicker -- thin "bar" was almost too thin on 4K)
 
 [theme.font]
 family            = "GeistMono Nerd Font Mono"
@@ -327,7 +327,7 @@ small_ram_model    = "phi4-mini:3.8b-q4_K_M"
 #             make sense as dev-VM defaults. Add a name here to
 #             flip it on; remove to keep dormant.
 #
-# Operator-flagged 2026-05-10: "bake into mios.toml so operators
+# Operator-flagged "bake into mios.toml so operators
 # can edit the list -- EVERYTHING is sourced from the mios.toml
 # file and edited in the mios.html in live environments browser".
 # ----------------------------------------------------------------------------
@@ -360,7 +360,7 @@ flatpaks      = [
     # ── GTK theme extensions (so flatpaks honor host dark theme) ──
     # Without these, every flatpak GTK app uses its bundled Adwaita
     # fallback and ignores host dconf gtk-theme=adw-gtk3-dark.
-    # Operator-flagged 2026-05-10 "Nautilus STILL has olde GTK/CSS/
+    # Operator-flagged "Nautilus STILL has olde GTK/CSS/
     # Decorations/theming" -- root cause was missing flatpak theme
     # extensions. Combined with mios.git's /etc/dconf/db/local.d/
     # 00-mios-theme + per-flatpak GTK_THEME env override these
@@ -1089,7 +1089,7 @@ reboot_on_finish = true                   # interactive y/N prompt at end of ins
 # NTFS reserves ~16 MB for boot sector / alignment / $MFT.
 [bootstrap.host_storage]
 shrink_mb         = 262656
-# Install-robustness 2026-06-21: floor for the adaptive shrink. When C: cannot
+# Install-robustness floor for the adaptive shrink. When C: cannot
 # free the full shrink_mb (256/512 GB SSDs, or a heavily-used C:), Initialize-
 # DataDisk clamps the MiOS-DEV partition to the largest fittable size DOWN TO this
 # floor instead of hard-aborting; only if even this won't fit does it stop (with

@@ -9,7 +9,7 @@
 #   err          #E76F4F  (warm red)
 #   highlight    #1A407F  (operator-blue accent for selection)
 #
-# Operator 2026-05-09: btop config "needs to match the entire MiOS themes
+# Operator rationale: btop config "needs to match the entire MiOS themes
 # and color palette". Theme keys map to btop's standard slots.
 
 # Main background. Set "" for transparent (preserves WT acrylic).

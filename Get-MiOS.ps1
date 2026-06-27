@@ -82,7 +82,7 @@ $ErrorActionPreference = "Stop"
 
 # Disable console QuickEdit immediately so an accidental click/select in the
 # (elevated) window can't freeze the installer on its next write -- Windows
-# "mark" mode blocks the process until Enter/Esc is pressed (2026-06-05: a click
+# "mark" mode blocks the process until Enter/Esc is pressed (a click
 # during the long install read as a dead hang). build-mios.ps1 re-applies this;
 # the type guard makes the second call a no-op. Best-effort; never fatal.
 function Disable-ConsoleQuickEdit {
@@ -242,7 +242,7 @@ if (-not $env:MIOS_CACHE_BUSTED -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
 #
 # This file (Get-MiOS.ps1) is the BOOTSTRAP entry -- invoked via
 # `irm | iex` for clean installs and via `mios update` for forced
-# refresh.  Per operator architectural rule 2026-05-09:
+# refresh. Per operator architectural rule
 #
 #   "ORIGIN = web entries/repos only -- no fallback to M:\ or
 #    anywhere else -- unless origin has been pulled and it's a
@@ -371,7 +371,7 @@ function Get-MiosTomlValue {
             # PS 7-only `` `u{0001} `` syntax -- PS 5.1 treats `` `u ``
             # as just literal "u", which leaked the placeholder
             # `u{0001}BS` (visible) into rendered strings.  Operator
-            # 2026-05-09: "Initializing mios.git as the M:u{0001}BSu{0001}
+            # "Initializing mios.git as the M:u{0001}BSu{0001}
             # working tree".  [char]0x01 works in both PS 5.1 and PS 7+.
             $_bs = [string][char]0x01 + 'BS' + [string][char]0x01
             $inner = $raw.Substring(1, $raw.Length - 2)
@@ -391,6 +391,29 @@ function Get-MiosTomlValue {
     # Bare value, no surrounding quotes -- return as-is.
     return $raw
 }
+
+# -- Canonical origin URLs (SSOT: [bootstrap] mios_repo / bootstrap_repo) ------
+# ONE source for every web fetch below. Resolved once from mios.toml so an
+# operator override of the repo owner/name/ref flows to all download sites; the
+# vendor defaults match the [bootstrap] keys. Raw-content bases are DERIVED from
+# the .git clone URLs (github.com host -> raw.githubusercontent.com, drop the
+# trailing .git, append the ref) so the owner/name live in exactly one place.
+# Script-scoped + assigned AFTER Get-MiosTomlValue is defined; the fetch
+# functions above resolve these at call time (which is always later). The two
+# root chicken-egg fetches that pull mios.toml / Get-MiOS.ps1 itself keep their
+# inline literal -- they run before any toml exists and ARE the documented
+# vendor default these vars fall back to.
+function ConvertTo-MiosRawBase {
+    param([Parameter(Mandatory)][string]$GitUrl, [Parameter(Mandatory)][string]$Ref)
+    $base = $GitUrl -replace '^https://github\.com/', 'https://raw.githubusercontent.com/' -replace '\.git$', ''
+    return "$base/$Ref"
+}
+$Script:MiosRepoUrl      = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_repo'      -Default 'https://github.com/mios-dev/MiOS.git'
+$Script:MiosBootstrapUrl = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_repo' -Default 'https://github.com/mios-dev/mios-bootstrap.git'
+$Script:MiosRef          = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_ref'       -Default 'main'
+$Script:MiosBootstrapRef = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_ref'  -Default 'main'
+$Script:MiosRawBase      = ConvertTo-MiosRawBase $Script:MiosRepoUrl      $Script:MiosRef          # vendor mios.git raw tree base
+$Script:MiosBootstrapRaw = ConvertTo-MiosRawBase $Script:MiosBootstrapUrl $Script:MiosBootstrapRef  # bootstrap repo raw tree base
 
 function Show-MiOSBanner {
     # Framed branded ASCII banner -- shown at the top of EVERY MiOS
@@ -428,7 +451,7 @@ function Show-MiOSBanner {
     # frame char wrapped. inner = cols - right_margin - 2 always
     # leaves right_margin cells of slack on the right edge.
     $_bCols      = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols'         -Default (Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80)
-    # Operator 2026-05-09: "dashboards should be edge to edge globally!!
+    # "dashboards should be edge to edge globally!!
     # 80x20 window is the Global benchmark!". right_margin=0 means the
     # frame paints col 1..N where N = WindowWidth, edge-to-edge.
     # Canonical launches use mios-launch.exe with --focus so WT runs in
@@ -453,7 +476,7 @@ function Show-MiOSBanner {
     # char to a string and repeats it; 5.1 does not. Cast to a string FIRST so
     # the horizontal rule repeats identically on both shells. (char + string
     # concatenation IS fine in 5.1 -- only the multiply was undefined.)
-    # install-robustness 2026-06-21.
+    # install-robustness.
     $_hbar  = ([char]0x2500).ToString() * $inner
     $top    = [char]0x256d + $_hbar + [char]0x256e
     $bottom = [char]0x2570 + $_hbar + [char]0x256f
@@ -850,7 +873,7 @@ if (-not $_isAdmin -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
     $_appRows  = Get-MiosTomlValue -Section 'terminal'         -Key 'rows'            -Default 20
     $_appWPx   = ($_appCols * $_cellW) + $_chromeW
     $_appHPx   = ($_appRows * $_cellH) + $_chromeH
-    $_rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
+    $_rawUrl = "$($Script:MiosBootstrapRaw)/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
     # Pass-2 exit-message strings resolved at install time from
     # mios.toml [messages.pass2_exit] (SSOT). Baked as literals into
     # the inner-cmd heredoc below.  Single-quote the values + escape
@@ -895,7 +918,7 @@ try { `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false) } catch {}
 # failure (IRM fetch, scriptblock parse/throw, agreement gate, a preflight
 # 'exit', or a bare error) lands in a readable file. build-mios.ps1 opens
 # its own mios-install-*.log later; this closes the gap BEFORE that on the
-# Pass-2 critical path. install-robustness 2026-06-21.
+# Pass-2 critical path. install-robustness.
 try {
     `$_p2LogDir = if (Test-Path 'M:\') { 'M:\MiOS\logs' } else { Join-Path `$env:TEMP 'mios-logs' }
     if (-not (Test-Path `$_p2LogDir)) { New-Item -ItemType Directory -Force -Path `$_p2LogDir | Out-Null }
@@ -1019,7 +1042,7 @@ Write-Host '  [*] MiOS Bootstrap (elevated)' -ForegroundColor Cyan
 Write-Host ('      Cache-busted Get-MiOS.ps1 fetch: ' + `$_rawUri) -ForegroundColor DarkGray
 Write-Host ''
 try {
-    # install-robustness 2026-06-21: retry the fetch 3x with backoff +
+    # install-robustness retry the fetch 3x with backoff +
     # body validation. A single transient blip here otherwise killed the
     # whole elevated install with a bare Invoke-RestMethod exception.
     `$src = `$null
@@ -1096,7 +1119,7 @@ try {
         Write-Host '$_p2BuildLogHnt' -ForegroundColor DarkGray
         Write-Host ''
     } else {
-        # Operator 2026-05-09: "irm|iex invocation and install processes
+        # "irm|iex invocation and install processes
         # spawn too many powershell windows and should be performed
         # in-line in one promoted Powershell window after bootstrap".
         # On success, transition THIS elevated conhost into the MiOS
@@ -1352,7 +1375,7 @@ function Wait-MiOSWindowsTerminalReady {
 function Ensure-MiOSWinget {
     # Bootstrap winget itself on a truly bare Windows host (Win 10 21H2,
     # OOBE-fresh Win 11 N edition without Store, etc.) before any other
-    # Install-MiOS* function tries to use it. Operator-flagged 2026-05-12:
+    # Install-MiOS* function tries to use it. Operator-flagged
     # "MiOS should automatically install EVERYTHING needed to install MiOS
     # via irm|iex". Without this, every winget invocation on a bare host
     # silently warns + skips, leaving the bootstrap half-installed.
@@ -1605,7 +1628,7 @@ function Install-MiOSGeistFont {
 
 function Install-MiOSBibataCursor {
     # Install Bibata-Modern-Classic as the Windows-wide cursor scheme.
-    # Operator-flagged 2026-05-11 "cursor is still not bibata GLOBALLY".
+    # Operator-flagged "cursor is still not bibata GLOBALLY".
     # Linux dev VM Bibata install runs separately inside the WSL distro
     # (build-mios.ps1's Set-Step "Installing Bibata-Modern-Classic
     # cursor"). This Windows-side complement covers the desktop chrome
@@ -1750,7 +1773,7 @@ function Install-MiOSBibataCursor {
         # (32, 48, 64, 96, 128); even the smallest 32px variant renders
         # visibly larger than typical Windows cursors because the
         # bibata glyph fills more of the 32x32 canvas. Operator-flagged
-        # 2026-05-11 "windows bibata is too large" -- lowering the base
+        # "windows bibata is too large" -- lowering the base
         # size to 24 forces Windows to downscale the 32px source to
         # match the visual weight of the default Aero cursor.
         # Operator-overridable via mios.toml [theme.cursor_windows].base_size.
@@ -2022,7 +2045,7 @@ function Install-MiOSTerminalProfile {
     $_miosWtRows = Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20
     if (-not ($_miosWtRows -is [int]) -or $_miosWtRows -lt 10 -or $_miosWtRows -gt 120) { $_miosWtRows = 20 }
     # WT profile names sourced from mios.toml [theme.terminal] (SSOT).
-    # Operator 2026-05-09: "MiOS-DEV is the main application the end
+    # "MiOS-DEV is the main application the end
     # user uses, MiOS app itself should be defined as MiOS-WIN from
     # here on out".  Linux dev VM = MiOS-DEV (canonical MiOS surface);
     # Windows-side launcher app = MiOS-WIN (renamed from "MiOS").
@@ -2052,7 +2075,7 @@ function Install-MiOSTerminalProfile {
         # (e.g. our edge-to-edge dashboard frame at width=80 in an
         # 80-col window) wraps every full-width row to a new visual
         # row -- pushing the dashboard's TOP frame above the viewport.
-        # Operator screenshot 2026-05-10 image #12: top `+-MiOS-+`
+        # Operator screenshot image #12: top `+-MiOS-+`
         # corner clipped, fastfetch info at row 0, right `|` border
         # missing. Setting this to true tells WT to leave col cols-1
         # written without firing the soft-wrap, so width=80 content
@@ -2136,7 +2159,7 @@ function Install-MiOSTerminalProfile {
         $wtJson = ConvertFrom-Json '{ "profiles": { "list": [] }, "schemes": [] }'
     }
 
-    # GLOBAL WRITES (edge-to-edge pivot 2026-05-08): the prior "no
+    # GLOBAL WRITES (edge-to-edge pivot): the prior "no
     # globals" stance left WT's pseudo-console reporting +1-2 cells
     # over the actual visible cell count during first paint, before
     # `profiles.defaults.scrollbarState='hidden'` could take effect.
@@ -2161,7 +2184,7 @@ function Install-MiOSTerminalProfile {
 
     # Root-level launchMode -- forces focus mode (no titlebar, no tabs)
     # globally. This affects EVERY WT window the operator opens, not
-    # just MiOS profiles. Operator-approved 2026-05-08 ("go fix
+    # just MiOS profiles. Operator-approved ("go fix
     # mios-bootstrap edge-to-edge now") because `--focus` on the wt.exe
     # CLI alone hides tabs but leaves the titlebar, so the off-by-N
     # cell-count bug persisted on launches that didn't go through the
@@ -2244,7 +2267,7 @@ function Install-MiOSTerminalProfile {
     # per `podman machine init` call and they accumulate without dedup.
     # Our branded MiOS-DEV profile already covers that distro.
     # Strip prior MiOS-related entries.  "MiOS" name kept in the strip
-    # list so re-runs after the 2026-05-09 rename ("MiOS app itself
+    # list so re-runs after the rename ("MiOS app itself
     # should be defined as MiOS-WIN") clean up the old "MiOS" profile
     # left behind.  Also strips current "MiOS-WIN" by name in case the
     # GUID changed.
@@ -2294,7 +2317,7 @@ function Install-MiOSTerminalProfile {
         if ($vJson.profiles -and $vJson.profiles.list) { $profileNames = @($vJson.profiles.list | ForEach-Object { $_.name }) }
 
         # Verify against the ACTUAL renamed profile names from
-        # mios.toml [theme.terminal] (operator 2026-05-09: "MiOS app
+        # mios.toml [theme.terminal] ("MiOS app
         # itself should be defined as MiOS-WIN").  Was hardcoded to
         # 'MiOS' which always failed post-rename and dropped through
         # to the raw-JSON-injection fallback that wrote a degraded
@@ -2380,7 +2403,7 @@ function Install-MiOSNativeApp {
 #                  Windows-side window after the profile body loads.
 #                  Ignored for MiOS-DEV (the dev VM is a bash login).
 #
-# Operator 2026-05-09: "UNIFY all MiOS app windows/themed windows
+# "UNIFY all MiOS app windows/themed windows
 # terminal windows to use the same profile and launch params GLOBALLY!!!"
 param(
     [string]$Profile = 'MiOS-DEV',
@@ -2554,7 +2577,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
 
     # Hub .lnk targets the MiOS-DEV WT profile (mios.toml
     # [theme.terminal].hub_target_profile, default "MiOS-DEV") --
-    # operator 2026-05-09: "MiOS app opens direct to ... podman-MiOS-DEV".
+    # "MiOS app opens direct to... podman-MiOS-DEV".
     # The launcher receives -Profile <name>; mios-launch.ps1 spawns
     # `wt.exe ... -p <name>` which lands the operator straight in the
     # dev VM shell.  No Verb -- the dev VM commandline is a bash
@@ -2563,7 +2586,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
     if ([string]::IsNullOrWhiteSpace($_hubTargetProfile)) { $_hubTargetProfile = 'MiOS-DEV' }
     $lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_hubTargetProfile`""
     # .lnk Description = mios.toml [branding].tagline_app (preferred)
-    # or .tagline. Per operator 2026-05-09: 'the Applications
+    # or.tagline. Per 'the Applications
     # tag/description ... should be defined as My Personal Operating
     # System or similar'.  SSOT lift per "no hardcoding ANYWHERE".
     $_lnkTag = Get-MiosTomlValue -Section 'branding' -Key 'tagline_app' -Default (Get-MiosTomlValue -Section 'branding' -Key 'tagline' -Default 'My Personal Operating System')
@@ -2591,7 +2614,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
         $sc.Save()
     }
 
-    # -- Canonical 4-shortcut set (operator 2026-05-09) ------------------
+    # - Canonical 4-shortcut set ------------------
     # SSOT: each shortcut's metadata (name, profile, verb, description)
     # resolves through mios.toml [apps.shortcut.<key>]. PS-code defaults
     # below are vendor fallbacks per feedback_mios_defaults_baseline.
@@ -2655,7 +2678,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
         # Build (TargetExe, ArgString) pair. .exe form takes positional
         # args ("<profile> <cols> <rows>") and is preferred. .ps1 fallback
         # uses pwsh -File invocation. Cell dims sourced from mios.toml
-        # [terminal] (SSOT) -- operator 2026-05-09: "TOML is THE TOTAL
+        # [terminal] (SSOT) -- "TOML is THE TOTAL
         # REFERENCE for all functions and calls".
         $_shortcutCols = [int](Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80)
         $_shortcutRows = [int](Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20)
@@ -2711,14 +2734,14 @@ if ($hwnd -ne [IntPtr]::Zero) {
     #   * Verb     -- mios verb to run inside the launched window
     #                 (empty = just open the profile, no dispatch)
     #   * Icon     -- per-verb .ico under M:\MiOS\icons (fallback: mios.ico)
-    # Operator 2026-05-09: "launching MiOS-DEV doesn't launch in to
+    # "launching MiOS-DEV doesn't launch in to
     # the podman-MiOS-DEV machine still" -- root cause was that the
     # MiOS-DEV.lnk was passing `-Verb dev` to mios-launch.ps1 which
     # only accepted -Profile, so the dev launcher silently fell back
     # to Profile='MiOS' (the hub) and the dev verb was never used.
     # The Profile field below routes to the right WT profile so
     # MiOS-DEV.lnk now lands in the actual dev VM.
-    # Operator 2026-05-09 consolidation: "TOO MANY APPS!! I SAID
+    # consolidation: "TOO MANY APPS!! I SAID
     # UNIFY MiOS APPS in a way that makes sense and is minimal --
     # MiOS app opens direct to ... podman-MiOS-DEV!!!".  The hub
     # MiOS.lnk written above is the ONE user-facing app.  Per-verb
@@ -2732,7 +2755,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
     $miosVerbs = @()
 
     # -- Uninstall MiOS shortcut (Start Menu + Desktop) --------------
-    # Per operator 2026-05-09: "MiOS should ... Install as a Native
+    # Per "MiOS should... Install as a Native
     # Windows Application with a bundled uninstaller being a
     # shortcut/link as well".  The hub already registers in
     # Add/Remove Programs (line 2294+); this gives the operator a
@@ -2861,7 +2884,7 @@ namespace MiOS.NativeApp {
         $uninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS'
         if (-not (Test-Path $uninstKey)) { New-Item -Path $uninstKey -Force | Out-Null }
         # DisplayName resolves through mios.toml [branding].tagline_app
-        # (per operator 2026-05-09: 'the Applications tag/description
+        # (per 'the Applications tag/description
         # when installed "MiOS - Immutable Fedora AI Workstation"
         # should be defined as My Personal Operating System or similar').
         # The technical descriptor "Immutable Fedora AI Workstation"
@@ -2873,7 +2896,7 @@ namespace MiOS.NativeApp {
         Set-ItemProperty -Path $uninstKey -Name 'DisplayVersion'  -Value 'v0.2.4' -Force
         Set-ItemProperty -Path $uninstKey -Name 'Publisher'       -Value 'mios-dev' -Force
         Set-ItemProperty -Path $uninstKey -Name 'InstallLocation' -Value $miosRoot -Force
-        Set-ItemProperty -Path $uninstKey -Name 'URLInfoAbout'    -Value 'https://github.com/mios-dev/mios' -Force
+        Set-ItemProperty -Path $uninstKey -Name 'URLInfoAbout'    -Value (Get-MiosTomlValue -Section 'branding' -Key 'about_url' -Default 'https://github.com/mios-dev/mios') -Force
         if ($iconPath) { Set-ItemProperty -Path $uninstKey -Name 'DisplayIcon' -Value $iconPath -Force }
         Set-ItemProperty -Path $uninstKey -Name 'NoModify' -Value 1 -Type DWord -Force
         Set-ItemProperty -Path $uninstKey -Name 'NoRepair' -Value 1 -Type DWord -Force
@@ -2919,7 +2942,7 @@ function Install-MiOSServiceShortcuts {
     # auto-publish heuristic filters out the 10 mios-svc-*.desktop files
     # MiOS ships in /usr/share/applications/ (Categories=System;Network;
     # Settings; + Exec=xdg-open URL doesn't fit WSLg's app model).
-    # Operator-confirmed 2026-05-12: 0 of 10 mios-svc-* entries surfaced
+    # Operator-confirmed 0 of 10 mios-svc-* entries surfaced
     # as Windows shortcuts despite clean Type=Application + NoDisplay=false.
     #
     # TOML-first per AGENTS.md §3 -- iterates mios.toml [desktop.start_menu]
@@ -2976,7 +2999,7 @@ function Install-MiOSServiceShortcuts {
 # theme) USED to be embedded as heredocs in this script.  They drifted
 # from upstream mios.git on every iteration and produced stale
 # powerline glyphs / ASCII art / fastfetch logos at install time --
-# operator 2026-05-09: "you are hardcoding mios build to build a
+# "you are hardcoding mios build to build a
 # smaller version of itself that you've embedded in the actual codebase
 # and THAT's where it's sourcing from!! MiOS is completely self
 # developing, self building, self hosted... ALL values source from the
@@ -2985,7 +3008,7 @@ function Install-MiOSServiceShortcuts {
 # Get-MiosVendorContent resolves vendor content from mios.git origin
 # (raw.githubusercontent.com).  WEB ONLY -- no local fallback.
 #
-# Per operator architectural rule 2026-05-09:
+# Per operator architectural rule
 #
 #   "ORIGIN = web entries/repos only -- no fallback to M:\ or
 #    anywhere else -- unless origin has been pulled and it's a
@@ -3011,7 +3034,7 @@ function Get-MiosVendorContent {
     )
     try {
         $cb  = [int][double]::Parse((Get-Date -UFormat %s))
-        $url = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/$RelPath" + "?cb=$cb"
+        $url = "$($Script:MiosRawBase)/usr/share/mios/$RelPath" + "?cb=$cb"
         $headers = @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' }
         # Use Invoke-WebRequest, NOT Invoke-RestMethod.  IRM
         # auto-deserializes any JSON response into a PSCustomObject; for
@@ -3176,7 +3199,7 @@ foreach ($mod in $psModules) {
     if (-not $tomlText) {
         try {
             $cb       = [int][double]::Parse((Get-Date -UFormat %s))
-            $tomlUrl  = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/mios.toml?cb=$cb"
+            $tomlUrl  = "$($Script:MiosRawBase)/usr/share/mios/mios.toml?cb=$cb"
             $tomlText = Invoke-RestMethod -Uri $tomlUrl `
                 -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } `
                 -ErrorAction Stop
@@ -3369,7 +3392,7 @@ function Install-MiOSFastfetch {
     $resolvedConfig = $resolvedConfig -replace '/usr/share/mios/branding/mios\.txt', $logoPathJson
 
     # -- Color substitution from mios.toml [theme.fastfetch] (SSOT) --
-    # Per operator 2026-05-09: "oh my posh and other settings should
+    # Per "oh my posh and other settings should
     # source from the same toml sections for all platform for theme/
     # branding to be truly unified in code".  fastfetch's per-module
     # color overrides (logo / keys / title / output) ship with vendor-
@@ -3731,7 +3754,7 @@ if (`$true) {
     function Show-MiosDashboard {
         param([string]`$ConfigPath, [string]`$LogoPath)
         # Width adapts to LIVE terminal width every render so the dashboard
-        # always renders edge-to-edge. Operator 2026-05-09: "dashboards
+        # always renders edge-to-edge. "dashboards
         # should be edge to edge globally!! 80x20 window is the Global
         # benchmark!" + "opening MiOS app and using things like fastfetch
         # and btop--things that clear the screen; ends up fitting the
@@ -3766,7 +3789,7 @@ if (`$true) {
         # top frame off-viewport. Capping to the toml value (the
         # operator-declared "this is what 80x20 means") guarantees
         # the dashboard never renders wider than the declared frame.
-        # Operator-flagged 2026-05-10: "ie..." / "on..." wraps in
+        # Operator-flagged "ie..." / "on..." wraps in
         # MiOS-WIN dashboard with top frame clipped off-screen.
         if ($_miosFrameW -gt 0 -and `$WIDTH -gt $_miosFrameW) {
             `$WIDTH = $_miosFrameW
@@ -3775,7 +3798,7 @@ if (`$true) {
         `$INNER = `$WIDTH - 4
         `$TL=[char]0x256d; `$TR=[char]0x256e; `$BL=[char]0x2570; `$BR=[char]0x256f; `$LT=[char]0x251c; `$RT=[char]0x2524; `$V=[char]0x2502; `$H=[char]0x2500
 
-        # Uniform frame color -- per operator 2026-05-08: "make the
+        # Uniform frame color -- per "make the
         # entire frame 1 uniform colour--make it a complimenting colour
         # to the windows colour that's sourced from the toml fields that
         # are relevant to MiOS's color palette colours". MiOS canonical
@@ -3892,7 +3915,7 @@ if (`$true) {
         # Driven by mios.toml [dashboard].rows -- side-by-side fields
         # per row keep the dashboard at ~5 metric rows so 80x20 leaves
         # ample room for the prompt and command output.  Per operator
-        # 2026-05-09: "the dash is set GLOBALLY to Windows and Linux
+        # "the dash is set GLOBALLY to Windows and Linux
         # dashboards!! same settings!!! ... smaller metric can be
         # side-by-side in the dash; freeing up more room for the
         # prompt field."  The Linux-side mios-dashboard.sh reads the
@@ -3916,7 +3939,7 @@ if (`$true) {
                     # "for Workstations" SKU suffix, "Insider Preview"
                     # marketing, "(64-bit)" arch (it's redundant -- the
                     # arch line covers it), and trailing whitespace.
-                    # Operator-flagged 2026-05-10: "Windows 11 Pro for
+                    # Operator-flagged "Windows 11 Pro for
                     # Workstations Insider Preview" overflowed the 80x20
                     # frame and wrapped, pushing the top frame off-screen.
                     `$_cap = if (`$_o -and `$_o.Caption) { ((((((`$_o.Caption -replace 'Microsoft\s*','') -replace '\s+for\s+Workstations','') -replace '\s+Insider\s+Preview','') -replace '\s*\(64-?bit\)','') -replace '\s*N\s+Edition','')).Trim() } else { 'Windows' }
@@ -3977,7 +4000,7 @@ if (`$true) {
                 {`$_ -match '^disk_([a-zA-Z])$'} {
                     # PowerShell switch with regex condition matches but
                     # does NOT reliably populate `$Matches in the action
-                    # block scope -- operator 2026-05-09 saw `disk_c : err`
+                    # block scope -- saw `disk_c : err`
                     # in the dashboard because `$Matches[1]` was \$null and
                     # `$_dl` came back empty.  Parse the letter from `$_
                     # directly via Substring instead.
@@ -4058,7 +4081,7 @@ if (`$true) {
             foreach (`$_fk in `$_row) {
                 # Try/catch per-field so a single broken renderer
                 # (e.g. Get-Volume not available, lspci missing) doesn't
-                # kill the whole loop -- operator 2026-05-09 saw the
+                # kill the whole loop -- saw the
                 # dashboard render only the first 3 rows and bail because
                 # the disk_c renderer's Get-Volume call raised in a
                 # context where the Storage module wasn't loaded.
@@ -4084,7 +4107,7 @@ if (`$true) {
             }
         }
         # -- MiOS services block ----------------------------------
-        # 2026-05-18 refresh: parity with the Linux-side
+        # refresh: parity with the Linux-side
         # mios-dashboard.sh services grid. Each cell is a
         # <dot> <name> :<port> probe row. Endpoints reachable from
         # the Windows host go through localhost (WSL2's
@@ -4204,7 +4227,7 @@ if (`$true) {
     # The dispatch fires AT THE END of this profile (after the `mios`
     # verb function is defined). See the [terminal.startup] block
     # below the function definitions.
-    # Operator 2026-05-10: "have the bash and pwsh/WT environment/
+    # "have the bash and pwsh/WT environment/
     # dotfile(s) automatically run mios dash on open/launch--NOT
     # PRINT ON LAUNCH!!! THE ACTUAL ENV/DOTFILE(S) SHOULD DICTATE THE
     # COMMANDS/VERBS AND WHATS RUN ON CONSOLE SPAWN(ALL PLATFORMS
@@ -4246,7 +4269,7 @@ if (`$true) {
 # pull the mios-bootstrap repo. Cache-busting via ?cb=<unix-time>
 # defeats Fastly's 5-minute max-age.
 
-`$Script:MiosBootstrapRaw = 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main'
+`$Script:MiosBootstrapRaw = '$($Script:MiosBootstrapRaw)'
 
 function mios-build {
     [CmdletBinding()]
@@ -4445,7 +4468,7 @@ function mios-dev {
 function mios-mini {
     # MINI dashboard -- the compact 80x20 framed banner + fastfetch
     # info. This is what fires on every shell spawn (vendor default
-    # of [terminal.startup].verb). Operator 2026-05-10: "have launch
+    # of [terminal.startup].verb). "have launch
     # be the mini-dashboard ... NOT PRINT ON LAUNCH" -- the dotfile
     # dispatches THIS verb so the render comes from a verb command,
     # not inline-print in the profile body.
@@ -4461,7 +4484,7 @@ function mios-mini {
 function mios-dash {
     # FULL MiOS dashboard -- ASCII banner + fastfetch (full width,
     # no compact frame trim) + MiOS-DEV service status + extended
-    # sys specs. Operator 2026-05-10: "the invoked 'mios dash'
+    # sys specs. "the invoked 'mios dash'
     # command(s) runs the FULL MiOS dashboard; showing all service's
     # and relevant MiOS system specs too--include the MIOS ASCII
     # banner in the full dash!"
@@ -4696,7 +4719,7 @@ $endMark
     # operator's hardware -- no more guessing right_margin values from
     # screenshots. Re-runs append (with timestamp) so we get a history
     # across MiOS WT launches. Per operator's 5-hour iteration spiral
-    # 2026-05-08: STOP guessing margin values, measure the actual width.
+    # STOP guessing margin values, measure the actual width.
     $diagBlock = @"
 
 # -- MiOS WindowWidth diagnostic (auto-appended by Install-MiOSPowerShellProfile) --
@@ -4878,7 +4901,7 @@ function Ensure-Winget {
     # PowerShell 7, oh-my-posh, fastfetch, etc.) so failing here means
     # NOTHING else installs.
     #
-    # Operator directive 2026-05-12: "Make sure the irm|iex installer
+    # Operator directive "Make sure the irm|iex installer
     # can STILL install on a fresh Windows System with NOTHING installed".
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         $v = (& winget --version 2>&1) -join ' '
@@ -4946,7 +4969,7 @@ function Enable-MiOSWindowsFeatures {
     # call site reaches this function, so we hard-fail with a clear message
     # rather than silently skipping if we somehow land here as a normal user.
     #
-    # Operator 2026-05-11: "pwsh7+, podman, wsl, hyper-v, etc-etc are all
+    # "pwsh7+, podman, wsl, hyper-v, etc-etc are all
     # fecthed and installed during irm|iex installations -- THE FIRST
     # STEPS AFTER DISK CREATION". This function is Step 0.6 in Pass-2,
     # immediately after Initialize-DataDisk + Set-PodmanMachineStorageOnM
@@ -4968,7 +4991,7 @@ function Enable-MiOSWindowsFeatures {
     # mios.html. Order matters (WSL substrate before VMP before Hyper-V);
     # use [ordered] to preserve insertion order. Build via .Add() (void
     # return) instead of $features[k]=v to avoid any indexer-emit leak
-    # into the function's pipeline output (operator-confirmed 2026-05-13:
+    # into the function's pipeline output (operator-confirmed
     # the indexer-assignment form leaked the assigned value into the
     # function's return stream, making `$_featResult -eq 'reboot-required'`
     # filter-match a multi-element array even when rebootPending stayed
@@ -5012,7 +5035,7 @@ function Enable-MiOSWindowsFeatures {
     # path) auto-pulls them on first run; we drive it explicitly so the
     # operator sees a known transcript instead of waiting on opaque downloads.
     #
-    # Operator-flagged 2026-05-12: "MiOS should be running preview builds
+    # Operator-flagged "MiOS should be running preview builds
     # of WSL. Make sure the irm|iex installer can STILL install on a fresh
     # Windows System with NOTHING installed".
     if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
@@ -5230,7 +5253,7 @@ function Ensure-PodmanDesktop {
 # C:\MiOS + C:\mios-bootstrap are PROTECTED -- operator dev working trees
 # of mios.git + mios-bootstrap.git per feedback_mios_no_c_drive_fallback.
 #
-# AND per operator 2026-05-09: "If the uninstaller actually uninstalled
+# AND per "If the uninstaller actually uninstalled
 # things automatically every time; I wouldn't have to Manually uninstall
 # anything EVERY TIME it fails!!!!"
 #
@@ -5326,7 +5349,7 @@ function Invoke-MiOSFullReap {
     #                            ".git IS /" working tree). End consumers
     #                            never have this dir, so deleting it
     #                            only ever destroys operator dev work.
-    #                            Operator-flagged 2026-05-11 after this
+    # Operator-flagged after this
     #                            trap fired on a Phase-3 reap-on-failure
     #                            and wiped their checkout (uncommitted
     #                            edits unrecoverable -- no shadow copies).
@@ -5521,7 +5544,7 @@ function Invoke-MiOSFullReap {
         # Recursively remove MiOS\Linux Apps\ subfolder (Files / Web / VSCodium /
         # Flatseal / Extension Manager / Ptyxis / System Monitor / Settings)
         # created by Install-WindowsBranding's Linux Apps loop. Operator
-        # 2026-05-10: "uninstaller STILL doesn't uninstall everything from
+        # "uninstaller STILL doesn't uninstall everything from
         # windows" -- the named-.lnk loop above left Linux Apps\ orphaned.
         if ($dir -match 'Start Menu\\Programs\\MiOS$') {
             $linuxAppsSub = Join-Path $dir 'Linux Apps'
@@ -5623,7 +5646,7 @@ function Invoke-MiOSFullReap {
     }
     try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
 
-    # 17. FULL FORMAT M:\ partition (operator 2026-05-10: "FULLY format
+    # 17. FULL FORMAT M:\ partition ("FULLY format
     # the M:\ partition only"). Only formats if M:\ exists AND its label
     # starts with MIOS (the partition we provisioned). NEVER repartitions,
     # never touches any other drive letter.
@@ -5671,7 +5694,7 @@ function Initialize-DataDisk {
     $shrinkBytes = [int64]$ShrinkMB * 1MB
     $newCSize    = $cPart.Size - $shrinkBytes
     if ($shrinkBytes -gt ($cPart.Size - $supported.SizeMin)) {
-        # Install-robustness 2026-06-21: do NOT hard-exit on a box that cannot
+        # Install-robustness do NOT hard-exit on a box that cannot
         # free the full 256 GB (256/512 GB laptop SSDs, or a heavily-used C:).
         # CLAMP the data partition to the largest fittable size, down to a floor
         # ([bootstrap.host_storage].min_shrink_mb, default 64 GB); only abort if
@@ -5818,7 +5841,7 @@ function Set-WingetStorageOnM {
 }
 
 # -- Functions-only dot-source gate -------------------------------------------
-# Per operator 2026-05-08: "irm|iex is the main entry point for ALL things
+# Per "irm|iex is the main entry point for ALL things
 # MiOS... FIX all in code!". The canonical entry is:
 #   irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex
 # which falls through to the Pass-1 main flow below (M:\ provisioning + Step
@@ -5857,7 +5880,7 @@ if ($env:MIOS_GETMIOS_FUNCTIONS_ONLY) {
 # all land on M:\ from the very first write. The Pass-2 calls to the same
 # functions are idempotent no-ops.
 # -- Defender exclusions BEFORE anything else --------------------------------
-# Operator 2026-05-09 16:48 install: Microsoft Defender AMSI blocked
+# 16:48 install: Microsoft Defender AMSI blocked
 # build-mios.ps1 with "This script contains malicious content and has
 # been blocked by your antivirus software". The C# Add-Type blocks for
 # IPropertyStore + PROPVARIANT + StringToCoTaskMemUni (AppUserModelID
@@ -5908,7 +5931,7 @@ try { Add-MiosDefenderExclusions } catch { Write-Host "  [!] Defender exclusion 
 # If .wslconfig isn't on disk by then, the utility VM that those reap
 # calls implicitly boot lands in legacy NAT mode and STAYS there until
 # the next time someone explicitly stops it. Symptom the operator hit
-# 2026-05-11: every container port (cockpit 9090, forge 3000, ai 8080,
+# every container port (cockpit 9090, forge 3000, ai 8080,
 # webui 3030, hermes 8642, searxng 8888, llm-light 11450) timed out from
 # Windows even though `ss -tlnp` inside MiOS-DEV showed the binds, and
 # the host showed `vEthernet (WSL (Hyper-V firewall))` (NAT-only
@@ -5985,14 +6008,14 @@ $($_keyLines -join "`r`n")
 # -- Phase 0: Reap ALL prior MiOS state BEFORE anything else -----------------
 # Per feedback_mios_entry_full_reset memory: "every irm|iex must reap ALL
 # prior MiOS state... No partial state; no carry-over." AND operator
-# 2026-05-09: "If the uninstaller actually uninstalled things automatically
+# "If the uninstaller actually uninstalled things automatically
 # every time; I wouldn't have to Manually uninstall anything EVERY TIME it
 # fails!!!!". Runs UNCONDITIONALLY on every irm|iex invocation -- even if
 # nothing prior is installed (idempotent no-op).
 try { Invoke-MiOSFullReap } catch { Write-Host "  [!] Invoke-MiOSFullReap failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 
 # -- Failure-trap auto-reap --------------------------------------------------
-# Operator contract 2026-05-09: "If the uninstaller actually uninstalled
+# Operator contract "If the uninstaller actually uninstalled
 # things automatically every time; I wouldn't have to Manually uninstall
 # anything EVERY TIME it fails!!!!". Phase 0 reap above already handled the
 # "next irm|iex starts clean" case. This trap handles the "current install
@@ -6053,7 +6076,7 @@ try {
 # as the Linux side. Without this step Show-MiosDashboard falls back to its
 # vendor row-layout when M:\etc\mios\mios.toml is missing or stale, and
 # operator sees a different dashboard layout in pwsh vs in MiOS-DEV bash
-# (operator-flagged 2026-05-11 "MIOS.TOML ISN'T USED GLOBALLY"). Idempotent:
+# (operator-flagged "MIOS.TOML ISN'T USED GLOBALLY"). Idempotent:
 # overwrites the M:\ overlay on every install with the live origin/main
 # fetch so a re-run always picks up the latest configurator edits.
 try {
@@ -6075,7 +6098,7 @@ try {
 }
 
 # Step 0.6: Enable Windows OS-level features MiOS depends on (WSL +
-# VirtualMachinePlatform + Hyper-V). Operator 2026-05-11: "pwsh7+,
+# VirtualMachinePlatform + Hyper-V). "pwsh7+,
 # podman, wsl, hyper-v, etc-etc are all fecthed and installed during
 # irm|iex installations -- THE FIRST STEPS AFTER DISK CREATION". This
 # runs as Step 0.6 -- after Initialize-DataDisk + the storage redirects
@@ -6091,7 +6114,7 @@ try { Ensure-MiOSWinget | Out-Null } catch { Write-Host "  [!] Ensure-MiOSWinget
 # NotConfigured, which inherits a deny-all-inbound policy and silently
 # drops every Windows-host -> WSL service request -- even when WSL2
 # native localhostForwarding, the in-distro firewalld, AND the netsh
-# portproxy are all open. Operator-confirmed 2026-05-13: with this
+# portproxy are all open. Operator-confirmed with this
 # setting NotConfigured, every browser hit on http://localhost:PORT/
 # returned 000 across the entire MiOS stack. Setting it to Allow +
 # Enabled is what unblocks the inbound path.
@@ -6114,7 +6137,7 @@ try {
 }
 try {
     # Capture into [pscustomobject] -- if the function leaks ANY pipeline
-    # output (shouldn't, post-2026-05-13 .Add() refactor), grab the LAST
+    # output (shouldn't, post-.Add refactor), grab the LAST
     # value (the explicit return) so the structured-result check can't be
     # confused by stray strings/objects upstream of the return statement.
     $_featOut = @(Enable-MiOSWindowsFeatures)
@@ -6187,7 +6210,7 @@ if ($true) {
     }
 
     # SSOT: Step 1/7..7/7 banners resolve through mios.toml [messages.steps].
-    # Operator 2026-05-09: "applications and icons should be installed AFTER
+    # "applications and icons should be installed AFTER
     # everything--at the end!!!! LAST STEPS". Step 8 (Install-MiOSNativeApp)
     # was relocated to the very end of Get-MiOS.ps1, AFTER bootstrap.ps1 +
     # build-mios.ps1's full phase loop succeeds. If the dev VM build fails
@@ -6218,7 +6241,7 @@ if ($true) {
     Install-MiOSGeistFont           | Out-Null
     # Bibata cursor rides alongside the font install -- both are
     # operator-visible "global desktop chrome" touches that don't fit
-    # neatly into a separate numbered step. Operator 2026-05-11:
+    # neatly into a separate numbered step.
     # "cursor is still not bibata GLOBALLY".
     Install-MiOSBibataCursor        | Out-Null
     # Start Menu shortcuts for every Linux .desktop entry in the dev
@@ -6226,7 +6249,7 @@ if ($true) {
     # Uses Microsoft WSL's native shortcut pattern (wslg.exe target,
     # no console flash, .ico icons in %LOCALAPPDATA%\Temp\WSLDVCPlugin\
     # <distro>\) so apps appear in Windows search / Start with their
-    # proper icons. Operator-flagged 2026-05-11: "opening WSL apps in
+    # proper icons. Operator-flagged "opening WSL apps in
     # windows is NOT native WSL behaviour ... icons should be visible
     # for each application NATIVELY".
     try {
@@ -6310,7 +6333,7 @@ if ($true) {
         return
         # Dead code below (kept for fallback if auto-elevation is ever
         # disabled). Reachable only if `return` above is removed.
-        $rawUrl = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
+        $rawUrl = "$($Script:MiosBootstrapRaw)/Get-MiOS.ps1?cb=$([int][double]::Parse((Get-Date -UFormat %s)))"
         # Pass-2 inner script: first action is to size the console to 80x30
         # and center it on the primary monitor, BEFORE any output runs (so the
         # operator never sees a default 120x30 window briefly before resize).
@@ -6514,9 +6537,9 @@ Write-Good "Prerequisites OK (git, podman)"
 # owned dev working trees of mios.git / mios-bootstrap.git (per the
 # feedback_mios_no_c_drive_fallback memory). End consumers never have
 # these dirs; reaping them only ever destroys operator dev work.
-# Operator-flagged 2026-05-11 after C:\MiOS got nuked.
+# Operator-flagged after C:\MiOS got nuked.
 #
-# Per feedback_mios_entry_full_reset memory + operator 2026-05-09:
+# Per feedback_mios_entry_full_reset memory +
 # "every irm|iex must reap ALL prior MiOS state... No partial state;
 # no carry-over." M:\ is the MiOS-owned 256 GB partition; the reap
 # clears that + the AppData caches but never the dev-tree C:\ paths.
@@ -6623,7 +6646,7 @@ if (Test-Path $RepoDir) {
     if ($parent -and -not (Test-Path $parent)) {
         New-Item -ItemType Directory -Path $parent -Force -ErrorAction SilentlyContinue | Out-Null
     }
-    # Install-robustness 2026-06-21: retry the clone 3x with backoff. A single
+    # Install-robustness retry the clone 3x with backoff. A single
     # transient network blip (raw.githubusercontent / GitHub TLS reset) otherwise
     # aborted the ENTIRE irm|iex install at the entry. Each retry wipes the partial
     # clone so it starts clean.
@@ -6671,7 +6694,7 @@ try {
 $_bootstrapExit = $LASTEXITCODE
 
 # -- FINAL STEP: applications + icons (operator directive) ------------------
-# Operator 2026-05-09: "applications and icons should be installed AFTER
+# "applications and icons should be installed AFTER
 # everything--at the end!!!! LAST STEPS". Only fires on bootstrap.ps1 +
 # build-mios.ps1 success ($_bootstrapExit==0). On failure the trap-on-
 # failure auto-reap above already wiped Windows clean -- no shortcuts
@@ -6693,7 +6716,7 @@ if ($_bootstrapExit -eq 0) {
 }
 
 # -- Bootstrap stops at DEV-ready --------------------------------------------
-# Operator 2026-05-10 (feedback_mios_dev_vm_is_builder_only.md):
+# (feedback_mios_dev_vm_is_builder_only.md):
 #   "we aren't bootc switching podman-MiOS-DEV!!! WE NEED TO FIRST BOOT IN
 #    TO podman-MiOS-DEV and have it working!!!! 'mios build' command is
 #    for building OCI images from any MiOS app window"
@@ -6713,7 +6736,7 @@ if ($_bootstrapExit -eq 0) {
 # verbs to type next.
 
 # -- WSLg host-side bridge reset (clears [WARN: COPY MODE]) ------------------
-# Operator 2026-05-10: "STILL no visible windows" -- weston / msrdc
+# "STILL no visible windows" -- weston / msrdc
 # accumulate state during the multi-minute install (mid-install
 # wsl.exe -- probes, daemon-reloads, container starts) that often
 # leaves the host-side RDP-RAIL bridge stuck in COPY MODE even after
@@ -6735,7 +6758,7 @@ if ($_bootstrapExit -eq 0) {
         # alone is usually enough.
         # WSL service name differs by Windows build: 'WslService' on Win11
         # Store/inbox WSL, 'LxssManager' on legacy Win10. Try both; skip
-        # gracefully if neither exists (2026-06-05: 'Cannot find any service
+        # gracefully if neither exists ('Cannot find any service
         # with service name LxssManager' on Win11).
         $_wslSvcRestarted = $false
         foreach ($_svc in @('WslService','LxssManager')) {

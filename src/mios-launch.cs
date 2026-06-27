@@ -38,7 +38,7 @@ class MiOSLaunch {
             }
         }
         if (wt == null) { MessageBox.Show("Windows Terminal (wt.exe) not found. Re-run the MiOS bootstrap.","MiOS",MessageBoxButtons.OK,MessageBoxIcon.Error); return 1; }
-        // Operator 2026-05-09 image #11: "Subsequent MiOS windows should
+        // Operator rationale (image #11): "Subsequent MiOS windows should
         // launch nested inside one-another as a new tab". Use SHARED
         // window name "MiOS" (not per-profile) so wt.exe routes every
         // MiOS click into the SAME window. New tab if MiOS window

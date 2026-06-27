@@ -33,7 +33,7 @@ fi
 # Fallback: pulled via curl|bash with no on-disk neighbor; fetch canonical.
 url="https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/build-mios.sh"
 if command -v curl >/dev/null 2>&1; then
-    # Install-robustness 2026-06-21: retry + timeout + body validation so a single
+    # Install-robustness retry + timeout + body validation so a single
     # transient network blip doesn't abort the whole curl|bash install with an
     # empty process-substitution. --retry-connrefused covers a not-yet-up mirror;
     # the ?cb= defeats the raw.githubusercontent CDN cache so a re-run is fresh.

@@ -70,9 +70,11 @@ DEFAULT_BRANCH="main"
 DEFAULT_TIMEZONE="UTC"
 DEFAULT_KEYBOARD="us"
 DEFAULT_LANG="en_US.UTF-8"
-# AI model defaults track the 12 GB-RAM / 8 GB-available baseline
-# documented in mios.toml [ai] and INDEX.md sec 2a. Override via
-# the layered profile-card resolution in load_profile_defaults().
+# AI model defaults. These are pre-profile-load vendor fallbacks that
+# MATCH the SSOT mios.toml [ai] section (model / embed_model); they are
+# superseded in load_profile_defaults() by the RAM-driven auto-pick
+# against the [ai.host_thresholds] tier table and then by any explicit
+# [ai].model operator override.
 DEFAULT_AI_MODEL="qwen3.5:2b"
 DEFAULT_AI_EMBED_MODEL="nomic-embed-text"
 DEFAULT_AI_BAKE="qwen3.5:2b,nomic-embed-text"
@@ -155,6 +157,31 @@ toml_get_layered() {
     echo "$result"
 }
 
+# Auto-pick the AI model from detected host RAM against the SSOT
+# [ai.host_thresholds] tier table: >= big_ram_gb -> big_ram_model,
+# >= mid_ram_gb -> mid_ram_model, else small_ram_model. mios.toml
+# documents [ai].model as the operator override that wins over this
+# pick, so callers apply that override AFTER consulting this function.
+# Vendor fallbacks mirror the canonical [ai.host_thresholds] values.
+pick_ai_model_by_ram() {
+    local big_gb mid_gb big_m mid_m small_m ram_gb mem_kb
+    big_gb="$(toml_get_layered ai.host_thresholds big_ram_gb)";       big_gb="${big_gb:-32}"
+    mid_gb="$(toml_get_layered ai.host_thresholds mid_ram_gb)";       mid_gb="${mid_gb:-12}"
+    big_m="$(toml_get_layered ai.host_thresholds big_ram_model)";     big_m="${big_m:-qwen3.5:14b}"
+    mid_m="$(toml_get_layered ai.host_thresholds mid_ram_model)";     mid_m="${mid_m:-qwen3.5:2b}"
+    small_m="$(toml_get_layered ai.host_thresholds small_ram_model)"; small_m="${small_m:-phi4-mini:3.8b-q4_K_M}"
+    # Detected host RAM in GiB (rounded). /proc/meminfo MemTotal is KiB.
+    mem_kb="$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null)"
+    if [[ -n "$mem_kb" && "$mem_kb" -gt 0 ]]; then
+        ram_gb=$(( (mem_kb + 524288) / 1048576 ))
+    else
+        ram_gb="$mid_gb"   # RAM unknown -> mid tier
+    fi
+    if   [[ "$ram_gb" -ge "$big_gb" ]]; then echo "$big_m"
+    elif [[ "$ram_gb" -ge "$mid_gb" ]]; then echo "$mid_m"
+    else                                     echo "$small_m"; fi
+}
+
 # Override DEFAULT_* from the merged profile-card layers.
 load_profile_defaults() {
     local layers; layers=$(resolve_profile_layers | tr '\n' ' ')
@@ -177,13 +204,17 @@ load_profile_defaults() {
     v="$(toml_get_layered bootstrap mios_repo)";      [[ -n "$v" ]] && MIOS_REPO="$v"
     v="$(toml_get_layered bootstrap bootstrap_repo)"; [[ -n "$v" ]] && BOOTSTRAP_REPO="$v"
 
-    # AI model selection (Architectural Law 5). Defaults match the
-    # researched 12 GB-RAM / 8 GB-available baseline. Operators
-    # override via [ai].model / [ai].embed_model / [ai].bake_models
-    # at any layer of the profile-card overlay; the interactive prompt
-    # below seeds from these resolved values.
+    # AI model selection (Architectural Law 5). The model lineup + RAM
+    # thresholds are the SSOT [ai.host_thresholds] tier table. Auto-pick
+    # by detected host RAM first; then let an explicit [ai].model (the
+    # documented operator override) win. embed follows [ai].embed_model.
+    local _ram_pick; _ram_pick="$(pick_ai_model_by_ram)"
+    [[ -n "$_ram_pick" ]] && DEFAULT_AI_MODEL="$_ram_pick"
     v="$(toml_get_layered ai model)";          [[ -n "$v" ]] && DEFAULT_AI_MODEL="$v"
     v="$(toml_get_layered ai embed_model)";    [[ -n "$v" ]] && DEFAULT_AI_EMBED_MODEL="$v"
+    # Bake set = chosen model + embed unless the card declares an
+    # explicit [ai].bake_models list.
+    DEFAULT_AI_BAKE="${DEFAULT_AI_MODEL},${DEFAULT_AI_EMBED_MODEL}"
     v="$(toml_get_layered ai bake_models)";    [[ -n "$v" ]] && DEFAULT_AI_BAKE="$v"
 
     # Legacy .env.mios fallback (deprecated; sourced last so explicit TOML wins).
@@ -320,21 +351,28 @@ prompt_default() {
 }
 
 prompt_model() {
-    # AI model menu prompt. Same auto-accept timing as prompt_default;
-    # presents the curated set researched for the 12 GB-RAM baseline
-    # plus a 'custom' escape hatch for free-form model ids.
+    # AI model menu prompt. Same auto-accept timing as prompt_default.
+    # The lineup is sourced from the SSOT [ai.host_thresholds] tier
+    # table (small/mid/big_ram_model) so it never drifts; option N maps
+    # 1:1 onto the RAM tiers plus a 'custom' free-form escape hatch.
     local default="$1"
+    local small mid big mid_gb big_gb
+    small="$(toml_get_layered ai.host_thresholds small_ram_model)"; small="${small:-phi4-mini:3.8b-q4_K_M}"
+    mid="$(toml_get_layered ai.host_thresholds mid_ram_model)";     mid="${mid:-qwen3.5:2b}"
+    big="$(toml_get_layered ai.host_thresholds big_ram_model)";     big="${big:-qwen3.5:14b}"
+    mid_gb="$(toml_get_layered ai.host_thresholds mid_ram_gb)";     mid_gb="${mid_gb:-12}"
+    big_gb="$(toml_get_layered ai.host_thresholds big_ram_gb)";     big_gb="${big_gb:-32}"
     log_info ""
     log_info "AI model (Architectural Law 5 -- baked into the image):"
-    log_info "  1) qwen3.5:2b   -- 12 GB RAM, code-specialized, default"
-    log_info "  2) qwen2.5-coder:14b  -- 24+ GB RAM, larger code reasoning"
-    log_info "  3) llama3.2:3b        -- 8 GB RAM, fast"
+    log_info "  1) ${small}  -- low-RAM default (CPU-fit)"
+    log_info "  2) ${mid}  -- >= ${mid_gb} GB RAM, auto-promote tier"
+    log_info "  3) ${big}  -- >= ${big_gb} GB RAM, big-RAM tier"
     log_info "  4) custom             -- enter your own ollama model id"
     local choice; choice="$(prompt_default 'Choice [1-4]' '1')"
     case "$choice" in
-        1|"")    echo "qwen3.5:2b" ;;
-        2)       echo "qwen2.5-coder:14b" ;;
-        3)       echo "llama3.2:3b" ;;
+        1|"")    echo "$small" ;;
+        2)       echo "$mid" ;;
+        3)       echo "$big" ;;
         4)       prompt_default 'Custom model id (e.g. mistral:7b)' "${default}" ;;
         *)       log_warn "invalid choice '${choice}'; using default '${default}'"; echo "${default}" ;;
     esac

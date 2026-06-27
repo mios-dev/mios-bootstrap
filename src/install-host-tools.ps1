@@ -4,7 +4,7 @@
 #Requires -Version 5.1
 # install-host-tools.ps1 -- Windows host CLI tool installation.
 #
-# Operator 2026-05-09: "TOLD YOU A MONOLITH INSTALL.ps1 SCRIPT WAS A BAD
+# "TOLD YOU A MONOLITH INSTALL.ps1 SCRIPT WAS A BAD
 # IDEA AND THAT THE BOOTSTRAP SHOULD BE DOING MOST OF THE HOST_SIDE
 # SETUP AND INSTALLATIONS". Per feedback_mios_dev_is_the_builder:
 # build-mios.ps1 is for the build (podman/bootc inside MiOS-DEV) ONLY.
@@ -26,7 +26,7 @@ function Install-MiosWindowsTools {
     # Microsoft.PowerShell (pwsh 7), fastfetch, btop, sharkdp.bat/.fd,
     # ripgrep, fzf, jq, gh, etc. -- everything the MiOS terminal
     # experience depends on.
-    # NO-LOCAL-DEPS (operator 2026-06-05 "without ANY local dependencies"): winget
+    # NO-LOCAL-DEPS ("without ANY local dependencies"): winget
     # is an OPTIONAL accelerator, NEVER a requirement. Every CLI tool below has a
     # direct GitHub-release download path, so a clean machine with no winget still
     # gets the full MiOS terminal toolset -- everything pulls from upstream/MiOS
@@ -233,7 +233,7 @@ function Install-MiosWindowsTools {
     #      experimental, links against a non-standard CPPdll.dll that
     #      isn't on most systems, and the binary fails at launch with
     #      "code execution cannot proceed because CPPdll.dll was not
-    #      found" on operator's host (2026-05-10 screenshot).
+    # found" on operator's host (screenshot).
     #   2. Operator's "UNIFIED across all platforms" directive: same
     #      btop binary + same MiOS theme on Windows AND Linux gives
     #      one consistent experience instead of two divergent ports.
@@ -348,7 +348,7 @@ function Install-MiosWindowsTools {
     # reliably prepend it to PATH, and the 0-byte stub at
     # %LOCALAPPDATA%\Microsoft\WindowsApps\python.exe shadows bare
     # `python` with a "install from the Store" message (operator
-    # 2026-05-20: host had no usable python/py/python3 even though the
+    # host had no usable python/py/python3 even though the
     # MiOS tooling needs it). Locate the real interpreter and PREPEND its
     # dir + Scripts to PATH so `python` resolves to it, not the stub.
     $_pyExe   = $null
@@ -438,7 +438,7 @@ function Install-MiosWindowsTools {
         }
     }
 
-    # btop config + MiOS theme. Operator 2026-05-09: "btop can run if a
+    # btop config + MiOS theme. "btop can run if a
     # preset can fit the dimensions provided--just need a profile preset
     # (make it match the entire MiOS themes and color palette)". Source
     # at src/btop/btop.conf + src/btop/mios.theme. Target M:\MiOS\btop\
@@ -521,7 +521,7 @@ function Configure-MiosBrowserAI {
     }
 
     # PRIMARY method (reliable, no admin): a per-profile user.js. Research
-    # 2026-05-20 -- some browser.ml.chat.* prefs do NOT apply via policies.json,
+    # - some browser.ml.chat.* prefs do NOT apply via policies.json,
     # and Program Files\...\distribution needs elevation; user.js is
     # user-writable and Zen reads it on every startup. Covers EXISTING profiles
     # (re-runs after the operator has launched Zen once); the policies.json

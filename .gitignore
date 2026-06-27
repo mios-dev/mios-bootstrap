@@ -18,7 +18,7 @@
 !Get-MiOS.ps1
 # C# source for mios-launch.exe lives outside the .ps1 heredoc so AMSI
 # doesn't see [DllImport] declarations as part of the PowerShell script
-# content (operator 2026-05-09 16:48 install: build-mios.ps1 was AMSI-
+# content (build-mios.ps1 was AMSI-
 # blocked because of the embedded C# heredoc with SetWindowPos +
 # Process.Start). build-mios.ps1 reads src/mios-launch.cs at runtime.
 !src/
@@ -34,7 +34,7 @@
 # host platform. See AGREEMENTS.md and IMPLEMENTATION-SUMMARY.md.
 !seed-merge.sh
 !seed-merge.ps1
-# Repo-root files. After the 2026-05-05 doc consolidation pass:
+# Repo-root files. After the doc consolidation pass:
 #   - duplicate substantive docs (AGREEMENTS, API, CREDITS) deleted from
 #     bootstrap; consumers find them at mios.git canonicals.
 #   - bootstrap-specific docs (AI, IMPLEMENTATION-SUMMARY, USER-SPACE-GUIDE,

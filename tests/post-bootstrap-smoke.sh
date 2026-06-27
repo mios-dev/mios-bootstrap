@@ -5,7 +5,7 @@
 # tests/post-bootstrap-smoke.sh
 #
 # Acceptance test for the "post-bootstrap = full MiOS environment" contract
-# (operator 2026-05-09; feedback_mios_bootstrap_stops_at_dev_ready.md inverted).
+# (feedback_mios_bootstrap_stops_at_dev_ready.md inverted).
 #
 # RUN FROM INSIDE MiOS-DEV (the podman-MiOS-DEV WSL distro / any deployed
 # MiOS host). NOT from Windows. Exits 0 if every P0 check passes, non-zero
@@ -36,7 +36,7 @@ warn() { printf '  %s[~]%s %s%s\n' "$Y" "$N" "$1" "${2:+$D ($2)$N}"; WARN=$((WAR
 fail() { printf '  %s[!]%s %s%s\n' "$R" "$N" "$1" "${2:+$D ($2)$N}"; FAIL=$((FAIL+1)); [[ "${3:-P0}" == "P0" ]] && P0_FAIL=$((P0_FAIL+1)); }
 hdr()  { printf '\n%s── %s ──%s\n' "$D" "$1" "$N"; }
 
-# Install-robustness 2026-06-21: detect the MiOS-DEV WSL builder VM. It is NOT a
+# Install-robustness detect the MiOS-DEV WSL builder VM. It is NOT a
 # bootc-booted host, so the bootc + os-release IDENTITY checks (§1-§2) are P0
 # only on a DEPLOYED host; on the dev VM they downgrade to P1 (warn) -- otherwise
 # the smoke, now auto-run by `mios build` inside MiOS-DEV, would always P0-fail a
@@ -84,7 +84,7 @@ fi
 
 # ── 3. mios-flatpak-install.service oneshot completed ───────────────────────
 # P0. The "block bootstrap until flatpaks installed" directive (operator
-# 2026-05-09) means this oneshot must reach inactive(success) before the
+#) means this oneshot must reach inactive(success) before the
 # Windows-side bootstrap returns. If still 'activating' the test caller
 # should poll-retry rather than fail outright.
 hdr "first-boot flatpak installer"
@@ -111,8 +111,8 @@ fi
 # ── 4. Required flatpaks are present in the system installation ─────────────
 # P0 for Epiphany / Nautilus / GNOME runtime; P1 for the rest.
 hdr "system flatpak inventory"
-required_p0=( org.gnome.Epiphany org.gnome.Nautilus )
-required_p1=( org.gnome.Software com.github.tchx84.Flatseal org.gnome.Ptyxis )
+required_p0=( org.gnome.Epiphany org.gnome.Nautilus.Devel )
+required_p1=( org.gnome.Software com.github.tchx84.Flatseal app.devsuite.Ptyxis )
 gnome_runtime_present=0
 
 if command -v flatpak >/dev/null 2>&1; then
@@ -197,7 +197,7 @@ else
 fi
 
 # ── 9. AI plane reachability -- the "MiOS AI is operational" contract ────────
-# P0 (install-robustness 2026-06-21). The whole point of the install is that the
+# P0 (install-robustness). The whole point of the install is that the
 # local OpenAI-compatible front door SERVES. /v1/models on the llm-light lane
 # answers as soon as llama-swap is up (it does NOT require a model to finish
 # loading), so a bounded retry confirms the lane without waiting on GGUF warm-up.

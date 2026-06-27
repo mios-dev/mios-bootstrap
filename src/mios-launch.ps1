@@ -15,7 +15,7 @@
 #                    Windows-side window after the profile body loads.
 #                    Ignored for MiOS-DEV (the dev VM is a bash login).
 #
-# Operator 2026-05-09: "UNIFY all MiOS app windows/themed windows
+# "UNIFY all MiOS app windows/themed windows
 # terminal windows to use the same profile and launch params GLOBALLY!!!"
 param(
     [string]$Profile = 'MiOS-DEV',
@@ -40,7 +40,7 @@ Add-Type -AssemblyName System.Windows.Forms
 
 # Dims in CELLS only -- placeholders __MIOS_COLS__ / __MIOS_ROWS__ are
 # substituted at install time by build-mios.ps1's Install-WindowsBranding
-# from mios.toml [terminal].cols / .rows (SSOT). Operator 2026-05-09:
+# from mios.toml [terminal].cols /.rows (SSOT).
 # "Toml is the total reference for all functions and calls -- scripts
 # are simply the core script and functions that refer to the contents
 # in the toml for all verbs GLOBALLY". Vendor defaults: 80x20.
@@ -71,7 +71,7 @@ if (-not $wtExe) {
 }
 
 # Shared window name "MiOS" -- subsequent launches nest as new tabs
-# in the same WT window. Operator 2026-05-09: "Subsequent MiOS windows
+# in the same WT window. "Subsequent MiOS windows
 # should launch nested inside one-another as a new tab".
 if ([string]::IsNullOrWhiteSpace($Verb) -or $Profile -eq 'MiOS-DEV') {
     # Bare profile launch (or dev VM -- bash login takes no verb).
@@ -80,7 +80,10 @@ if ([string]::IsNullOrWhiteSpace($Verb) -or $Profile -eq 'MiOS-DEV') {
     # Verb dispatch on a Windows-side profile (MiOS-WIN, or legacy 'MiOS').
     $_pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
     if (-not $_pwsh) { $_pwsh = "$env:ProgramFiles\PowerShell\7\pwsh.exe" }
-    $_profileBody = 'M:\MiOS\powershell\profile.ps1'
+    # __MIOS_DRIVE__ is the install-root drive letter, substituted at stage
+    # time by build-mios.ps1 from mios.toml [bootstrap.host_storage].drive_letter
+    # (SSOT) -- same placeholder convention as __MIOS_COLS__/__MIOS_ROWS__ above.
+    $_profileBody = '__MIOS_DRIVE__:\MiOS\powershell\profile.ps1'
     $_inner = "if (Test-Path '$_profileBody') { . '$_profileBody' }; mios $Verb"
     $wtArgs = @('-w','MiOS','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile,'--',$_pwsh,'-NoLogo','-NoExit','-NoProfile','-Command',$_inner)
 }

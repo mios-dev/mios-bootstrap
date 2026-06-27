@@ -15,7 +15,7 @@
 # -- the operator sees a taskbar icon but the actual window is
 # unfindable against a transparent / acrylic background.
 #
-# Operator 2026-05-10: months of debugging assumed Mesa/Vulkan/dzn/
+# months of debugging assumed Mesa/Vulkan/dzn/
 # Zink rendering failure when in fact xeyes (a pure-XLib zero-GPU
 # app) had the same symptom: invisible 129x113 window at (1019,766).
 # Force-centering it at 200x200 made it instantly visible. The
@@ -65,10 +65,14 @@ try { [void][MiosGui.Win]::SetProcessDPIAware() } catch {}
 # Resolve dimensions from mios.toml [terminal.gui_min].* if not on the cmdline.
 function _ResolveTomlDim {
     param([string]$Key, [int]$Default)
+    # __MIOS_DRIVE__ is the install-root drive letter, substituted at stage
+    # time by build-mios.ps1 from mios.toml [bootstrap.host_storage].drive_letter
+    # (SSOT). The per-user override under $env:USERPROFILE is checked first and
+    # is drive-independent; the install-root copies are the fallback.
     foreach ($t in @(
         (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
-        'M:\etc\mios\mios.toml',
-        'M:\usr\share\mios\mios.toml'
+        '__MIOS_DRIVE__:\etc\mios\mios.toml',
+        '__MIOS_DRIVE__:\usr\share\mios\mios.toml'
     )) {
         if (-not (Test-Path -LiteralPath $t)) { continue }
         try {

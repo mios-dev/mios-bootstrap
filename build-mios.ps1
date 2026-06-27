@@ -30,7 +30,7 @@
 # it spawns a new Windows Terminal tab running `wsl.exe -d MiOS-DEV` which
 # in turn invokes /usr/libexec/mios/mios-build-driver inside the dev distro.
 #
-# Migration status (2026-05-06): Phase 6+ legacy code (identity, OCI build,
+# Migration status : Phase 6+ legacy code (identity, OCI build,
 # disk image generation, Hyper-V VM deploy) still lives in this script as
 # the -FullBuild / -BuildOnly path. The new SSH-handoff flow runs alongside
 # it via the menu. Subsequent migration chunks move identity prompts and
@@ -66,7 +66,7 @@ $ProgressPreference    = "SilentlyContinue"
 # default), the instant anyone clicks or selects text in the window the console
 # enters "mark" mode and BLOCKS the process on its next write until Enter/Esc is
 # pressed -- on a long elevated install this looks identical to a dead hang
-# (process idle, only a conhost child, VM perfectly healthy). The 2026-06-05
+# (process idle, only a conhost child, VM perfectly healthy). The
 # stall right after "MiOS Quadlet overlay applied" was exactly this. Clearing
 # ENABLE_QUICK_EDIT_MODE (0x40) + setting ENABLE_EXTENDED_FLAGS (0x80) makes the
 # installer immune to accidental click-to-freeze. Best-effort; never fatal.
@@ -350,6 +350,12 @@ $MiosRepoUrl    = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_repo'       
 $MiosBootstrapUrl = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_repo' -Default 'https://github.com/mios-dev/mios-bootstrap.git'
 $MiosRef          = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_ref'       -Default 'main'
 $MiosBootstrapRef = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_ref' -Default 'main'
+# Raw-content tree bases + registry owner DERIVED from the repo URLs above so
+# every download/login site sources the owner/name from one SSOT place
+# (github.com host -> raw.githubusercontent.com, drop .git, append the ref).
+$MiosRawBase      = (($MiosRepoUrl      -replace '^https://github\.com/', 'https://raw.githubusercontent.com/' -replace '\.git$', '') + "/$MiosRef")
+$MiosBootstrapRaw = (($MiosBootstrapUrl -replace '^https://github\.com/', 'https://raw.githubusercontent.com/' -replace '\.git$', '') + "/$MiosBootstrapRef")
+$MiosRepoOwner    = (($MiosRepoUrl -replace '^https://github\.com/', '') -split '/')[0]   # ghcr.io / GitHub owner namespace
 # Podman machine name. Backed by WSL distro `podman-MiOS-DEV` once `podman
 # machine init` runs. Locked per memory feedback_mios_distro_name_locked.md
 # (renaming breaks podman's distro discovery), so the TOML key carries
@@ -365,7 +371,7 @@ $LegacyDistro     = "podman-machine-default"
 #   "use 6.0 machine podman-os images!!!!!"
 #
 # 6.0 is the newest stable non-floating tag at quay.io/podman/machine-os
-# (probed 2026-05-06: tags = 5.0, 5.1, ..., 5.8, 6.0, next).
+# (probed tags = 5.0, 5.1,..., 5.8, 6.0, next).
 #
 # IMPORTANT compatibility note: pinning a major-version-newer machine-os
 # than the installed podman client requires the client to know how to
@@ -504,7 +510,7 @@ try {
         $script:MiosDistroDir       = Join-Path $script:MiosProgramData 'distros'
         $script:MiosImagesDir       = Join-Path $script:MiosProgramData 'images'
         $script:MiosMachineCfg      = Join-Path $script:MiosProgramData 'config'
-        # M:\ root IS the mios.git working tree per the 2026-05-06
+        # M:\ root IS the mios.git working tree per the
         # directive ("M:\ IS git"). Repo lives at the drive root,
         # mios-bootstrap shadow at M:\MiOS\bootstrap-shadow.
         $script:MiosRepoDir         = "${_miosDataLetter}:\"
@@ -574,7 +580,7 @@ function Update-MiosInstallPaths {
     # Caller MUST run this BEFORE Phase 2 (repos clone) so the clones
     # land at the right place for the new "M:\ IS git" layout.
     #
-    # 2026-05-06 OPERATOR DIRECTIVE -- "MIOS REPOSITORIES BOTH OVERLAYED
+    # OPERATOR DIRECTIVE -- "MIOS REPOSITORIES BOTH OVERLAYED
     # AT THE M:\ ROOT". The previous "$MiosRepoDir = M:\MiOS\repo with
     # mios/ + mios-bootstrap/ as siblings" layout is gone. New layout:
     #
@@ -633,7 +639,7 @@ function Update-MiosInstallPaths {
 }
 
 function Invoke-MigrateLegacyInstallRoot {
-    # NO-OP by default (2026-05-05 final). Kept callable only for legacy
+    # NO-OP by default (final). Kept callable only for legacy
     # invocation sites; the function returns immediately unless the operator
     # explicitly opts in via MIOS_FORCE_LEGACY_MIGRATE=1.
     #
@@ -661,7 +667,7 @@ function Invoke-MigrateLegacyInstallRoot {
     # working tree onto M:\\".
     #
     # The previous /MOVE behavior wiped C:\\MiOS files between bootstrap
-    # turns (visible 2026-05-05 14:43-14:52 session as a 13-file working-
+    # turns (visible 14:43-14:52 session as a 13-file working-
     # tree wipe restored via `git checkout HEAD -- ...`) -- a destructive
     # failure mode for the operator's active dev surface that no
     # combination of "make it git-aware" or "fence it behind opt-in"
@@ -933,7 +939,7 @@ function Write-Log {
 }
 
 # ── MiOS globals (ONE central loader) ────────────────────────────────────────
-# Operator 2026-05-09: "EXACTLY BUT FOR ALL VARIABLES GLOBALLY!!!!".
+# "EXACTLY BUT FOR ALL VARIABLES GLOBALLY!!!!".
 # Every shared mios.toml value the build pipeline reads is loaded
 # ONCE here into the $script:Mios* namespace and read by name from
 # downstream code instead of each site re-calling Get-MiosTomlValue.
@@ -1390,7 +1396,7 @@ function Show-Dashboard {
             [Console]::SetCursorPosition(0, $tgtRow)
             # No ANSI \e[K -- the operator's terminal sometimes does NOT
             # process the escape, in which case the literal "[K" leaks
-            # into the dashboard view (seen in 2026-05-06 paste). The
+            # into the dashboard view (seen in paste). The
             # strict-clamp on $winW above caps every row at 80 chars
             # already, so stale content past col 80 from prior renders
             # is not the concern it was; rely on row-overwrite alone.
@@ -1613,7 +1619,7 @@ function Repair-WslConfig {
         # BOM-free: PS 5.1 `Set-Content -Encoding UTF8` writes a UTF-8 BOM, and a
         # leading BOM makes WSL silently IGNORE the [wsl2] section (the operator's
         # memory/processor limits are dropped). WriteAllLines + UTF8Encoding($false)
-        # is BOM-free on 5.1 AND pwsh 7. install-robustness 2026-06-21.
+        # is BOM-free on 5.1 AND pwsh 7. install-robustness.
         [System.IO.File]::WriteAllLines($wslCfg, $newLines, (New-Object System.Text.UTF8Encoding($false)))
         Log-Ok ".wslconfig: scrubbed $scrubbed misplaced /etc/wsl.conf key(s) from [wsl2]"
     }
@@ -1739,7 +1745,7 @@ function Show-PostBootstrapMenu {
                 #     [error 2147942402 (0x80070002): The system cannot find the file specified.]
                 # at wt.exe spawn time. Single-line, single-quoted-on-bash-side, no escapes.
                 $driverPath = '/usr/libexec/mios/mios-build-driver'
-                $fallback   = "https://raw.githubusercontent.com/mios-dev/mios/$MiosRef/usr/libexec/mios/mios-build-driver"
+                $fallback   = "$MiosRawBase/usr/libexec/mios/mios-build-driver"
                 $driverCmd  = "stty cols $($script:MiosCols) rows $($script:MiosRows) 2>/dev/null; if [ -x '$driverPath' ]; then exec bash '$driverPath'; else echo '[handoff] $driverPath not in $devDistro yet -- fetching latest...'; t=`$(mktemp); if curl -fsSL '$fallback' -o `"`$t`"; then chmod +x `"`$t`"; exec bash `"`$t`"; else echo '[handoff] FATAL: could not fetch driver from $fallback'; exec bash; fi; fi"
                 # wt.exe (Windows Terminal) is the canonical multi-tab host; if it's
                 # missing or the App Execution Alias is broken (per d6e8b66 / earlier
@@ -1805,7 +1811,7 @@ $driverCmd
             }
             '3' {
                 # preflight.ps1 is in mios.git, which is now overlaid AT
-                # $MiosRepoDir root (M:\). Per the 2026-05-06 directive
+                # $MiosRepoDir root (M:\). Per the directive
                 # "M:\ IS git", mios.git/preflight.ps1 lives at M:\preflight.ps1.
                 # The legacy $MiosRepoDir\mios\preflight.ps1 fallback is kept
                 # for operators on stale checkouts pre-overlay-refactor.
@@ -1881,29 +1887,33 @@ function Read-Line([string]$Prompt, [string]$Default = "") {
     if ([string]::IsNullOrWhiteSpace($v)) { return $Default } else { return $v }
 }
 
-function Read-Model([string]$Default = "granite4.1:3b") {
+function Read-Model([string]$Default = "qwen3.5:2b") {
     # AI model menu prompt -- feature parity with build-mios.sh's
     # prompt_model. Drives MIOS_OLLAMA_BAKE_MODELS at build time and
     # MIOS_AI_MODEL in install.env at runtime. Same auto-accept
-    # semantics as the rest of the Phase-6 prompts. Keep the menu in
-    # sync with mios.toml [[ai.catalog]] -- both define the operator-
-    # facing model lineup.
+    # semantics as the rest of the Phase-6 prompts. The lineup is
+    # sourced from mios.toml [ai.host_thresholds] (the RAM-tier table)
+    # so the menu never drifts from the SSOT -- the three options map
+    # 1:1 onto small/mid/big_ram_model plus a custom escape hatch.
+    $small = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'small_ram_model' -Default 'phi4-mini:3.8b-q4_K_M'
+    $mid   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_model'   -Default 'qwen3.5:2b'
+    $big   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_model'   -Default 'qwen3.5:14b'
+    $midGb = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_gb'      -Default 12
+    $bigGb = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_gb'      -Default 32
     Move-BelowDash
     Write-Host ""
     Write-Host "  AI model (Architectural Law 5 -- baked into the image):" -ForegroundColor White
-    Write-Host "    1) granite4.1:3b     -- 8 GB RAM, low-RAM default" -ForegroundColor DarkGray
-    Write-Host "    2) gpt-oss:20b       -- 16 GB RAM, agent-tuned MoE" -ForegroundColor DarkGray
-    Write-Host "    3) granite4.1:30b    -- 24+ GB RAM, MoE, big-RAM auto-pick" -ForegroundColor DarkGray
-    Write-Host "    4) qwen3-coder:30b   -- 24+ GB RAM, code-focused MoE" -ForegroundColor DarkGray
-    Write-Host "    5) custom            -- enter your own ollama model id" -ForegroundColor DarkGray
-    $choice = Read-Line "Choice [1-5]" "1"
+    Write-Host "    1) $small  -- low-RAM default (CPU-fit)" -ForegroundColor DarkGray
+    Write-Host "    2) $mid  -- >= ${midGb} GB RAM, auto-promote tier" -ForegroundColor DarkGray
+    Write-Host "    3) $big  -- >= ${bigGb} GB RAM, big-RAM tier" -ForegroundColor DarkGray
+    Write-Host "    4) custom            -- enter your own ollama model id" -ForegroundColor DarkGray
+    $choice = Read-Line "Choice [1-4]" "1"
     switch ($choice) {
-        "1"     { return "granite4.1:3b" }
-        ""      { return "granite4.1:3b" }
-        "2"     { return "gpt-oss:20b" }
-        "3"     { return "granite4.1:30b" }
-        "4"     { return "qwen3-coder:30b" }
-        "5"     { return (Read-Line "Custom model id (e.g. mistral-small3:24b)" $Default) }
+        "1"     { return $small }
+        ""      { return $small }
+        "2"     { return $mid }
+        "3"     { return $big }
+        "4"     { return (Read-Line "Custom model id (e.g. mistral-small3:24b)" $Default) }
         default { Write-Host "  invalid choice '$choice'; using default '$Default'" -ForegroundColor Yellow; return $Default }
     }
 }
@@ -1915,10 +1925,13 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
     # to /etc/mios/mios.toml or ~/.config/mios/mios.toml seed the
     # interactive prompt without re-cloning. Pure regex parser; no TOML
     # library dependency. Returns a hashtable -- caller picks fields.
+    # Vendor fallbacks mirror the SSOT [ai] section (model / embed_model)
+    # so an absent/unreadable card lands on the same values the canonical
+    # mios.toml declares; bake = model + embed.
     $defaults = @{
-        Model       = "granite4.1:3b"
+        Model       = "qwen3.5:2b"
         EmbedModel  = "nomic-embed-text"
-        BakeModels  = "granite4.1:3b,nomic-embed-text"
+        BakeModels  = "qwen3.5:2b,nomic-embed-text"
     }
     $layers = @()
     foreach ($p in @(
@@ -2252,11 +2265,11 @@ function Get-Hardware {
     # AI model auto-pick by host RAM. Thresholds + model IDs from mios.toml
     # [ai.host_thresholds] (NEW). Operators tune the cutoffs or swap to a
     # different family (mistral / llama / etc.) via mios.html.
-    $_aiBig    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_gb'        -Default 24
-    $_aiMid    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_gb'        -Default 16
-    $_aiBigM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_model'     -Default 'granite4.1:30b'
-    $_aiMidM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_model'     -Default 'gpt-oss:20b'
-    $_aiSmallM = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'small_ram_model'   -Default 'granite4.1:3b'
+    $_aiBig    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_gb'        -Default 32
+    $_aiMid    = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_gb'        -Default 12
+    $_aiBigM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_model'     -Default 'qwen3.5:14b'
+    $_aiMidM   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_model'     -Default 'qwen3.5:2b'
+    $_aiSmallM = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'small_ram_model'   -Default 'phi4-mini:3.8b-q4_K_M'
     $aiModel   = if ($hostRamGB -ge $_aiBig) { $_aiBigM } elseif ($hostRamGB -ge $_aiMid) { $_aiMidM } else { $_aiSmallM }
 
     # Free space on the data disk (M:\ if provisioned, else C:\). The
@@ -2431,7 +2444,7 @@ function Set-PodmanMachineStorageOn {
 
     .NOTES
         Symlinks (mklink /D), NOT junctions (mklink /J). Verified
-        empirically 2026-05-06 against podman 5.8.2 + WSL provider:
+        empirically against podman 5.8.2 + WSL provider:
 
             /J -> `podman machine ls` FAILS with
                   "mkdir <path>: Cannot create a file when that file
@@ -3001,7 +3014,7 @@ function New-BuilderDistro([hashtable]$HW) {
                 Log-Warn "$BuilderDistro start failed after init-already-exists (exit $LASTEXITCODE) -- force-removing and retrying init"
                 Write-Log "podman-recover-rm-output: $startJoined"
 
-                # Operator 2026-05-09 v3: WSL unregister chain + final
+                # v3: WSL unregister chain + final
                 # `wsl --shutdown` to fully reset the WSL2 service state
                 # before retry-init.  Previous v2 (commit c434302) got
                 # past the getpwnam crash but the retry-init then hit
@@ -3121,7 +3134,7 @@ function New-BuilderDistro([hashtable]$HW) {
 
     # ── Force the podman-MiOS-DEV WSL distro onto M:\ ────────────────────
     # Operator: "podman-MiOS-DEV MUST also be located on M:\". XDG_DATA_HOME=
-    # Operator 2026-05-09 (4th time): "I have told you the broken
+    # (4th time): "I have told you the broken
     # MiOS-DEV machine is due to relocation and renaming breaking
     # the connections!!!".  Move-PodmanWslDistroToM does a
     # wsl --export + unregister + import which breaks podman's
@@ -3185,7 +3198,7 @@ function New-BuilderDistro([hashtable]$HW) {
 }
 
 function Invoke-MiosOverlaySeed {
-    # DEPRECATED 2026-05-06: bare invocation is a silent no-op.
+    # DEPRECATED bare invocation is a silent no-op.
     #
     # Original purpose: read mios.toml packages.* sections
     # from the cloned mios.git checkout and run `dnf5 install` per
@@ -3450,7 +3463,7 @@ function Invoke-MiosQuadletOverlay {
     # baked-in image; if the install-time overlay succeeds, it's a no-op
     # post-bootc-switch via the sentinel check.)
 
-    # Per the 2026-05-06 directive "M:\ IS git", mios.git is overlaid AT
+    # Per the directive "M:\ IS git", mios.git is overlaid AT
     # $MiosRepoDir root, not at $MiosRepoDir\mios subdir.
     $miosRoot = $MiosRepoDir
     if (-not (Test-Path (Join-Path $miosRoot "Containerfile"))) {
@@ -3665,7 +3678,7 @@ echo "[quadlet-overlay] / HEAD: $(sudo git -C / rev-parse --short HEAD 2>/dev/nu
 
 # Restore the executable bit on MiOS scripts. mios.git is authored on Windows
 # where git core.filemode is off, so the checkout to / lands libexec/bin scripts
-# as 0644 -- systemd ExecStart then 203/EXECs "Permission denied" (2026-06-05:
+# as 0644 -- systemd ExecStart then 203/EXECs "Permission denied" (
 # hermes-agent + cdi-detect + every firstboot failed this way). chmod +x the
 # script trees; data files (py/json/yaml/md) stay untouched.
 echo "[quadlet-overlay] restoring +x on MiOS scripts (Windows git checkout drops it)"
@@ -3690,8 +3703,8 @@ sudo ln -sf ../mios-ai-firstboot.service /usr/lib/systemd/system/multi-user.targ
 # gates it to that user). Without this the broker ships DISABLED -> the socket
 # /run/mios-launcher/launcher.sock is never created -> EVERY OS-control verb
 # (open_app, etc.) fails "broker socket missing" and the agent cannot drive
-# Windows/Linux apps (operator 2026-06-21 "open notepad" -> "LIAR"). The broker
-# is what lets MiOS AI actually control the OS. install-robustness 2026-06-21.
+# Windows/Linux apps ("open notepad" -> "LIAR"). The broker
+# is what lets MiOS AI actually control the OS. install-robustness.
 sudo install -d -m 0755 /etc/systemd/user/default.target.wants 2>/dev/null || true
 sudo ln -sf /usr/lib/systemd/user/mios-launcher.service /etc/systemd/user/default.target.wants/mios-launcher.service 2>/dev/null \
     && echo "[quadlet-overlay] mios-launcher (OS-control broker) enabled via global user .wants symlink" \
@@ -3727,7 +3740,7 @@ echo "[quadlet-overlay] root symlinks: /mios.toml, /configurator.html"
 # `:-8080`) and dies with:
 #     Error: cannot parse "${MIOS_PORT_LOCALAI" as an IP address
 # Every Quadlet stays in `activating auto-restart` and `podman ps`
-# is empty. Operator-flagged 2026-05-11 (containers all dead after
+# is empty. Operator-flagged (containers all dead after
 # install).
 #
 # automation/15-render-quadlets.sh walks the four Quadlet search
@@ -3737,7 +3750,7 @@ echo "[quadlet-overlay] root symlinks: /mios.toml, /configurator.html"
 # this at image-build time; the dev-VM overlay path does NOT, so
 # we run it here. Idempotent: re-runs against an already-rendered
 # .container are a no-op (envsubst sees no remaining placeholders).
-# install-robustness 2026-06-21: the dev-VM overlay never ran 36-tools.sh
+# install-robustness the dev-VM overlay never ran 36-tools.sh
 # (which deploys tools/lib/userenv.sh -> /usr/lib/mios/userenv.sh, the env-bridge
 # resolver) NOR mios-sync-env -- so /etc/mios/install.env was never generated,
 # leaving the AI plane INERT on a fresh install: empty bake_models -> no GGUFs ->
@@ -3883,7 +3896,7 @@ if id mios >/dev/null 2>&1; then
         # safe AND new skel content reaches existing users.
         # `cp -a` instead of rsync -- podman-machine-os 6.0 base does
         # NOT ship rsync, so the prior rsync call silently no-op'd.
-        # Operator-flagged 2026-05-11.
+        # Operator-flagged.
         sudo cp -an /etc/skel/. /var/home/mios/ 2>/dev/null || true
         sudo chown -R mios:mios /var/home/mios 2>/dev/null || true
         echo "[quadlet-overlay]   /var/home/mios reconciled against /etc/skel (cp -an, idempotent)"
@@ -3897,7 +3910,7 @@ fi
 # (on <distro>).lnk -- WITH the app's real icon and no terminal popup.
 # Flatpak installs its entries to /var/lib/flatpak/exports/share/
 # applications/ which WSLg does NOT scan, so symlink each into the
-# WSLg-watched dir. Operator-flagged 2026-05-11: flatpak apps weren't
+# WSLg-watched dir. Operator-flagged flatpak apps weren't
 # in Start Menu STILL after the custom Linux Apps shortcuts were
 # fixed -- WSLg's quality (icons + no terminal) is the canonical
 # user expectation, our custom .lnks are a fallback only.
@@ -3933,7 +3946,7 @@ fi
 # nvidia-cdi-refresh.path) take the standard `enable --now` path.
 NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-ai-firstboot.service)
 
-# Operator 2026-05-10: "now to finally fix none of the containers
+# "now to finally fix none of the containers
 # existing or properly launching on boot.. in podman-MiOS-DEV".
 # Plus: "bake into mios.toml so operators can edit the list --
 # EVERYTHING is sourced from the mios.toml file and edited in the
@@ -3964,7 +3977,7 @@ $NS systemctl daemon-reload 2>&1 | grep -vE 'created symlink' || true
 
 # Belt-and-suspenders reload, then enable each unit DIRECTLY. The previous
 # `list-unit-files | grep` gate gave a FALSE "not present" for units checked out
-# in this same overlay pass (2026-06-05: mios-ai-firstboot.service was on disk +
+# in this same overlay pass (mios-ai-firstboot.service was on disk +
 # /usr/lib/systemd/system writable, but the gate skipped it so the AI never
 # auto-provisioned). enable is the authoritative existence check.
 $NS systemctl daemon-reload 2>/dev/null || true
@@ -4075,7 +4088,7 @@ sudo flatpak remote-add --system --if-not-exists fedora \
 # current GNOME with modern libadwaita CSS / decorations.
 sudo flatpak remote-add --system --if-not-exists gnome-nightly \
     https://nightly.gnome.org/gnome-nightly.flatpakrepo 2>/dev/null || true
-# Operator 2026-05-10: "enable all beta/preview/testing repositories
+# "enable all beta/preview/testing repositories
 # for all fedora sources". Enable updates-testing dnf repo so we
 # always get the freshest Fedora packages (fixes lag in Mesa /
 # libadwaita / gnome-* / etc. landing on stable).
@@ -4096,7 +4109,7 @@ sudo flatpak update --system --appstream gnome-nightly 2>&1 | tail -3 || true
 #
 # Entries with a "fedora:" prefix install from the fedora remote
 # (current libadwaita / GNOME 50.x); plain entries install from
-# flathub. Operator directive 2026-05-10: "just enable newer fedora
+# flathub. Operator directive "just enable newer fedora
 # repos for the flatpaks" / "you hard coded an old version of gnome
 # files flatpak -- THAT'S why it's old looking!!"
 declare -A FLATPAK_SHORT=(
@@ -4238,7 +4251,7 @@ echo "mios:${_mios_pw}" | sudo chpasswd 2>&1 \
 # Verify: drive `su - mios -c id` through a pty so we can actually
 # type the password. If this succeeds, Cockpit's PAM stack (which
 # uses the same /etc/shadow lookup) will accept the same credential.
-# Operator-flagged 2026-05-10: dashboard said `mios / mios` but the
+# Operator-flagged dashboard said `mios / mios` but the
 # Cockpit login rejected those credentials because an earlier chpasswd
 # silently set the hash to something else (likely a CRLF leak from a
 # prior PowerShell heredoc, since fixed). The verify step catches a
@@ -4276,7 +4289,7 @@ PYVERIFY
 fi
 
 # ── Layer the FULL mios.toml [packages].sections set into MiOS-DEV ───────
-# Per feedback_mios_dev_equals_mios.md and the 2026-05-06 directive
+# Per feedback_mios_dev_equals_mios.md and the directive
 # "MIOS MUST CONTAIN EVERYTHING NEEDED TO SELF; dev, build, run, host,
 # hosting, etc-etc TOML/HTML SHOULD BOTH REFLECT EACHOTHER AND DICTATE
 # ANY AND ALL MIOS DEPLOYMENTS AND ENTRIES INCLUDING DEPLOYING MIOS DEV":
@@ -4435,7 +4448,7 @@ sudo touch "$SENTINEL"
 # subsequent `nsenter -t <old-pid> -a` then dies with:
 #     nsenter: stat of /proc/<old-pid>/ns/user failed: No such file
 # tripping the reap-on-failure trap and wiping the install.
-# Operator-flagged 2026-05-11.
+# Operator-flagged.
 SYSTEMD_PID=$(pidof systemd 2>/dev/null | tr ' ' '\n' | head -1)
 if [[ -n "$SYSTEMD_PID" ]]; then
     NS="sudo nsenter -t $SYSTEMD_PID -a"
@@ -4446,7 +4459,7 @@ else
 fi
 
 # ── Dev-VM host networking drop-ins ──────────────────────────────────
-# Operator-flagged 2026-05-11: localhost:3000 / :8888 from Windows
+# Operator-flagged localhost:3000 / :8888 from Windows
 # (and from inside the dev VM) timed out even though the containers
 # were `Up` per `podman ps` and bound 0.0.0.0:NNNN per `ss -tlnp`.
 # Root cause: netavark was installed at /usr/libexec/podman/netavark
@@ -4474,7 +4487,7 @@ fi
 # works (no aardvark; bridge networks aren't used). Override each
 # image's bind/upstream env vars to talk over localhost on the
 # canonical MiOS port from mios.toml [ports].*. Discovered live
-# 2026-05-11 while shaking out the operator's first install.
+# while shaking out the operator's first install.
 #
 #   ollama: HOME=/var/lib/ollama -- without this ollama tries to
 #       mkdir /.ollama in the read-only container root and dies with
@@ -4528,7 +4541,7 @@ tools:
 # model.default=<resolved>. Duplicating those keys here would
 # overwrite the SSOT-derived value with whatever build-time guess
 # build-mios.ps1 has hardcoded -- exactly the regression
-# operator hit 2026-05-12 ("MiOS-Hermes agent isn't trying hard
+# operator hit ("MiOS-Hermes agent isn't trying hard
 # enough and is not capable"). Keep config.local.yaml limited to
 # host-network URL overrides only.
 CFGLOCAL
@@ -4541,7 +4554,7 @@ echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward work
 # eth0 + loopback directly, so wslrelay relays loopback->Windows-host
 # localhost AND the portproxy relays eth0->LAN.
 #
-# Architecture 2026-05-13/14 (operator-directed):
+# Architecture /14 (operator-directed):
 #   * hermes-agent: DIRECT host install (automation/38 + hermes-agent.
 #     service) -- NOT a container, so it gets NO dropin here.
 #   * mios-hermes + mios-hermes-dashboard: container Quadlets SHELVED
@@ -4551,7 +4564,7 @@ echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward work
 #     internally (parent Quadlet remapped host:3030->container:8080 via
 #     PublishPort). Under host-net PublishPort is a no-op, so it MUST
 #     get PORT=3030 or it binds 8080 and collides with mios-code-server
-#     ("[Errno 98] address already in use" -- operator-confirmed 2026-05-14).
+# ("[Errno 98] address already in use" -- operator-confirmed).
 #   * Bind addresses: 0.0.0.0 everywhere (NOT 127.0.0.1). The old
 #     "127.0.0.1 forces AF_INET for localhostForwarding" theory is
 #     superseded -- the portproxy->WSL-VM-IP path needs eth0 binds.
@@ -4589,12 +4602,12 @@ done
 # Without this, every MiOS port is dropped on eth0 -- services bind but
 # are unreachable from the WSL-VM-IP, so the Windows-side portproxy
 # (0.0.0.0 -> WSL-VM-IP) hits a closed door (operator-confirmed
-# 2026-05-14: LAN access dead until firewalld was opened by hand).
+# LAN access dead until firewalld was opened by hand).
 # firewall-cmd (online) here mirrors what 25-firewall-ports.sh bakes
 # offline. Tolerant: no-op if firewalld isn't running.
 if systemctl is-active --quiet firewalld 2>/dev/null; then
     echo "[quadlet-overlay] opening MiOS service ports in dev VM firewalld"
-    for _p in 22 2222 3000 3030 6333 6334 8080 8642 8888 9090 9119 11434 19090; do
+    for _p in __MIOS_FIREWALL_PORTS__; do
         sudo firewall-cmd --permanent --add-port="${_p}/tcp" >/dev/null 2>&1
     done
     sudo firewall-cmd --reload >/dev/null 2>&1
@@ -4607,7 +4620,7 @@ fi
 # the reload reaches the running PID 1's bus. Bare `sudo systemctl
 # daemon-reload` runs in the OUTER WSL ns and gets "Transport endpoint
 # is not connected" -- same root cause as the early-overlay daemon-
-# reload that already routes through $NS. Operator-flagged 2026-05-11:
+# reload that already routes through $NS. Operator-flagged
 # the bare-sudo call here tripped the reap-on-failure trap and wiped
 # their install after a 9-minute Phase-3 build.
 $NS systemctl daemon-reload
@@ -4617,7 +4630,7 @@ $NS systemctl daemon-reload
 # on the dev VM. The deployed bootc image processes presets at image-
 # build time; the dev-VM overlay path does NOT, so without this every
 # preset-`enable`d unit stays at upstream Fedora's `disabled` default.
-# Operator-flagged 2026-05-11: cockpit metrics page showed "pmlogger.
+# Operator-flagged cockpit metrics page showed "pmlogger.
 # service is not running" because PCP units were stuck disabled. The
 # preset is the SSOT for "what should be on by default"; applying it
 # here keeps the dev VM behavior identical to the deployed image.
@@ -4652,7 +4665,7 @@ fi
 # Each shows up as "Failed to start" in cockpit's Services panel
 # otherwise, which is operator-visible noise that suggests the
 # install is broken. Masking is idempotent and reversible
-# (systemctl unmask <unit>). Operator-flagged 2026-05-11.
+# (systemctl unmask <unit>). Operator-flagged.
 for _hostile in audit-rules.service auditd.service fapolicyd.service usbguard.service \
                 bootloader-update.service greenboot-healthcheck.service \
                 mios-aichat-build.service mios-wslg-permissions-fix.service \
@@ -4679,7 +4692,7 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     # entries. Vendor default is the workstation-core set (cockpit-
     # link + forge + searxng + webui + ai + ollama). Operator opt-in
     # services land in the .optin list (per mios.toml).
-    # Operator directive 2026-05-11: 'forget open webui for now -- Ollama
+    # Operator directive 'forget open webui for now -- Ollama
     # >> hermes agent >> hermes-workspace app is the front-end'. Swap
     # mios-webui out, swap mios-hermes + mios-hermes-workspace in.
     $_quadletAutostartDefault = @(
@@ -4697,6 +4710,22 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     if ($null -eq $_optinBash)     { $_optinBash     = '' }
     $overlayScript = $overlayScript -replace '__MIOS_QUADLET_AUTOSTART__', $_autostartBash
     $overlayScript = $overlayScript -replace '__MIOS_QUADLET_OPTIN__',     $_optinBash
+
+    # __MIOS_FIREWALL_PORTS__ -- dev-VM firewalld open-port list for the
+    # quadlet overlay. Service ports flow from the [ports] SSOT (operator
+    # override-aware); the infra ports (ssh, forgejo-ssh, qdrant grpc/http,
+    # hermes-dashboard, metrics) are not operator-tunable [ports] service
+    # keys so they carry vendor defaults here. Mirrors the offline
+    # 25-firewall-ports.sh surface baked into the OCI image.
+    $_fwServicePorts = [ordered]@{
+        forge = 3000; webui = 3030; ai = 8080; hermes = 8642; searxng = 8888; cockpit = 9090; ollama = 11434
+    }
+    $_fwPortList = [System.Collections.Generic.List[int]]@(22, 2222, 6333, 6334, 9119, 19090)
+    foreach ($_k in $_fwServicePorts.Keys) {
+        $_fwPortList.Add([int](Get-MiosTomlValue -Section 'ports' -Key $_k -Default $_fwServicePorts[$_k]))
+    }
+    $_fwPortsStr = (($_fwPortList | Sort-Object -Unique) -join ' ')
+    $overlayScript = $overlayScript -replace '__MIOS_FIREWALL_PORTS__', $_fwPortsStr
 
     # __MIOS_LOGIN_PASSWORD__ -- the operator-facing dev-VM login (also
     # the credential Cockpit web at https://localhost:9090/ accepts).
@@ -4753,7 +4782,7 @@ function Invoke-GhcrLogin([string]$Token) {
         return
     }
     Set-Step "Authenticating podman to ghcr.io..."
-    $Token | & podman login ghcr.io --username "mios-dev" --password-stdin 2>&1 |
+    $Token | & podman login ghcr.io --username "$MiosRepoOwner" --password-stdin 2>&1 |
         ForEach-Object { Write-Log "ghcr-login: $_" }
     if ($LASTEXITCODE -eq 0) { Log-Ok "Authenticated to ghcr.io" }
     else { Log-Warn "ghcr.io login failed -- build may fail pulling base image" }
@@ -4783,7 +4812,7 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
                                    [string]$EmbedModel = "nomic-embed-text",
                                    [string]$BakeModels = "granite4.1:3b,nomic-embed-text") {
     # mios.git is now overlaid AT $MiosRepoDir root (M:\), per the
-    # 2026-05-06 directive. The build context IS the overlay root.
+    # directive. The build context IS the overlay root.
     $repoPath = $MiosRepoDir
 
     # ── Universal MiOS-SEED merge ────────────────────────────────────────────
@@ -5259,7 +5288,7 @@ function Test-MiosDevDistroHealthy {
 
     # 1. Basic responsiveness. Retried with backoff: Phase 3's wsl --shutdown
     # restarts the distro right before this smoke check, so the FIRST echo-ready
-    # probe races the VM cold-start (operator-flagged 2026-06-05: smoke warned
+    # probe races the VM cold-start (operator-flagged smoke warned
     # "did not respond to echo ready" on a freshly-shutdown distro). Match the
     # systemd/podman probes' retry pattern. SSOT: [smoke_tests].
     $echoOut = ""
@@ -5421,7 +5450,7 @@ function Set-MiosWslConfig {
     # reads .wslconfig at WSL2-utility-VM-START, so if we write it
     # AFTER podman-machine-init has spawned the VM, the VM keeps its
     # boot-time settings (legacy NAT mode) until the next `wsl --
-    # shutdown`. Symptom the operator hit 2026-05-11: cockpit + every
+    # shutdown`. Symptom the operator hit cockpit + every
     # other port timed out from Windows because the dev VM came up
     # in NAT mode while .wslconfig (set in Phase 4) said mirrored.
     # Idempotent: re-invoking from Phase 4 sees the same key set and
@@ -5430,7 +5459,7 @@ function Set-MiosWslConfig {
 
     $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
     # Networking: NAT + localhostForwarding (NOT mirrored). MS labels
-    # mirrored as "beta" and operator confirmed 2026-05-11 on Windows
+    # mirrored as "beta" and operator confirmed on Windows
     # build 28020 (Canary): mirrored sets up the VM IP correctly
     # (vm-side `ip addr` shows Windows' Wi-Fi + Tailscale IPs), but
     # the documented localhost-forwarding silently breaks -- every
@@ -5465,7 +5494,7 @@ function Set-MiosWslConfig {
     # strip it on every merge so .wslconfig stays small. (Switch back
     # to ('localhostForwarding',) the day mirrored mode is the default
     # again -- right now NAT + localhostForwarding is the reliable
-    # combo per operator's 2026-05-11 testing on Win 11 build 28020.)
+    # combo per operator's testing on Win 11 build 28020.)
     $deprecatedKeys = @('firewall')
     $lines    = (Get-Content $wslCfg)
     $inWsl2   = $false
@@ -5525,7 +5554,7 @@ function Set-MiosLanFirewallRules {
     # mios.html to flip exposure on / off per service or narrow
     # profiles.
     #
-    # Operator-flagged 2026-05-11: "windows installation should also
+    # Operator-flagged "windows installation should also
     # open the containers ports / forward them on windows side so that
     # we can access open webui, searxng, hermes, etc -- from my phone
     # or another device(s) on the local network."
@@ -5598,7 +5627,7 @@ function Set-MiosLanFirewallRules {
 function Set-MiosLanPortProxy {
     # Skip entirely under WSL2 mirrored networking: there is no distinct VM
     # eth0 to resolve and Windows already exposes container ports on the host,
-    # so netsh portproxy is both impossible and unnecessary (2026-06-05: the
+    # so netsh portproxy is both impossible and unnecessary (the
     # "could not resolve a clean WSL VM IP" warning came from mirrored mode --
     # the .wslconfig the installer writes now uses networkingMode=mirrored).
     try {
@@ -5624,7 +5653,7 @@ function Set-MiosLanPortProxy {
     # via WSL's loopback bridge. Net effect: phone -> Win NIC ->
     # portproxy -> WSL distro container.
     #
-    # Operator-flagged 2026-05-11: "none of my services are available
+    # Operator-flagged "none of my services are available
     # on my local wifi network".
     #
     # SSOT: same [ports].* + [ports.lan_firewall].expose list as the
@@ -5649,7 +5678,7 @@ function Set-MiosLanPortProxy {
     $_expose = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose' -Default @($_defaultPorts.Keys))
     if ($_expose.Count -eq 0) { $_expose = @($_defaultPorts.Keys) }
 
-    # CRITICAL FIX 2026-05-13 -- bind 0.0.0.0:PORT (covers Windows-host
+    # CRITICAL FIX -- bind 0.0.0.0:PORT (covers Windows-host
     # localhost AND LAN clients in one rule), connect to the WSL VM's
     # eth0 IP. Earlier attempts:
     #   v0 (broken): listen=0.0.0.0 + connect=127.0.0.1 -- hijacked
@@ -5663,11 +5692,11 @@ function Set-MiosLanPortProxy {
     #     because target is the WSL VM, not Windows loopback. Windows-
     #     host localhost:PORT and LAN client <host-lan-ip>:PORT both
     #     hit the portproxy and forward into the WSL VM. Operator-
-    #     confirmed 2026-05-13: 8/8 MiOS services reachable from
+    # confirmed 8/8 MiOS services reachable from
     #     Windows browser via this rule shape.
     # WSL VM eth0 IP resolution. wsl.exe emits UTF-16LE by default --
     # capturing that in PowerShell mangles it (operator-confirmed
-    # 2026-05-14: produced "20172.21.194.158", a garbage-prefixed IP, in
+    # produced "20172.21.194.158", a garbage-prefixed IP, in
     # the live netsh portproxy table -> every LAN connect failed).
     # Two-part fix:
     #   1. $env:WSL_UTF8=1 makes wsl.exe emit clean UTF-8.
@@ -5792,7 +5821,7 @@ function Rename-PodmanDevDistro {
     # Idempotent: if `podman-$DevDistro` is already absent and
     # `$DevDistro` is registered, skip with a no-op.
     #
-    # Default behavior INVERTED 2026-05-12: skipping the rename is now
+    # Default behavior INVERTED skipping the rename is now
     # the default. Reason: the rename breaks Podman Desktop's machine
     # visibility (Podman Desktop tracks the distro by its podman- prefix
     # registration; the rename + M:\ relocation orphans the machine
@@ -5895,7 +5924,7 @@ function New-Shortcut([string]$Path,[string]$Target,[string]$ArgList="",[string]
     # PowerShell's reserved superglobals (automatically populated with
     # the function's UNBOUND positional args). Inside the function body
     # $Args was therefore ALWAYS empty -- the test `if ($Args)` failed
-    # and Arguments never made it onto the .lnk. Symptom 2026-05-11:
+    # and Arguments never made it onto the.lnk. Symptom
     # MiOS Linux Apps Start Menu shortcuts had TargetPath=wsl.exe but
     # Arguments="" so clicking "Files" / "Web" / etc. launched a bare
     # wsl.exe shell instead of `wsl -d podman-MiOS-DEV --user mios --
@@ -5911,7 +5940,7 @@ function New-Shortcut([string]$Path,[string]$Target,[string]$ArgList="",[string]
 
 function Install-MiosWindowsTools {
     # Body extracted to src/install-host-tools.ps1 per operator directive
-    # 2026-05-09: "TOLD YOU A MONOLITH INSTALL.ps1 SCRIPT WAS A BAD IDEA
+    # "TOLD YOU A MONOLITH INSTALL.ps1 SCRIPT WAS A BAD IDEA
     # AND THAT THE BOOTSTRAP SHOULD BE DOING MOST OF THE HOST_SIDE SETUP
     # AND INSTALLATIONS". Dot-sourced from disk at first call so the
     # 360-line winget install logic is no longer inline in this monolith
@@ -5976,7 +6005,7 @@ function Install-WindowsBranding {
     # ── 1. Fonts (TOML-first per AGENTS.md §3) ───────────────────────
     # Sources + install scope all resolve from mios.toml [theme.font].*
     # so operators can pin URLs / force scope via mios.html. Geist is the
-    # MiOS GLOBAL font (operator 2026-05-12: "Linux and Windows Font is
+    # MiOS GLOBAL font ("Linux and Windows Font is
     # Geist font (system-wide -- terminals, apps, UI, etc-etc)") so the
     # default scope is "auto" => system-wide when elevated.
     $_fontVercelRepo = [string](Get-MiosTomlValue -Section 'theme.font' -Key 'vercel_repo'   -Default 'https://github.com/vercel/geist-font.git')
@@ -6072,7 +6101,7 @@ function Install-WindowsBranding {
         try {
             # SendMessageTimeout, NOT SendMessage: a synchronous HWND_BROADCAST of
             # WM_FONTCHANGE blocks the installer FOREVER if ANY top-level window is
-            # hung/unresponsive -- the 2026-06-05 stuck-install root cause (hung after
+            # hung/unresponsive -- the stuck-install root cause (hung after
             # "Symbols-Only Nerd Font installed"). SMTO_ABORTIFHUNG|SMTO_NORMAL (0x0002)
             # + 1000ms/window makes the broadcast non-blocking. 0xFFFF=HWND_BROADCAST,
             # 0x001D=WM_FONTCHANGE.
@@ -6111,7 +6140,7 @@ function Install-WindowsBranding {
 
     # ── 3. PowerShell profile + theme ────────────────────────────────
     # mios.git overlay puts the theme at $MiosRepoDir\usr\share\mios\...
-    # (per 2026-05-06 "M:\ IS git" directive). The mios-bootstrap shadow
+    # (per "M:\ IS git" directive). The mios-bootstrap shadow
     # is checked as a defensive fallback.
     $miosThemeSrc = Join-Path $MiosRepoDir 'usr\share\mios\oh-my-posh\mios.omp.json'
     if (-not (Test-Path $miosThemeSrc)) {
@@ -6162,7 +6191,7 @@ function Install-WindowsBranding {
                 $_omp = $_omp -replace '("trailing_diamond"\s*:\s*")\\u[0-9a-fA-F]{4}', ('${1}' + $_eTD)
             }
             # ── Color substitution from mios.toml [colors] (SSOT) ───
-            # Per operator 2026-05-09: "oh my posh and other settings
+            # Per "oh my posh and other settings
             # should source from the same toml sections for all
             # platform for theme/branding to be truly unified in code."
             # The on-disk omp.json ships with vendor-default Hokusai
@@ -6497,7 +6526,7 @@ function Install-MiosLauncher {
     else          { Log-Warn "icon generation failed -- shortcuts will use default WT icon"; $icoPath = "" }
 
     # ── 2. Bin scripts: mios-dash + mios-dev + mios-pull + mios-update ──
-    # Operator 2026-05-09: "the dashboards are still too big!!! ... but
+    # "the dashboards are still too big!!!... but
     # if I open a new tab in MiOS apps' terminal window--I get a perfectly
     # fitting dashboard and piping!!!".
     #
@@ -6519,7 +6548,7 @@ function Install-MiosLauncher {
 # `mios dash` verb -- delegates to the canonical Show-MiosDashboard
 # defined in M:\MiOS\powershell\profile.ps1 so the dashboard rendered
 # here is byte-identical to the one that auto-renders on each MiOS
-# terminal tab open. Operator's directive 2026-05-09: ONE dashboard
+# terminal tab open. Operator's directive ONE dashboard
 # globally, dictated by mios.toml.
 $ErrorActionPreference = 'SilentlyContinue'
 
@@ -6529,7 +6558,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 # processes (launched from a Start Menu shortcut, a new WT tab, or
 # any non-nested context) re-source the profile, which triggers its
 # auto-render, which then runs in addition to our explicit call --
-# producing two dashboards in a row. Operator-flagged 2026-05-10:
+# producing two dashboards in a row. Operator-flagged
 # "DOUBLE DASHBOARD still when running 'mios dash'".
 $Global:MiosProfileMotdRendered = $true
 
@@ -6550,7 +6579,7 @@ return
 
     # The original verbose mios-dash body (full ASCII logo + Self-replication
     # endpoint probes + WSL distro state + build pipeline arrow) was
-    # operator-rejected 2026-05-09: too tall for the 80x20 portal. The
+    # operator-rejected too tall for the 80x20 portal. The
     # block below is dead code retained as a textual marker only -- the
     # heredoc above is what gets staged.
 
@@ -6606,7 +6635,7 @@ if (`$args.Count -eq 0) {
 #   2. / inside MiOS-DEV (the dev VM's mios.git working tree per
 #      Architectural Law 3, ".git IS /") -- /usr/bin/mios-pull does the
 #      git fetch + reset --hard inside the dev distro.
-# Operator confirmed bug 2026-05-08: previous mios-pull.ps1 only did
+# Operator confirmed bug previous mios-pull.ps1 only did
 # step 2, leaving M:\ stale -> `mios build` rendered an old MiOS.
 $devResolveBlock
 `$ErrorActionPreference = 'Continue'
@@ -6651,7 +6680,7 @@ if ((Test-Path (Join-Path `$miosRoot '.git')) -and (Get-Command git -ErrorAction
 #
 # Earlier attempt passed `bash -c \$inlinePull` -- PowerShell's native-
 # command argument quoting mangled the multi-line string (operator-
-# observed 2026-05-10 install: ": invalid option namefail / -c: line
+# observed install: ": invalid option namefail / -c: line
 # 20: syntax error: unexpected end of file from `if' command on line
 # 8"). The robust pattern is stdin-piping: write the script to bash's
 # stdin via the pipeline, with LF normalization so CRLF doesn't make
@@ -6749,7 +6778,7 @@ if (Test-Path `$bootstrapBs) {
 } else {
     Write-Host "  [mios update] build-mios.ps1 not found at `$bootstrapBs" -ForegroundColor Red
     Write-Host "  [mios update] Re-paste the canonical irm|iex one-liner to recover:" -ForegroundColor Yellow
-    Write-Host '    powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"' -ForegroundColor DarkGray
+    Write-Host '    powershell -ExecutionPolicy Bypass -Command "irm $($MiosBootstrapRaw)/Get-MiOS.ps1 | iex"' -ForegroundColor DarkGray
 }
 "@
     Set-Content -Path $updatePath -Value $updateScript -Encoding UTF8
@@ -6917,7 +6946,7 @@ Header 'Where to dig deeper'
 Note '   mios.html    /usr/share/mios/configurator/mios.html   (HTML editor for mios.toml)'
 Note '   AGENTS.md    M:\MiOS\repo\mios\AGENTS.md              (canonical agents.md doc)'
 Note '   README.md    M:\MiOS\repo\mios\README.md              (project overview)'
-Note '   GitHub       https://github.com/mios-dev/MiOS'
+Note "   GitHub       $($MiosRepoUrl -replace '\.git$','')"
 Note ''
 Note '   Press any key to close...'
 [void]([System.Console]::ReadKey($true))
@@ -6986,7 +7015,7 @@ if (-not `$promoted) {
 #        - MiOS Config opens an OLD mios.html
 #        - mios.toml reads return OLD values
 #        - the dev VM's build-driver via /mnt/m/ uses OLD overlay
-#      Operator confirmed bug 2026-05-08: `mios build` rendered an
+# Operator confirmed bug `mios build` rendered an
 #      "old MiOS build" because M:\ was stale.
 #   2. / inside MiOS-DEV (the dev VM's mios.git working tree -- Architectural
 #      Law 3, ".git IS /") -- mios-pull.ps1 delegates to
@@ -7035,7 +7064,7 @@ if (Test-Path `$pull) {
 # start, the build can fail on first invocation after a reboot with
 # "Cannot connect to Podman" because the daemon isn't up yet.
 # Idempotent: no-op if the machine is already running. Operator-confirmed
-# 2026-05-08: `mios build` should actually open the WSL-Podman machine
+# `mios build` should actually open the WSL-Podman machine
 # AND build MiOS AND overlay newest MiOS repos at /ROOT.
 `$distro = Resolve-MiosDevDistro
 # `podman machine` and `wsl.exe -d` use DIFFERENT names for the same VM:
@@ -7102,7 +7131,7 @@ Start-Sleep -Milliseconds 800
 # distro. The canonical source lives in mios.git at
 # usr/libexec/mios/mios-build-driver (mios-dev/MiOS layout: FHS-shaped
 # tree directly at repo root, NO 'system_files/' prefix). Per the
-# 2026-05-06 "M:\ IS git" layout (build-mios.ps1 Update-MiosInstallPaths),
+# "M:\ IS git" layout (build-mios.ps1 Update-MiosInstallPaths),
 # mios.git's working tree is overlaid AT M:\ root, so the file is at
 # M:\usr\libexec\mios\mios-build-driver, which is
 # /mnt/m/usr/libexec/mios/mios-build-driver from inside WSL. Copy it in
@@ -7112,14 +7141,14 @@ Start-Sleep -Milliseconds 800
 # becomes a no-op on subsequent re-builds.
 `$driverSrc = '/mnt/m/usr/libexec/mios/mios-build-driver'
 Write-Host ('  [build] staging mios-build-driver into {0}:/usr/libexec/mios/' -f `$distro) -ForegroundColor DarkGray
-& wsl.exe -d `$distro --user root -- bash -c "mkdir -p /usr/libexec/mios && if [ -r '`$driverSrc' ]; then cp '`$driverSrc' /usr/libexec/mios/mios-build-driver && chmod +x /usr/libexec/mios/mios-build-driver && echo '[stage] driver staged from `$driverSrc'; else echo '[stage] WARN: `$driverSrc not readable from inside `$distro -- falling back to curl'; curl -fsSL -o /usr/libexec/mios/mios-build-driver 'https://raw.githubusercontent.com/mios-dev/MiOS/$MiosRef/usr/libexec/mios/mios-build-driver' && chmod +x /usr/libexec/mios/mios-build-driver; fi"
+& wsl.exe -d `$distro --user root -- bash -c "mkdir -p /usr/libexec/mios && if [ -r '`$driverSrc' ]; then cp '`$driverSrc' /usr/libexec/mios/mios-build-driver && chmod +x /usr/libexec/mios/mios-build-driver && echo '[stage] driver staged from `$driverSrc'; else echo '[stage] WARN: `$driverSrc not readable from inside `$distro -- falling back to curl'; curl -fsSL -o /usr/libexec/mios/mios-build-driver '$MiosRawBase/usr/libexec/mios/mios-build-driver' && chmod +x /usr/libexec/mios/mios-build-driver; fi"
 
 Write-Host ''
 Write-Host ('  [build] handing off to {0}:/usr/libexec/mios/mios-build-driver' -f `$distro) -ForegroundColor Cyan
 Write-Host '  [build] (this builds the OCI image inside MiOS-DEV; first run takes 10-30 min)' -ForegroundColor DarkGray
 Write-Host ''
 & wsl.exe -d `$distro --user mios --cd / -- bash -lc '/usr/libexec/mios/mios-build-driver'
-# Install-robustness 2026-06-21: surface the driver's REAL exit code. Without
+# Install-robustness surface the driver's REAL exit code. Without
 # this the `mios build` verb reported SUCCESS even when the OCI build failed
 # inside MiOS-DEV -> the operator believed the image built and MiOS AI would come
 # up, when it never did. Propagate the failure so it is visible + scriptable.
@@ -7129,7 +7158,7 @@ if (`$_drc -ne 0) {
     exit `$_drc
 }
 Write-Host '  [build] OCI image build completed OK.' -ForegroundColor Green
-# Install-robustness 2026-06-21: run the post-bootstrap acceptance smoke now that
+# Install-robustness run the post-bootstrap acceptance smoke now that
 # the image built -- it was authored to run "at the end of mios build" but was
 # never wired in, so the AI-plane "is it operational?" check never executed. The
 # smoke is best-effort here (non-fatal): a still-warming AI plane warns rather
@@ -7146,7 +7175,7 @@ if ((& wsl.exe -d `$distro --user root -- bash -lc "test -f `$_smoke && echo y" 
     Set-Content -Path $buildPath -Value $buildScript -Encoding UTF8
     Log-Ok "mios-build.ps1 (the `mios build` verb) staged at $buildPath"
 
-    # mios.ps1 -- THE MiOS app dispatcher.  Operator 2026-05-09:
+    # mios.ps1 -- THE MiOS app dispatcher.
     # "U.N.I.F.I.E.D EVERYTHING MiOS related!!!".  This file used to
     # render a SECOND, NON-UNIFIED layout (a numbered TUI menu) when
     # the operator typed `mios <anything>` -- diverging from the
@@ -7162,7 +7191,7 @@ if ((& wsl.exe -d `$distro --user root -- bash -lc "test -f `$_smoke && echo y" 
     $hubScript = @'
 # <MiOSRoot>\bin\mios.ps1 -- thin verb-dispatch pass-through.
 # Auto-installed by mios-bootstrap (Install-MiosLauncher).  Operator
-# 2026-05-09: "U.N.I.F.I.E.D EVERYTHING MiOS related!!!".  This file
+# "U.N.I.F.I.E.D EVERYTHING MiOS related!!!". This file
 # used to render its own Show-MiosApp TUI menu (a different layout
 # from the canonical Show-MiosDashboard that [dashboard].rows
 # drives) -- that has been REMOVED.  Now the file dot-sources the
@@ -7293,10 +7322,29 @@ if (-not $Q -or $Q.Count -eq 0) {
 $query = ($Q -join ' ').Trim()
 if (-not $query) { return }
 
-# Endpoint + model + key resolved from env > install.env > mios.toml fallback.
+# Resolution is per field. Model: MIOS_AI_MODEL env, else the layered
+# mios.toml [ai].model (the SSOT default chat model), else a vendor fallback
+# -- so an unset env never pins a stale model id. Key: MIOS_AI_KEY env, else
+# install.env. Endpoint: MIOS_AI_ENDPOINT env, else the vendor default.
 $endpoint = if ($env:MIOS_AI_ENDPOINT) { $env:MIOS_AI_ENDPOINT } else { 'http://localhost:8642/v1' }
-$model    = if ($env:MIOS_AI_MODEL)    { $env:MIOS_AI_MODEL }    else { 'granite4.1:3b' }
+$model    = if ($env:MIOS_AI_MODEL)    { $env:MIOS_AI_MODEL }    else { '' }
 $apiKey   = if ($env:MIOS_AI_KEY)      { $env:MIOS_AI_KEY }      else { '' }
+
+# If no env model, resolve [ai].model from the layered mios.toml (SSOT for the
+# default chat model). Mirrors the open_webui port scrape in the mios app verb;
+# the literal is only the bottom-of-stack fallback if every layer is unreadable.
+if (-not $model) {
+    foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+        if (Test-Path -LiteralPath $_t) {
+            try {
+                $_txt = [IO.File]::ReadAllText($_t, (New-Object System.Text.UTF8Encoding($false)))
+                $_m = [regex]::Match($_txt, '(?ms)^\[ai\].*?^\s*model\s*=\s*"?([^"\r\n]+)"?')
+                if ($_m.Success) { $model = $_m.Groups[1].Value.Trim(); break }
+            } catch {}
+        }
+    }
+}
+if (-not $model) { $model = 'granite4.1:8b' }
 
 # If no env key, scrape /etc/mios/install.env on M:\ for the key.
 if (-not $apiKey) {
@@ -7363,7 +7411,7 @@ $marker
 # dot-sources that profile FIRST, then runs this block.  Previous
 # revisions had a `function mios { ... mios.ps1 ... }` here that
 # REDEFINED the canonical dispatcher to call the legacy
-# Show-MiosApp TUI hub -- operator 2026-05-09: "not unified
+# Show-MiosApp TUI hub -- "not unified
 # dashboards!!!" (TWO different layouts rendering: the legacy hub
 # AND the [dashboard].rows-driven Show-MiosDashboard).  Removed
 # `function mios` here so the canonical dispatcher (which routes
@@ -7387,7 +7435,7 @@ function mios-ask     { & (Join-Path `$Global:MiosBin 'mios-ask.ps1')    @args }
 
 # Set-MiosWindow -- resize + re-center the CURRENT MiOS terminal
 # window between [terminal] and [terminal.reading] modes from
-# mios.toml. Operator 2026-05-10: "a centered 100x50 window called
+# mios.toml. "a centered 100x50 window called
 # MiOS 'reading mode' invoked with a command to resize (and re
 # center) the window between the sizes". Used by `mios portal` /
 # `mios reading` verbs and by the `btop` function which auto-flips
@@ -7548,7 +7596,7 @@ $endMark
         $wtSettings = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'
     }
     $hubPathForJson = $hubPath -replace '\\', '\\'
-    # Per operator (clarified 2026-05-07): "MiOS app opens to a windows
+    # Per operator (clarified): "MiOS app opens to a windows
     # terminal wherein 'mios *' invocations are done on the windows
     # host first and relevant MiOS-DEV 'mios *' invocations are
     # directly passed through to the podman-MiOS-DEV machine and then
@@ -7637,6 +7685,12 @@ $endMark
         return $false
     }
 
+    # Install-root drive letter (SSOT: [bootstrap.host_storage].drive_letter,
+    # env override MIOS_DATA_DISK_LETTER). Substituted into the __MIOS_DRIVE__
+    # placeholder of the staged launcher + gui-watch sources so the operator's
+    # data-disk letter -- not a baked 'M' -- drives the install-root paths.
+    $_stagingDrive = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER } else { Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'M' }
+
     # ── ONE shortcut: MiOS (the hub) ─────────────────────────────────
     # Native-app behavior: the .lnk targets a tiny launcher script
     # (mios-launch.ps1) staged under $MiosBinDir. The launcher source
@@ -7664,19 +7718,20 @@ $endMark
     }
     if ($launcherSrc) {
         # Substitute __MIOS_COLS__ / __MIOS_ROWS__ placeholders from mios.toml
-        # [terminal].cols / .rows (SSOT) -- operator 2026-05-09: "Toml is the
+        # [terminal].cols /.rows (SSOT) -- "Toml is the
         # total reference for all functions and calls".
         $_lnchCols = [int](Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80)
         $_lnchRows = [int](Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20)
         $launcherSrc = $launcherSrc -replace '__MIOS_COLS__', [string]$_lnchCols
         $launcherSrc = $launcherSrc -replace '__MIOS_ROWS__', [string]$_lnchRows
+        $launcherSrc = $launcherSrc -replace '__MIOS_DRIVE__', $_stagingDrive
         if (-not (Test-Path $MiosBinDir)) { New-Item -ItemType Directory -Path $MiosBinDir -Force | Out-Null }
         Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
         Log-Ok "MiOS native launcher staged: $miosLauncher (cols=$_lnchCols rows=$_lnchRows from mios.toml [terminal])"
     }
 
     # ── mios-gui-watch.ps1 (background daemon for WSLg window auto-resize) ─
-    # Operator 2026-05-10: months of "GUI windows never render on WSLg"
+    # months of "GUI windows never render on WSLg"
     # turned out to be windows rendering at native X11 default sizes
     # (e.g. 129x113 for xeyes) at arbitrary positions, invisible against
     # acrylic terminals on a 4K display. mios-gui-watch.ps1 polls
@@ -7693,6 +7748,7 @@ $endMark
     if ($_gwSrc) {
         try {
             $_gwBody = [IO.File]::ReadAllText($_gwSrc, (New-Object System.Text.UTF8Encoding($false)))
+            $_gwBody = $_gwBody -replace '__MIOS_DRIVE__', $_stagingDrive
             Set-Content -Path $miosGuiWatch -Value $_gwBody -Encoding UTF8
             Log-Ok "mios-gui-watch staged: $miosGuiWatch (auto-resize WSLg windows to mios.toml [terminal.gui_min])"
 
@@ -7818,7 +7874,7 @@ $endMark
     }
 
     # ── Shortcut creation deferred to FINAL STEP of Get-MiOS.ps1 ────────────
-    # Operator 2026-05-09: "applications and icons should be installed AFTER
+    # "applications and icons should be installed AFTER
     # everything--at the end!!!! LAST STEPS". The canonical 4-shortcut set
     # (MiOS, MiOS-WIN, MiOS Help, Uninstall MiOS) is created by
     # Get-MiOS.ps1's end-of-script block AFTER bootstrap.ps1 + build-mios.ps1
@@ -7862,12 +7918,12 @@ $endMark
     # against the new name+bin+icon set. Vendor fallback below mirrors
     # what mios.toml [apps] ships with for cold first-run before any
     # operator edit.
-    # Operator 2026-05-09 canonical 4-shortcut set: MiOS / MiOS-WIN /
+    # canonical 4-shortcut set: MiOS / MiOS-WIN /
     # MiOS Help / Uninstall MiOS, all created in Get-MiOS.ps1's
     # Install-MiOSNativeApp. NO per-verb shortcut creator here -- the
     # entire [apps.shortcuts] toml-driven loader was a duplicate creator
     # that re-seeded MiOS-DEV.lnk / MiOS Config.lnk / MiOS Help.lnk on
-    # every install (caught in the 2026-05-09 15:27 install screenshot).
+    # every install (caught in the 15:27 install screenshot).
     # The previous "$verbShortcuts = @()" guard was racy: any operator
     # mios.toml [apps.shortcuts] section would re-populate it. Removed
     # entirely. Per operator: "JUST FUCKING LISTEN".
@@ -7876,7 +7932,7 @@ $endMark
 
     # Garbage-collect every shortcut OUTSIDE the canonical 4-set
     # (MiOS / MiOS-WIN / MiOS Help / Uninstall MiOS). Per operator
-    # 2026-05-09: MiOS-DEV.lnk and MiOS Config.lnk are NOT canonical --
+    # MiOS-DEV.lnk and MiOS Config.lnk are NOT canonical --
     # the MiOS shortcut already targets the dev VM, and `mios config`
     # is a typed verb. Idempotent: if absent, skip.
     $staleLnks = @(
@@ -7901,7 +7957,7 @@ $endMark
     }
 
     # ── MiOS Linux Apps (Start Menu subfolder) ─────────────────────────
-    # Operator 2026-05-10: "no MiOS Linux apps in windows start menus".
+    # "no MiOS Linux apps in windows start menus".
     # Two-prong fix: (a) /etc/wsl.conf adds [gui] guiApplications=true
     # so WSLg auto-exports .desktop entries (handled in mios.git);
     # (b) we ALSO create explicit Windows .lnk shortcuts here, because
@@ -7972,7 +8028,7 @@ $endMark
         # returns just `[` (the opening bracket on the same line as
         # the assignment). That stray `[` then propagated as a
         # phantom entry, producing a `[.lnk` shortcut in the
-        # operator's Linux Apps folder (2026-05-10 21:39).
+        # operator's Linux Apps folder (21:39).
         #
         # Use the same multi-line array parser the overlay flatpak
         # loop uses upstream at line ~7945: regex-grab the bracket
@@ -8071,7 +8127,7 @@ $endMark
     # ── MiOS Services (web links via default browser) ──────────────────
     # Start Menu\Programs\MiOS\Services\<Name>.url -- Internet Shortcut
     # files that open in the operator's default browser (Zen / Edge /
-    # Firefox / Chrome). Operator-flagged 2026-05-11: "Should also
+    # Firefox / Chrome). Operator-flagged "Should also
     # include shortcuts to all our containers and services as webapps/
     # weblinks using local browser(s)". .url files are Start Menu
     # indexable and respect the operator's BrowserChoice without us
@@ -8173,11 +8229,11 @@ $endMark
     # those substitutions. Every install.ps1 / mios-update / re-run of
     # build-mios.ps1 left the deployed dashboard + WT settings.json STALE,
     # so toml/omp.json edits looked like they had no effect (operator
-    # iteration loop on 2026-05-08, which uninstalled + reinstalled
+    # iteration loop on, which uninstalled + reinstalled
     # multiple times waiting for the dashboard to update -- it never did
     # because the Step 1-8 chain never ran).
     #
-    # Operator pivot 2026-05-08: "irm|iex is the main entry point for ALL
+    # Operator pivot "irm|iex is the main entry point for ALL
     # things MiOS... FIX all in code!" -> all entry paths now route through
     # the same Install-MiOS* function bodies, sourced from the canonical
     # Get-MiOS.ps1 via the MIOS_GETMIOS_FUNCTIONS_ONLY=1 dot-source gate.
@@ -8216,10 +8272,10 @@ $endMark
             }
         } catch {
             Remove-Item env:\MIOS_GETMIOS_FUNCTIONS_ONLY -ErrorAction SilentlyContinue
-            Log-Warn "Get-MiOS.ps1 functions-only dot-source failed: $($_.Exception.Message). Dashboard + WT settings.json may be stale -- run 'irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex' to refresh."
+            Log-Warn "Get-MiOS.ps1 functions-only dot-source failed: $($_.Exception.Message). Dashboard + WT settings.json may be stale -- run 'irm $($MiosBootstrapRaw)/Get-MiOS.ps1 | iex' to refresh."
         }
     } else {
-        Log-Warn "Get-MiOS.ps1 not found in any candidate path ($($_getMiosCandidates -join ', ')) -- dashboard + WT settings.json patches skipped. Run 'irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex' to refresh."
+        Log-Warn "Get-MiOS.ps1 not found in any candidate path ($($_getMiosCandidates -join ', ')) -- dashboard + WT settings.json patches skipped. Run 'irm $($MiosBootstrapRaw)/Get-MiOS.ps1 | iex' to refresh."
     }
 }
 
@@ -8389,7 +8445,7 @@ Show-Dashboard -Force
 $preOk = $true
 
 # NO-LOCAL-DEPS direct installer for the Phase-0 platform prereqs (operator
-# 2026-06-05 "without ANY local dependencies"). Used when winget is absent OR
+# "without ANY local dependencies"). Used when winget is absent OR
 # its install failed -- everything pulls from upstream GitHub releases or the
 # built-in `wsl --install`, so a clean machine bootstraps with nothing
 # pre-installed. Fail-soft: returns $false on any miss so the caller falls
@@ -8508,7 +8564,7 @@ foreach ($_pq in $_prereqs) {
     }
 }
 
-# Install-robustness 2026-06-21 (B3): if WSL2 was JUST installed this run, the
+# Install-robustness (B3): if WSL2 was JUST installed this run, the
 # WSL2 substrate (and thus `podman machine init` in Phase 3) is NOT live until
 # Windows reboots. Falling through to Phase 1/3 here dies with a cryptic podman
 # error. HALT cleanly with an actionable, idempotent-re-run banner instead.
@@ -8519,7 +8575,7 @@ if ($script:WslJustInstalled) {
     throw "Reboot required after WSL2 install -- reboot Windows, then re-run the bootstrap."
 }
 
-# Install-robustness 2026-06-21 (B2): hardware-virtualization preflight. WSL2 +
+# Install-robustness (B2): hardware-virtualization preflight. WSL2 +
 # `podman machine init` cannot start without VT-x/AMD-V (SVM) enabled in BIOS/
 # UEFI; without this check Phase 3 dies with a cryptic HCS 0x80370102 / "not in
 # running state after 90s". Probe firmware + hypervisor presence and fail CLEANLY
@@ -8552,7 +8608,7 @@ $activeDistro = Find-ActiveDistro
 
 if ($activeDistro) {
     Log-Ok "MiOS repo found in $activeDistro"
-    # mios.git is overlaid AT $MiosRepoDir root (M:\). Per 2026-05-06.
+    # mios.git is overlaid AT $MiosRepoDir root (M:\). Per.
     $miosRepo = $MiosRepoDir
     if (Test-Path (Join-Path $MiosRepoDir ".git")) {
         Set-Step (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_git_update' -Default "Updating mios.git (fetch + hard reset @ $MiosRepoDir)")
@@ -8689,7 +8745,7 @@ if ($activeDistro) {
     # WSL2 reads .wslconfig at utility-VM start; if we write it after
     # podman has already spawned the VM, mirrored mode + firewall=false
     # never apply until the next `wsl --shutdown`. Operator-flagged
-    # 2026-05-11: cockpit + every other container port timed out from
+    # cockpit + every other container port timed out from
     # Windows because the VM came up in NAT mode while Phase 4's
     # post-hoc .wslconfig write said mirrored. Phase 4 still re-calls
     # this (idempotent) so any path that skips Phase 3 still lands
@@ -8824,13 +8880,13 @@ if ($activeDistro) {
 
     # Invoke-MiosOverlaySeed is deliberately NOT called anymore.
     # It was the legacy PACKAGES.md fenced-block parser that ran
-    # `dnf5 install` per ```packages-*``` block. As of 2026-05-05 the
+    # `dnf5 install` per ```packages-*``` block. As of the
     # SSOT is mios.toml `[packages.<section>].pkgs` (resolved via
     # automation/lib/packages.sh), and PACKAGES.md was relegated to
     # docs at usr/share/doc/mios/reference/PACKAGES.md. The legacy
     # function's path check now warns "overlay seed skipped" on every
     # run because it looks at the moved path -- pure noise that
-    # confused the operator's "ignition failed" reading on 2026-05-06.
+    # confused the operator's "ignition failed" reading on.
     # Removed from the call chain. The function body itself is left
     # in place under a deprecation guard so any stale external caller
     # still loads cleanly; bare invocation is now a no-op.
@@ -8984,7 +9040,7 @@ if ($activeDistro) {
     }
 
     # ── Full MiOS OCI image parity at overlay time ──────────────────
-    # Operator 2026-05-09: "podman-MiOS-DEV machine doesn't have the
+    # "podman-MiOS-DEV machine doesn't have the
     # full packages list and flatpaks installed at overlay time --
     # ALL sourced from the toml embeds ... podman-MiOS-DEV = full
     # MiOS OCI image(s) parity".  This step iterates
@@ -9096,7 +9152,7 @@ if ($activeDistro) {
                             ForEach-Object { Write-Log "mios-flatpak: $_" }
                     }
                     # Per-ref install with explicit exit-code check.
-                    # Operator 2026-05-09: "NOT AT ALL A MIOS OVERLAY ...
+                    # "NOT AT ALL A MIOS OVERLAY...
                     # nautilus / epiphany not found".  Previous version
                     # silently succeeded on every flatpak install
                     # regardless of actual outcome (the inner bash used
@@ -9131,7 +9187,7 @@ if ($activeDistro) {
                         #     "dbus-launch" (No such file or directory)
                         # The retry-with-arch path then dies the same
                         # way and the install loop reports 0/N OK.
-                        # Operator-flagged 2026-05-11. Cheap fix: install
+                        # Operator-flagged. Cheap fix: install
                         # dbus-x11 (and its xauth dep) here once, before
                         # any flatpak call -- under 200 KB, runs in
                         # ~2-3s. Idempotent: dnf no-ops on second run.
@@ -9159,7 +9215,7 @@ if ($activeDistro) {
                             # cleanly. The old explicit `org.gnome.Platform//master` pre-pull
                             # errored "Nothing matches org.gnome.Platform in remote flathub"
                             # (//master is a gnome-nightly branch, NOT flathub -- flathub uses
-                            # versioned branches; 2026-06-05). Runtimes are pulled as deps by
+                            # versioned branches;). Runtimes are pulled as deps by
                             # each per-app install below, so the pre-pull was redundant anyway.
                             & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- sh -c 'flatpak update --system --appstream flathub 2>&1 | tail -3 || true' 2>&1 | tail -20" 2>&1 |
                                 ForEach-Object { Write-Log "mios-flatpak-runtime: $_" }
@@ -9187,7 +9243,7 @@ if ($activeDistro) {
                         $_fpOk = 0; $_fpFail = 0
                         foreach ($_fpEntry in $_flatpaks) {
                             # Parse "remote:appid" form; default to flathub when no prefix.
-                            # Operator-flagged 2026-05-10: nautilus/ptyxis shims
+                            # Operator-flagged nautilus/ptyxis shims
                             # errored "app/<id>/x86_64/master not installed" because
                             # the install loop hardcoded `flathub` and our toml
                             # entries used `gnome-nightly:org.gnome.Nautilus.Devel`
@@ -9215,7 +9271,7 @@ if ($activeDistro) {
                                 #     error: Could not connect:
                                 #     No such file or directory
                                 # which is what killed `fedora:org.gnome.Epiphany`
-                                # for the operator 2026-05-11 even after dbus-x11
+                                # for the even after dbus-x11
                                 # was installed. dbus-run-session is part of dbus
                                 # (always present on Fedora-base machine-os).
                                 & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- flatpak install -y --noninteractive --or-update $_fpRemote $_fp 2>&1" 2>&1 |
@@ -9265,7 +9321,7 @@ if ($activeDistro) {
     }
 
     # ── NVIDIA WSL userland (gated on /dev/dxg present in dev VM) ───
-    # Operator 2026-05-10: "WSLg + GPU-PV or CDI" -> "WSLg + NVIDIA
+    # "WSLg + GPU-PV or CDI" -> "WSLg + NVIDIA
     # Vulkan ICD". Installs NVIDIA's userspace Vulkan ICD + GLX/EGL
     # libs from the official CUDA repo. Userland-only; no kernel
     # modules. The script self-detects /dev/dxg + /mnt/wslg presence
@@ -9347,7 +9403,7 @@ if [ -d /mnt/m/usr/share/mios ] && [ ! -e /usr/share/mios ]; then
     ln -snf /mnt/m/usr/share/mios /usr/share/mios
 fi
 # ── Ensure the `mios` user exists (idempotent) ────────────────────────
-# Per operator 2026-05-08 (`getpwnam(mios) failed 17 / User not found`):
+# Per (`getpwnam(mios) failed 17 / User not found`):
 # in BootstrapOnly mode, the OCI build's quadlet-overlay step (which
 # runs systemd-sysusers and creates uid 1000=mios) is DEFERRED and
 # never executes. Without the mios user, /etc/wsl.conf default=mios
@@ -9438,7 +9494,7 @@ EOPROFILE
 chmod 0644 /etc/profile.d/00-mios-pre-bootc.sh
 echo "[mios-seed] symlinks + pre-bootc bridge installed"
 # ── btop MiOS theme + 80x20 preset for the dev VM ─────────────────────
-# Operator 2026-05-09 image #15: btop reports "Width = 75 Height = 18,
+# image #15: btop reports "Width = 75 Height = 18,
 # Needed 80 x 24". btop runs INSIDE the dev VM (Linux) so the Windows
 # config at M:\MiOS\btop doesn't apply -- it reads ~/.config/btop/.
 # Source files are exposed via WSL automount at /mnt/m/MiOS/btop/.
@@ -9450,7 +9506,7 @@ if [ -d /mnt/m/MiOS/btop ]; then
     # BTOP_CONFIG_DIR=/etc/btop when the user has no ~/.config/btop,
     # so this guarantees the MiOS preset/palette renders even if the
     # per-user copy is missing (e.g. /=git home edge case).
-    # Operator 2026-05-10 screenshot: btop launched with btop's
+    # screenshot: btop launched with btop's
     # compiled-in defaults (preset 3 = cpu+net, update_ms=2000)
     # because no config was found at $HOME/.config/btop. With this
     # /etc/btop/ copy in place, the resolver hits it unconditionally.
@@ -9484,7 +9540,7 @@ if [ -d /mnt/m/MiOS/btop ]; then
     done
 fi
 # ── Flatpak convenience symlinks (operator: epiphany / nautilus etc. should work) ─
-# Operator 2026-05-09: ran `nautilus` and `epiphany` after install, got
+# ran `nautilus` and `epiphany` after install, got
 # "command not found" -- "LIAR!!!!!!". Install log said the flatpaks
 # installed OK; they did, but flatpak exports binaries as their full
 # app IDs (org.gnome.Epiphany, etc.) under /var/lib/flatpak/exports/bin/,
@@ -9553,7 +9609,7 @@ fi
     # `dconf update` builds the binary system-db.  Without this, the
     # adw-gtk3-dark + prefer-dark defaults stay inert and every GTK
     # app boots with the upstream light Adwaita fallback (operator-
-    # flagged 2026-05-10 "not the mios.toml defined prefer-dark mode
+    # flagged "not the mios.toml defined prefer-dark mode
     # yet").
     Set-Step "Compiling MiOS dconf system-db in $_wslDistroForTerm..."
     & {
@@ -9566,10 +9622,10 @@ fi
         # render) which can hang here under WSL's pre-systemd boot state
         # and stall the entire install. dconf is in $PATH at /bin/dconf
         # without login-shell PATH-extension.
-        # Operator-flagged 2026-05-10: install "stuck here" at this step.
+        # Operator-flagged install "stuck here" at this step.
         # NOTE: keep this bash -c free of embedded double-quotes and parens --
         # PowerShell's native-arg quoting mangles them passing to wsl.exe (the
-        # 2026-06-05 'syntax error near unexpected token (' came from the old
+        # 'syntax error near unexpected token (' came from the old
         # echo message's "(...)"). Plain words only.
         & wsl.exe -d $_wslDistroForTerm --user root -- bash -c 'command -v dconf >/dev/null 2>&1 && dconf update 2>&1 || echo dconf-binary-missing-skipped; ls /etc/dconf/db/local 2>&1 | head -1' 2>&1 |
             ForEach-Object { Write-Log "mios-dconf: $_" }
@@ -9581,7 +9637,7 @@ fi
     # (podman-MiOS-DEV = podman-machine-os Fedora 44 + MiOS overlay) doesn't
     # run that automation. Without this overlay step, dconf points at
     # 'Bibata-Modern-Classic' but the theme dir doesn't exist -> libXcursor
-    # silently falls back to default (operator-flagged 2026-05-10: "not
+    # silently falls back to default (operator-flagged "not
     # seeing bibata cursor that is the GLOBAL MiOS defaults"). Match the
     # image install path so the dev VM has the same cursor surface.
     Set-Step "Installing Bibata-Modern-Classic cursor in $_wslDistroForTerm..."
@@ -9603,7 +9659,7 @@ fi
             }
             # Base64-wrap the bibata script. Passed inline, its embedded
             # double-quotes/parens/$(...) get mangled by PowerShell's native-arg
-            # quoting into bash syntax errors (2026-06-05: "unexpected token ("
+            # quoting into bash syntax errors ("unexpected token ("
             # on the size echo). Encoding the whole script means ONLY base64 chars
             # reach the bash -c argument -- nothing to mangle. LF-normalize first.
             # Also guards the version/download/tar steps with || (a bare
@@ -9682,7 +9738,7 @@ exit 0
     # Full `wsl --shutdown` (utility VM + all distros) instead of just
     # `wsl --terminate <distro>`. The terminate path only restarts the
     # distro process, leaving the WSL2 utility VM running with whatever
-    # networkingMode it booted in. Symptom 2026-05-11: if the utility
+    # networkingMode it booted in. Symptom if the utility
     # VM started in NAT mode earlier in the install (e.g. due to a
     # wsl --list -v probe in Phase 1 firing before .wslconfig was on
     # disk), .wslconfig's mirrored mode never takes effect and every
@@ -9710,7 +9766,7 @@ exit 0
     # mios.toml [ports].* + [ports.lan_firewall].profiles/.expose.
     # Without these, mirrored networking carries the WSL port bind onto
     # Windows' all interfaces but Defender blocks inbound from any LAN
-    # device (phone, tablet, second laptop). Operator-flagged 2026-05-11.
+    # device (phone, tablet, second laptop). Operator-flagged.
     Set-Step "Adding Windows Firewall LAN inbound rules for MiOS service ports..."
     try { Set-MiosLanFirewallRules } catch { Log-Warn "Set-MiosLanFirewallRules: $($_.Exception.Message)" }
     try { Set-MiosLanPortProxy }     catch { Log-Warn "Set-MiosLanPortProxy: $($_.Exception.Message)" }
@@ -9720,7 +9776,7 @@ exit 0
     # ── Phase 5 -- Verify Windows build context ──────────────────────────────
     # Build runs via 'podman build' from the Windows clone -- no machine exec needed.
     Start-Phase 5
-    # mios.git is overlaid AT $MiosRepoDir root, per 2026-05-06.
+    # mios.git is overlaid AT $MiosRepoDir root, per.
     $repoPath = $MiosRepoDir
     if (Test-Path (Join-Path $repoPath "Containerfile")) {
         Log-Ok "Build context ready at $repoPath"
@@ -9794,7 +9850,7 @@ exit 0
         # Frame chars come from mios.toml [branding.dashboard].frame_chars
         # so the install-complete banner matches every other framed surface
         # (Show-MiosDashboard, mios-dashboard.sh, agreement gate, etc.).
-        # Per operator 2026-05-09: "headers and dashboards and framing/
+        # Per "headers and dashboards and framing/
         # piping are all scattered and not fitting because they aren't
         # TRULY based off the toml code as source for everything".
         # Vendor default '╭─╮│╰╯' if mios.toml is unreachable.
@@ -9911,7 +9967,7 @@ exit 0
     # default model isn't already in the minimal set, offer to bake it
     # too; declining means it first-boot-pulls instead of bloating the
     # image.
-    $MiosOllamaBakeModels = if ($aiDefaults.BakeModels) { $aiDefaults.BakeModels } else { "granite4.1:3b,nomic-embed-text" }
+    $MiosOllamaBakeModels = if ($aiDefaults.BakeModels) { $aiDefaults.BakeModels } else { "$defaultModel,$($aiDefaults.EmbedModel)" }
     $_bakeList = @($MiosOllamaBakeModels -split ',' | ForEach-Object { $_.Trim() })
     # Make sure the embedding model the operator chose is in the set.
     if ($MiosAiEmbedModel -and ($_bakeList -notcontains $MiosAiEmbedModel)) {
@@ -10008,7 +10064,7 @@ chmod 0640 /etc/mios/install.env
     if (-not (Test-Path $UninstallRegKey)) { New-Item -Path $UninstallRegKey -Force | Out-Null }
     # DisplayName / Publisher / URLInfoAbout all resolve through mios.toml
     # so operators rebrand the Add/Remove Programs entry via mios.html.
-    # Per operator 2026-05-09: "the Applications tag/description when
+    # Per "the Applications tag/description when
     # installed 'MiOS - Immutable Fedora AI Workstation' should be
     # defined as My Personal Operating System or similar".
     # Prefer [branding].tagline_app (the explicit Application-tag value);
@@ -10122,7 +10178,7 @@ exit 1
     }
     Log-Ok "Add/Remove Programs + Start Menu created (5+ native apps: MiOS, MiOS-DEV, MiOS Config, MiOS Help, Uninstall MiOS, MiOS Enhanced Session*)"
 
-    # Uninstaller script. Operator-asserted contract 2026-05-08:
+    # Uninstaller script. Operator-asserted contract
     # "EVERY failure will result in an uninstallation!! Plus make sure
     # MiOS uninstaller ACTUALLY removes and cleans everything up after."
     #
@@ -10399,7 +10455,7 @@ foreach (`$dir in `$shortcutDirs) {
     # Also nuke the MiOS\Linux Apps\ subfolder + every .lnk inside it
     # (Files / Web / VSCodium / Flatseal / Extension Manager / Ptyxis /
     # System Monitor / Settings -- created by Install-WindowsBranding's
-    # Linux Apps loop). Operator 2026-05-10: "uninstaller STILL doesn't
+    # Linux Apps loop). "uninstaller STILL doesn't
     # uninstall everything from windows" -- previous build only removed
     # named .lnks, leaving Linux Apps\ orphaned in Start Menu.
     if (`$dir -match 'Start Menu\\Programs\\MiOS$') {
@@ -10487,7 +10543,7 @@ Write-Host '  [16/17] Final HKCU\Uninstall\MiOS sweep + stale icon dir...' -Fore
 try { Remove-Item -LiteralPath `$K -Recurse -Force -ErrorAction SilentlyContinue } catch {}
 try { Remove-Item -LiteralPath (Join-Path `$I 'icons') -Recurse -Force -ErrorAction SilentlyContinue } catch {}
 
-# 16. FULL FORMAT M:\ partition (operator 2026-05-10: "FULLY format
+# 16. FULL FORMAT M:\ partition ("FULLY format
 # the M:\ partition only"). Only formats if M:\ exists AND is the
 # MiOS-DEV labeled partition we provisioned. NEVER touches any other
 # drive letter, never re-partitions, never creates/deletes drives.
