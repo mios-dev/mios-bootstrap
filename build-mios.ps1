@@ -8602,6 +8602,32 @@ Repair-WslConfig
 
 End-Phase 0
 
+function Invoke-GitFetchWithRetry {
+    param(
+        [string]$RepoPath,
+        [string]$Ref
+    )
+    $exitCode = 1
+    Push-Location $RepoPath
+    try {
+        for ($retry = 1; $retry -le 3; $retry++) {
+            $exitCode = Invoke-NativeQuiet { git fetch --depth=1 origin $Ref }
+            if ($exitCode -eq 0) { return 0 }
+            # Fallback to full fetch if depth=1 fails (e.g. on commit SHAs or tags)
+            $exitCode = Invoke-NativeQuiet { git fetch origin $Ref }
+            if ($exitCode -eq 0) { return 0 }
+            
+            if ($retry -lt 3) {
+                Log-Warn "git fetch failed for ref $Ref (exit $exitCode). Retrying in 5 seconds ($retry/3)..."
+                Start-Sleep -Seconds 5
+            }
+        }
+    } finally {
+        Pop-Location
+    }
+    return $exitCode
+}
+
 # ── Phase 1 -- Detecting existing build environment ──────────────────────────
 Start-Phase 1
 $activeDistro = Find-ActiveDistro
