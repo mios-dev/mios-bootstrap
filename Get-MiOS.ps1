@@ -4135,7 +4135,7 @@ if (`$true) {
             param([string]`$Name, [int]`$Port, [string]`$Probe = "/",
                   [bool]`$Https = `$false)
             `$scheme = if (`$Https) { "https" } else { "http" }
-            `$url = "`$scheme`://localhost:`$Port`$Probe"
+            `$url = "`${scheme}://localhost:`${Port}`${Probe}"
             `$up  = _ProbeEp -Url `$url
             `$dot = if (`$up) { "`$_esc[32m*`$_esc[0m" } else { "`$_esc[90m-`$_esc[0m" }
             `$nm = `$Name.PadRight(11)
