@@ -1,4 +1,4 @@
-# AI-hint: The primary entry point for Windows environment provisioning; it automates preflight checks, Podman machine setup, disk partitioning, and local MiOS installation to prepare the local dev environment.
+﻿# AI-hint: The primary entry point for Windows environment provisioning; it automates preflight checks, Podman machine setup, disk partitioning, and local MiOS installation to prepare the local dev environment.
 # AI-related: mios-dev, mios-bootstrap
 #Requires -Version 5.1
 <#

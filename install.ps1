@@ -1,4 +1,4 @@
-# AI-hint: Legacy entry point for the MiOS installation pipeline that redirects to bootstrap.ps1, supporting backward compatibility for one-liner installs and optional full build/unattended flags.
+﻿# AI-hint: Legacy entry point for the MiOS installation pipeline that redirects to bootstrap.ps1, supporting backward compatibility for one-liner installs and optional full build/unattended flags.
 # AI-related: mios-dev, mios-bootstrap
 #Requires -Version 5.1
 <#
