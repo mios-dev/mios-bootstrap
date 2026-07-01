@@ -244,6 +244,17 @@ allow_cockpit          = true   # opens 9090/tcp
 allow_libvirt_bridge   = true   # for VM networking
 
 # ----------------------------------------------------------------------------
+# [mios_app] -- placeholder for the future MiOS App client (scaffold-stage;
+# see src/mios-app/README.md + RESEARCH.md). Gated off: this section carries
+# no behavior yet, it exists so later operator-tunable fields (VPN endpoint,
+# client mode) land in the SSOT instead of getting hardcoded first and
+# migrated later.
+# ----------------------------------------------------------------------------
+[mios_app]
+enabled     = false
+vpn_endpoint = ""   # WireGuard endpoint for cluster-client mode; empty = local-deploy mode only
+
+# ----------------------------------------------------------------------------
 # [ports] -- SSOT for the canonical MiOS service ports. Used by:
 #   * 15-render-quadlets.sh    -- substitutes MIOS_PORT_* env vars into
 #                                 Quadlet PublishPort= lines at image build.
