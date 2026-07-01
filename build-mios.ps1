@@ -8749,6 +8749,9 @@ $miosRepo = $MiosRepoDir
     }
     Log-Ok "mios-bootstrap files overlaid at $MiosRepoDir (shadow at $MiosBootstrapShadow)"
 
+    if (-not (Test-Path $MiosInstallDir)) { New-Item -ItemType Directory -Path $MiosInstallDir -Force | Out-Null }
+    if (-not (Test-Path $MiosBinDir)) { New-Item -ItemType Directory -Path $MiosBinDir -Force | Out-Null }
+
     # Drop a VERSION marker at the Windows install dir so external tools
     # (and the uninstaller) can identify the installed release without
     # a git query.
