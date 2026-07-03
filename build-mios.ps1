@@ -1,4 +1,4 @@
-﻿# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver for generating OCI images and disk formats.
+# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver for generating OCI images and disk formats.
 # AI-related: 37-ollama-prep.sh, mios-btop.sh, /usr/libexec/mios/mios-build-driver, /usr/share/mios/mios.toml, /usr/libexec/mios/mios-build-driver., /etc/mios/mios.toml, /usr/share/mios/configurator/mios.html, /usr/libexec/mios/flatpak-launch, /etc/mios/hermes/config.yaml, /etc/mios/hermes/config.local.yaml
 # AI-functions: parse_sections_from_toml, get_pkgs, install_section, parse_pkgs, Disable-ConsoleQuickEdit, Resolve-MiosTomlText, Get-MiosTomlValue, Resolve-MiosInstallRoot, Update-MiosInstallPaths, Invoke-MigrateLegacyInstallRoot, Invoke-DataDiskBootstrap, Test-DashboardCanRedraw
 #Requires -Version 5.1
@@ -4808,9 +4808,9 @@ function Invoke-GhcrLogin([string]$Token) {
 # legacy callers; a follow-up commit will delete them outright.
 # ============================================================================
 function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [string]$MiosHostname,
-                                   [string]$AiModel = "granite4.1:3b",
+                                   [string]$AiModel = "qwen3.5:2b",
                                    [string]$EmbedModel = "nomic-embed-text",
-                                   [string]$BakeModels = "granite4.1:3b,nomic-embed-text") {
+                                   [string]$BakeModels = "qwen3.5:2b,nomic-embed-text") {
     # mios.git is now overlaid AT $MiosRepoDir root (M:\), per the
     # directive. The build context IS the overlay root.
     $repoPath = $MiosRepoDir
@@ -7344,7 +7344,7 @@ if (-not $model) {
         }
     }
 }
-if (-not $model) { $model = 'granite4.1:8b' }
+if (-not $model) { $model = 'qwen3.5:2b' }
 
 # If no env key, scrape /etc/mios/install.env on M:\ for the key.
 if (-not $apiKey) {
@@ -9988,7 +9988,7 @@ exit 0
     $MiosAiModel       = Read-Model -Default $defaultModel
     $MiosAiEmbedModel  = Read-Line "AI embedding model" $aiDefaults.EmbedModel
     # Bake-set policy: the MINIMAL set from mios.toml [ai].bake_models
-    # (small Granite + the embedding model) is ALWAYS baked into the OCI
+    # (small Qwen + the embedding model) is ALWAYS baked into the OCI
     # image so a fresh install is usable fully offline without bloating
     # the image layer. Larger models stay SELECTABLE -- offered here as
     # an opt-in. This prompt only runs in the interactive local-build
