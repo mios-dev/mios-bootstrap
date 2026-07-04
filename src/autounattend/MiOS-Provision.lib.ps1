@@ -184,13 +184,41 @@ function New-MiOSBrandingCommands {
 }
 
 function New-MiOSLinuxLayoutCommands {
-    # Strip Windows' default per-user directory sprawl; impose a UNIFIED,
-    # Linux-like layout that mirrors the WSL tree (C:\etc <-> /mnt/c/etc).
+    # STRIP Windows' default per-user sprawl, THEN impose a UNIFIED, Linux-like
+    # layout that mirrors the WSL tree (C:\etc <-> /mnt/c/etc). This is a
+    # strip-and-rebuild, not an additive overlay: OneDrive setup/autorun/links,
+    # premade Desktop/Start shortcuts, and redundant known-folders are removed
+    # from the Default profile (every future account) + Public + current user
+    # BEFORE the clean MiOS tree is created.
     param($Toml)
     if ((Get-Toml $Toml 'autounattend.layout.enable' 'true') -notmatch '^(true|1|yes)$') { return @() }
     $sys = '%SystemDrive%'
     $tree = (Get-Toml $Toml 'autounattend.layout.linux_tree' 'etc usr var home opt srv tmp bin lib root').Trim()
     $c = New-Object System.Collections.Generic.List[string]
+
+    # --- STRIP defaults (SSOT-gated) --------------------------------------
+    if ((Get-Toml $Toml 'autounattend.layout.strip_defaults' 'true') -match '^(true|1|yes)$') {
+        # OneDrive: kill autorun (machine + default hive), setup stubs, and the shortcut.
+        $c.Add('reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v OneDriveSetup /f')
+        $c.Add('reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT"')
+        $c.Add('reg delete "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Run" /v OneDriveSetup /f')
+        $c.Add('reg unload "HKU\MiOSDefault"')
+        $c.Add('del /f /q "%SystemRoot%\System32\OneDriveSetup.exe"')
+        $c.Add('del /f /q "%SystemRoot%\SysWOW64\OneDriveSetup.exe"')
+        $c.Add('del /f /q "C:\Users\Default\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\OneDrive.lnk"')
+        # Premade shortcuts on Default/Public/current desktops (nothing pre-pinned).
+        foreach ($dt in @('C:\Users\Default\Desktop','%PUBLIC%\Desktop','%USERPROFILE%\Desktop')) {
+            $c.Add(('del /f /q "{0}\*.lnk"' -f $dt))
+        }
+        # Redundant default-profile known folders (kept: downloads/documents which we redirect).
+        $redundant = (Get-Toml $Toml 'autounattend.layout.strip_folders' '3D Objects;Contacts;Favorites;Links;Saved Games;Searches;OneDrive')
+        foreach ($rf in ($redundant -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+            $c.Add(('rmdir /s /q "C:\Users\Default\{0}"' -f $rf))
+            $c.Add(('rmdir /s /q "%USERPROFILE%\{0}"' -f $rf))
+        }
+    }
+
+    # --- REBUILD the clean MiOS tree --------------------------------------
     foreach ($d in ($tree -split '\s+' | Where-Object { $_ })) { $c.Add("mkdir $sys\$d") }
     if ((Get-Toml $Toml 'autounattend.layout.lowercase_userfolders' 'true') -match '^(true|1|yes)$') {
         $map = [ordered]@{

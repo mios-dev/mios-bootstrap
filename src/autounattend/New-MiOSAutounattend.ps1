@@ -48,9 +48,10 @@
     <WinutilToolsDir>\autounattend.xml so a winutil/MicroWin build picks up the
     MiOS answer file (MicroWin ships its own tools\autounattend.xml at ISO root).
 
-.PARAMETER CarveDataPartition
-    Carve MiOS's M:\ data partition (default 256 GB) at install time instead of
-    letting Get-MiOS.ps1 shrink C:\ afterwards.
+.PARAMETER FullDiskWindows
+    Give Windows the whole disk (C: = all), provisioning M:\ later via Get-MiOS.ps1.
+    DEFAULT (off) is the MiOS carve: C: = [autounattend].c_partition_gb (96 GB) and
+    the REST of the disk allocated to MiOS as M:\ (MIOS-DEV).
 
 .PARAMETER ObfuscatePasswords
     Base64-obscure account passwords in the XML (Schneegans "Base64 obscuration").
@@ -76,13 +77,18 @@ param(
     [string]$SourceIso,
     [string]$OutIso,
     [string]$WinutilToolsDir,
-    [switch]$CarveDataPartition,
+    [switch]$FullDiskWindows,
     [switch]$ObfuscatePasswords,
     [string]$BootstrapUrl
 )
 $ErrorActionPreference = 'Stop'
 
 $CANONICAL_BOOTSTRAP = 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1'
+
+# Shared MiOS provisioning core -- same strip-and-rebuild layout + branding the
+# NTLite preset (ConvertTo-MiOSPreset) and existing-Windows path (Invoke-MiOSProvision)
+# use, so all three stay in parity. (Provides New-MiOSLinuxLayoutCommands, etc.)
+. (Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1')
 
 # ---------------------------------------------------------------------------
 # Minimal TOML reader -- just enough for [autounattend] scalars,
@@ -151,7 +157,8 @@ function New-MiOSAutounattendXml {
     $bypassHw     = (Get-Toml $Toml 'autounattend.bypass_hardware_checks' 'true') -match '^(true|1|yes)$'
     $runBootstrap = (Get-Toml $Toml 'autounattend.run_bootstrap' 'true') -match '^(true|1|yes)$'
     $bootUrl      = if ($BootstrapUrl) { $BootstrapUrl } else { Get-Toml $Toml 'autounattend.bootstrap_url' $CANONICAL_BOOTSTRAP }
-    $dataGb       = [int](Get-Toml $Toml 'autounattend.data_partition_gb' '256')
+    $cGb          = [int](Get-Toml $Toml 'autounattend.c_partition_gb' '96')   # Windows C: size; MiOS M:\ gets the rest
+    $layoutTree   = (Get-Toml $Toml 'autounattend.layout.linux_tree' 'etc usr var home opt srv tmp bin lib root').Trim()
 
     # --- Accounts (SSOT; fallback to [identity].username as sole admin) -----
     $accounts = @($Toml.accounts)
@@ -216,8 +223,9 @@ function New-MiOSAutounattendXml {
     }
 
     # --- Disk layout: standard (C: only) OR carve M: at install -------------
-    if ($CarveDataPartition) {
-        $dataMb = $dataGb * 1024
+    if (-not $FullDiskWindows) {
+        # MiOS carve: C: = $cGb GB (Windows), the REST of the disk -> MiOS M:\ (MIOS-DEV).
+        $cMb = $cGb * 1024
         $diskXml = @"
       <DiskConfiguration>
         <Disk wcm:action="add">
@@ -226,19 +234,19 @@ function New-MiOSAutounattendXml {
           <CreatePartitions>
             <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>300</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Size>$dataMb</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Size>$cMb</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>4</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
           </CreatePartitions>
           <ModifyPartitions>
             <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>
             <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>MIOS-DEV</Label><Letter>M</Letter></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>4</Order><PartitionID>4</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>4</Order><PartitionID>4</PartitionID><Format>NTFS</Format><Label>MIOS-DEV</Label><Letter>M</Letter></ModifyPartition>
           </ModifyPartitions>
         </Disk>
       </DiskConfiguration>
 "@
-        $installPartId = 4
+        $installPartId = 3
     } else {
         $diskXml = @"
       <DiskConfiguration>
@@ -260,6 +268,18 @@ function New-MiOSAutounattendXml {
 "@
         $installPartId = 3
     }
+
+    # --- Pre-OOBE strip + directory layout (Schneegans "DefaultUser" context) ---
+    # Emit the shared strip-and-rebuild layout (OneDrive/shortcuts/redundant
+    # folders removed, then the clean Linux-like tree) as specialize-pass
+    # RunSynchronousCommands so it runs BEFORE OOBE / before any account exists.
+    $_preOobe = New-Object System.Text.StringBuilder
+    $_ord = 2
+    foreach ($pc in @(New-MiOSLinuxLayoutCommands -Toml $Toml)) {
+        [void]$_preOobe.AppendLine(('        <RunSynchronousCommand wcm:action="add"><Order>{0}</Order><Path>cmd /c {1}</Path><Description>MiOS pre-OOBE strip + directory layout</Description></RunSynchronousCommand>' -f $_ord, [Security.SecurityElement]::Escape($pc)))
+        $_ord++
+    }
+    $preOobeXml = $_preOobe.ToString().TrimEnd()
 
     # --- Full document -----------------------------------------------------
     return @"
@@ -302,6 +322,7 @@ $diskXml
     <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <RunSynchronous>
         <RunSynchronousCommand wcm:action="add"><Order>1</Order><Path>reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f</Path><Description>Enable NTFS long paths for MiOS</Description></RunSynchronousCommand>
+$preOobeXml
       </RunSynchronous>
     </component>
   </settings>
