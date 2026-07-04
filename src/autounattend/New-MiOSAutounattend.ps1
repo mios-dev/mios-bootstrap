@@ -1,0 +1,403 @@
+# AI-hint: SSOT-driven generator that renders a MiOS autounattend.xml (with a nested MiOS irm|iex bootstrap + all local offline accounts from mios.toml) and optionally injects it into a UUP-Dump / winutil source ISO via oscdimg to produce a custom "MiOS Windows 11" install image.
+# AI-related: mios-bootstrap, Get-MiOS.ps1, src/autounattend/autounattend.xml, Invoke-MiOSProvision.ps1
+# AI-functions: Read-MiosToml, ConvertTo-UnattendPassword, New-MiOSAutounattendXml, Build-MiOSIso
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    Generate a MiOS autounattend.xml from mios.toml SSOT, and (optionally) inject
+    it into a Windows 11 ISO to produce a custom MiOS install image.
+
+.DESCRIPTION
+    Part of the MiOS custom-Windows pipeline:
+
+        UUP Dump            -> latest, slipstreamed Windows 11 source ISO
+        winutil / MicroWin  -> debloat + hardware-check bypass (optional)
+        THIS SCRIPT         -> Schneegans-style autounattend.xml with:
+                                 * ALL local ("offline") accounts from SSOT
+                                   (mios.toml [[autounattend.accounts]]),
+                                   NO Microsoft account, fully offline
+                                 * OOBE skip + long-path enable + optional
+                                   Win11 TPM/SecureBoot/RAM bypass
+                                 * a NESTED MiOS irm|iex in FirstLogonCommands
+                                   that runs Get-MiOS.ps1 at first boot
+        oscdimg (ADK)       -> rebuilt dual BIOS/UEFI bootable MiOS ISO
+
+    "During install" (fresh media) and "post install" (existing Windows users,
+    via Invoke-MiOSProvision.ps1) both converge on the SAME irm|iex bootstrap.
+
+    SSOT: accounts, computer name, timezone, and the bootstrap URL all resolve
+    from mios.toml. Missing keys degrade-open to safe defaults derived from
+    [identity]. No value is hardcoded that belongs in the TOML.
+
+.PARAMETER TomlPath
+    mios.toml to read. Default: first of M:\etc\mios\mios.toml,
+    M:\usr\share\mios\mios.toml, <repo>\mios.toml.
+
+.PARAMETER OutXml
+    Output autounattend.xml path. Default: .\autounattend.xml (cwd).
+
+.PARAMETER SourceIso
+    A Windows 11 ISO (from UUP Dump, or a winutil/MicroWin output) to inject the
+    autounattend into. When set with -OutIso, rebuilds a bootable ISO via oscdimg.
+
+.PARAMETER OutIso
+    Output ISO path for the injected MiOS image.
+
+.PARAMETER WinutilToolsDir
+    If given, also copies the generated autounattend.xml to
+    <WinutilToolsDir>\autounattend.xml so a winutil/MicroWin build picks up the
+    MiOS answer file (MicroWin ships its own tools\autounattend.xml at ISO root).
+
+.PARAMETER CarveDataPartition
+    Carve MiOS's M:\ data partition (default 256 GB) at install time instead of
+    letting Get-MiOS.ps1 shrink C:\ afterwards.
+
+.PARAMETER ObfuscatePasswords
+    Base64-obscure account passwords in the XML (Schneegans "Base64 obscuration").
+    NOT encryption -- an answer file on media is always readable. Treat passwords
+    as first-boot temporary credentials and rotate on first logon.
+
+.PARAMETER BootstrapUrl
+    Override the nested-bootstrap URL. Default: mios.toml [autounattend].bootstrap_url
+    or the canonical raw Get-MiOS.ps1.
+
+.EXAMPLE
+    # SSOT -> autounattend.xml only
+    .\New-MiOSAutounattend.ps1 -OutXml .\autounattend.xml
+
+.EXAMPLE
+    # Full custom MiOS ISO from a UUP-Dump source ISO
+    .\New-MiOSAutounattend.ps1 -SourceIso .\Win11_UUP.iso -OutIso .\MiOS-Win11.iso -CarveDataPartition
+#>
+[CmdletBinding()]
+param(
+    [string]$TomlPath,
+    [string]$OutXml = (Join-Path (Get-Location) 'autounattend.xml'),
+    [string]$SourceIso,
+    [string]$OutIso,
+    [string]$WinutilToolsDir,
+    [switch]$CarveDataPartition,
+    [switch]$ObfuscatePasswords,
+    [string]$BootstrapUrl
+)
+$ErrorActionPreference = 'Stop'
+
+$CANONICAL_BOOTSTRAP = 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1'
+
+# ---------------------------------------------------------------------------
+# Minimal TOML reader -- just enough for [autounattend] scalars,
+# [[autounattend.accounts]] array-of-tables, and [identity]/[locale] fallbacks.
+# Not a general TOML parser; MiOS mios.toml uses simple key = "value" lines.
+# ---------------------------------------------------------------------------
+function Read-MiosToml {
+    param([string]$Path)
+    $result = @{ scalars = @{}; accounts = @() }
+    if (-not (Test-Path -LiteralPath $Path)) { return $result }
+    $lines = [IO.File]::ReadAllLines($Path)
+    $section = ''
+    $curAccount = $null
+    foreach ($raw in $lines) {
+        $line = ($raw -replace '#.*$', '').Trim()
+        if (-not $line) { continue }
+        if ($line -eq '[[autounattend.accounts]]') {
+            if ($curAccount) { $result.accounts += ,$curAccount }
+            $curAccount = @{}
+            $section = 'account'
+            continue
+        }
+        if ($line -match '^\[(?<s>[^\]]+)\]$') {
+            if ($curAccount) { $result.accounts += ,$curAccount; $curAccount = $null }
+            $section = $Matches['s']
+            continue
+        }
+        if ($line -match '^(?<k>[A-Za-z0-9_\-\.]+)\s*=\s*(?<v>.+)$') {
+            $k = $Matches['k'].Trim()
+            $v = $Matches['v'].Trim().Trim('"', "'")
+            if ($section -eq 'account' -and $curAccount -ne $null) {
+                $curAccount[$k] = $v
+            } else {
+                $result.scalars["$section.$k"] = $v
+            }
+        }
+    }
+    if ($curAccount) { $result.accounts += ,$curAccount }
+    return $result
+}
+
+function Get-Toml { param($T,[string]$Key,[string]$Default='') if ($T.scalars.ContainsKey($Key) -and $T.scalars[$Key]) { $T.scalars[$Key] } else { $Default } }
+
+function ConvertTo-UnattendPassword {
+    # Emits the <Value>/<PlainText> pair for a LocalAccount/AutoLogon password.
+    # Base64 form per Windows Setup: Base64( UTF16LE( password + "Password" ) ),
+    # PlainText=false. Otherwise PlainText=true.
+    param([string]$Pw,[bool]$Obfuscate)
+    if ($Obfuscate) {
+        $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Pw + 'Password'))
+        return @{ Value = $enc; PlainText = 'false' }
+    }
+    return @{ Value = [Security.SecurityElement]::Escape($Pw); PlainText = 'true' }
+}
+
+function New-MiOSAutounattendXml {
+    param($Toml)
+
+    # --- Resolve SSOT ------------------------------------------------------
+    $computerName = Get-Toml $Toml 'autounattend.computer_name' (Get-Toml $Toml 'identity.hostname' 'MIOS')
+    $timezone     = Get-Toml $Toml 'autounattend.timezone'      (Get-Toml $Toml 'locale.timezone' 'UTC')
+    $uiLang       = Get-Toml $Toml 'autounattend.ui_language'   'en-US'
+    $inputLocale  = Get-Toml $Toml 'autounattend.input_locale'  '0409:00000409'
+    $edition      = Get-Toml $Toml 'autounattend.image_name'    'Windows 11 Pro'
+    $productKey   = Get-Toml $Toml 'autounattend.product_key'   'VK7JG-NPHTM-C97JM-9MPGT-3V66T'  # generic Pro
+    $bypassHw     = (Get-Toml $Toml 'autounattend.bypass_hardware_checks' 'true') -match '^(true|1|yes)$'
+    $runBootstrap = (Get-Toml $Toml 'autounattend.run_bootstrap' 'true') -match '^(true|1|yes)$'
+    $bootUrl      = if ($BootstrapUrl) { $BootstrapUrl } else { Get-Toml $Toml 'autounattend.bootstrap_url' $CANONICAL_BOOTSTRAP }
+    $dataGb       = [int](Get-Toml $Toml 'autounattend.data_partition_gb' '256')
+
+    # --- Accounts (SSOT; fallback to [identity].username as sole admin) -----
+    $accounts = @($Toml.accounts)
+    if ($accounts.Count -eq 0) {
+        $u = Get-Toml $Toml 'identity.username' 'mios'
+        $accounts = @(@{ name = $u; display_name = (Get-Toml $Toml 'identity.fullname' 'MiOS User'); group = 'Administrators'; password = $u })
+    }
+
+    $localAccountsXml = New-Object System.Text.StringBuilder
+    foreach ($a in $accounts) {
+        $name  = [Security.SecurityElement]::Escape([string]$a.name)
+        $disp  = [Security.SecurityElement]::Escape([string]($a.display_name  | ForEach-Object { if ($_) { $_ } else { $a.name } }))
+        $group = [string]($a.group | ForEach-Object { if ($_) { $_ } else { 'Users' } })
+        $pw    = ConvertTo-UnattendPassword -Pw ([string]$a.password) -Obfuscate:$ObfuscatePasswords
+        [void]$localAccountsXml.Append(@"
+          <LocalAccount wcm:action="add">
+            <Name>$name</Name>
+            <DisplayName>$disp</DisplayName>
+            <Group>$group</Group>
+            <Password>
+              <Value>$($pw.Value)</Value>
+              <PlainText>$($pw.PlainText)</PlainText>
+            </Password>
+          </LocalAccount>
+
+"@)
+    }
+
+    # First (admin) account drives AutoLogon so FirstLogonCommands run unattended.
+    $first   = $accounts[0]
+    $firstPw = ConvertTo-UnattendPassword -Pw ([string]$first.password) -Obfuscate:$ObfuscatePasswords
+    $firstName = [Security.SecurityElement]::Escape([string]$first.name)
+
+    # --- Nested MiOS irm|iex (the bootstrap that runs DURING install) -------
+    $firstLogonXml = ''
+    if ($runBootstrap) {
+        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;irm $bootUrl | iex&quot;"
+        $firstLogonXml = @"
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>$cmd</CommandLine>
+          <Description>MiOS bootstrap (nested irm|iex)</Description>
+          <RequiresUserInput>true</RequiresUserInput>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+"@
+    }
+
+    # --- Optional Win11 hardware-check bypass (windowsPE) -------------------
+    $bypassXml = ''
+    if ($bypassHw) {
+        $bypassXml = @"
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add"><Order>1</Order><Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>2</Order><Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>3</Order><Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>4</Order><Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>5</Order><Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
+      </RunSynchronous>
+"@
+    }
+
+    # --- Disk layout: standard (C: only) OR carve M: at install -------------
+    if ($CarveDataPartition) {
+        $dataMb = $dataGb * 1024
+        $diskXml = @"
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>300</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Size>$dataMb</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>4</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>MIOS-DEV</Label><Letter>M</Letter></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>4</Order><PartitionID>4</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+"@
+        $installPartId = 4
+    } else {
+        $diskXml = @"
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>300</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+"@
+        $installPartId = 3
+    }
+
+    # --- Full document -----------------------------------------------------
+    return @"
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated by New-MiOSAutounattend.ps1 from mios.toml SSOT. Nested MiOS
+     irm|iex runs Get-MiOS.ps1 at first logon. Passwords are $(if($ObfuscatePasswords){'Base64-obscured (NOT encrypted)'}else{'PLAINTEXT'}); treat as first-boot temporary. -->
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <SetupUILanguage><UILanguage>$uiLang</UILanguage></SetupUILanguage>
+      <InputLocale>$inputLocale</InputLocale>
+      <SystemLocale>$uiLang</SystemLocale>
+      <UILanguage>$uiLang</UILanguage>
+      <UserLocale>$uiLang</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+$bypassXml
+      <UserData>
+        <ProductKey><Key>$productKey</Key><WillShowUI>OnError</WillShowUI></ProductKey>
+        <AcceptEula>true</AcceptEula>
+      </UserData>
+$diskXml
+      <ImageInstall>
+        <OSImage>
+          <InstallTo><DiskID>0</DiskID><PartitionID>$installPartId</PartitionID></InstallTo>
+          <InstallFrom><MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>$edition</Value></MetaData></InstallFrom>
+        </OSImage>
+      </ImageInstall>
+    </component>
+  </settings>
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <ComputerName>$computerName</ComputerName>
+      <RegisteredOwner>MiOS</RegisteredOwner>
+      <RegisteredOrganization>MiOS</RegisteredOrganization>
+      <TimeZone>$timezone</TimeZone>
+    </component>
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add"><Order>1</Order><Path>reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f</Path><Description>Enable NTFS long paths for MiOS</Description></RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <InputLocale>$inputLocale</InputLocale>
+      <SystemLocale>$uiLang</SystemLocale>
+      <UILanguage>$uiLang</UILanguage>
+      <UserLocale>$uiLang</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+      <UserAccounts>
+        <LocalAccounts>
+$($localAccountsXml.ToString())        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>$firstName</Username>
+        <LogonCount>1</LogonCount>
+        <Password><Value>$($firstPw.Value)</Value><PlainText>$($firstPw.PlainText)</PlainText></Password>
+      </AutoLogon>
+$firstLogonXml
+    </component>
+  </settings>
+</unattend>
+"@
+}
+
+function Build-MiOSIso {
+    param([string]$SourceIso,[string]$XmlPath,[string]$OutIso)
+    # Locate oscdimg (Windows ADK Deployment Tools).
+    $oscdimg = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools" -Recurse -Filter oscdimg.exe -ErrorAction SilentlyContinue |
+               Select-Object -First 1 -ExpandProperty FullName
+    if (-not $oscdimg) { $oscdimg = (Get-Command oscdimg.exe -ErrorAction SilentlyContinue).Source }
+    if (-not $oscdimg) {
+        throw "oscdimg.exe not found. Install the Windows ADK 'Deployment Tools', or run winutil/MicroWin which bundles the ISO build. autounattend.xml written to '$XmlPath' -- copy it to the ISO root manually."
+    }
+    Write-Host "[*] Mounting $SourceIso ..." -ForegroundColor Cyan
+    $mount = Mount-DiskImage -ImagePath (Resolve-Path $SourceIso) -PassThru
+    try {
+        $drive = ($mount | Get-Volume).DriveLetter + ':'
+        $scratch = Join-Path $env:TEMP ("mios-iso-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+        Write-Host "[*] Copying ISO contents to $scratch ..." -ForegroundColor Cyan
+        New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+        Copy-Item -Path "$drive\*" -Destination $scratch -Recurse -Force
+        Copy-Item -LiteralPath $XmlPath -Destination (Join-Path $scratch 'autounattend.xml') -Force
+        $boot = "-bootdata:2#p0,e,b$scratch\boot\etfsboot.com#pEF,e,b$scratch\efi\microsoft\boot\efisys.bin"
+        Write-Host "[*] Building $OutIso via oscdimg ..." -ForegroundColor Cyan
+        & $oscdimg -m -o -u2 -udfver102 $boot $scratch $OutIso
+        if ($LASTEXITCODE -ne 0) { throw "oscdimg failed (exit $LASTEXITCODE)" }
+        Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "[+] MiOS ISO built: $OutIso" -ForegroundColor Green
+    } finally {
+        Dismount-DiskImage -ImagePath (Resolve-Path $SourceIso) | Out-Null
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+if (-not $TomlPath) {
+    foreach ($c in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml',
+                     (Join-Path $PSScriptRoot '..\..\mios.toml'))) {
+        if (Test-Path -LiteralPath $c) { $TomlPath = (Resolve-Path $c).Path; break }
+    }
+}
+Write-Host "[*] Reading SSOT: $(if ($TomlPath) { $TomlPath } else { '(none found -- using identity defaults)' })" -ForegroundColor DarkGray
+$toml = if ($TomlPath) { Read-MiosToml -Path $TomlPath } else { @{ scalars=@{}; accounts=@() } }
+
+$xml = New-MiOSAutounattendXml -Toml $toml
+[IO.File]::WriteAllText($OutXml, $xml, (New-Object System.Text.UTF8Encoding($false)))
+Write-Host "[+] autounattend.xml written: $OutXml" -ForegroundColor Green
+
+if ($WinutilToolsDir) {
+    if (-not (Test-Path -LiteralPath $WinutilToolsDir)) { New-Item -ItemType Directory -Path $WinutilToolsDir -Force | Out-Null }
+    Copy-Item -LiteralPath $OutXml -Destination (Join-Path $WinutilToolsDir 'autounattend.xml') -Force
+    Write-Host "[+] Copied to winutil tools dir: $WinutilToolsDir\autounattend.xml (MicroWin will use the MiOS answer file)" -ForegroundColor Green
+}
+
+if ($SourceIso -and $OutIso) {
+    Build-MiOSIso -SourceIso $SourceIso -XmlPath $OutXml -OutIso $OutIso
+} elseif ($SourceIso -or $OutIso) {
+    Write-Warning "Both -SourceIso and -OutIso are required to build an ISO. Skipped ISO build; XML is ready at $OutXml."
+}
+
+Write-Host ''
+Write-Host "Post-install path for EXISTING Windows users (same bootstrap):" -ForegroundColor Cyan
+Write-Host '  powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"' -ForegroundColor DarkGray
+Write-Host "  (or src\autounattend\Invoke-MiOSProvision.ps1 to also create the SSOT local accounts first)" -ForegroundColor DarkGray

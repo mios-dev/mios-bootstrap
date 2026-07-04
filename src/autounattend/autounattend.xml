@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MiOS autounattend.xml : unattended Windows 11 answer file with a NESTED
+  MiOS irm|iex bootstrap.
+
+  WHAT THIS DOES (fresh-machine, zero-touch path)
+  ===============================================
+  Placed at the ROOT of Windows 11 install media (USB), or shipped as a
+  separate unattend.iso mounted alongside the Windows ISO (required for VMs /
+  Hyper-V), Windows Setup auto-discovers this file in the WinPE phase and:
+
+    1. (optional) bypasses the Win11 TPM 2.0 / Secure Boot / RAM checks so a
+       fresh minimal machine or VM installs cleanly.
+    2. Creates ALL LOCAL ("offline") accounts defined here. NO Microsoft
+       account, fully offline. (MiOS is multi-user; this file is the SSOT to
+       Windows bridge. Generate a customized copy from mios.toml with
+       New-MiOSAutounattend.ps1 so the account set is the SSOT account set.)
+    3. Skips the online-account / privacy OOBE screens.
+    4. Enables long-path support plus a few MiOS-friendly defaults (specialize).
+    5. Auto-logs-on the first (admin) account and runs the NESTED MiOS
+       bootstrap (irm .../Get-MiOS.ps1 | iex), the exact same one-liner an
+       existing-Windows user pastes. The fresh install therefore lands straight
+       in a provisioned MiOS host with zero manual steps, INCLUDING OOBE.
+
+  POST-INSTALL (pre-existing Windows users)
+  =========================================
+  Existing users do not reinstall Windows. They run the SAME bootstrap:
+     powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"
+  and, to apply the SSOT multi-user local accounts + long-paths to their
+  existing box first, run src/autounattend/Invoke-MiOSProvision.ps1 (creates the
+  SSOT accounts, enables long-paths, then chains the same irm|iex). "During
+  install" and "post install" converge on ONE bootstrap.
+
+  SECURITY: account passwords below are PlainText for template clarity. Treat
+  them as first-boot temporary credentials and rotate on first logon, or run
+  the generator with -ObfuscatePasswords (Base64) / supply per-account secrets
+  from SSOT. An answer file on media is readable; never bake a permanent secret
+  here.
+
+  This committed file carries MiOS DEFAULT values (one admin account "mios",
+  computer name "MIOS"). New-MiOSAutounattend.ps1 regenerates it from mios.toml
+  [autounattend] + [[autounattend.accounts]] so the accounts, computer name,
+  locale, and bootstrap URL all flow from the SSOT.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <!-- windowsPE -->
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>0409:00000409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS">
+
+      <!-- Win11 requirement bypass. Benign on compliant hardware; lets a fresh
+           minimal machine or VM install without TPM 2.0 / Secure Boot / 4 GB
+           RAM. Remove this block for strict enforcement. -->
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+      <UserData>
+        <ProductKey>
+          <!-- Generic Win11 Pro key = "install this edition", NOT activation. -->
+          <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+        <AcceptEula>true</AcceptEula>
+      </UserData>
+
+      <!-- DISK LAYOUT (DESTRUCTIVE): standard UEFI/GPT clean install to Disk 0.
+           WIPES DISK 0. MiOS's M:\ 256 GB data partition is provisioned LATER
+           by Get-MiOS.ps1 (its adaptive C: shrink), keeping this layout simple.
+           To carve M:\ at install, regenerate with New-MiOSAutounattend.ps1
+           -CarveDataPartition. -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order><Type>EFI</Type><Size>300</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order><Type>MSR</Type><Size>16</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order><Type>Primary</Type><Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order><PartitionID>1</PartitionID>
+              <Format>FAT32</Format><Label>System</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order><PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order><PartitionID>3</PartitionID>
+              <Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <ImageInstall>
+        <OSImage>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <!-- Match the edition on your media if not Pro. -->
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows 11 Pro</Value>
+            </MetaData>
+          </InstallFrom>
+        </OSImage>
+      </ImageInstall>
+    </component>
+  </settings>
+
+  <!-- specialize -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS">
+      <ComputerName>MIOS</ComputerName>
+      <RegisteredOwner>MiOS</RegisteredOwner>
+      <RegisteredOrganization>MiOS</RegisteredOrganization>
+      <TimeZone>UTC</TimeZone>
+    </component>
+
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS">
+      <RunSynchronous>
+        <!-- Long path support (32,767 chars) system-wide, before first logon. -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f</Path>
+          <Description>Enable NTFS long paths for MiOS</Description>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
+  <!-- oobeSystem -->
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>0409:00000409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS">
+
+      <!-- Skip every online-account / privacy screen. Fully offline,
+           local-account-only OOBE. -->
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+
+      <!-- SSOT-defined LOCAL ("offline") accounts. The generator replaces this
+           whole UserAccounts block from mios.toml [[autounattend.accounts]].
+           Default: one admin account "mios". -->
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>mios</Name>
+            <DisplayName>MiOS User</DisplayName>
+            <Group>Administrators</Group>
+            <Password>
+              <Value>mios</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+
+      <!-- Auto-logon the first admin account once so FirstLogonCommands (the
+           nested MiOS bootstrap) runs unattended with an interactive desktop
+           and UAC available. Get-MiOS.ps1 self-elevates from here. -->
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>mios</Username>
+        <LogonCount>1</LogonCount>
+        <Password>
+          <Value>mios</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+
+      <!-- NESTED MiOS irm|iex : runs DURING the Windows install. -->
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"</CommandLine>
+          <Description>MiOS bootstrap (nested irm|iex)</Description>
+          <RequiresUserInput>true</RequiresUserInput>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>
