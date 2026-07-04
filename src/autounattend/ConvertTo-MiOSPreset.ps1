@@ -121,21 +121,16 @@ function ConvertTo-PwPair { param([string]$Pw)
 }
 
 function New-MiOSGlobalPrefCommands {
-    # MiOS user preferences applied GLOBALLY: to the Default User hive (every
-    # future account) AND the first user's HKCU (the auto-logon admin). Values
-    # resolve from SSOT [autounattend.preferences] with MiOS defaults.
+    # MiOS FUNCTIONAL preferences applied GLOBALLY: to the Default User hive
+    # (every future account) AND the first user's HKCU. Visual identity (theme,
+    # accent, wallpaper, lockscreen, OEM) lives in New-MiOSBrandingCommands.
+    # Values resolve from SSOT [autounattend.preferences] with MiOS defaults.
     param($Toml)
-    $accentBgr = Get-Toml $Toml 'autounattend.accent_bgr' '0xFF7F401A'   # #1A407F in AABBGGRR
     $d = [ordered]@{
-        'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|AppsUseLightTheme|REG_DWORD'    = (Get-Toml $Toml 'autounattend.preferences.apps_light' '0')
-        'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|SystemUsesLightTheme|REG_DWORD' = (Get-Toml $Toml 'autounattend.preferences.system_light' '0')
-        'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|ColorPrevalence|REG_DWORD'      = (Get-Toml $Toml 'autounattend.preferences.color_prevalence' '1')
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|HideFileExt|REG_DWORD'           = (Get-Toml $Toml 'autounattend.preferences.hide_file_ext' '0')
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|Hidden|REG_DWORD'                = (Get-Toml $Toml 'autounattend.preferences.show_hidden' '1')
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarAl|REG_DWORD'             = (Get-Toml $Toml 'autounattend.preferences.taskbar_align' '0')  # 0=left
         'Software\Microsoft\Windows\CurrentVersion\Search|SearchboxTaskbarMode|REG_DWORD'             = (Get-Toml $Toml 'autounattend.preferences.taskbar_search' '0') # 0=hidden
-        'Software\Microsoft\Windows\DWM|AccentColor|REG_DWORD'                                        = $accentBgr
-        'Software\Microsoft\Windows\DWM|ColorPrevalence|REG_DWORD'                                    = '1'
     }
     $cmds = New-Object System.Collections.Generic.List[string]
     # Apply to the current (first auto-logon) user's HKCU.
@@ -149,6 +144,111 @@ function New-MiOSGlobalPrefCommands {
     }
     $cmds.Add('reg unload "HKU\MiOSDefault"')
     return $cmds
+}
+
+function ConvertTo-AccentDword {
+    # #RRGGBB -> 0xFFBBGGRR (DWM/Explorer accent DWORD, AABBGGRR little-endian).
+    param([string]$Hex)
+    $h = "$Hex".TrimStart('#')
+    if ($h.Length -ne 6 -or $h -notmatch '^[0-9A-Fa-f]{6}$') { return '0xFF7F401A' }  # MiOS #1A407F
+    return ('0xFF{0}{1}{2}' -f $h.Substring(4,2), $h.Substring(2,2), $h.Substring(0,2)).ToUpper()
+}
+
+function New-MiOSBrandingCommands {
+    # FULL MiOS visual identity applied GLOBALLY to the Windows edition, ALL from
+    # SSOT ([branding], [colors].accent, [theme]) with MiOS defaults, editable in
+    # the mios.html configurator. Writes machine-wide (HKLM: OEM info, lockscreen,
+    # brand icon) + the Default User hive AND first HKCU (theme, accent, wallpaper)
+    # so EVERY account -- present and future -- carries the MiOS look.
+    param($Toml)
+    if ((Get-Toml $Toml 'branding.windows.enable' 'true') -notmatch '^(true|1|yes)$') { return @() }
+    $c = New-Object System.Collections.Generic.List[string]
+
+    # --- OEM information (machine-wide, System > About) --------------------
+    $oem = [ordered]@{
+        Manufacturer = Get-Toml $Toml 'branding.oem_manufacturer' 'MiOS'
+        Model        = Get-Toml $Toml 'branding.oem_model'        (Get-Toml $Toml 'branding.tagline' 'My Personal Operating System')
+        SupportURL   = Get-Toml $Toml 'branding.oem_support_url'  'https://github.com/mios-dev'
+        SupportHours = Get-Toml $Toml 'branding.oem_support_hours' 'Always on'
+        SupportPhone = Get-Toml $Toml 'branding.oem_support_phone' ''
+        Logo         = Get-Toml $Toml 'branding.oem_logo'         'C:\Windows\Web\MiOS\mios-logo.bmp'
+    }
+    foreach ($k in $oem.Keys) {
+        if ("$($oem[$k])" -ne '') { $c.Add(('reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v {0} /t REG_SZ /d "{1}" /f' -f $k, $oem[$k])) }
+    }
+
+    # --- System UI font: substitute Segoe UI -> Geist (machine-wide) -------
+    # The actual Geist / GeistMono Nerd Font files are installed by the MiOS
+    # bootstrap (Install-MiOSGeistFont); this makes Geist the global UI face.
+    if ((Get-Toml $Toml 'branding.font_substitute' 'true') -match '^(true|1|yes)$') {
+        $uiFont = Get-Toml $Toml 'branding.ui_font' 'Geist'
+        foreach ($face in @('Segoe UI','Segoe UI Semibold','Segoe UI Light','Segoe UI Semilight')) {
+            $c.Add(('reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontSubstitutes" /v "{0}" /t REG_SZ /d "{1}" /f' -f $face, $uiFont))
+        }
+    }
+
+    # --- Lockscreen (machine-wide, PersonalizationCSP) --------------------
+    $wallpaper  = Get-Toml $Toml 'branding.wallpaper'  'C:\Windows\Web\MiOS\mios-wallpaper.jpg'
+    $lockscreen = Get-Toml $Toml 'branding.lockscreen' $wallpaper
+    if ("$lockscreen" -ne '') {
+        $csp = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
+        $c.Add(('reg add "{0}" /v LockScreenImageStatus /t REG_DWORD /d 1 /f' -f $csp))
+        $c.Add(('reg add "{0}" /v LockScreenImagePath /t REG_SZ /d "{1}" /f' -f $csp, $lockscreen))
+        $c.Add(('reg add "{0}" /v LockScreenImageUrl /t REG_SZ /d "{1}" /f' -f $csp, $lockscreen))
+    }
+
+    # --- Theme + accent + wallpaper (Default hive + first HKCU) -----------
+    $accentDword = ConvertTo-AccentDword (Get-Toml $Toml 'colors.accent' '#1A407F')
+    $darkApps    = if ((Get-Toml $Toml 'theme.mode' 'dark') -match '^(?i)light$') { '1' } else { '0' }
+    $wallStyle   = Get-Toml $Toml 'branding.wallpaper_style' '10'   # 10 = Fill
+    $perHive = {
+        param($hivePrefix)
+        $per = [ordered]@{
+            'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|AppsUseLightTheme|REG_DWORD'    = $darkApps
+            'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|SystemUsesLightTheme|REG_DWORD' = $darkApps
+            'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|ColorPrevalence|REG_DWORD'      = '1'
+            'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|EnableTransparency|REG_DWORD'   = '1'
+            'Software\Microsoft\Windows\DWM|AccentColor|REG_DWORD'                                        = $accentDword
+            'Software\Microsoft\Windows\DWM|ColorizationColor|REG_DWORD'                                  = $accentDword
+            'Software\Microsoft\Windows\DWM|ColorPrevalence|REG_DWORD'                                    = '1'
+            'Software\Microsoft\Windows\CurrentVersion\Explorer\Accent|AccentColorMenu|REG_DWORD'         = $accentDword
+            'Software\Microsoft\Windows\CurrentVersion\Explorer\Accent|StartColorMenu|REG_DWORD'          = $accentDword
+            'Control Panel\Desktop|WallPaper|REG_SZ'                                                       = $wallpaper
+            'Control Panel\Desktop|WallpaperStyle|REG_SZ'                                                  = $wallStyle
+            # Dynamic Lighting -- drive RGB peripherals from the MiOS accent.
+            'Software\Microsoft\Lighting|UseSystemAccentColor|REG_DWORD'                                   = '1'
+            'Software\Microsoft\Lighting|AmbientLightingEnabled|REG_DWORD'                                 = '1'
+        }
+        $lines = @()
+        foreach ($k in $per.Keys) {
+            $p = $k -split '\|'
+            $lines += ('reg add "{0}\{1}" /v {2} /t {3} /d {4} /f' -f $hivePrefix, $p[0], $p[1], $p[2], $(if ($p[2] -eq 'REG_SZ') { '"' + $per[$k] + '"' } else { $per[$k] }))
+        }
+        return $lines
+    }
+    # --- Bibata cursor scheme (per hive). The .cur/.ani files are staged to
+    # cursor_dir by the MiOS bootstrap (Install-MiOSBibataCursor) / the ISO;
+    # the registry makes Bibata the global default for every account. ------
+    $curEnable = (Get-Toml $Toml 'branding.cursor' 'true') -match '^(true|1|yes)$'
+    $curDir    = Get-Toml $Toml 'branding.cursor_dir'    '%SystemRoot%\Cursors\Bibata-Modern-Classic'
+    $curName   = Get-Toml $Toml 'branding.cursor_scheme' 'Bibata-Modern-Classic'
+    $curMap = [ordered]@{ AppStarting='Working.ani'; Arrow='Default.cur'; Crosshair='Cross.cur'; Hand='Link.cur'; Help='Help.cur'; IBeam='IBeam.cur'; No='Unavailiable.cur'; NWPen='Handwriting.cur'; Person='Person.cur'; Pin='Pin.cur'; SizeAll='Move.cur'; SizeNESW='Diagonal_2.cur'; SizeNS='Vertical.cur'; SizeNWSE='Diagonal_1.cur'; SizeWE='Horizontal.cur'; UpArrow='Alternate.cur'; Wait='Busy.ani' }
+    $cursorCmds = {
+        param($hp)
+        $ll = @()
+        if (-not $curEnable) { return $ll }
+        $ll += ('reg add "{0}\Control Panel\Cursors" /ve /t REG_SZ /d "{1}" /f' -f $hp, $curName)
+        $ll += ('reg add "{0}\Control Panel\Cursors" /v "Scheme Source" /t REG_DWORD /d 2 /f' -f $hp)
+        foreach ($cn in $curMap.Keys) { $ll += ('reg add "{0}\Control Panel\Cursors" /v {1} /t REG_EXPAND_SZ /d "{2}\{3}" /f' -f $hp, $cn, $curDir, $curMap[$cn]) }
+        return $ll
+    }
+    foreach ($l in (& $perHive 'HKCU')) { $c.Add($l) }
+    foreach ($l in (& $cursorCmds 'HKCU')) { $c.Add($l) }
+    $c.Add('reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT"')
+    foreach ($l in (& $perHive 'HKU\MiOSDefault')) { $c.Add($l) }
+    foreach ($l in (& $cursorCmds 'HKU\MiOSDefault')) { $c.Add($l) }
+    $c.Add('reg unload "HKU\MiOSDefault"')
+    return $c
 }
 
 function New-MiOSLinuxLayoutCommands {
@@ -294,8 +394,12 @@ $existingFlc = $oobe.SelectSingleNode('n:FirstLogonCommands', $ns); if ($existin
 $flc = New-El $xml 'FirstLogonCommands'
 $order = 1
 $layoutCmds = @(New-MiOSLinuxLayoutCommands -Toml $toml)
+$brandCmds  = @(New-MiOSBrandingCommands -Toml $toml)
 $prefCmds   = @(New-MiOSGlobalPrefCommands -Toml $toml)
-foreach ($grp in @(@{ d='MiOS unified Linux-like directory layout'; c=$layoutCmds }, @{ d='MiOS global user preferences'; c=$prefCmds })) {
+foreach ($grp in @(
+        @{ d='MiOS unified Linux-like directory layout'; c=$layoutCmds },
+        @{ d='MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)'; c=$brandCmds },
+        @{ d='MiOS global user preferences'; c=$prefCmds })) {
     foreach ($pc in $grp.c) {
         $sc = New-El $xml 'SynchronousCommand'
         [void]$sc.AppendChild((New-El $xml 'Order' ([string]$order)))
