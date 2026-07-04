@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- MiOS preset (sanitized from Xbox-Minimal-ULTRA-PLUS.xml by ConvertTo-MiOSPreset.ps1).
- Conventions: SSOT hostname=mios; 1 SSOT local account(s) with credentials;
- GLOBAL MiOS user preferences + unified Linux-like directory layout (Default hive + first HKCU,
- mirrors the WSL tree); nested MiOS irm|iex bootstrap.
+ SSOT hostname=mios; 1 SSOT local account(s) with credentials;
+ GLOBAL MiOS branding/theme + unified Linux-like layout + prefs (shared MiOS-Provision.lib.ps1,
+ Default hive + first HKCU); nested MiOS irm|iex bootstrap - - same core the irm|iex installer runs.
  Posture B: WSL2 / VirtualMachinePlatform / Hyper-V PRESERVED for the MiOS podman stack
  (removed 2 virt component-removal(s) + 12 virt feature-disable(s)).-->
 <Preset isAutoSaved="true" xmlns="urn:schemas-nliteos-com:pn.v1">
@@ -739,392 +739,392 @@
           <SynchronousCommand>
             <Order>33</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v Manufacturer /t REG_SZ /d "MiOS" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>34</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v Model /t REG_SZ /d "My Personal Operating System" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>35</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v SupportURL /t REG_SZ /d "https://github.com/mios-dev" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>36</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v SupportHours /t REG_SZ /d "Always on" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>37</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation" /v Logo /t REG_SZ /d "C:\Windows\Web\MiOS\mios-logo.bmp" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>38</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontSubstitutes" /v "Segoe UI" /t REG_SZ /d "Geist" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>39</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontSubstitutes" /v "Segoe UI Semibold" /t REG_SZ /d "Geist" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>40</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontSubstitutes" /v "Segoe UI Light" /t REG_SZ /d "Geist" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>41</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontSubstitutes" /v "Segoe UI Semilight" /t REG_SZ /d "Geist" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>42</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" /v LockScreenImageStatus /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>43</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" /v LockScreenImagePath /t REG_SZ /d "C:\Windows\Web\MiOS\mios-wallpaper.jpg" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>44</Order>
             <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" /v LockScreenImageUrl /t REG_SZ /d "C:\Windows\Web\MiOS\mios-wallpaper.jpg" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>45</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v AppsUseLightTheme /t REG_DWORD /d 0 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>46</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v SystemUsesLightTheme /t REG_DWORD /d 0 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>47</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v ColorPrevalence /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>48</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v EnableTransparency /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>49</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\DWM" /v AccentColor /t REG_DWORD /d 0XFF7F401A /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>50</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\DWM" /v ColorizationColor /t REG_DWORD /d 0XFF7F401A /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>51</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\DWM" /v ColorPrevalence /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>52</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent" /v AccentColorMenu /t REG_DWORD /d 0XFF7F401A /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>53</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent" /v StartColorMenu /t REG_DWORD /d 0XFF7F401A /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>54</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Desktop" /v WallPaper /t REG_SZ /d "C:\Windows\Web\MiOS\mios-wallpaper.jpg" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>55</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d "10" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>56</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Lighting" /v UseSystemAccentColor /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>57</Order>
             <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Lighting" /v AmbientLightingEnabled /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>58</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /ve /t REG_SZ /d "Bibata-Modern-Classic" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>59</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v "Scheme Source" /t REG_DWORD /d 2 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>60</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v AppStarting /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Working.ani" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>61</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v Arrow /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Default.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>62</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v Crosshair /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Cross.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>63</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v Hand /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Link.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>64</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v Help /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Help.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>65</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v IBeam /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\IBeam.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>66</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v No /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Unavailiable.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>67</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v NWPen /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Handwriting.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>68</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v Person /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Person.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>69</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v Pin /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Pin.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>70</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v SizeAll /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Move.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>71</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v SizeNESW /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Diagonal_2.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>72</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v SizeNS /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Vertical.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>73</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v SizeNWSE /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Diagonal_1.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>74</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v SizeWE /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Horizontal.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>75</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v UpArrow /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Alternate.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>76</Order>
             <CommandLine>cmd /c reg add "HKCU\Control Panel\Cursors" /v Wait /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Busy.ani" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>77</Order>
             <CommandLine>cmd /c reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT"</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>78</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v AppsUseLightTheme /t REG_DWORD /d 0 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>79</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v SystemUsesLightTheme /t REG_DWORD /d 0 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>80</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v ColorPrevalence /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>81</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v EnableTransparency /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>82</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\DWM" /v AccentColor /t REG_DWORD /d 0XFF7F401A /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>83</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\DWM" /v ColorizationColor /t REG_DWORD /d 0XFF7F401A /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>84</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\DWM" /v ColorPrevalence /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>85</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent" /v AccentColorMenu /t REG_DWORD /d 0XFF7F401A /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>86</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Accent" /v StartColorMenu /t REG_DWORD /d 0XFF7F401A /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>87</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Desktop" /v WallPaper /t REG_SZ /d "C:\Windows\Web\MiOS\mios-wallpaper.jpg" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>88</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d "10" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>89</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Lighting" /v UseSystemAccentColor /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>90</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Lighting" /v AmbientLightingEnabled /t REG_DWORD /d 1 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>91</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /ve /t REG_SZ /d "Bibata-Modern-Classic" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>92</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v "Scheme Source" /t REG_DWORD /d 2 /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>93</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v AppStarting /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Working.ani" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>94</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v Arrow /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Default.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>95</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v Crosshair /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Cross.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>96</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v Hand /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Link.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>97</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v Help /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Help.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>98</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v IBeam /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\IBeam.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>99</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v No /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Unavailiable.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>100</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v NWPen /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Handwriting.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>101</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v Person /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Person.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>102</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v Pin /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Pin.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>103</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v SizeAll /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Move.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>104</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v SizeNESW /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Diagonal_2.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>105</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v SizeNS /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Vertical.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>106</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v SizeNWSE /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Diagonal_1.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>107</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v SizeWE /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Horizontal.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>108</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v UpArrow /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Alternate.cur" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>109</Order>
             <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Cursors" /v Wait /t REG_EXPAND_SZ /d "%SystemRoot%\Cursors\Bibata-Modern-Classic\Busy.ani" /f</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>110</Order>
             <CommandLine>cmd /c reg unload "HKU\MiOSDefault"</CommandLine>
-            <Description>MiOS global branding + theme (OEM/accent/wallpaper/lockscreen)</Description>
+            <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>111</Order>
