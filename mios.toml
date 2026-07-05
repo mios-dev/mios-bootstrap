@@ -1162,6 +1162,43 @@ mios-guacamole-postgres = true
 mios-guacd              = true
 
 # ----------------------------------------------------------------------------
+# [autounattend] -- MiOS custom-Windows ISO pipeline SSOT (WS-XBOX / WS-WEDITION).
+# Consumed by mios-uup-fetch.ps1, New-MiOSISO.ps1, ConvertTo-MiOSPreset.ps1, and
+# New-MiOSAutounattend.ps1. Every key degrades open to a MiOS default in-script,
+# so the pipeline runs even before this section is mirrored into the vendor SSOT
+# (mios.git usr/share/mios/mios.toml -- the T-147 configurator surface).
+# ----------------------------------------------------------------------------
+[autounattend]
+# UUP Dump source acquisition (T-137). Target the DEV channel -- it carries the
+# newest feature IDs (Xbox Full Screen Experience) before they reach Retail.
+uup_channel    = "dev"           # dev | beta | releasepreview | retail  (maps to WU ring)
+uup_arch       = "amd64"         # amd64 | arm64
+uup_edition    = "professional"  # Windows 11 edition (listeditions.php name)
+uup_lang       = "en-us"
+# ISO carve + output.
+c_partition_gb = 96              # C: size; the REST of the disk -> M:\ (MIOS-DEV)
+bootstrap_url  = ""              # empty -> canonical raw Get-MiOS.ps1
+iso_out        = "M:\\MiOS\\iso\\MiOS-Xbox.iso"
+iso_label      = "MiOS-Xbox"
+computer_name  = ""              # empty -> inherits [identity].hostname
+
+# [autounattend.xbox] -- Xbox Full Screen Experience "out of the box" (T-140).
+# enable=true is the MiOS-XBOX edition default; the base MiOS edition overrides
+# to false (the [editions] matrix, T-146, scopes this per-edition). feature_ids
+# are Controlled-Feature-Rollout ids that CHANGE PER BUILD -- pin them to the
+# target build here (never assume forward/backward portability). Dev-channel
+# default = the single stable FSE id; 24H2 retail needs the pair
+# "58989070,59765208". The pipeline writes the reg-only FeatureManagement
+# override (no vivetool.exe) + a DeviceForm spoof so the toggle surfaces on
+# non-handheld hardware. NOTE: the FSE home still requires a signed-in Xbox/MS
+# account at first run -- that cannot be pre-baked.
+[autounattend.xbox]
+enable            = true
+feature_ids       = "59765208"   # Dev/25H2; 24H2 retail: "58989070,59765208"
+device_form_spoof = true         # DeviceForm=0x2E so FSE surfaces on desktops/laptops
+min_build         = "26200"      # informational: 25H2/Dev FSE floor
+
+# ----------------------------------------------------------------------------
 # [env] -- free-form environment-variable additions. Keys must match POSIX
 # env-var rules ([A-Za-z_][A-Za-z0-9_]*). Anything you put here is exported
 # verbatim to every script that sources tools/lib/userenv.sh, so it

@@ -43,6 +43,41 @@ grammar DISM itself uses — so the mapping is verifiable against the mounted im
 > lists is DISM-native; one that resolves in none is NTLite-only. No static keyword allowlist is
 > shipped (operator LAW: no hardcoded heuristics) — the image manifest is the authority.
 
+### Merged-preset actual split (what `New-MiOSISO.ps1` services)
+
+The `<Feature>` node carries the enable state as **inner text** (`false` = remove), and its
+`@name` grammar decides the DISM class. In the current `MiOS-Xbox-Merged.xml` the disabled
+`<Feature>` set resolves to **51 FoD capabilities** (`Remove-WindowsCapability`, the `~~~`
+grammar — Language.Speech/OCR/Handwriting, Print.Management.Console, etc.) + **23 optional
+features** (`Disable-WindowsOptionalFeature` — Printing-*, SMB1, MediaPlayback, …). The
+**286 `RemoveComponents/<c>`** are lowercase CBS keys (`asimov 'Telemetry Client'`, …) =
+the NTLite-only residue. `New-MiOSISO.ps1` applies the first two classes and reports the
+residue count; it never guesses appx from CBS keys.
+
+### Servicing caveats (verified)
+
+- **`Disable-WindowsOptionalFeature -Remove` does NOT reclaim payload on *client* Windows
+  10/11** — Push-Button-Reset retention keeps the payload; it only sets
+  `DisabledWithPayloadRemoved`. Payload deletion via `-Remove` takes effect on **Server**
+  editions only. The real size win on client comes from the final
+  `Export-WindowsImage -CompressionType Max` re-export, not `-Remove`.
+- **`Export-Image` is not a PowerShell cmdlet.** Use `Export-WindowsImage` (`-CompressionType
+  Fast|Max|None`); for `recovery`/ESD compression use `dism /Export-Image /Compress:recovery`.
+- Over-debloat watch: the union merge can disable capabilities the curated ULTRA-PLUS base
+  preserved (e.g. `Language.Basic`); DISM refuses or degrades gracefully (per-target
+  try/catch), but a protect-list in `Merge-MiOSPresets.ps1` is the "perfected" follow-up.
+
+### Xbox Full Screen Experience — registry-native (not a component op)
+
+Xbox FSE "out of the box" is **not** an appx/capability/feature removal — it is a **feature-flag
+override**, applied reg-only (no `vivetool.exe`): per SSOT feature id
+(`[autounattend.xbox].feature_ids`), write `EnabledState=2` (+ the Variant quartet) under
+`…\Control\FeatureManagement\Overrides\8\<id>` — `CurrentControlSet` live (FirstLogon, via
+`New-MiOSXboxModeCommands`) or `ControlSet001` offline (image servicing, via `New-MiOSISO.ps1`) —
+plus a `DeviceForm=0x2E` spoof so the toggle surfaces on non-handheld hardware. The ids are
+Controlled-Feature-Rollout values that **change per build**, so they are SSOT-pinned, never
+hardcoded. (Runtime caveat: the FSE home still needs a signed-in Xbox/MS account.)
+
 ## Per-op-type mapping for the merged preset
 
 Counts below are from the current `MiOS-Xbox-Merged.xml` (286 `RemoveComponents/<c>`,

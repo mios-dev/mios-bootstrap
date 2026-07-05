@@ -117,6 +117,43 @@ function New-MiOSGlobalPrefCommands {
     return $cmds
 }
 
+function New-MiOSXboxModeCommands {
+    # Xbox Full Screen Experience (FSE) "out of the box" for the MiOS-XBOX edition.
+    # Emits the REG-ONLY equivalent of `vivetool /enable` (importing these keys
+    # produces the same result -- no vivetool.exe shipped): a FeatureManagement
+    # override per feature ID + the DeviceForm spoof so the toggle surfaces on
+    # non-handheld hardware. Gated on [autounattend.xbox].enable (default off --
+    # only the MiOS-XBOX edition turns it on). Feature IDs come from SSOT, NOT a
+    # hardcoded list: they are Controlled-Feature-Rollout IDs that CHANGE PER
+    # BUILD, so the target build pins them via [autounattend.xbox].feature_ids
+    # (Dev-channel default = the single stable FSE id; 24H2 needs the pair).
+    #
+    # Live form only (HKLM\SYSTEM\CurrentControlSet...): this runs at FirstLogon.
+    # The offline image-servicing form (ControlSet001) is written by New-MiOSISO.ps1
+    # from the SAME SSOT ids. NOTE (honest limitation): the FSE HOME still needs a
+    # signed-in Microsoft/Xbox account at runtime + the Xbox app; those cannot be
+    # pre-baked. This gets the mode enabled + discoverable; sign-in is first-run.
+    param($Toml)
+    $cmds = New-Object System.Collections.Generic.List[string]
+    if ((Get-Toml $Toml 'autounattend.xbox.enable' 'false') -notmatch '^(?i:true|1|yes)$') { return $cmds }
+
+    $ov = 'HKLM\SYSTEM\CurrentControlSet\Control\FeatureManagement\Overrides\8'
+    $ids = (Get-Toml $Toml 'autounattend.xbox.feature_ids' '59765208') -split '[,\s]+' | Where-Object { $_ -match '^\d+$' }
+    foreach ($id in $ids) {
+        $cmds.Add(('reg add "{0}\{1}" /v EnabledState /t REG_DWORD /d 2 /f'        -f $ov,$id))   # 2 = Enabled
+        $cmds.Add(('reg add "{0}\{1}" /v EnabledStateOptions /t REG_DWORD /d 0 /f' -f $ov,$id))
+        $cmds.Add(('reg add "{0}\{1}" /v Variant /t REG_DWORD /d 0 /f'             -f $ov,$id))
+        $cmds.Add(('reg add "{0}\{1}" /v VariantPayload /t REG_DWORD /d 0 /f'      -f $ov,$id))
+        $cmds.Add(('reg add "{0}\{1}" /v VariantPayloadKind /t REG_DWORD /d 0 /f'  -f $ov,$id))
+    }
+    # DeviceForm spoof (0x2E = 46 = "gaming handheld") so the FSE toggle surfaces
+    # on a desktop/laptop that doesn't self-identify as a handheld. SSOT-gated.
+    if ((Get-Toml $Toml 'autounattend.xbox.device_form_spoof' 'true') -match '^(?i:true|1|yes)$') {
+        $cmds.Add('reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\OEM" /v DeviceForm /t REG_DWORD /d 46 /f')
+    }
+    return $cmds
+}
+
 function New-MiOSBrandingCommands {
     # FULL MiOS visual identity applied GLOBALLY (HKLM + Default hive + first
     # HKCU), ALL from SSOT ([branding], [colors].accent, [theme]).
@@ -268,6 +305,7 @@ function New-MiOSProvisionCommands {
         @{ Description = 'MiOS unified Linux-like directory layout';                 Commands = @(New-MiOSLinuxLayoutCommands -Toml $Toml) }
         @{ Description = 'MiOS global branding + theme (OEM/accent/wallpaper/RGB)';   Commands = @(New-MiOSBrandingCommands   -Toml $Toml) }
         @{ Description = 'MiOS global user preferences';                              Commands = @(New-MiOSGlobalPrefCommands -Toml $Toml) }
+        @{ Description = 'MiOS-XBOX: Xbox Full Screen Experience enablement';         Commands = @(New-MiOSXboxModeCommands   -Toml $Toml) }
     )
 }
 

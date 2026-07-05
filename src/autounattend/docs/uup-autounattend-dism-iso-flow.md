@@ -23,17 +23,16 @@ fallbacks (so the flow is forward-accurate but the keys are not yet populated in
 
 | # | Stage | Tool | Input -> Output | Status |
 |---|---|---|---|---|
-| 0 | Acquire stock media | **UUP Dump** | Build id -> `Windows 11 25H2 x64 en-US` ESD/WIM + `uup_download_windows.cmd` -> `sources\install.wim` (+ `boot.wim`, `winre.wim`) | [ext] |
+| 0 | Acquire stock media (**Dev channel**) | `mios-uup-fetch.ps1` -> **UUP Dump** | `[autounattend].uup_channel=dev` -> newest Dev Win11 Pro en-US -> stock bootable ISO (+ `.uup.json` build pin) | **[done]**\* |
 | 1 | Merge presets | `Merge-MiOSPresets.ps1` | 3 intact NTLite presets -> `MiOS-Xbox-Merged.xml` (deduped, identity-agnostic) | **[done]** |
-| 2 | Sanitize + inject identity | `ConvertTo-MiOSPreset.ps1` | `MiOS-Xbox-Merged.xml` + `mios.toml` -> `MiOS-Xbox.xml` (SSOT hostname/accounts/AutoLogon/FirstLogonCommands, GUID `{MIOS-XBOX-SSOT}`, AutoIso, Posture B) | **[done]** |
-| 3 | Emit autounattend | `New-MiOSAutounattend.ps1` | SSOT -> `autounattend.xml` (Setup-consumed: OOBE, LabConfig bypass, disk layout, accounts, FirstLogon) | **[partial]** |
+| 2 | Sanitize + inject identity (NTLite path) | `ConvertTo-MiOSPreset.ps1` | `MiOS-Xbox-Merged.xml` + `mios.toml` -> `MiOS-Xbox.xml` (SSOT hostname/accounts/AutoLogon/FirstLogonCommands, GUID `{MIOS-XBOX-SSOT}`, AutoIso, Posture B) | **[done]** |
+| 3 | Emit autounattend | `New-MiOSAutounattend.ps1` | SSOT -> `autounattend.xml` (Setup-consumed: OOBE, LabConfig bypass, disk layout, accounts, FirstLogon incl. Xbox) | **[partial]** |
 | 4 | Export drivers | `Export-MiOSDrivers.ps1` | live OEM -> `M:\MiOS\drivers\*.inf` for slipstream | **[partial]** |
-| 5 | Mount image | `Mount-WindowsImage` | `install.wim` (index = Pro) -> `M:\mount` | [todo] |
-| 6 | Offline servicing | `DISM` module | remove appx/capabilities/features, add packages/drivers, offline-reg tweaks (per conversion map) | [todo] |
-| 7 | Deep debloat (optional) | **NTLite** *or* skip | the ~200 CBS-only component removals DISM cannot do | [todo]/[ext] |
-| 8 | Commit + optimize | `Dismount-WindowsImage -Save` + `Export-WindowsImage` (or `dism /Export-Image`) | serviced mount -> trimmed `install.wim`/`.esd` | [todo] |
-| 9 | Stage ISO tree | copy | serviced `install.wim` + `autounattend.xml` + boot files -> `M:\MiOS\iso\root\` | [todo] |
-| 10 | Build ISO | **oscdimg.exe** (ADK) | ISO tree -> `MiOS-Xbox.iso` (BIOS+UEFI El-Torito) | [todo] |
+| 5-10 | **DISM-native ISO (canonical)** | `New-MiOSISO.ps1` | stock ISO -> extract -> mount `install.wim` -> Remove-WindowsCapability (51) + Disable-WindowsOptionalFeature (23) from the merged preset + Xbox FSE reg into the image -> Dismount-Save -> Export-WindowsImage Max -> autounattend at root -> **oscdimg** dual BIOS/UEFI -> `MiOS-Xbox.iso` | **[done]**\* |
+| X | Xbox Full Screen Experience | `MiOS-Provision.lib.ps1` `New-MiOSXboxModeCommands` + offline reg in `New-MiOSISO.ps1` | `[autounattend.xbox]` -> FeatureManagement override (ids `59765208`) + DeviceForm spoof, image-wide + FirstLogon (reg-only, no vivetool.exe) | **[done]** |
+| 7 | Deep debloat (optional) | **NTLite** *or* skip | the 286 CBS-only component removals (`RemoveComponents/<c>`) DISM cannot do -- the NTLite-only residue | [todo]/[ext] |
+
+\* **[done]** = script written, parses, unit-verified (SSOT reads, preset parse, command emission). End-to-end run needs elevation + a live UUP Dump Dev fetch + the Windows ADK (oscdimg) on the build host; not executed in this pass (no ISO built).
 
 ## Stage detail
 
