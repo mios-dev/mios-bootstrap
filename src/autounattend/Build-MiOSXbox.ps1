@@ -170,8 +170,11 @@ function Invoke-MiOSHyperVTest {
     $dvd = Get-VMDvdDrive -VMName $Name
 
     if ($SecureBoot) {
+        # Windows ISO -> 'MicrosoftWindows' template (Windows Production PCA). The
+        # 'MicrosoftUEFICertificateAuthority' (Linux/shim) template rejects the Windows
+        # bootloader: "The signed image's hash is not allowed (DB)".
         Set-VMFirmware -VMName $Name -EnableSecureBoot On `
-            -SecureBootTemplate 'MicrosoftUEFICertificateAuthority' -FirstBootDevice $dvd
+            -SecureBootTemplate 'MicrosoftWindows' -FirstBootDevice $dvd
     } else {
         Set-VMFirmware -VMName $Name -EnableSecureBoot Off -FirstBootDevice $dvd
     }

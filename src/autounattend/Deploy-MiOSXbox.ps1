@@ -103,7 +103,11 @@ try {
     Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $true -MinimumBytes 2GB -StartupBytes 8GB -MaximumBytes 8GB
     Add-VMDvdDrive -VMName $VMName -Path $iso
     $dvd = Get-VMDvdDrive -VMName $VMName
-    Set-VMFirmware -VMName $VMName -EnableSecureBoot On -SecureBootTemplate 'MicrosoftUEFICertificateAuthority' -FirstBootDevice $dvd
+    # WINDOWS ISO -> the 'MicrosoftWindows' SB template (its boot files are signed
+    # under the Windows Production PCA). 'MicrosoftUEFICertificateAuthority' is the
+    # Linux/shim template and rejects the Windows bootloader ("signed image's hash is
+    # not allowed (DB)").
+    Set-VMFirmware -VMName $VMName -EnableSecureBoot On -SecureBootTemplate 'MicrosoftWindows' -FirstBootDevice $dvd
     $swv = Get-VMSwitch -EA SilentlyContinue | Where-Object Name -eq 'Default Switch'
     if (-not $swv) { $swv = Get-VMSwitch -SwitchType External -EA SilentlyContinue | Select-Object -First 1 }
     if ($swv) { Connect-VMNetworkAdapter -VMName $VMName -SwitchName $swv.Name; Log "NIC -> $($swv.Name)" } else { Log "WARN no NAT/External vSwitch -- guest has no internet; MiOS bootstrap will not fetch" Yellow }
