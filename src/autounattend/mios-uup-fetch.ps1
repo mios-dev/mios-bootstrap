@@ -79,24 +79,47 @@ function Invoke-UupApi {
 function Resolve-MiOSUupBuild {
     param([string]$Ring, [string]$Arch, [string]$Edition, [string]$Lang)
     Write-Host "[*] Resolving newest $Ring-channel $Arch build ..." -ForegroundColor Cyan
-    $upd = Invoke-UupApi "$API/fetchupd.php?arch=$Arch&ring=$Ring&flight=Mainline"
-    $r   = $upd.response
-    if (-not $r -or -not $r.updateArray -or $r.updateArray.Count -lt 1) {
-        throw "No $Ring build returned by fetchupd (arch=$Arch)."
+    $uuid = $null; $build = $null; $title = $null
+    # (1) live WU scan (fetchupd.php) -- authoritative for the exact ring, but FLAKY:
+    #     Microsoft's WU backend returns HTTP 500 / NO_UPDATE_FOUND / rate-limits under
+    #     load and between flights. Try it, but never let it be the only source.
+    try {
+        $upd = Invoke-UupApi "$API/fetchupd.php?arch=$Arch&ring=$Ring&flight=Mainline" -Retries 3
+        $r   = $upd.response
+        if ($r -and $r.updateArray -and @($r.updateArray).Count -ge 1) {
+            $sel   = @($r.updateArray)[0]
+            $uuid  = $sel.updateId; $title = $sel.updateTitle
+            $build = if ($sel.foundBuild) { $sel.foundBuild } elseif ($sel.build) { $sel.build }
+                     elseif ("$title" -match '\b(\d+\.\d+)\b') { $Matches[1] } else { 'unknown' }
+            Write-Host "    fetchupd -> build=$build uuid=$uuid ($title)" -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Host "[!] fetchupd live-scan unavailable ($($_.Exception.Message.Split([Environment]::NewLine)[0]))." -ForegroundColor Yellow
     }
-    $sel = $r.updateArray[0]
-    # fetchupd.php updateArray elements expose the build as 'foundBuild' (NOT 'build');
-    # fall back to the number in the title so the reproducibility pin never records null.
-    $uuid = $sel.updateId; $title = $sel.updateTitle
-    $build = if ($sel.foundBuild) { $sel.foundBuild } elseif ($sel.build) { $sel.build }
-             elseif ("$title" -match '\b(\d+\.\d+)\b') { $Matches[1] } else { 'unknown' }
-    Write-Host "    build=$build  uuid=$uuid  ($title)" -ForegroundColor DarkGray
-    # Confirm the requested edition/lang are actually populated for this build.
-    $eds = Invoke-UupApi "$API/listeditions.php?id=$uuid&lang=$Lang"
-    $have = @($eds.response.editionFancyNames.PSObject.Properties.Name)
-    if ($have.Count -and -not ($have | Where-Object { $_ -ieq $Edition })) {
-        Write-Host "[!] Edition '$Edition' not yet populated for $build; editions: $($have -join ', ')" -ForegroundColor Yellow
+    # (2) catalog fallback (listid.php) -- the cataloged UUP DB. Pick the newest amd64
+    #     full "Feature Update" (a buildable base, NOT a Quality/CU delta), preferring
+    #     the Dev/25H2 26xxx range. Robust when the live scan is down (this is exactly
+    #     what the Linux builder falls back to).
+    if (-not $uuid) {
+        Write-Host "[*] Falling back to the UUP catalog (listid.php) ..." -ForegroundColor Cyan
+        $lst = Invoke-UupApi "$API/listid.php?search=Windows%2011%20Insider%20Preview%20Feature%20Update&sortByDate=1"
+        $builds = @($lst.response.builds)
+        if ($builds.Count -eq 0 -and $lst.response.builds) { $builds = @($lst.response.builds.PSObject.Properties.Value) }
+        $cand = @($builds | Where-Object { $_.arch -eq $Arch -and "$($_.title)" -match 'Feature Update' })
+        $pref = @($cand | Where-Object { "$($_.build)" -match '^(26200|26120|26100)' })
+        $pick = if ($pref.Count) { $pref[0] } elseif ($cand.Count) { $cand[0] } else { $null }
+        if (-not $pick) { throw "No $Ring/Insider Feature Update build found via fetchupd OR listid (arch=$Arch)." }
+        $uuid = $pick.uuid; $build = $pick.build; $title = $pick.title
+        Write-Host "    listid -> build=$build uuid=$uuid ($title)" -ForegroundColor DarkGray
     }
+    # Confirm the requested edition/lang are actually populated for this build (non-fatal).
+    try {
+        $eds  = Invoke-UupApi "$API/listeditions.php?id=$uuid&lang=$Lang" -Retries 3
+        $have = @($eds.response.editionFancyNames.PSObject.Properties.Name)
+        if ($have.Count -and -not ($have | Where-Object { $_ -ieq $Edition })) {
+            Write-Host "[!] Edition '$Edition' not yet populated for $build; editions: $($have -join ', ')" -ForegroundColor Yellow
+        }
+    } catch { Write-Host "[!] listeditions check skipped ($($_.Exception.Message.Split([Environment]::NewLine)[0]))" -ForegroundColor Yellow }
     return [pscustomobject]@{ Uuid = $uuid; Build = $build; Title = $title }
 }
 
