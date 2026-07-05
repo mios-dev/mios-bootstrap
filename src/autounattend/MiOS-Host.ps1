@@ -25,6 +25,15 @@ function Log { param([string]$m) "$([Environment]::TickCount) $m" | Out-File -Ap
 # packaged one carries the WSL-2.0.0 Session-0 fix.
 $wsl = if (Test-Path "$env:ProgramFiles\WSL\wsl.exe") { "$env:ProgramFiles\WSL\wsl.exe" } else { 'wsl.exe' }
 
+# wsl.exe emits --list output as UTF-16LE regardless of codepage (microsoft/WSL#4607);
+# captured by PS 5.1 it becomes NUL-interleaved mojibake so a plain regex never matches.
+# WSL_UTF8=1 makes it emit UTF-8; strip any residual NULs as belt-and-suspenders.
+$env:WSL_UTF8 = '1'
+function Test-DistroRegistered { param([string]$Name)
+    $list = (& $wsl --list --quiet 2>$null) -join "`n"
+    return (($list -replace "`0", '') -match [regex]::Escape($Name))
+}
+
 # --- FIRST RUN: one-time heavy install (as mios-svc, NOT SYSTEM) -------------
 # The nested MiOS installer provisions the WSL2 distro + podman + Quadlet units.
 # It registers the distro in THIS account's Lxss hive (the one the keep-alive uses),
@@ -33,14 +42,19 @@ if (-not (Test-Path $marker)) {
     Log "first-run: MiOS install via $BootstrapUrl"
     try {
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm $BootstrapUrl | iex"
-        New-Item -ItemType File -Force -Path $marker | Out-Null
-        Log "first-run: install complete, marker written"
+        # A native exe (powershell.exe) does NOT throw on non-zero exit, so the catch
+        # only fires if it can't launch at all. Mark provisioned ONLY when the install
+        # actually succeeded (exit 0 AND the distro is registered) -- otherwise leave
+        # the marker unset so the next boot retries (fresh boxes often have no/late
+        # network or a reboot-pending WSL feature). Mirrors the $ok gate in Hydrate.
+        $installed = ($LASTEXITCODE -eq 0) -and (Test-DistroRegistered $Distro)
+        if ($installed) { New-Item -ItemType File -Force -Path $marker | Out-Null; Log "first-run: install complete, marker written" }
+        else { Log "first-run: install did not complete (exit=$LASTEXITCODE, distro registered=$(($installed))) -- next boot retries" }
     } catch { Log "first-run: install FAILED: $($_.Exception.Message)" }
 }
 
 # --- EVERY BOOT: ensure the distro is registered + running, then hold it ------
-$registered = (& $wsl --list --quiet) -join "`n"
-if ($registered -notmatch [regex]::Escape($Distro)) {
+if (-not (Test-DistroRegistered $Distro)) {
     Log "distro '$Distro' not registered yet (install pending/failed) -- exiting; next boot retries"
     return
 }

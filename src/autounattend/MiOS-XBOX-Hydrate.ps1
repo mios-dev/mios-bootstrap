@@ -44,8 +44,11 @@ if (Test-Path $marker) { Log 'already hydrated -- removing task'; schtasks /dele
 
 # Need connectivity for the Store/web fetch; if offline, exit and let the next
 # logon retry (the ONLOGON task stays registered until the marker is set).
-if (-not (Test-Connection -ComputerName 'www.microsoft.com' -Count 1 -Quiet -ErrorAction SilentlyContinue)) {
-    Log 'no network yet -- will retry next logon'; return
+# Probe TCP 443, NOT ICMP: Microsoft's edge (and many routers/firewalls) drop ICMP
+# echo even when HTTPS works -- an ICMP gate would false-"offline" a fully online box
+# and, since the marker is only set on success, no-op hydration forever.
+if (-not (Test-NetConnection -ComputerName 'www.microsoft.com' -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue)) {
+    Log 'no network yet (TCP 443 to microsoft.com) -- will retry next logon'; return
 }
 
 $ok = $true

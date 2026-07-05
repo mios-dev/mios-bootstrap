@@ -37,7 +37,11 @@ function Read-MiosToml {
     if (-not (Test-Path -LiteralPath $Path)) { return $r }
     $section = ''; $cur = $null
     foreach ($raw in [IO.File]::ReadAllLines($Path)) {
-        $line = ($raw -replace '#.*$', '').Trim()
+        $line = $raw.Trim()
+        # Skip blank + full-line comments. Strip only a WHITESPACE-preceded trailing
+        # comment -- a bare `#.*$` strip would eat a hex value like accent="#1A407F".
+        if (-not $line -or $line.StartsWith('#')) { continue }
+        $line = ($line -replace '\s+#.*$', '').Trim()
         if (-not $line) { continue }
         if ($line -eq '[[autounattend.accounts]]') {
             if ($cur) { $r.accounts += ,$cur }
@@ -48,10 +52,11 @@ function Read-MiosToml {
             $section = $Matches['s']; continue
         }
         if ($line -match '^(?<k>[A-Za-z0-9_\-\.]+)\s*=\s*(?<v>.+)$') {
-            $k = $Matches['k'].Trim(); $v = $Matches['v'].Trim().Trim('"', "'")
+            # Unescape TOML basic-string backslashes ("C:\\x" -> "C:\x") so SSOT paths
+            # match the single-backslash in-code defaults.
+            $k = $Matches['k'].Trim(); $v = ($Matches['v'].Trim().Trim('"', "'")) -replace '\\\\', '\'
             if ($section -eq 'account' -and $cur -ne $null) { $cur[$k] = $v }
-            elseif ($section -eq 'autounattend.preferences') { $r.prefs[$k] = $v }
-            else { $r.scalars["$section.$k"] = $v }
+            else { $r.scalars["$section.$k"] = $v }   # incl. autounattend.preferences.* (read via Get-Toml/scalars)
         }
     }
     if ($cur) { $r.accounts += ,$cur }
@@ -235,8 +240,11 @@ function New-MiOSHostServiceCommands {
     $cmds.Add('dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart')
     $cmds.Add('dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart')
     # 2) Dedicated NON-admin service account (WSL can't run as SYSTEM).
-    $cmds.Add(('net user "{0}" "{1}" /add /y' -f $svcUser, $svcPass))
-    $cmds.Add(('wmic useraccount where "name=''{0}''" set PasswordExpires=false' -f $svcUser))
+    # `net user` has NO /y switch (that's `net use`) -- with /y it prints usage +
+    # exits 2 without creating the account. And wmic.exe is removed on 25H2/Dev
+    # (the target channel), so use the inbox LocalAccounts cmdlet for no-expiry.
+    $cmds.Add(('net user "{0}" "{1}" /add' -f $svcUser, $svcPass))
+    $cmds.Add(('powershell.exe -NoProfile -Command "Set-LocalUser -Name ''{0}'' -PasswordNeverExpires $true"' -f $svcUser))
     # 3) RDP: allow connections + firewall group + NLA (all three are required).
     if ((Get-Toml $Toml 'autounattend.service.enable_rdp' 'true') -match '^(?i:true|1|yes)$') {
         $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')

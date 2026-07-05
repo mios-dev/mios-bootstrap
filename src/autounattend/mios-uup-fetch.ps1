@@ -85,7 +85,11 @@ function Resolve-MiOSUupBuild {
         throw "No $Ring build returned by fetchupd (arch=$Arch)."
     }
     $sel = $r.updateArray[0]
-    $uuid = $sel.updateId; $title = $sel.updateTitle; $build = $sel.build
+    # fetchupd.php updateArray elements expose the build as 'foundBuild' (NOT 'build');
+    # fall back to the number in the title so the reproducibility pin never records null.
+    $uuid = $sel.updateId; $title = $sel.updateTitle
+    $build = if ($sel.foundBuild) { $sel.foundBuild } elseif ($sel.build) { $sel.build }
+             elseif ("$title" -match '\b(\d+\.\d+)\b') { $Matches[1] } else { 'unknown' }
     Write-Host "    build=$build  uuid=$uuid  ($title)" -ForegroundColor DarkGray
     # Confirm the requested edition/lang are actually populated for this build.
     $eds = Invoke-UupApi "$API/listeditions.php?id=$uuid&lang=$Lang"
@@ -144,7 +148,10 @@ function Invoke-MiOSUupConvert {
     $cmd = Join-Path $PackageDir 'uup_download_windows.cmd'
     Write-Host "[*] Running UUP converter (aria2 fetch + build ISO) -- this is long ..." -ForegroundColor Cyan
     Push-Location $PackageDir
-    try { & cmd.exe /c "`"$cmd`"" } finally { Pop-Location }
+    # Pipe the converter's native stdout to the HOST (visible in the transcript) so it
+    # does NOT enter the success stream -- otherwise this function returns an ARRAY of
+    # [converter log lines..., iso path] and the caller's $SourceIso is garbage.
+    try { & cmd.exe /c "`"$cmd`"" 2>&1 | Out-Host } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw "uup_download_windows.cmd failed (exit $LASTEXITCODE)" }
     $iso = Get-ChildItem -Path $PackageDir -Filter '*.ISO' -File -ErrorAction SilentlyContinue |
            Sort-Object LastWriteTime -Descending | Select-Object -First 1

@@ -162,8 +162,19 @@ function Set-MiOSXboxOfflineReg {
 function Invoke-MiOSImageServicing {
     param([string]$MediaRoot, $Toml, [object]$Removals)
     $wim = Join-Path $MediaRoot 'sources\install.wim'
-    if (-not (Test-Path $wim)) { $wim = Join-Path $MediaRoot 'sources\install.esd' }
-    if (-not (Test-Path $wim)) { throw "No sources\install.wim|.esd under $MediaRoot" }
+    if (-not (Test-Path $wim)) {
+        # Only a solid install.esd (LZMS) is present (MCT media / esd builds). DISM
+        # cannot MOUNT an .esd read-write -- convert the needed index to a mountable
+        # .wim first (Export-WindowsImage esd->wim), then service the .wim.
+        $esd = Join-Path $MediaRoot 'sources\install.esd'
+        if (-not (Test-Path $esd)) { throw "No sources\install.wim|.esd under $MediaRoot" }
+        Get-ChildItem $esd | ForEach-Object { $_.IsReadOnly = $false }
+        $ei = (Get-WindowsImage -ImagePath $esd | Where-Object { $_.ImageName -match 'Pro' } | Select-Object -First 1)
+        if (-not $ei) { $ei = Get-WindowsImage -ImagePath $esd | Select-Object -First 1 }
+        Write-Host "[*] Converting install.esd (index $($ei.ImageIndex)) -> mountable install.wim ..." -ForegroundColor Cyan
+        Export-WindowsImage -SourceImagePath $esd -SourceIndex $ei.ImageIndex -DestinationImagePath $wim -CompressionType Max | Out-Null
+        Remove-Item $esd -Force -ErrorAction SilentlyContinue
+    }
     Get-ChildItem $wim | ForEach-Object { $_.IsReadOnly = $false }
     $idx = (Get-WindowsImage -ImagePath $wim | Where-Object { $_.ImageName -match 'Pro' } | Select-Object -First 1).ImageIndex
     if (-not $idx) { $idx = (Get-WindowsImage -ImagePath $wim | Select-Object -First 1).ImageIndex }
@@ -236,7 +247,9 @@ function Build-MiOSBootableIso {
     # (install.wim exceeds ISO-9660's 4GB single-file cap). -l<label> no space.
     $bootdata = "-bootdata:2#p0,e,b$bios#pEF,e,b$uefi"
     Write-Host "[*] oscdimg -> $OutIso ..." -ForegroundColor Cyan
-    & $oscdimg -m -o -u2 -udfver102 "-l$Label" $bootdata $MediaRoot $OutIso
+    # Out-Host: keep oscdimg's output in the transcript but out of the success stream
+    # (New-MiOSISO returns $OutIso; a leaked oscdimg log would make the return an array).
+    & $oscdimg -m -o -u2 -udfver102 "-l$Label" $bootdata $MediaRoot $OutIso 2>&1 | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "oscdimg failed (exit $LASTEXITCODE)" }
 }
 
@@ -257,7 +270,7 @@ if (-not $WorkDir) { $WorkDir = if (Test-Path 'M:\') { 'M:\MiOS\isobuild' } else
 # Stage 0 -- source ISO (fetch Dev-channel if not supplied).
 if (-not $SourceIso) {
     Write-Host "[*] No -SourceIso; fetching stock ISO via mios-uup-fetch (channel from SSOT) ..." -ForegroundColor Cyan
-    $SourceIso = & (Join-Path $PSScriptRoot 'mios-uup-fetch.ps1') -TomlPath $TomlPath
+    $SourceIso = & (Join-Path $PSScriptRoot 'mios-uup-fetch.ps1') -TomlPath $TomlPath -Esd:$Esd
 }
 if (-not (Test-Path $SourceIso)) { throw "Source ISO not found: $SourceIso" }
 

@@ -103,7 +103,11 @@ function Read-MiosToml {
     $section = ''
     $curAccount = $null
     foreach ($raw in $lines) {
-        $line = ($raw -replace '#.*$', '').Trim()
+        $line = $raw.Trim()
+        # Skip blank + full-line comments; strip only whitespace-preceded trailing
+        # comments so a hex value like accent="#1A407F" survives (matches the lib).
+        if (-not $line -or $line.StartsWith('#')) { continue }
+        $line = ($line -replace '\s+#.*$', '').Trim()
         if (-not $line) { continue }
         if ($line -eq '[[autounattend.accounts]]') {
             if ($curAccount) { $result.accounts += ,$curAccount }
@@ -118,7 +122,7 @@ function Read-MiosToml {
         }
         if ($line -match '^(?<k>[A-Za-z0-9_\-\.]+)\s*=\s*(?<v>.+)$') {
             $k = $Matches['k'].Trim()
-            $v = $Matches['v'].Trim().Trim('"', "'")
+            $v = ($Matches['v'].Trim().Trim('"', "'")) -replace '\\\\', '\'   # unescape TOML "\\" -> "\"
             if ($section -eq 'account' -and $curAccount -ne $null) {
                 $curAccount[$k] = $v
             } else {
