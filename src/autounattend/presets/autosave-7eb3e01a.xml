@@ -1,0 +1,526 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Preset isAutoSaved="true" xmlns="urn:schemas-nliteos-com:pn.v1">
+	<Date>01/30/2026 16:53:52</Date>
+	<Version>1.1</Version>
+	<AppInfo>
+		<Version>2026.1.10761</Version>
+		<Licensed>No</Licensed>
+		<Protections>Yes</Protections>
+		<Host>Windows 11 ProfessionalWorkstation 26H1 x64 - 10.0.28000.1 (en-US)</Host>
+	</AppInfo>
+	<ImageInfo>
+		<Version mode="offline">Windows 11 Professional 25H2 x64 - 10.0.26220.7670 (en-US)</Version>
+		<GUID>{BB1204F0-8B7F-4643-8975-6C0715DFC689}</GUID>
+	</ImageInfo>
+	<RemoveComponents AppRemovalMode="DISM">
+		<c>adamclient 'Active Directory Lightweight Directory Services (AD LDS)'</c>
+		<c>enterpriseclientsync 'Work Folders Client'</c>
+		<c>hwsupport_wia 'Windows Image Acquisition (WIA)'</c>
+		<c>microsoft.services.store.engagement 'Microsoft Engagement Framework'</c>
+		<c>microsoft.windowsterminal 'Windows Terminal'</c>
+		<c>simpletcp 'Simple TCP/IP services'</c>
+		<c>smbdirect 'SMB Direct (RDMA)'</c>
+		<c>stici 'Still Image Class Installer'</c>
+		<c>telnetclient 'Telnet Client'</c>
+		<c>tftpclient 'TFTP client'</c>
+		<c>winocr 'Windows TIFF IFilter (OCR)'</c>
+	</RemoveComponents>
+	<RemoveComponents AppRemovalMode="DISM" date="01/29/2026 19:07:20">
+		<c>adamclient 'Active Directory Lightweight Directory Services (AD LDS)'</c>
+		<c>appv 'Application Virtualization (App-V)'</c>
+		<c>assembly.net '.NET assembly cache'</c>
+		<c>branchcacheclient 'BranchCache Client'</c>
+		<c>e2a4f912-2574-4a75-9bb0-0d023378592b 'App Resolver'</c>
+		<c>easeofaccessthemes 'Ease Of Access Themes'</c>
+		<c>embeddedexperience 'Device Lockdown (Embedded Experience)'</c>
+		<c>enterpriseclientsync 'Work Folders Client'</c>
+		<c>f46d4000-fd22-4db4-ac8e-4e1ddde828fe 'Add Folder Suggestions dialog'</c>
+		<c>fciclient 'File Server Resource Manager'</c>
+		<c>help 'Windows Help content'</c>
+		<c>hwsupport_internetprintingclient 'Internet Printing Client'</c>
+		<c>hwsupport_scanner 'Scanner'</c>
+		<c>iis 'Internet Information Server (IIS)'</c>
+		<c>internetexplorer32 'Internet Explorer - 32 bit'</c>
+		<c>kerneldebug 'Kernel Debugging'</c>
+		<c>la57 '57-bit Linear Addressing'</c>
+		<c>lxss 'Windows Subsystem for Linux'</c>
+		<c>manifestbackup 'Manifest Backup (WinSxS\Backup)'</c>
+		<c>mediaplayer 'Windows Media Player'</c>
+		<c>mediaplayer32 'Windows Media Player - 32 bit'</c>
+		<c>mediaplayernetworksharing 'WMP Network Sharing Service'</c>
+		<c>mediaplayernetworksharing32 'WMP Network Sharing Service - 32 bit'</c>
+		<c>microsoft.applicationcompatibilityenhancements 'Windows Application Compatibility Enhancements'</c>
+		<c>microsoft.asynctextservice 'AsyncTextService'</c>
+		<c>microsoft.av1videoextension 'AV1 Video Extension'</c>
+		<c>microsoft.avcencodervideoextension 'AVC Encoder Video Extension'</c>
+		<c>microsoft.bingsearch 'Microsoft Bing Search'</c>
+		<c>microsoft.bioenrollment 'Windows Hello Setup'</c>
+		<c>microsoft.creddialoghost 'Credential Dialog'</c>
+		<c>microsoft.ecapp 'Eye Control'</c>
+		<c>microsoft.heifimageextension 'HEIF Image Extensions'</c>
+		<c>microsoft.hevcvideoextension 'HEVC Video Extensions from Device Manufacturer'</c>
+		<c>microsoft.lockapp 'Windows Default Lock Screen'</c>
+		<c>microsoft.microsoftedgedevtoolsclient 'Microsoft Edge DevTools Client'</c>
+		<c>microsoft.microsoftstickynotes 'Microsoft Sticky Notes'</c>
+		<c>microsoft.mpeg2videoextension 'MPEG-2 Video Extension'</c>
+		<c>microsoft.paint 'Paint'</c>
+		<c>microsoft.rawimageextension 'Raw Image Extension'</c>
+		<c>microsoft.sechealthui 'Microsoft Defender Antivirus'</c>
+		<c>microsoft.storepurchaseapp 'Store Experience Host'</c>
+		<c>microsoft.vp9videoextensions 'VP9 Video Extensions'</c>
+		<c>microsoft.webmediaextensions 'Web Media Extensions'</c>
+		<c>microsoft.webpimageextension 'Webp Image Extensions'</c>
+		<c>microsoft.win32webviewhost 'Desktop App Web Viewer'</c>
+		<c>microsoft.windows.assignedaccesslockapp 'Assigned Access Lock app'</c>
+		<c>microsoft.windows.contentdeliverymanager 'Content Delivery Manager'</c>
+		<c>microsoft.windows.devhome 'Dev Home'</c>
+		<c>microsoft.windows.narratorquickstart 'Narrator'</c>
+		<c>microsoft.windows.oobenetworkcaptiveportal 'Captive Portal Flow'</c>
+		<c>microsoft.windows.oobenetworkconnectionflow 'Network Connection Flow'</c>
+		<c>microsoft.windows.parentalcontrols 'Microsoft Family Safety'</c>
+		<c>microsoft.windows.peopleexperiencehost 'Windows Shell Experience'</c>
+		<c>microsoft.windows.photos 'Microsoft Photos'</c>
+		<c>microsoft.windows.pinningconfirmationdialog 'PinningConfirmationDialog'</c>
+		<c>microsoft.windows.printqueueactioncenter 'PrintQueueActionCenter'</c>
+		<c>microsoft.windows.secureassessmentbrowser 'Take a Test'</c>
+		<c>microsoft.windows.xgpuejectdialog 'Safely Remove Device'</c>
+		<c>microsoft.windowscalculator 'Windows Calculator'</c>
+		<c>microsoft.windowscamera 'Windows Camera'</c>
+		<c>microsoft.windowsnotepad 'Windows Notepad'</c>
+		<c>microsoft.windowsterminal 'Windows Terminal'</c>
+		<c>microsoftcorporationii.windowssubsystemforlinux 'Windows Subsystem for Linux'</c>
+		<c>microsoftwindows.client.photon 'Windows Feature Experience Pack - Photon'</c>
+		<c>microsoftwindows.client.webexperience 'Windows Web Experience Pack'</c>
+		<c>microsoftwindows.crossdevice 'Cross Device Experience Host'</c>
+		<c>msmq 'Microsoft Message Queue (MSMQ)'</c>
+		<c>otherthemes 'Windows Personalization themes'</c>
+		<c>photoviewer 'Photo Viewer'</c>
+		<c>photoviewer32 'Photo Viewer - 32 bit'</c>
+		<c>powershellise 'PowerShell ISE'</c>
+		<c>powershellise32 'PowerShell ISE - 32 bit'</c>
+		<c>printtopdf 'Print to PDF'</c>
+		<c>rdc 'Remote Differential Compression (RDC)'</c>
+		<c>rdpclient 'Remote Desktop Client'</c>
+		<c>rdpclient32 'Remote Desktop Client - 32 bit'</c>
+		<c>remoteactivex 'Remote Desktop Services ActiveX Client'</c>
+		<c>remoteactivex32 'Remote Desktop Services ActiveX Client - 32 bit'</c>
+		<c>rotationmanager 'Auto-Rotation Manager'</c>
+		<c>simpletcp 'Simple TCP/IP services'</c>
+		<c>smbdirect 'SMB Direct (RDMA)'</c>
+		<c>supportdir 'Support directory'</c>
+		<c>tabletpc 'Tablet PC'</c>
+		<c>telnetclient 'Telnet Client'</c>
+		<c>tftpclient 'TFTP client'</c>
+		<c>uev 'User Experience Virtualization (UE-V)'</c>
+		<c>wallet 'Wallet Service'</c>
+		<c>wallpaperdefault 'Wallpaper (Default)'</c>
+		<c>wallpapers 'Wallpapers (Themes)'</c>
+		<c>windows.cbspreview 'Windows Barcode Preview'</c>
+		<c>windows.printdialog 'Windows Print'</c>
+		<c>windowstogo 'Windows To Go'</c>
+	</RemoveComponents>
+	<Compatibility>
+		<ComponentFeatures>
+			<Feature enabled="no">AppGuard</Feature>
+			<Feature enabled="no">Battle.net</Feature>
+			<Feature enabled="no">YubiKey</Feature>
+			<Feature enabled="yes">Bluetooth</Feature>
+			<Feature enabled="yes">USBCamera</Feature>
+			<Feature enabled="no">CapFrameX</Feature>
+			<Feature enabled="yes">Discord</Feature>
+			<Feature enabled="yes">EAC</Feature>
+			<Feature enabled="yes">FileSharing</Feature>
+			<Feature enabled="no">Hyper-V</Feature>
+			<Feature enabled="no">iCloud</Feature>
+			<Feature enabled="no">Kaspersky</Feature>
+			<Feature enabled="yes">LegacyGames</Feature>
+			<Feature enabled="no">OfficeSupport</Feature>
+			<Feature enabled="yes">AppxSupport</Feature>
+			<Feature enabled="yes">Netflix</Feature>
+			<Feature enabled="no">NetworkDiscovery</Feature>
+			<Feature enabled="yes">NightLight</Feature>
+			<Feature enabled="yes">NvidiaSetup</Feature>
+			<Feature enabled="no">OOBE</Feature>
+			<Feature enabled="no">PITR</Feature>
+			<Feature enabled="no">Printing</Feature>
+			<Feature enabled="no">Recommended-All</Feature>
+			<Feature enabled="no">RDPServer</Feature>
+			<Feature enabled="no">SamsungSwitch</Feature>
+			<Feature enabled="no">Scanning</Feature>
+			<Feature enabled="yes">ServicingStack</Feature>
+			<Feature enabled="yes">ShellSearchSupport</Feature>
+			<Feature enabled="no">SnippingTool</Feature>
+			<Feature enabled="yes">Spotify</Feature>
+			<Feature enabled="yes">SFC</Feature>
+			<Feature enabled="yes">DefaultFonts</Feature>
+			<Feature enabled="yes">SafeMode</Feature>
+			<Feature enabled="yes">TeamViewer</Feature>
+			<Feature enabled="no">Recommended-Tablet</Feature>
+			<Feature enabled="no">HostRefresh</Feature>
+			<Feature enabled="no">USBModem</Feature>
+			<Feature enabled="yes">USB</Feature>
+			<Feature enabled="yes">VideoPlayback</Feature>
+			<Feature enabled="no">VPN</Feature>
+			<Feature enabled="no">VisualStudio</Feature>
+			<Feature enabled="no">VSS</Feature>
+			<Feature enabled="yes">Activation</Feature>
+			<Feature enabled="no">WFC</Feature>
+			<Feature enabled="yes">WinSetup</Feature>
+			<Feature enabled="yes">WindowsStore</Feature>
+			<Feature enabled="no">WindowsUpdate</Feature>
+			<Feature enabled="yes">WLAN</Feature>
+		</ComponentFeatures>
+		<MachineDrivers>
+			<Machine enabled="yes">HostMachine</Machine>
+			<Machine enabled="no">Hyper-V VM</Machine>
+			<Machine enabled="no">Parallels VM</Machine>
+			<Machine enabled="no">Virtual Box VM</Machine>
+			<Machine enabled="no">VMware VM</Machine>
+		</MachineDrivers>
+	</Compatibility>
+	<Compatibility date="01/29/2026 19:07:20">
+		<ComponentFeatures>
+			<Feature enabled="no">AppGuard</Feature>
+			<Feature enabled="no">Battle.net</Feature>
+			<Feature enabled="no">YubiKey</Feature>
+			<Feature enabled="yes">Bluetooth</Feature>
+			<Feature enabled="yes">USBCamera</Feature>
+			<Feature enabled="no">CapFrameX</Feature>
+			<Feature enabled="yes">Discord</Feature>
+			<Feature enabled="no">Docker</Feature>
+			<Feature enabled="no">EAC</Feature>
+			<Feature enabled="yes">FileSharing</Feature>
+			<Feature enabled="no">Hyper-V</Feature>
+			<Feature enabled="no">iCloud</Feature>
+			<Feature enabled="no">Kaspersky</Feature>
+			<Feature enabled="yes">LegacyGames</Feature>
+			<Feature enabled="yes">OfficeSupport</Feature>
+			<Feature enabled="yes">AppxSupport</Feature>
+			<Feature enabled="yes">Netflix</Feature>
+			<Feature enabled="no">NetworkDiscovery</Feature>
+			<Feature enabled="yes">NightLight</Feature>
+			<Feature enabled="yes">NvidiaSetup</Feature>
+			<Feature enabled="no">OneNote</Feature>
+			<Feature enabled="no">OOBE</Feature>
+			<Feature enabled="no">PITR</Feature>
+			<Feature enabled="no">Printing</Feature>
+			<Feature enabled="no">Recommended-All</Feature>
+			<Feature enabled="no">RDPServer</Feature>
+			<Feature enabled="no">SamsungSwitch</Feature>
+			<Feature enabled="no">Scanning</Feature>
+			<Feature enabled="yes">ServicingStack</Feature>
+			<Feature enabled="yes">ShellSearchSupport</Feature>
+			<Feature enabled="no">SnippingTool</Feature>
+			<Feature enabled="yes">Spotify</Feature>
+			<Feature enabled="yes">SFC</Feature>
+			<Feature enabled="yes">DefaultFonts</Feature>
+			<Feature enabled="no">SafeMode</Feature>
+			<Feature enabled="yes">TeamViewer</Feature>
+			<Feature enabled="no">Recommended-Tablet</Feature>
+			<Feature enabled="no">HostRefresh</Feature>
+			<Feature enabled="no">USBModem</Feature>
+			<Feature enabled="yes">USB</Feature>
+			<Feature enabled="yes">VideoPlayback</Feature>
+			<Feature enabled="no">VPN</Feature>
+			<Feature enabled="no">VisualStudio</Feature>
+			<Feature enabled="no">VSS</Feature>
+			<Feature enabled="yes">Activation</Feature>
+			<Feature enabled="no">WFC</Feature>
+			<Feature enabled="yes">WinSetup</Feature>
+			<Feature enabled="yes">WindowsStore</Feature>
+			<Feature enabled="no">WindowsUpdate</Feature>
+			<Feature enabled="yes">WLAN</Feature>
+		</ComponentFeatures>
+		<MachineDrivers>
+			<Machine enabled="yes">HostMachine</Machine>
+			<Machine enabled="no">Hyper-V VM</Machine>
+			<Machine enabled="no">Parallels VM</Machine>
+			<Machine enabled="no">Virtual Box VM</Machine>
+			<Machine enabled="no">VMware VM</Machine>
+		</MachineDrivers>
+	</Compatibility>
+	<Features date="01/29/2026 19:07:20">
+		<Feature name="Windows.Kernel.LA57~~~~0.0.1.0">false</Feature>
+		<Feature name="NetFx4Extended-ASPNET45">true</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Broadcom.Bcmpciedhd63~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Broadcom.Bcmwl63a~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Broadcom.Bcmwl63al~~~~0.0.1.0">false</Feature>
+		<Feature name="DirectX.Configuration.Database~~~~0.0.1.0">false</Feature>
+		<Feature name="OneCoreUAP.OneSync~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Wallpapers.Extended~~~~0.0.1.0">false</Feature>
+		<Feature name="Hello.Face.20134~~~~0.0.1.0">false</Feature>
+		<Feature name="WCF-HTTP-Activation45">true</Feature>
+		<Feature name="Microsoft.Windows.Ethernet.Client.Intel.E1i68x64~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Ethernet.Client.Intel.E2f68~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwbw02~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwew00~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwew01~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwlv64~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwns64~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwsw00~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwtw02~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwtw04~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwtw06~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwtw08~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Intel.Netwtw10~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Marvel.Mrvlpcie8897~~~~0.0.1.0">false</Feature>
+		<Feature name="MathRecognizer~~~~0.0.1.0">false</Feature>
+		<Feature name="WCF-MSMQ-Activation45">true</Feature>
+		<Feature name="Edge.Webview2.Platform~~~~">false</Feature>
+		<Feature name="WCF-Pipe-Activation45">true</Feature>
+		<Feature name="Microsoft.Windows.Notepad.System~~~~0.0.1.0">false</Feature>
+		<Feature name="Print.Management.Console~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Qualcomm.Athw8x~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Qualcomm.Athwnx~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Qualcomm.Qcamain10x64~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Ralink.Netr28x~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Ethernet.Client.Realtek.Rtcx21x64~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Realtek.Rtl8192se~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Realtek.Rtwlane~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Realtek.Rtwlane01~~~~0.0.1.0">false</Feature>
+		<Feature name="Microsoft.Windows.Wifi.Client.Realtek.Rtwlane13~~~~0.0.1.0">false</Feature>
+		<Feature name="AppServerClient">true</Feature>
+		<Feature name="Windows.SmbDirect~~~~">false</Feature>
+		<Feature name="WCF-TCP-Activation45">true</Feature>
+		<Feature name="Microsoft.Windows.Ethernet.Client.Vmware.Vmxnet3~~~~0.0.1.0">false</Feature>
+		<Feature name="Media.WindowsMediaPlayer~~~~0.0.12.0">false</Feature>
+		<Feature name="Microsoft.Windows.PowerShell.ISE~~~~0.0.1.0">false</Feature>
+		<Feature name="SearchEngine-Client-Package">false</Feature>
+		<Feature name="Microsoft-Windows-Subsystem-Linux">true</Feature>
+		<Feature name="Windows.WorkFolders.Client~~~~">false</Feature>
+	</Features>
+	<Packages>
+		<Options>
+			<CleanHotfixedLeftovers>4</CleanHotfixedLeftovers>
+			<OptimizeAppX>true</OptimizeAppX>
+			<UpdateBootManager>true</UpdateBootManager>
+		</Options>
+		<File>C:\Program Files\NTLite\Cache\Updates\11.25H2.x64\windows11.0-kb5074108-x64_de8816eab7cf9e5715212af6d98edcb759625d4f.cab</File>
+		<File>C:\Program Files\NTLite\Cache\Updates\11.25H2.x64\windows11.0-kb5074111-x64_4d9cee2cd856cf3760c1b0f875204cac749b8118.cab</File>
+		<File>C:\Program Files\NTLite\Cache\Updates\11.25H2.x64\windows11.0-kb5078127-x64_2669c24d8d8227e7992853d32fb4e95873bbe6bf.msu</File>
+		<File>C:\Program Files\NTLite\Cache\Updates\11.25H2.x64\windows11.0-kb5068516-x64_52337d6ab0d11b474dfafe1b14155d4a63ac2a8a.cab</File>
+	</Packages>
+	<Packages date="01/29/2026 19:07:20">
+		<Options>
+			<CleanHotfixedLeftovers>4</CleanHotfixedLeftovers>
+			<OptimizeAppX>true</OptimizeAppX>
+		</Options>
+	</Packages>
+	<Unattended mode="0" date="01/29/2026 19:07:20">
+		<settings pass="oobeSystem">
+			<component name="Microsoft-Windows-International-Core">
+				<InputLocale>0409:00000409</InputLocale>
+				<SystemLocale>en-US</SystemLocale>
+				<UILanguage>en-US</UILanguage>
+				<UILanguageFallback>en-US</UILanguageFallback>
+				<UserLocale>en-US</UserLocale>
+			</component>
+			<component name="Microsoft-Windows-Shell-Setup">
+				<TimeZone>Coordinated Universal Time</TimeZone>
+				<AutoLogon>
+					<Enabled>true</Enabled>
+					<LogonCount>9999999</LogonCount>
+					<Username>NTLiteUser</Username>
+					<Password>
+						<PlainText>true</PlainText>
+						<Value></Value>
+					</Password>
+				</AutoLogon>
+				<OOBE>
+					<HideEULAPage>true</HideEULAPage>
+					<HideLocalAccountScreen>true</HideLocalAccountScreen>
+					<HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+					<HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+					<NetworkLocation>Home</NetworkLocation>
+					<ProtectYourPC>3</ProtectYourPC>
+				</OOBE>
+				<UserAccounts>
+					<LocalAccounts>
+						<LocalAccount>
+							<DisplayName>NTLite User</DisplayName>
+							<Group>Administrators</Group>
+							<Name>NTLiteUser</Name>
+							<Password>
+								<PlainText>true</PlainText>
+								<Value></Value>
+							</Password>
+						</LocalAccount>
+					</LocalAccounts>
+				</UserAccounts>
+			</component>
+		</settings>
+		<settings pass="specialize">
+			<component name="Microsoft-Windows-Security-SPP-UX">
+				<SkipAutoActivation>true</SkipAutoActivation>
+			</component>
+			<component name="Microsoft-Windows-Shell-Setup">
+				<ComputerName>DESKTOP-D0UCH3</ComputerName>
+			</component>
+		</settings>
+		<settings pass="windowsPE">
+			<component name="Microsoft-Windows-International-Core-WinPE">
+				<InputLocale>0409:00000409</InputLocale>
+				<SystemLocale>en-US</SystemLocale>
+				<UILanguage>en-US</UILanguage>
+				<UILanguageFallback>en-US</UILanguageFallback>
+				<UserLocale>en-US</UserLocale>
+				<SetupUILanguage>
+					<UILanguage>en-US</UILanguage>
+				</SetupUILanguage>
+			</component>
+			<component name="Microsoft-Windows-Setup">
+				<Diagnostics>
+					<OptIn>false</OptIn>
+				</Diagnostics>
+				<DynamicUpdate>
+					<Enable>false</Enable>
+					<WillShowUI>OnError</WillShowUI>
+				</DynamicUpdate>
+				<UserData>
+					<AcceptEula>true</AcceptEula>
+				</UserData>
+			</component>
+		</settings>
+	</Unattended>
+	<Tweaks>
+		<Settings date="01/29/2026 19:07:20">
+			<TweakGroup name="DesktopTweaks">
+				<Tweak name="Keyboard\PrintScreenKeyForSnippingEnabled">0</Tweak>
+			</TweakGroup>
+		</Settings>
+	</Tweaks>
+	<ApplyOptions>
+		<ImageTasks>
+			<Task>imageSaveTrim</Task>
+			<Task>imageFormatWim</Task>
+			<Task>updates_winre.wim_01__64</Task>
+			<Task>updates_boot.wim_01_2_64</Task>
+			<Task>components_winre.wim_01__64</Task>
+			<Task>components_boot.wim_01_2_64</Task>
+			<Task>drivers_winre.wim_01__64</Task>
+			<Task>drivers_boot.wim_01_2_64</Task>
+			<Task>tweakscheduledtasks_winre.wim_01__64</Task>
+			<Task>tweakscheduledtasks_boot.wim_01_2_64</Task>
+			<Task>tweakservices_winre.wim_01__64</Task>
+			<Task>tweakservices_boot.wim_01_2_64</Task>
+			<Task>tweakextraservices_winre.wim_01__64</Task>
+			<Task>tweakextraservices_boot.wim_01_2_64</Task>
+			<Task>tweaksettings_winre.wim_01__64</Task>
+			<Task>tweaksettings_boot.wim_01_2_64</Task>
+			<Task>powerschemes_winre.wim_01__64</Task>
+			<Task>powerschemes_boot.wim_01_2_64</Task>
+			<Task>registry_winre.wim_01__64</Task>
+			<Task>registry_boot.wim_01_2_64</Task>
+			<Task>imageOptionsCreateIso</Task>
+		</ImageTasks>
+		<AutoIsoFile>C:\Users\Admin\Desktop\Xbox-Minimal-25H2.iso</AutoIsoFile>
+		<AutoIsoLabel>XboxMinimal</AutoIsoLabel>
+	</ApplyOptions>
+	<ApplyOptions date="01/29/2026 19:07:20">
+		<ImageTasks>
+			<Task>imageSaveTrim</Task>
+			<Task>deledition_boot.wim_01_9_64</Task>
+			<Task>imageFormatWim</Task>
+			<Task>updates_winre.wim_01__64</Task>
+			<Task>updates_boot.wim_02_2_64</Task>
+			<Task>components_winre.wim_01__64</Task>
+			<Task>components_boot.wim_02_2_64</Task>
+			<Task>drivers_winre.wim_01__64</Task>
+			<Task>drivers_boot.wim_02_2_64</Task>
+			<Task>tweakscheduledtasks_winre.wim_01__64</Task>
+			<Task>tweakscheduledtasks_boot.wim_02_2_64</Task>
+			<Task>tweakservices_winre.wim_01__64</Task>
+			<Task>tweakservices_boot.wim_02_2_64</Task>
+			<Task>tweakextraservices_winre.wim_01__64</Task>
+			<Task>tweakextraservices_boot.wim_02_2_64</Task>
+			<Task>tweaksettings_winre.wim_01__64</Task>
+			<Task>tweaksettings_boot.wim_02_2_64</Task>
+			<Task>powerschemes_winre.wim_01__64</Task>
+			<Task>powerschemes_boot.wim_02_2_64</Task>
+			<Task>registry_winre.wim_01__64</Task>
+			<Task>registry_boot.wim_02_2_64</Task>
+			<Task>imageOptionsCreateIso</Task>
+		</ImageTasks>
+		<AutoIsoFile>C:\Users\Admin\Desktop\Winbox26h1.iso</AutoIsoFile>
+		<AutoIsoLabel>Winbox</AutoIsoLabel>
+	</ApplyOptions>
+	<Drivers>
+		<File>C:\DriversExport\amdpcidev.inf_amd64_daf545e4cebbacbb\AMDPCIDev.inf</File>
+		<File>C:\DriversExport\atihdwt6.inf_amd64_76dcade1eff04982\AtihdWT6.INF</File>
+		<File>C:\DriversExport\amdpsp.inf_amd64_6e4aeaa8a1e9f51c\amdpsp.inf</File>
+		<File>C:\DriversExport\amdgpio2.inf_amd64_2c4b58e27c1b707a\amdgpio2.inf</File>
+		<File>C:\DriversExport\amdinterface.inf_amd64_31edaafbed031f81\AMDInterface.inf</File>
+		<File>C:\DriversExport\amd3dvcache.inf_amd64_a6979208d3f53b5f\amd3dvcache.inf</File>
+		<File>C:\DriversExport\amdappcompat.inf_amd64_e01b29e17ce4a109\AmdAppCompat.inf</File>
+		<File>C:\DriversExport\amdfdans.inf_amd64_bc75aaf3f72d751b\amdfdans.inf</File>
+		<File>C:\DriversExport\amdfendr.inf_amd64_9bbf7ce85091da4a\amdfendr.inf</File>
+		<File>C:\DriversExport\amdfendr.inf_amd64_fbce97352464e3d7\amdfendr.inf</File>
+		<File>C:\DriversExport\amdgpio3.inf_amd64_65ad95c3dff6b360\amdgpio3.inf</File>
+		<File>C:\DriversExport\amdi2c.inf_amd64_fdec99701aa315af\amdi2c.inf</File>
+		<File>C:\DriversExport\amdocl.inf_amd64_08744e7bd5c4ee8e\amdocl.inf</File>
+		<File>C:\DriversExport\amdppkg.inf_amd64_6b71afde72a0e813\AmdPpkg.inf</File>
+		<File>C:\DriversExport\amdwin-u0195698.inf_amd64_eba1c44bd0a0dc7c\amdwin-u0195698.inf</File>
+		<File>C:\DriversExport\u0195698.inf_amd64_480d395d3459e71d\U0195698.INF</File>
+		<File>C:\DriversExport\iteucmcxclient.inf_amd64_69d3f03adf96474d\iteucmcxclient.inf</File>
+		<File>C:\DriversExport\iteucmcxclient.inf_amd64_99e63b5ecfbd0048\iteucmcxclient.inf</File>
+		<File>C:\DriversExport\luac2025s_2.3.7.10.inf_amd64_7c70b72a66476abe\lUAC2025s_2.3.7.10.inf</File>
+		<File>C:\DriversExport\luvc2022v.inf_amd64_fec51da809c34f55\lUVC2022v.inf</File>
+		<File>C:\DriversExport\aqnic650.inf_amd64_117b940704bd2388\aqnic650.inf</File>
+		<File>C:\DriversExport\voiceclarityep_audio_component.inf_amd64_76974bd7342f9cf5\voiceclarityep_audio_component.inf</File>
+		<File>C:\DriversExport\nv_dispi.inf_amd64_7840b4313191ae17\nv_dispi.inf</File>
+		<File>C:\DriversExport\nv_dispig.inf_amd64_0afec3f2050014a0\nv_dispig.inf</File>
+		<File>C:\DriversExport\nvpcf.inf_amd64_69c6215d2d3e853b\nvpcf.inf</File>
+		<File>C:\DriversExport\nvppc.inf_amd64_5465f77a9a8448b4\nvppc.inf</File>
+		<File>C:\DriversExport\nvhda.inf_amd64_7ddfa6f9e56e3d41\nvhda.inf</File>
+		<File>C:\DriversExport\nvhda.inf_amd64_c902843a0fd5ba00\nvhda.inf</File>
+		<File>C:\DriversExport\vboxnetadp6.inf_amd64_7c38759d718a94e6\VBoxNetAdp6.inf</File>
+		<File>C:\DriversExport\vboxnetlwf.inf_amd64_73538916bbd3547d\VBoxNetLwf.inf</File>
+		<File>C:\DriversExport\vboxsup.inf_amd64_1d1af9ce5832b04c\VBoxSup.inf</File>
+		<File>C:\DriversExport\vboxusb.inf_amd64_290700470304b796\VBoxUSB.inf</File>
+		<File>C:\DriversExport\vboxusbmon.inf_amd64_aea4f218cbcdb539\VBoxUSBMon.inf</File>
+		<File>C:\DriversExport\qemufwcfg.inf_amd64_6e5946408560182c\qemufwcfg.inf</File>
+		<File>C:\DriversExport\qemupciserial.inf_amd64_0a8ccbec4f3d52dd\qemupciserial.inf</File>
+		<File>C:\DriversExport\qemupciserial.inf_amd64_1c232c0b9627cd6f\qemupciserial.inf</File>
+		<File>C:\DriversExport\btfilter.inf_amd64_530d95bf87ea1d98\BtFilter.inf</File>
+		<File>C:\DriversExport\btfilter.inf_amd64_01e26b4a8066d91d\btfilter.inf</File>
+		<File>C:\DriversExport\qcwlan64.inf_amd64_e99f9c8bedac5831\qcwlan64.inf</File>
+		<File>C:\DriversExport\qcwlan64.inf_amd64_28f362065b504b95\qcwlan64.inf</File>
+		<File>C:\DriversExport\rz009fdev.inf_amd64_ee67f49cc7a01106\rz009fdev.inf</File>
+		<File>C:\DriversExport\rt25cx21x64sta.inf_amd64_a89a477bc1498772\rt25cx21x64sta.inf</File>
+		<File>C:\DriversExport\rt25dcx21x64sta.inf_amd64_bd974d0f470d6fce\rt25dcx21x64sta.inf</File>
+		<File>C:\DriversExport\rt26cx21x64sta.inf_amd64_3d71acf67b6aeab2\rt26cx21x64sta.inf</File>
+		<File>C:\DriversExport\rt68cx21x64sta.inf_amd64_e749ff9dc5c9b2bf\rt68cx21x64sta.inf</File>
+		<File>C:\DriversExport\rt68dcx21x64sta.inf_amd64_623cce1dd966d906\rt68dcx21x64sta.inf</File>
+		<File>C:\DriversExport\rtots640x64sta.inf_amd64_79d9669f8c2560be\rtots640x64sta.inf</File>
+		<File>C:\DriversExport\balloon.inf_amd64_35a378e7ce1bb7d8\balloon.inf</File>
+		<File>C:\DriversExport\balloon.inf_amd64_b624a3307b73acf3\balloon.inf</File>
+		<File>C:\DriversExport\fwcfg.inf_amd64_88db5f7e47f78c34\fwcfg.inf</File>
+		<File>C:\DriversExport\fwcfg.inf_amd64_21edb5d97e83b551\fwcfg.inf</File>
+		<File>C:\DriversExport\ivshmem.inf_amd64_5f044ddf61f0d3c0\ivshmem.inf</File>
+		<File>C:\DriversExport\netkvm.inf_amd64_39e6df360fa084b6\netkvm.inf</File>
+		<File>C:\DriversExport\netkvm.inf_amd64_9549f21367c38756\netkvm.inf</File>
+		<File>C:\DriversExport\pvpanic.inf_amd64_8a24925b36a10eec\pvpanic.inf</File>
+		<File>C:\DriversExport\pvpanic.inf_amd64_50de665dd6304173\pvpanic.inf</File>
+		<File>C:\DriversExport\qxldod.inf_amd64_6199f9ecf2339133\qxldod.inf</File>
+		<File>C:\DriversExport\viofs.inf_amd64_60034dd27c706087\viofs.inf</File>
+		<File>C:\DriversExport\viofs.inf_amd64_1fa05a9d16a4cdf7\viofs.inf</File>
+		<File>C:\DriversExport\viogpudo.inf_amd64_480fc73c9a6c1e49\viogpudo.inf</File>
+		<File>C:\DriversExport\viogpudo.inf_amd64_d1816df2ef9c583c\viogpudo.inf</File>
+		<File>C:\DriversExport\vioinput.inf_amd64_05905547bfcff1b1\vioinput.inf</File>
+		<File>C:\DriversExport\vioinput.inf_amd64_e47ffc2c81aa989e\vioinput.inf</File>
+		<File>C:\DriversExport\viomem.inf_amd64_3d4d71c7bd5e7b86\viomem.inf</File>
+		<File>C:\DriversExport\viomem.inf_amd64_a2830ae0e9bc5caa\viomem.inf</File>
+		<File>C:\DriversExport\vioprot.inf_amd64_5f89323ac7ca6575\vioprot.inf</File>
+		<File>C:\DriversExport\viorng.inf_amd64_605e90aa654bcbb6\viorng.inf</File>
+		<File>C:\DriversExport\viorng.inf_amd64_09b242318e5a1847\viorng.inf</File>
+		<File>C:\DriversExport\vioscsi.inf_amd64_2df7864b646f5fc0\vioscsi.inf</File>
+		<File>C:\DriversExport\vioscsi.inf_amd64_24727626b1893093\vioscsi.inf</File>
+		<File>C:\DriversExport\vioser.inf_amd64_1425009984047e9d\vioser.inf</File>
+		<File>C:\DriversExport\vioser.inf_amd64_5b2f5a60c17d1ff5\vioser.inf</File>
+		<File>C:\DriversExport\viosock.inf_amd64_0d377d4a6be4c0b9\viosock.inf</File>
+		<File>C:\DriversExport\viostor.inf_amd64_8b924af07a9295a7\viostor.inf</File>
+		<File>C:\DriversExport\viostor.inf_amd64_92d16130a01291fb\viostor.inf</File>
+		<File>C:\DriversExport\gameflt.inf_amd64_152b7ad8bf20bdc5\gameflt.inf</File>
+		<File>C:\DriversExport\xvdd.inf_amd64_90e925b5928da869\xvdd.inf</File>
+	</Drivers>
+</Preset>

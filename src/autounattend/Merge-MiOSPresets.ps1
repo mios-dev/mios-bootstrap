@@ -38,15 +38,16 @@
 
 .PARAMETER InputPresets
     NTLite presets to merge. The FIRST is the canonical base (structural sections +
-    the sole Unattended come from it). Default: the three intact C:\MiOS presets with
-    Xbox-Minimal-ULTRA-PLUS.xml first.
+    the sole Unattended come from it). Default: the three intact presets vendored
+    under .\presets\ (xbox-minimal-ultra-plus.xml first), so the merge is fully
+    reproducible from the tracked repo alone.
 
 .PARAMETER OutputPreset
     Output merged preset path. Default: <scriptdir>\MiOS-Xbox-Merged.xml.
 
 .EXAMPLE
     .\Merge-MiOSPresets.ps1
-    # merges the three intact C:\MiOS presets -> .\MiOS-Xbox-Merged.xml
+    # merges the three vendored .\presets\*.xml -> .\MiOS-Xbox-Merged.xml
 
 .EXAMPLE
     .\Merge-MiOSPresets.ps1 -InputPresets 'A.xml','B.xml' -OutputPreset '.\Merged.xml'
@@ -55,9 +56,9 @@
 [CmdletBinding()]
 param(
     [string[]]$InputPresets = @(
-        'C:\MiOS\Xbox-Minimal-ULTRA-PLUS.xml',   # BASE (canonical) -- must be first
-        'C:\MiOS\Auto-saved 7eb3e01a.xml',
-        'C:\MiOS\Auto-saved e8a2b9d1.xml'
+        (Join-Path $PSScriptRoot 'presets\xbox-minimal-ultra-plus.xml'),   # BASE (canonical) -- must be first
+        (Join-Path $PSScriptRoot 'presets\autosave-7eb3e01a.xml'),
+        (Join-Path $PSScriptRoot 'presets\autosave-e8a2b9d1.xml')
     ),
     [string]$OutputPreset
 )

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MiOS-Xbox MERGED NTLite preset - - union of: Xbox-Minimal-ULTRA-PLUS.xml, Auto-saved 7eb3e01a.xml, Auto-saved e8a2b9d1.xml
+<!-- MiOS-Xbox MERGED NTLite preset - - union of: xbox-minimal-ultra-plus.xml, autosave-7eb3e01a.xml, autosave-e8a2b9d1.xml
  Built by Merge-MiOSPresets.ps1 (identity-agnostic; NO baked accounts, NO personal identity).
- Base/canonical structural source = Xbox-Minimal-ULTRA-PLUS.xml (sole Unattended, ApplyOptions, ImageInfo, Packages, Drivers).
+ Base/canonical structural source = xbox-minimal-ultra-plus.xml (sole Unattended, ApplyOptions, ImageInfo, Packages, Drivers).
  Unioned debloat: +4 RemoveComponents <c>, +7 DISM Features
  (+1 value-conflict(s) resolved), +2 Compatibility toggle(s),
  +0 registry Tweak(s) (+2 value-conflict(s), base kept).
