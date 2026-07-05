@@ -150,8 +150,16 @@ function Set-MiOSXboxOfflineReg {
     if ((Get-Toml $Toml 'autounattend.xbox.enable' 'false') -notmatch '^(?i:true|1|yes)$') { return }
     $sys = Join-Path $Mount 'Windows\System32\config\SYSTEM'
     $sw  = Join-Path $Mount 'Windows\System32\config\SOFTWARE'
-    $ids = (Get-Toml $Toml 'autounattend.xbox.feature_ids' '59765208') -split '[,\s]+' | Where-Object { $_ -match '^\d+$' }
-    Write-Host "[*] Xbox FSE override -> offline image (ids: $($ids -join ','))" -ForegroundColor Cyan
+    $ids = @((Get-Toml $Toml 'autounattend.xbox.feature_ids' '59765208') -split '[,\s]+' | Where-Object { $_ -match '^\d+$' })
+    # Union the full god-mode set from the reviewable data file so the image boots with
+    # ALL Xbox/gaming/2026-UI features on, not just the FSE flag. Non-existent ids on a
+    # given build are harmless no-ops (an unused override key).
+    $featFile = Join-Path $PSScriptRoot 'mios-xbox-features.txt'
+    if (Test-Path $featFile) {
+        $ids += @(Get-Content -LiteralPath $featFile | ForEach-Object { ($_ -replace '#.*$', '').Trim() } | Where-Object { $_ -match '^\d+$' })
+    }
+    $ids = @($ids | Select-Object -Unique)
+    Write-Host "[*] Xbox/gaming feature overrides -> offline image ($($ids.Count) ids, EnabledState=2)" -ForegroundColor Cyan
     & reg.exe load 'HKLM\MIOS_SYS' $sys | Out-Null
     & reg.exe load 'HKLM\MIOS_SW'  $sw  | Out-Null
     try {
@@ -317,6 +325,26 @@ function Invoke-MiOSImageServicing {
         foreach ($stage in 'MiOS-Host.ps1','MiOS-XBOX-Hydrate.ps1') {
             $src = Join-Path $PSScriptRoot $stage
             if (Test-Path $src) { Copy-Item $src (Join-Path $hostDst $stage) -Force; Write-Host "    staged $stage -> image ProgramData\MiOS" -ForegroundColor DarkGray }
+        }
+        # KEYSTONE: bake SetupComplete.cmd -> \Windows\Setup\Scripts\. Windows Setup runs
+        # it as SYSTEM at the END of setup (after specialize, before first logon). This is
+        # the RELIABLE first-boot trigger -- Win11 26xxx silently skips FirstLogonCommands/
+        # RunOnce under our unattended OOBE, so WITHOUT this MiOS never deploys (no theme,
+        # no install, no Xbox mode -- exactly what a bare boot showed). SetupComplete
+        # debloats, drops the all-users Startup launcher + ONLOGON task, and runs the MiOS
+        # bootstrap (irm|iex) at first interactive logon.
+        $scriptsDst = Join-Path $mount 'Windows\Setup\Scripts'
+        New-Item -ItemType Directory -Force -Path $scriptsDst | Out-Null
+        $scSrc = Join-Path $PSScriptRoot 'SetupComplete.cmd'
+        if (Test-Path $scSrc) {
+            Copy-Item $scSrc (Join-Path $scriptsDst 'SetupComplete.cmd') -Force
+            Write-Host "    baked SetupComplete.cmd -> image \Windows\Setup\Scripts (SYSTEM first-boot trigger)" -ForegroundColor Green
+        } else { Write-Host "[!] SetupComplete.cmd NOT found next to New-MiOSISO -- first-boot MiOS trigger MISSING!" -ForegroundColor Red }
+        # SSOT appx-removal list SetupComplete reads (mios-remove-appx.txt beside it), from
+        # the same preset removals -- a fallback strip for anything left provisioned.
+        if ($Removals.Appx.Count) {
+            Set-Content -LiteralPath (Join-Path $scriptsDst 'mios-remove-appx.txt') -Encoding ASCII -Value @($Removals.Appx | Sort-Object -Unique)
+            Write-Host "    baked mios-remove-appx.txt ($($Removals.Appx.Count) tokens) beside SetupComplete.cmd" -ForegroundColor DarkGray
         }
         Write-Host "    Deep CBS component FILES can't be DISM-removed (of $($Removals.NtliteOnly) <c>; see dism-native-conversion-map.md) -- their telemetry/AI/consumer behaviour is killed by the offline debloat policy above." -ForegroundColor DarkGray
         $_serviced = $true   # reached only if every servicing step above succeeded

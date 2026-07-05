@@ -1,0 +1,127 @@
+# MiOS-XBOX feature overrides. Every numeric id here is written offline into the
+# image as a Controlled-Feature-Rollout override (FeatureManagement\Overrides\8\<id>
+# EnabledState=2) by New-MiOSISO Set-MiOSXboxOfflineReg -- so the build boots with
+# the full Xbox / gaming / god-mode surface ON, not just the FSE flag.
+#
+# One id per line; '#' comments + blank lines ignored. Non-existent ids on a given
+# build are harmless no-ops (an unused override key). Unioned with SSOT
+# [autounattend.xbox].feature_ids. Keep grouped so intent stays reviewable.
+# (Runtime caveat: the Xbox FSE *home* still needs a signed-in Xbox/MS account.)
+
+# --- Xbox Full Screen Experience / handheld gaming shell ---
+59765208    # Xbox Full Screen Experience (FSE)
+52580392    # Handheld compact-mode UI
+50902630    # Handheld compact-mode UI
+60786016    # Native NVMe bypass for DirectStorage 2.1
+42550315    # Auto Super Resolution (Auto SR) controls
+55305888    # Auto Super Resolution notifications
+42592269    # Instant "End Task" on taskbar
+41863571    # Snap Assist suggestions
+42589465    # Snap Assist suggestions
+
+# --- Hardware / sensory ---
+35262205    # RGB ambient lighting controls
+41355275    # RGB ambient lighting controls
+56784836    # Peripheral haptic feedback
+58536988    # Peripheral haptic feedback
+59100632    # Peripheral haptic feedback
+
+# --- 2026 shell overhauls (Start / taskbar AI / File Explorer) ---
+47205210
+49221331
+49381526
+49402389
+49820095
+55495322
+58938944
+57900749
+58324036
+59359094
+58978959
+58381341
+58527096
+57156807
+57259990
+58680439
+47123936
+45624564
+53397005
+55844454
+54792954
+55345819
+58423575
+58778013
+49256040
+48655351
+49793372
+42941381
+
+# --- feature bundles + misc god-mode ---
+58989021
+58989002
+58988972
+57741219
+55994763
+55324166
+59673297
+60063638
+58182453
+57118881
+49059846
+
+# --- base rollout set ---
+59339532
+50730971
+57048231
+59275076
+50564196
+38679741
+41356296
+38664959
+55390938
+59800000
+57882334
+59213523
+57739723
+59193521
+59265307
+46107637
+45690266
+57941090
+40950262
+58383338
+40729001
+49615568
+48433719
+42105254
+59270880
+59203365
+43693406
+40268500
+57048237
+60233104
+55120633
+59982341
+42106010
+57645315
+57703775
+47622034
+42250125
+59162732
+41118774
+47370305
+48064775
+60124892
+53343270
+45596742
+45703317
+57048226
+57048218
+57048216
+44950080
+39258685
+35620393
+35620394
+41040327
+47448915
+48546544

@@ -18,7 +18,8 @@
     { "key": "Policies\\Microsoft\\Windows\\OneDrive",                       "name": "DisableFileSyncNGSC",               "type": "REG_DWORD", "data": 1 },
     { "key": "Policies\\Microsoft\\Windows\\Windows Feeds",                  "name": "EnableFeeds",                       "type": "REG_DWORD", "data": 0 },
     { "key": "Policies\\Microsoft\\Dsh",                                     "name": "AllowNewsAndInterests",             "type": "REG_DWORD", "data": 0 },
-    { "key": "Microsoft\\Windows\\CurrentVersion\\Explorer\\Advertising Info","name": "DisabledByGroupPolicy",            "type": "REG_DWORD", "data": 1 }
+    { "key": "Microsoft\\Windows\\CurrentVersion\\Explorer\\Advertising Info","name": "DisabledByGroupPolicy",            "type": "REG_DWORD", "data": 1 },
+    { "key": "Microsoft\\DirectStorage",                                     "name": "ForceBypassIO",                     "type": "REG_DWORD", "data": 1 }
   ],
 
   "system_services": [
@@ -27,7 +28,8 @@
   ],
 
   "system": [
-    { "key": "ControlSet001\\Control\\Session Manager\\Power",               "name": "HiberbootEnabled",                  "type": "REG_DWORD", "data": 0 }
+    { "key": "ControlSet001\\Control\\Session Manager\\Power",               "name": "HiberbootEnabled",                  "type": "REG_DWORD", "data": 0 },
+    { "key": "ControlSet001\\Control\\GraphicsDrivers",                      "name": "HwSchMode",                         "type": "REG_DWORD", "data": 2 }
   ],
 
   "default_user": [
