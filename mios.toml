@@ -1197,6 +1197,13 @@ enable            = true
 feature_ids       = "59765208"   # Dev/25H2; 24H2 retail: "58989070,59765208"
 device_form_spoof = true         # DeviceForm=0x2E so FSE surfaces on desktops/laptops
 min_build         = "26200"      # informational: 25H2/Dev FSE floor
+# Boot-into-Xbox: the gaming HOME APP + start-on-startup. Operator-chosen LOGGED-OUT
+# end state -- boots into the full-screen Xbox chrome at the sign-in wall (no MS
+# account baked; a populated dashboard is a hard MS gate that needs one sign-in).
+# home_app empty disables Xbox mode; set to a 3rd-party launcher AUMID (Playnite/
+# AnyFSE) for a no-signin console home instead of the Xbox app.
+home_app          = "Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App"
+start_on_startup  = true         # autounattend Gaming-Configuration StartupToGamingHome
 
 # ----------------------------------------------------------------------------
 # [env] -- free-form environment-variable additions. Keys must match POSIX

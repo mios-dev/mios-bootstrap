@@ -72,6 +72,14 @@ $NLNS = 'urn:schemas-nliteos-com:pn.v1'
 # function defs); merge stays identity-agnostic and reads no accounts/SSOT.
 . (Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1')
 $VIRT_FEATURE_MATCH = Get-MiOSVirtFeatureMatch
+# MiOS-XBOX protect-list (single source: MiOS-Provision.lib.ps1). The union of the
+# NTLite presets re-adds Xbox/virt-breaking removals (bioenrollment/sechealthui/
+# storepurchaseapp/contentdeliverymanager, lxss, ...) that the curated ULTRA-PLUS
+# base preserved; this list is the HARD EXCLUSION that keeps them out (and keeps
+# protected Features enabled) so the merged artifact can still boot Xbox mode + the
+# MiOS brain -- the "perfected" preset.
+$PROTECT_COMPONENTS = @(Get-MiOSXboxProtectComponents) | ForEach-Object { $_.ToLower() }
+$PROTECT_FEATURES   = @(Get-MiOSXboxProtectFeatures)
 
 # XML helper -- nliteos-namespaced, UNPREFIXED element (mirrors ConvertTo-MiOSPreset).
 function New-El { param([xml]$Doc,[string]$Name,[string]$Text) $e=$Doc.CreateElement($Name,$NLNS); if($PSBoundParameters.ContainsKey('Text')){$e.InnerText=$Text}; return $e }
@@ -81,6 +89,20 @@ function Get-EnabledState { param([string]$Text) return ("$Text".Trim().ToLower(
 
 # Is this Feature name one MiOS needs kept enabled (virtualization stack)?
 function Test-VirtNeeded { param([string]$Name) foreach ($m in $VIRT_FEATURE_MATCH) { if ("$Name" -like "*$m*") { return $true } } return $false }
+
+# Is this RemoveComponents/<c> a PROTECTED component? Match the leading KEY token
+# (before the friendly-name quote/space) case-insensitively against the protect list.
+function Test-ProtectedComponent {
+    param([string]$Text)
+    $key = ("$Text".Trim() -split "[\s']", 2)[0].ToLower()
+    return ($PROTECT_COMPONENTS -contains $key)
+}
+# Is this Feature @name PROTECTED (never disable -- keep enabled)?
+function Test-ProtectedFeature {
+    param([string]$Name)
+    foreach ($m in $PROTECT_FEATURES) { if ("$Name" -like "*$m*") { return $true } }
+    return $false
+}
 
 # ---------------------------------------------------------------------------
 # Load base (first preset) + secondary DOMs
@@ -129,7 +151,19 @@ if ($tweakSet) {
     }
 }
 
-$stats = [ordered]@{ c_added=0; feat_added=0; feat_conflict=0; comp_added=0; tweak_added=0; tweak_conflict=0 }
+$stats = [ordered]@{ c_added=0; feat_added=0; feat_conflict=0; comp_added=0; tweak_added=0; tweak_conflict=0; c_protected=0; feat_protected=0 }
+
+# PROTECT-LIST post-scrub of the BASE seed itself: strip any protected removal the
+# base carries, and force any protected Feature enabled. The curated ULTRA-PLUS base
+# should already be clean, but this makes the guarantee absolute (a future base edit
+# can't reintroduce an Xbox/virt-breaking removal).
+foreach ($c in @($base.SelectNodes('//n:RemoveComponents/n:c', $ns))) {
+    if (Test-ProtectedComponent "$($c.InnerText)") { [void]$c.ParentNode.RemoveChild($c); [void]$seenC.Remove("$($c.InnerText)"); $stats.c_protected++ }
+}
+foreach ($f in @($base.SelectNodes('//n:Features/n:Feature', $ns))) {
+    $nm = "$($f.GetAttribute('name'))"
+    if ((Test-ProtectedFeature $nm) -and -not (Get-EnabledState $f.InnerText)) { $f.InnerText = 'true'; $stats.feat_protected++ }
+}
 $conflicts = New-Object System.Collections.Generic.List[string]
 
 # ---------------------------------------------------------------------------
@@ -142,8 +176,10 @@ foreach ($p in ($InputPresets | Select-Object -Skip 1)) {
     $sns = New-Object System.Xml.XmlNamespaceManager($src.NameTable); $sns.AddNamespace('n', $NLNS)
 
     # --- RemoveComponents/<c> : union, dedup by EXACT InnerText -------------
+    # PROTECT-LIST: never union a removal of an Xbox/gaming/virt-critical component.
     foreach ($c in @($src.SelectNodes('//n:RemoveComponents/n:c', $sns))) {
         $txt = "$($c.InnerText)"
+        if (Test-ProtectedComponent $txt) { $stats.c_protected++; continue }
         if ($seenC.Add($txt)) { [void]$rc.AppendChild($base.ImportNode($c, $true)); $stats.c_added++ }
     }
 
@@ -152,7 +188,10 @@ foreach ($p in ($InputPresets | Select-Object -Skip 1)) {
         $nm = "$($f.GetAttribute('name'))"
         if (-not $nm) { continue }
         if (-not $featIndex.ContainsKey($nm)) {
-            [void]$featSec.AppendChild($base.ImportNode($f, $true)); $featIndex[$nm] = $featSec.LastChild; $stats.feat_added++
+            $node = $base.ImportNode($f, $true)
+            # A PROTECTED feature never enters the merged set DISABLED.
+            if ((Test-ProtectedFeature $nm) -and -not (Get-EnabledState $node.InnerText)) { $node.InnerText = 'true'; $stats.feat_protected++ }
+            [void]$featSec.AppendChild($node); $featIndex[$nm] = $node; $stats.feat_added++
             continue
         }
         $baseNode = $featIndex[$nm]
@@ -160,14 +199,14 @@ foreach ($p in ($InputPresets | Select-Object -Skip 1)) {
         $srcOn  = Get-EnabledState $f.InnerText
         if ($baseOn -ne $srcOn) {
             $stats.feat_conflict++
-            if (Test-VirtNeeded $nm) {
-                # virt/MiOS-needed -> prefer ENABLED
+            if ((Test-VirtNeeded $nm) -or (Test-ProtectedFeature $nm)) {
+                # virt / Xbox-protected -> prefer ENABLED
                 $resolved = 'true'
             } else {
                 # else stricter/disabled wins (debloat intent)
                 $resolved = 'false'
             }
-            $conflicts.Add("Feature '$nm': base=$($baseNode.InnerText) src=$($f.InnerText) -> $resolved ($([string]::Format('{0}', $(if(Test-VirtNeeded $nm){'virt->enabled'}else{'stricter->disabled'}))))")
+            $conflicts.Add("Feature '$nm': base=$($baseNode.InnerText) src=$($f.InnerText) -> $resolved ($(if((Test-VirtNeeded $nm) -or (Test-ProtectedFeature $nm)){'protected->enabled'}else{'stricter->disabled'}))")
             $baseNode.InnerText = $resolved
         }
     }
@@ -220,6 +259,7 @@ $hdr = $base.CreateComment(@"
  Unioned debloat: +$($stats.c_added) RemoveComponents <c>, +$($stats.feat_added) DISM Features
  (+$($stats.feat_conflict) value-conflict(s) resolved), +$($stats.comp_added) Compatibility toggle(s),
  +$($stats.tweak_added) registry Tweak(s) (+$($stats.tweak_conflict) value-conflict(s), base kept).
+ MiOS-XBOX protect-list: $($stats.c_protected) Xbox/virt-critical removal(s) blocked, $($stats.feat_protected) protected Feature(s) kept enabled.
  NEXT: ConvertTo-MiOSPreset.ps1 applies SSOT hostname/accounts/AutoLogon/FirstLogonCommands,
  GUID {MIOS-XBOX-SSOT}, AutoIsoFile/Label, and Posture B (re-preserve WSL2/VMP/Hyper-V).$conflictLines
 "@)
@@ -242,6 +282,7 @@ $oobe      = $base.SelectNodes("//n:Unattended/n:settings[@pass='oobeSystem']/n:
 $applyOpts = @($base.SelectNodes('//n:ApplyOptions', $ns)).Count
 
 Write-Host "[+] Merged preset written   : $OutputPreset" -ForegroundColor Green
+Write-Host "    Protect-list            : $($stats.c_protected) removal(s) blocked, $($stats.feat_protected) Feature(s) kept enabled" -ForegroundColor DarkGray
 Write-Host "    RemoveComponents <c>    : $totalC unique (+$($stats.c_added) unioned)" -ForegroundColor DarkGray
 Write-Host "    DISM Features           : $totalFeat unique (+$($stats.feat_added), $($stats.feat_conflict) conflict(s))" -ForegroundColor DarkGray
 Write-Host "    Compatibility toggles   : +$($stats.comp_added) unioned" -ForegroundColor DarkGray

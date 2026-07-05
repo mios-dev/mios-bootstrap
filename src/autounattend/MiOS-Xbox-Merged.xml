@@ -2,13 +2,13 @@
 <!-- MiOS-Xbox MERGED NTLite preset - - union of: xbox-minimal-ultra-plus.xml, autosave-7eb3e01a.xml, autosave-e8a2b9d1.xml
  Built by Merge-MiOSPresets.ps1 (identity-agnostic; NO baked accounts, NO personal identity).
  Base/canonical structural source = xbox-minimal-ultra-plus.xml (sole Unattended, ApplyOptions, ImageInfo, Packages, Drivers).
- Unioned debloat: +4 RemoveComponents <c>, +7 DISM Features
- (+1 value-conflict(s) resolved), +2 Compatibility toggle(s),
+ Unioned debloat: +0 RemoveComponents <c>, +7 DISM Features
+ (+0 value-conflict(s) resolved), +2 Compatibility toggle(s),
  +0 registry Tweak(s) (+2 value-conflict(s), base kept).
+ MiOS-XBOX protect-list: 16 Xbox/virt-critical removal(s) blocked, 13 protected Feature(s) kept enabled.
  NEXT: ConvertTo-MiOSPreset.ps1 applies SSOT hostname/accounts/AutoLogon/FirstLogonCommands,
  GUID {MIOS-XBOX-SSOT}, AutoIsoFile/Label, and Posture B (re-preserve WSL2/VMP/Hyper-V).
  Conflicts (resolved):
-  - Feature 'Microsoft-Windows-Subsystem-Linux': base=false src=true -> true (virt->enabled)
   - Tweak 'DesktopTweaks\Keyboard\PrintScreenKeyForSnippingEnabled': base=1 (KEPT, ULTRA-PLUS canonical) vs src=0
   - Tweak 'DesktopTweaks\Keyboard\PrintScreenKeyForSnippingEnabled': base=1 (KEPT, ULTRA-PLUS canonical) vs src=0-->
 <Preset isAutoSaved="true" xmlns="urn:schemas-nliteos-com:pn.v1">
@@ -72,7 +72,6 @@
     <c>appv 'Application Virtualization (App-V)'</c>
     <c>assignedaccess 'Assigned Access'</c>
     <c>axinstall 'ActiveX Installer Service'</c>
-    <c>containers 'Containers (Application Guard)'</c>
     <c>embeddedexperience 'Device Lockdown (Embedded Experience)'</c>
     <c>embeddedmode 'Embedded Mode'</c>
     <c>enterpriseclientsync 'Work Folders Client'</c>
@@ -100,10 +99,8 @@
     <!-- ===== SHELL/UI COMPONENTS ===== -->
     <c>e2a4f912-2574-4a75-9bb0-0d023378592b 'App Resolver'</c>
     <c>f46d4000-fd22-4db4-ac8e-4e1ddde828fe 'Add Folder Suggestions dialog'</c>
-    <c>gameexplorer 'Game Explorer'</c>
     <c>eudcedit 'Private Character Editor'</c>
     <c>fontpreviewer32 'Font previewer - 32 bit'</c>
-    <c>captureservice 'Capture Service'</c>
     <!-- ===== FILE/WEB SERVICES ===== -->
     <c>fciclient 'File Server Resource Manager'</c>
     <c>iis 'Internet Information Server (IIS)'</c>
@@ -160,8 +157,6 @@
     <!-- ===== CPU FEATURES ===== -->
     <c>la57 '57-bit Linear Addressing'</c>
     <!-- ===== WSL ===== -->
-    <c>lxss 'Windows Subsystem for Linux'</c>
-    <c>microsoftcorporationii.windowssubsystemforlinux 'Windows Subsystem for Linux'</c>
     <!-- ===== SERVICING ===== -->
     <c>manifestbackup 'Manifest Backup (WinSxS\Backup)'</c>
     <!-- ===== MEDIA ===== -->
@@ -261,7 +256,6 @@
     <c>microsoftwindows.crossdevice 'Cross Device Experience Host'</c>
     <c>microsoft.windows.apprep.chxapp 'SmartScreen'</c>
     <c>microsoft.windows.augloop.cbs</c>
-    <c>microsoft.windows.capturepicker 'Capture Picker'</c>
     <c>startexperiencesapp 'Start Experiences (InboxApp)'</c>
     <c>oobefodsetup 'Out-of-box Experience (OOBE) - FOD Setup'</c>
     <!-- ===== AI/COPILOT/WIDGETS ===== -->
@@ -371,10 +365,6 @@
 		- battery (for laptops)
 		=======================================================================
 		-->
-    <c>microsoft.bioenrollment 'Windows Hello Setup'</c>
-    <c>microsoft.sechealthui 'Microsoft Defender Antivirus'</c>
-    <c>microsoft.storepurchaseapp 'Store Experience Host'</c>
-    <c>microsoft.windows.contentdeliverymanager 'Content Delivery Manager'</c>
   </RemoveComponents>
   <!-- =======================================================================
 	     COMPATIBILITY
@@ -473,17 +463,17 @@
     <Feature name="App.StepsRecorder~~~~0.0.1.0">false</Feature>
     <Feature name="MathRecognizer~~~~0.0.1.0">false</Feature>
     <!-- Virtualization -->
-    <Feature name="Windows.HyperV.OptionalFeature.VirtualMachinePlatform.Client.Disabled~~~~">false</Feature>
-    <Feature name="Microsoft-Hyper-V-All">false</Feature>
-    <Feature name="Microsoft-Hyper-V">false</Feature>
-    <Feature name="Microsoft-Hyper-V-Tools-All">false</Feature>
-    <Feature name="Microsoft-Hyper-V-Management-PowerShell">false</Feature>
-    <Feature name="Microsoft-Hyper-V-Hypervisor">false</Feature>
-    <Feature name="Microsoft-Hyper-V-Services">false</Feature>
-    <Feature name="Microsoft-Hyper-V-Management-Clients">false</Feature>
-    <Feature name="VirtualMachinePlatform">false</Feature>
-    <Feature name="HypervisorPlatform">false</Feature>
-    <Feature name="Containers-DisposableClientVM">false</Feature>
+    <Feature name="Windows.HyperV.OptionalFeature.VirtualMachinePlatform.Client.Disabled~~~~">true</Feature>
+    <Feature name="Microsoft-Hyper-V-All">true</Feature>
+    <Feature name="Microsoft-Hyper-V">true</Feature>
+    <Feature name="Microsoft-Hyper-V-Tools-All">true</Feature>
+    <Feature name="Microsoft-Hyper-V-Management-PowerShell">true</Feature>
+    <Feature name="Microsoft-Hyper-V-Hypervisor">true</Feature>
+    <Feature name="Microsoft-Hyper-V-Services">true</Feature>
+    <Feature name="Microsoft-Hyper-V-Management-Clients">true</Feature>
+    <Feature name="VirtualMachinePlatform">true</Feature>
+    <Feature name="HypervisorPlatform">true</Feature>
+    <Feature name="Containers-DisposableClientVM">true</Feature>
     <Feature name="Microsoft-Windows-Subsystem-Linux">true</Feature>
     <!-- PowerShell -->
     <Feature name="Microsoft.Windows.PowerShell.ISE~~~~0.0.1.0">false</Feature>
@@ -533,7 +523,7 @@
     <Feature name="NetFx4Extended-ASPNET45">true</Feature>
     <Feature name="WCF-HTTP-Activation45">true</Feature>
     <Feature name="WCF-MSMQ-Activation45">true</Feature>
-    <Feature name="Edge.Webview2.Platform~~~~">false</Feature>
+    <Feature name="Edge.Webview2.Platform~~~~">true</Feature>
     <Feature name="WCF-Pipe-Activation45">true</Feature>
     <Feature name="AppServerClient">true</Feature>
     <Feature name="WCF-TCP-Activation45">true</Feature>

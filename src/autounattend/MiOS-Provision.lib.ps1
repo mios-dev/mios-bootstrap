@@ -151,7 +151,57 @@ function New-MiOSXboxModeCommands {
     if ((Get-Toml $Toml 'autounattend.xbox.device_form_spoof' 'true') -match '^(?i:true|1|yes)$') {
         $cmds.Add('reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\OEM" /v DeviceForm /t REG_DWORD /d 46 /f')
     }
+    # Set the Xbox app as the gaming HOME APP so the box boots into the full-screen
+    # Xbox console UI (paired with AutoLogon to the local account + the autounattend
+    # Microsoft-Windows-Gaming-Configuration StartupToGamingHome=true). Empty
+    # home_app disables Xbox mode. HONEST LIMIT: with no Microsoft account the FSE
+    # chrome renders at the Xbox SIGN-IN screen -- there is no logged-out populated
+    # dashboard (hard MS gate). This is the operator-chosen logged-out end state.
+    $homeApp = Get-Toml $Toml 'autounattend.xbox.home_app' 'Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App'
+    if ($homeApp) {
+        $cmds.Add(('reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\GamingConfiguration" /v GamingHomeApp /t REG_SZ /d "{0}" /f' -f $homeApp))
+    }
     return $cmds
+}
+
+# ── MiOS-XBOX protect-list (never debloat these -- Xbox/gaming + virt survival) ──
+# Centralized, consumed by Merge-MiOSPresets.ps1 (strip from the union) and
+# New-MiOSISO.ps1 (never remove/disable during DISM servicing). Sourced from the
+# researched "removing X breaks Y" manifest -- NOT a guess. The union merge of the
+# NTLite presets re-added several of these as removals (bioenrollment/sechealthui/
+# storepurchaseapp/contentdeliverymanager) even though the curated ULTRA-PLUS base
+# preserved them; this list is the hard exclusion that makes the merged artifact a
+# TRULY perfected MiOS-XBOX preset that can still boot Xbox mode + the MiOS brain.
+
+# NTLite RemoveComponents/<c> KEY tokens (case-insensitive, matched as the leading
+# token before the friendly-name quote) that must NEVER be removed.
+function Get-MiOSXboxProtectComponents {
+    @(
+        # --- Xbox / gaming / Store (removing these breaks FSE + Game Pass) ---
+        'microsoft.gamingapp', 'microsoft.xboxgamingoverlay', 'microsoft.xboxgameoverlay',
+        'microsoft.xboxidentityprovider', 'microsoft.xbox.tcui', 'microsoft.xboxspeechtotextoverlay',
+        'microsoft.xboxgamecallableui', 'microsoft.gamingservices', 'microsoft.windowsstore',
+        'microsoft.storepurchaseapp', 'microsoft.desktopappinstaller',
+        'microsoft.bioenrollment', 'microsoft.sechealthui', 'microsoft.windows.contentdeliverymanager',
+        'gameexplorer', 'captureservice', 'microsoft.windows.capturepicker',
+        # --- virtualization / MiOS brain (WSL2 + podman + Hyper-V + HCS) ---
+        'lxss', 'lxssmanager', 'microsoftcorporationii.windowssubsystemforlinux',
+        'windowssubsystemforlinux', 'virtualmachineplatform', 'virtual machine platform',
+        'hyper-v', 'hypervisorplatform', 'windows hypervisor platform',
+        'containers', 'containers-disposableclientvm', 'windows sandbox', 'vmcompute'
+    )
+}
+
+# NTLite Features <Feature name=...> that must NEVER be disabled (kept enabled/present).
+# Virtualization set comes from the shared Posture-B allowlist; WebView2 is added
+# because the Xbox app's account/store panels render in it.
+function Get-MiOSXboxProtectFeatures {
+    @(Get-MiOSVirtFeatureMatch) + @(
+        'Microsoft-Hyper-V-All', 'Microsoft-Hyper-V-Hypervisor', 'Microsoft-Hyper-V-Services',
+        'Microsoft-Hyper-V-Tools-All', 'Microsoft-Hyper-V-Management-PowerShell',
+        'Microsoft-Hyper-V-Management-Clients', 'Containers',
+        'Edge.Webview2.Platform'
+    )
 }
 
 function New-MiOSBrandingCommands {

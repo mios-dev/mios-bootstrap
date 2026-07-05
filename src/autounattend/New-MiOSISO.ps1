@@ -97,22 +97,35 @@ function Expand-MiOSIso {
 # the NTLite-only residue (counted, not serviced -- see dism-native-conversion-map.md).
 function Get-MiOSMergedRemovals {
     param([string]$PresetPath)
-    $out = [pscustomobject]@{ Capabilities = @(); Features = @(); NtliteOnly = 0 }
+    $out = [pscustomobject]@{ Capabilities = @(); Features = @(); EnableFeatures = @(); NtliteOnly = 0 }
     if (-not (Test-Path $PresetPath)) { Write-Host "[!] Merged preset not found: $PresetPath (servicing skipped)" -ForegroundColor Yellow; return $out }
     [xml]$xml = Get-Content -LiteralPath $PresetPath -Raw
     $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
     $ns.AddNamespace('n', 'urn:schemas-nliteos-com:pn.v1')
+    # PROTECT-LIST: never remove/disable an Xbox/gaming or virt feature (shared with
+    # the merge). Belt-and-suspenders even though the merged preset is protect-clean.
+    $protectFeat = @(Get-MiOSXboxProtectFeatures)
+    function _protected([string]$n) { foreach ($m in $protectFeat) { if ("$n" -like "*$m*") { return $true } }; return $false }
     $caps = New-Object System.Collections.Generic.List[string]
     $feat = New-Object System.Collections.Generic.List[string]
+    $en   = New-Object System.Collections.Generic.List[string]
     foreach ($f in @($xml.SelectNodes('//n:Features/n:Feature', $ns))) {
-        if ("$($f.InnerText)".Trim().ToLower() -ne 'false') { continue }   # only the disabled ones
         $name = "$($f.GetAttribute('name'))".Trim()
         if (-not $name) { continue }
-        if ($name -match '~~~') { $caps.Add($name) } else { $feat.Add($name) }
+        $state = "$($f.InnerText)".Trim().ToLower()
+        if ($state -eq 'false') {
+            if (_protected $name) { continue }                # never disable a protected feature
+            if ($name -match '~~~') { $caps.Add($name) } else { $feat.Add($name) }
+        } elseif (_protected $name -and $name -notmatch '~~~') {
+            $en.Add($name)                                    # protected + enabled -> actively ENABLE in the image
+        }
     }
-    $out.Capabilities = @($caps | Select-Object -Unique)
-    $out.Features     = @($feat | Select-Object -Unique)
-    $out.NtliteOnly   = @($xml.SelectNodes('//n:RemoveComponents/n:c', $ns)).Count
+    # Posture B minimum: the MiOS brain always needs these enabled.
+    $en.Add('VirtualMachinePlatform'); $en.Add('Microsoft-Windows-Subsystem-Linux')
+    $out.Capabilities   = @($caps | Select-Object -Unique)
+    $out.Features       = @($feat | Select-Object -Unique)
+    $out.EnableFeatures = @($en   | Select-Object -Unique)
+    $out.NtliteOnly     = @($xml.SelectNodes('//n:RemoveComponents/n:c', $ns)).Count
     return $out
 }
 
@@ -175,6 +188,18 @@ function Invoke-MiOSImageServicing {
             $todo = @($Removals.Features | Where-Object { $present -contains $_ })
             if ($todo.Count) { Write-Host "[*] Disabling $($todo.Count) optional features ..." -ForegroundColor Cyan
                 Disable-WindowsOptionalFeature -Path $mount -FeatureName $todo -Remove -ErrorAction SilentlyContinue | Out-Null }
+        }
+        # Posture B: actively ENABLE the MiOS virt stack (WSL2/VMP/Hyper-V) so the
+        # brain works out of the box. Enable only features actually present + not
+        # already enabled; -All pulls in parents (e.g. Hyper-V children).
+        if ($Removals.EnableFeatures.Count) {
+            $avail = @(Get-WindowsOptionalFeature -Path $mount)
+            foreach ($ef in $Removals.EnableFeatures) {
+                $st = ($avail | Where-Object FeatureName -eq $ef | Select-Object -First 1).State
+                if ($st -and $st -ne 'Enabled') {
+                    try { Enable-WindowsOptionalFeature -Path $mount -FeatureName $ef -All -ErrorAction Stop | Out-Null; Write-Host "    +enabled $ef" -ForegroundColor DarkGray } catch {}
+                }
+            }
         }
         # Xbox FSE override into the image.
         Set-MiOSXboxOfflineReg -Mount $mount -Toml $Toml
