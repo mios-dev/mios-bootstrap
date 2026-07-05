@@ -232,9 +232,7 @@ function New-MiOSHostServiceCommands {
     # Service-account password: SSOT service key, else the global default_password.
     # An answer-file credential is a first-boot temporary cred (rotate on first run).
     $svcPass  = Get-Toml $Toml 'autounattend.service.svc_password' (Get-Toml $Toml 'identity.default_password' 'mios')
-    $distro   = Get-Toml $Toml 'autounattend.service.wsl_distro' 'MiOS'
     $script   = Get-Toml $Toml 'autounattend.service.host_script' 'C:\ProgramData\MiOS\MiOS-Host.ps1'
-    $bootUrl  = Get-Toml $Toml 'autounattend.bootstrap_url' 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1'
 
     # 1) WSL2 platform feature (the only OC strictly required for the MiOS brain).
     $cmds.Add('dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart')
@@ -254,7 +252,13 @@ function New-MiOSHostServiceCommands {
     # 4) Register MiOS-Host as an ONSTART task under mios-svc (ONSTART fires in
     #    Session 0 at boot, before any logon; schtasks grants the batch-logon right).
     #    HIGHEST run level so the first-run install can elevate.
-    $tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{0}\" -Distro {1} -BootstrapUrl {2}' -f $script, $distro, $bootUrl
+    #    NB: the /tr value must NOT contain nested/escaped quotes (\"...\") -- Windows
+    #    Setup's unattend validator REJECTS the whole answer file (0x80220005 "Value
+    #    is invalid") for a RunSynchronousCommand/Path that does. The script path is
+    #    space-free (SSOT default under C:\ProgramData\MiOS), so it needs no inner
+    #    quoting; MiOS-Host.ps1 self-resolves the distro and defaults the bootstrap
+    #    URL, so -Distro/-BootstrapUrl are omitted here (keeps the value short + valid).
+    $tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $script
     $cmds.Add(('schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $tr))
 
     # 5) MiOS-XBOX first-login HYDRATION task: an ONLOGON task (runs in the
@@ -265,7 +269,8 @@ function New-MiOSHostServiceCommands {
     #    Xbox edition. Runs "post 1 login while the user signs into Xbox".
     if ((Get-Toml $Toml 'autounattend.xbox.enable' 'false') -match '^(?i:true|1|yes)$') {
         $hydrate = Get-Toml $Toml 'autounattend.xbox.hydrate_script' 'C:\ProgramData\MiOS\MiOS-XBOX-Hydrate.ps1'
-        $htr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{0}\"' -f $hydrate
+        # no nested quotes (see MiOS-Host /tr note above); space-free SSOT path
+        $htr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $hydrate
         $cmds.Add(('schtasks /create /tn "MiOS-XBOX-Hydrate" /sc ONLOGON /rl HIGHEST /tr "{0}" /f' -f $htr))
     }
     return $cmds
