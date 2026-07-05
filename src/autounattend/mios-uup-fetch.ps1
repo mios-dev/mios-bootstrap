@@ -130,6 +130,17 @@ function Resolve-MiOSUupBuild {
 function Get-MiOSUupPackage {
     param([string]$Uuid, [string]$Edition, [string]$Lang, [string]$WorkDir, [switch]$Esd)
     New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
+    $extract = Join-Path $WorkDir 'package'
+    $marker  = Join-Path $extract 'uup_download_windows.cmd'
+    # RESUMABLE: if the package is already extracted, reuse it -- the converter's
+    # aria2 runs with -c (continue), so a re-run picks up the partial UUPs\ set
+    # instead of restarting the multi-GB download. This is what makes the fetch
+    # survive a flaky connection: on a drop, just re-run. (Delete the package dir
+    # to force a clean re-fetch.)
+    if (Test-Path $marker) {
+        Write-Host "[*] Reusing existing UUP package (resumes partial download). Delete '$extract' to force fresh." -ForegroundColor DarkGray
+        return $extract
+    }
     $zip = Join-Path $WorkDir 'uup-package.zip'
     $body = @{ autodl = '2'; updates = '1'; cleanup = '1' }
     if ($Esd) { $body['esd'] = '1' }
@@ -143,13 +154,60 @@ function Get-MiOSUupPackage {
             Write-Host "[!] get.php -- retry $i/5 in ${wait}s" -ForegroundColor Yellow; Start-Sleep -Seconds $wait
         }
     }
-    $extract = Join-Path $WorkDir 'package'
-    if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
-    Expand-Archive -Path $zip -DestinationPath $extract -Force
-    if (-not (Test-Path (Join-Path $extract 'uup_download_windows.cmd'))) {
-        throw "Package missing uup_download_windows.cmd (got a non-convert package?). Dir: $extract"
+    # Extract into a temp sibling then swap, so a partial extract never leaves a
+    # half-populated 'package' that the resume-check would wrongly trust.
+    $stage = "$extract.stage"
+    if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+    Expand-Archive -Path $zip -DestinationPath $stage -Force
+    if (-not (Test-Path (Join-Path $stage 'uup_download_windows.cmd'))) {
+        throw "Package missing uup_download_windows.cmd (got a non-convert package?). Dir: $stage"
     }
+    if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
+    Move-Item -LiteralPath $stage -Destination $extract
     return $extract
+}
+
+# Pre-stage aria2c.exe so the converter's own bootstrap never runs.
+#
+# The converter's files\get_aria2.ps1 downloads + SHA256-verifies aria2c.exe in a
+# child Windows PowerShell it spawns from cmd. In a customized parent session that
+# child can fail to resolve Get-FileHash ("The term 'Get-FileHash' is not
+# recognized") even while Invoke-WebRequest works -- a false "aria2c.exe appears to
+# be tampered with" abort. We sidestep it: fetch + verify aria2c.exe here in the
+# (working) build interpreter, reading the url + expected hash from the converter's
+# OWN script (no duplicated literals), then neuter get_aria2.ps1 so the .cmd just
+# confirms the staged binary and proceeds. Idempotent: a good aria2c.exe is kept.
+function Set-MiOSAria2 {
+    param([string]$PackageDir)
+    $g = Join-Path $PackageDir 'files\get_aria2.ps1'
+    if (-not (Test-Path $g)) { return }
+    $src  = Get-Content -LiteralPath $g -Raw
+    if ($src -match '# Neutered by MiOS') { return }   # already staged on a prior run
+    $url  = [regex]::Match($src, "url\s*=\s*'([^']+)'").Groups[1].Value
+    $hash = [regex]::Match($src, "hash\s*=\s*'([^']+)'").Groups[1].Value
+    if (-not $url -or -not $hash) { Write-Host "[!] Couldn't parse aria2 url/hash -- leaving converter bootstrap intact." -ForegroundColor Yellow; return }
+    $exe  = Join-Path $PackageDir 'files\aria2c.exe'
+    $good = (Test-Path $exe) -and ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLower() -eq $hash.ToLower())
+    if (-not $good) {
+        Write-Host "[*] Pre-staging aria2c.exe (bypassing the converter's fragile Get-FileHash bootstrap) ..." -ForegroundColor Cyan
+        New-Item -ItemType Directory -Force -Path (Split-Path $exe) | Out-Null
+        for ($i = 1; $i -le 4 -and -not $good; $i++) {
+            try {
+                Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $exe -ErrorAction Stop
+                $good = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLower() -eq $hash.ToLower()
+                if (-not $good) { Write-Host "    hash mismatch -- retry $i/4" -ForegroundColor Yellow }
+            } catch {
+                Write-Host ("    fetch failed ({0}) -- retry {1}/4" -f $_.Exception.Message.Split([char]10)[0], $i) -ForegroundColor Yellow
+                Start-Sleep -Seconds ([math]::Min(8, 2 * $i))
+            }
+        }
+        if (-not $good) { throw "Could not pre-stage a hash-verified aria2c.exe from $url" }
+    }
+    Set-Content -LiteralPath $g -Encoding ASCII -Value @(
+        '# Neutered by MiOS: aria2c.exe was pre-staged + SHA256-verified by mios-uup-fetch.ps1.',
+        'if (Test-Path "files\aria2c.exe") { Write-Host "Ready." ; exit 0 } else { exit 1 }'
+    )
+    Write-Host "[*] aria2c.exe staged + verified; converter bootstrap neutered." -ForegroundColor DarkGray
 }
 
 # Patch ConvertConfig.ini for a headless run, then drive the converter -> ISO.
@@ -171,15 +229,30 @@ function Invoke-MiOSUupConvert {
         Set-Content -LiteralPath $ini -Value $lines -Encoding ASCII
         Write-Host "[*] ConvertConfig.ini patched (AutoStart/AutoExit/ResetBase/ForceDism)." -ForegroundColor DarkGray
     }
+    Set-MiOSAria2 -PackageDir $PackageDir
     $cmd = Join-Path $PackageDir 'uup_download_windows.cmd'
     Write-Host "[*] Running UUP converter (aria2 fetch + build ISO) -- this is long ..." -ForegroundColor Cyan
     Push-Location $PackageDir
+    # The converter's .cmd spawns Windows PowerShell 5.1 (files\get_aria2.ps1). Under a
+    # pwsh 7 parent, the inherited PSModulePath points only at PS7's module dirs and
+    # OMITS the 5.1 system path (...\v1.0\Modules), so 5.1 can't autoload
+    # Microsoft.PowerShell.Utility -> Get-FileHash "not recognized" -> aria2 wrongly
+    # flagged "tampered with". Reset the child's PSModulePath to the machine+user
+    # default (+ the v1.0 system path explicitly) for the duration of the converter run.
+    $savedPSMP = $env:PSModulePath
+    $clean = @(
+        [Environment]::GetEnvironmentVariable('PSModulePath','Machine'),
+        [Environment]::GetEnvironmentVariable('PSModulePath','User'),
+        (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules')
+    ) | Where-Object { $_ } | Select-Object -Unique
+    if ($clean) { $env:PSModulePath = ($clean -join ';') }
     # Pipe the converter's native output to the HOST (visible in the transcript) so it
     # does NOT enter the success stream -- otherwise this function returns an ARRAY of
     # [converter log lines..., iso path] and the caller's $SourceIso is garbage. Scope
     # EAP=Continue so the FIRST stderr line under `2>&1` doesn't throw NativeCommandError
     # in Windows PowerShell 5.1 (the build interpreter) BEFORE the exit-code check.
-    try { & { $ErrorActionPreference = 'Continue'; & cmd.exe /c "`"$cmd`"" 2>&1 | Out-Host } } finally { Pop-Location }
+    try { & { $ErrorActionPreference = 'Continue'; & cmd.exe /c "`"$cmd`"" 2>&1 | Out-Host } }
+    finally { $env:PSModulePath = $savedPSMP; Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw "uup_download_windows.cmd failed (exit $LASTEXITCODE)" }
     $iso = Get-ChildItem -Path $PackageDir -Filter '*.ISO' -File -ErrorAction SilentlyContinue |
            Sort-Object LastWriteTime -Descending | Select-Object -First 1
