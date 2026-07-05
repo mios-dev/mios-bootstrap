@@ -21,6 +21,55 @@ pick() { python3 -c "$1" 2>/dev/null; }
 
 setst "starting"
 
+# --- Stage -1: converter prerequisites (idempotent) --------------------------
+# The UUP converter (uup_download_linux.sh + files/convert.sh) needs: aria2c,
+# cabextract, wimlib-imagex (Fedora ships this in the SEPARATE wimlib-utils
+# package, not libwimlib), chntpw, and a genisoimage/mkisofs.
+if ! command -v wimlib-imagex >/dev/null 2>&1; then
+  setst "installing converter deps"
+  sudo dnf install -y wimlib-utils cabextract chntpw aria2 xorriso >>"$LOG" 2>&1 || true
+fi
+# convert.sh (files/convert.sh) masters a UDF-PRIMARY ISO: files are visible
+# via UDF and the ISO9660 duplicates are hidden via --hide "*", with no -R/-J.
+# But Fedora's xorriso build has NO UDF support -- so its mkisofs-emulation
+# rejects "--udf", and simply dropping UDF would leave every file hidden.
+# cdrkit genisoimage also cannot master the >4GB install.wim. So install a
+# genisoimage SHIM that ignores convert.sh's boot/hide/udf flags and masters an
+# EQUIVALENT bootable Windows ISO via xorriso: ISO9660 level 3 (multi-extent,
+# handles >4GB install.wim) + Rock Ridge + Joliet + dual BIOS/UEFI El Torito.
+# Lives outside the package so it survives convert.sh's per-run re-download;
+# convert.sh prefers genisoimage, so it picks up the shim.
+SHIM=/usr/local/bin/genisoimage
+if ! grep -q 'MiOS build shim' "$SHIM" 2>/dev/null; then
+  setst "installing genisoimage->xorriso shim"
+  sudo tee "$SHIM" >/dev/null <<'SHIMEOF'
+#!/bin/bash
+# MiOS build shim standing in for genisoimage in the UUP converter. This host's
+# xorriso has NO UDF; master an ISO9660-L3 + Rock Ridge + Joliet + dual El
+# Torito image instead (level 3 handles the >4GB install.wim via multi-extent).
+out=""; src=""; vol=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o)                 out="$2"; shift 2;;
+    -V|-volid|--volid)  vol="$2"; shift 2;;
+    -b)                 shift 2;;   # convert.sh boot images -- we set our own
+    -hide|--hide)       shift 2;;   # drop --hide "*"
+    -iso-level)         shift 2;;   # we force level 3
+    -*)                 shift;;     # any other flag (no value): --udf, --no-emul-boot, ...
+    *)                  src="$1"; shift;;
+  esac
+done
+: "${vol:=MIOS_XBOX}"
+exec xorriso -as mkisofs \
+  -iso-level 3 -rational-rock -joliet -joliet-long \
+  -volid "$vol" \
+  -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 -boot-info-table \
+  -eltorito-alt-boot -e efi/microsoft/boot/efisys.bin -no-emul-boot \
+  -o "$out" "$src"
+SHIMEOF
+  sudo chmod +x "$SHIM"
+fi
+
 # --- Stage 0: resolve a BUILDABLE Insider build UUID -------------------------
 # Prefer a Dev/25H2 (26200-range) Feature Update; else the newest amd64 Feature
 # Update. fetchupd (live WU scan) is flaky/rate-limited, so fall back to the
@@ -87,23 +136,61 @@ if [ -z "$STOCK" ]; then
     done
   fi
   chmod +x "$PKG/uup_download_linux.sh"
-  ( cd "$PKG" && ./uup_download_linux.sh ) >>"$LOG" 2>&1
+  # If the UUP set + converter are already downloaded (resumed build), run the
+  # converter DIRECTLY. uup_download_linux.sh re-fetches convert.sh from
+  # git.uupdump.net on every run, which frequently returns HTTP 522 and aborts
+  # the whole build even though nothing else needs downloading. Running
+  # convert.sh directly is fully offline (local UUPs/ + files/convert.sh).
+  if [ -f "$PKG/files/convert.sh" ] && [ -n "$(ls -A "$PKG/UUPs" 2>/dev/null)" ]; then
+    say "UUP set + converter present -> convert.sh direct (skip network re-fetch)"
+    ( cd "$PKG" && chmod +x ./files/convert.sh && ./files/convert.sh wim UUPs 0 ) >>"$LOG" 2>&1
+  else
+    ( cd "$PKG" && ./uup_download_linux.sh ) >>"$LOG" 2>&1
+  fi
   STOCK=$(find_stock)
-  [ -z "$STOCK" ] && { setst "FAILED: converter produced no ISO"; exit 1; }
 fi
-say "stock ISO: $STOCK ($(du -h "$STOCK" | cut -f1))"
 
-# --- Stage 3: inject the MiOS autounattend + re-master (preserve boot) -------
+# --- Stage 3: produce MiOS-XBOX.iso with the MiOS autounattend injected -------
 setst "injecting MiOS autounattend"
 [ -f "$AUTOUNATTEND" ] || { setst "FAILED: autounattend.xml not found at $AUTOUNATTEND"; exit 1; }
 mkdir -p "$(dirname "$OUTISO")"
-# xorriso: copy the stock ISO, replay its El Torito (BIOS+UEFI) boot, add the
-# answer file at the ISO root AND \sources\ (Setup searches both).
-xorriso -indev "$STOCK" -outdev "$OUTISO" \
-        -boot_image any replay \
-        -map "$AUTOUNATTEND" /autounattend.xml \
-        -map "$AUTOUNATTEND" /sources/autounattend.xml >>"$LOG" 2>&1
-[ -s "$OUTISO" ] || { setst "FAILED: xorriso produced no output"; exit 1; }
+
+# Master the final ISO straight from the converter's ISODIR tree, baking the
+# answer file in at root + /sources/. iso-level 3 + Rock Ridge + Joliet (this
+# xorriso has no UDF) with dual BIOS/UEFI El Torito; handles the >4GB image.
+master_from_isodir() {
+  local d="$1"
+  cp -f "$AUTOUNATTEND" "$d/autounattend.xml"
+  cp -f "$AUTOUNATTEND" "$d/sources/autounattend.xml"
+  xorriso -as mkisofs -iso-level 3 -rational-rock -joliet -joliet-long \
+    -volid "MIOS_XBOX" \
+    -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 -boot-info-table \
+    -eltorito-alt-boot -e efi/microsoft/boot/efisys_noprompt.bin -no-emul-boot \
+    -o "$OUTISO" "$d" >>"$LOG" 2>&1
+}
+
+if [ -n "$STOCK" ]; then
+  # convert.sh produced a stock ISO -> copy it, replay its El Torito (BIOS+UEFI)
+  # boot, and add the answer file at the ISO root AND /sources/ (Setup searches
+  # both). ISODIR is already gone (convert.sh cleans up on success).
+  say "stock ISO: $STOCK ($(du -h "$STOCK" | cut -f1)) -> replay-inject autounattend"
+  xorriso -indev "$STOCK" -outdev "$OUTISO" \
+          -boot_image any replay \
+          -map "$AUTOUNATTEND" /autounattend.xml \
+          -map "$AUTOUNATTEND" /sources/autounattend.xml >>"$LOG" 2>&1
+else
+  # convert.sh's own ISO step failed or was interrupted, but the reconstructed
+  # ISODIR survives -> master the final ISO directly from it (this is also the
+  # recovery path when a long run is killed mid-mastering).
+  ISODIR=$(find "$PKG" -maxdepth 2 -type d -name ISODIR 2>/dev/null | head -1)
+  if [ -n "$ISODIR" ] && [ -f "$ISODIR/sources/install.wim" ]; then
+    say "no stock ISO; ISODIR complete -> mastering directly from $ISODIR"
+    master_from_isodir "$ISODIR"
+  else
+    setst "FAILED: converter produced neither a stock ISO nor a complete ISODIR"; exit 1
+  fi
+fi
+[ -s "$OUTISO" ] || { setst "FAILED: no output ISO produced"; exit 1; }
 
 SHA=$(sha256sum "$OUTISO" | cut -d' ' -f1)
 say "DONE: $OUTISO ($(du -h "$OUTISO" | cut -f1))  sha256=$SHA  build=$BUILD"
