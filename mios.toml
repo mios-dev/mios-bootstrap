@@ -1180,6 +1180,10 @@ uup_channel    = "dev"           # dev | beta | releasepreview | retail  (maps t
 uup_arch       = "amd64"         # amd64 | arm64
 uup_edition    = "professional"  # Windows 11 edition (listeditions.php name)
 uup_lang       = "en-us"
+# Bake THIS build host's third-party/OEM drivers into the image (one-time, at
+# build): Export-WindowsDriver -Online -> Add-WindowsDriver offline, so the custom
+# ISO boots this hardware out of the box. User-defined; default yes.
+bake_host_drivers = true
 # ISO carve + output.
 c_partition_gb = 96              # C: size; the REST of the disk -> M:\ (MIOS-DEV)
 bootstrap_url  = ""              # empty -> canonical raw Get-MiOS.ps1

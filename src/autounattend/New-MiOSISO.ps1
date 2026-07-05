@@ -241,6 +241,22 @@ function Invoke-MiOSImageServicing {
                 }
             }
         }
+        # Optionally bake THIS BUILD HOST's third-party drivers into the image
+        # (SSOT [autounattend].bake_host_drivers, default yes -- user-defined).
+        # Export-WindowsDriver -Online dumps the host DriverStore's OEM/3rd-party
+        # .inf packages; Add-WindowsDriver injects them offline so the custom image
+        # boots this hardware out of the box. One-time, at build. Non-fatal.
+        if ((Get-Toml $Toml 'autounattend.bake_host_drivers' 'true') -match '^(?i:true|1|yes)$') {
+            $drv = Join-Path (Split-Path $MediaRoot) 'hostdrivers'
+            New-Item -ItemType Directory -Force -Path $drv | Out-Null
+            try {
+                Write-Host "[*] Exporting build-host drivers (Export-WindowsDriver -Online) ..." -ForegroundColor Cyan
+                Export-WindowsDriver -Online -Destination $drv -ErrorAction Stop | Out-Null
+                $inf = @(Get-ChildItem -Path $drv -Recurse -Filter *.inf -ErrorAction SilentlyContinue)
+                Write-Host "[*] Injecting $($inf.Count) host driver package(s) offline (Add-WindowsDriver) ..." -ForegroundColor Cyan
+                Add-WindowsDriver -Path $mount -Driver $drv -Recurse -ForceUnsigned -ErrorAction SilentlyContinue | Out-Null
+            } catch { Write-Host "[!] Host-driver bake skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
+        } else { Write-Host "[*] Host-driver bake disabled (SSOT bake_host_drivers=false)." -ForegroundColor DarkGray }
         # Xbox FSE override into the image.
         Set-MiOSXboxOfflineReg -Mount $mount -Toml $Toml
         # Stage the MiOS-Host boot payload into the image so the specialize-pass

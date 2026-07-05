@@ -103,10 +103,13 @@ function Resolve-MiOSUupBuild {
     if (-not $uuid) {
         Write-Host "[*] Falling back to the UUP catalog (listid.php) ..." -ForegroundColor Cyan
         $lst = Invoke-UupApi "$API/listid.php?search=Windows%2011%20Insider%20Preview%20Feature%20Update&sortByDate=1"
-        $builds = @($lst.response.builds)
-        if ($builds.Count -eq 0 -and $lst.response.builds) { $builds = @($lst.response.builds.PSObject.Properties.Value) }
+        # listid.php returns response.builds as a UUID-keyed OBJECT (not an array):
+        # {"<uuid>":{arch,build,title,...},...}. Enumerate its property VALUES.
+        $bnode  = $lst.response.builds
+        $builds = if ($bnode -is [System.Array]) { @($bnode) } else { @($bnode.PSObject.Properties.Value) }
         $cand = @($builds | Where-Object { $_.arch -eq $Arch -and "$($_.title)" -match 'Feature Update' })
-        $pref = @($cand | Where-Object { "$($_.build)" -match '^(26200|26120|26100)' })
+        # Prefer the Dev/25H2 26xxx range over Canary 28xxx (SSOT channel = dev).
+        $pref = @($cand | Where-Object { "$($_.build)" -match '^26' })
         $pick = if ($pref.Count) { $pref[0] } elseif ($cand.Count) { $cand[0] } else { $null }
         if (-not $pick) { throw "No $Ring/Insider Feature Update build found via fetchupd OR listid (arch=$Arch)." }
         $uuid = $pick.uuid; $build = $pick.build; $title = $pick.title
