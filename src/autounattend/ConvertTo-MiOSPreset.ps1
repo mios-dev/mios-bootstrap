@@ -39,16 +39,14 @@ $ErrorActionPreference = 'Stop'
 $NLNS = 'urn:schemas-nliteos-com:pn.v1'
 $CANONICAL_BOOTSTRAP = 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1'
 
-# Shared MiOS provisioning core (SSOT reader + branding/theme/layout/prefs/accounts).
+# Shared MiOS provisioning core (SSOT reader + branding/theme/layout/prefs/accounts
+# + the Posture-B virtualization allowlist).
 . (Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1')
 
 # Components/features that MUST survive for MiOS's WSL2 podman stack (Posture B).
-$VIRT_COMPONENT_MATCH = @('lxss', 'windowssubsystemforlinux')
-$VIRT_FEATURE_MATCH   = @(
-    'VirtualMachinePlatform', 'HypervisorPlatform', 'Microsoft-Hyper-V',
-    'Microsoft-Windows-Subsystem-Linux', 'Containers-DisposableClientVM',
-    'Windows.HyperV.OptionalFeature'
-)
+# Single source: MiOS-Provision.lib.ps1 (shared with Merge-MiOSPresets.ps1).
+$VIRT_COMPONENT_MATCH = Get-MiOSVirtComponentMatch
+$VIRT_FEATURE_MATCH   = Get-MiOSVirtFeatureMatch
 
 # XML helper -- nliteos-namespaced element (uses $NLNS; XML-specific, not shared).
 function New-El { param([xml]$Doc,[string]$Name,[string]$Text) $e=$Doc.CreateElement($Name,$NLNS); if($PSBoundParameters.ContainsKey('Text')){$e.InnerText=$Text}; return $e }

@@ -18,6 +18,19 @@
 # (the ISO via the nested irm|iex FirstLogon, existing Windows directly).
 # =============================================================================
 
+# Posture-B virtualization allowlist -- the NTLite component-removal texts and
+# DISM feature names MiOS MUST keep for its WSL2/podman substrate. Defined ONCE
+# here (single source) and consumed by ConvertTo-MiOSPreset.ps1 (re-preserve on
+# sanitize) AND Merge-MiOSPresets.ps1 (prefer ENABLED on a Feature conflict), so
+# the virt-preserve set can never drift between the two. Was duplicated verbatim
+# in both scripts (NO-HARDCODE: SSOT-restated literal) -> centralized here.
+function Get-MiOSVirtComponentMatch { @('lxss', 'windowssubsystemforlinux') }
+function Get-MiOSVirtFeatureMatch {
+    @('VirtualMachinePlatform', 'HypervisorPlatform', 'Microsoft-Hyper-V',
+      'Microsoft-Windows-Subsystem-Linux', 'Containers-DisposableClientVM',
+      'Windows.HyperV.OptionalFeature')
+}
+
 function Read-MiosToml {
     param([string]$Path)
     $r = @{ scalars = @{}; accounts = @(); prefs = @{} }

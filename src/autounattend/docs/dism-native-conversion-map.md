@@ -112,8 +112,8 @@ Applied by `ConvertTo-MiOSPreset.ps1` from SSOT, emitted alongside the ISO. Not 
 
 ### 8. `ApplyOptions/ImageTasks` — mixed
 
-- `imageSaveTrim` / `imageFormatWim` / ESD conversion -> `Export-Image -CompressionType max|recovery`
-  (DISM-native).
+- `imageSaveTrim` / `imageFormatWim` / ESD conversion -> `Export-WindowsImage -CompressionType Max`
+  (PS cmdlet: `Fast|Max|None`) or `dism /Export-Image /Compress:recovery` for `.esd` (DISM-native).
 - `deledition_boot` / edition trim -> `Remove-WindowsImage` / edition servicing (DISM-native, partial).
 - Apply tweaks to `winre.wim` **and** `boot.wim` -> mount each WIM and repeat servicing
   (DISM-native, orchestration-heavy).

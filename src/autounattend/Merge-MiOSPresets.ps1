@@ -65,12 +65,12 @@ $ErrorActionPreference = 'Stop'
 $NLNS = 'urn:schemas-nliteos-com:pn.v1'
 
 # Features that MUST survive for MiOS's WSL2/podman stack -- on a Feature value
-# conflict these prefer ENABLED (mirrors ConvertTo-MiOSPreset's Posture B allowlist).
-$VIRT_FEATURE_MATCH = @(
-    'VirtualMachinePlatform', 'HypervisorPlatform', 'Microsoft-Hyper-V',
-    'Microsoft-Windows-Subsystem-Linux', 'Containers-DisposableClientVM',
-    'Windows.HyperV.OptionalFeature'
-)
+# conflict these prefer ENABLED. Single source: the Posture-B allowlist in the
+# shared MiOS-Provision.lib.ps1 (also used by ConvertTo-MiOSPreset), so the two
+# never drift. We source ONLY for this data constant (the lib is side-effect-free
+# function defs); merge stays identity-agnostic and reads no accounts/SSOT.
+. (Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1')
+$VIRT_FEATURE_MATCH = Get-MiOSVirtFeatureMatch
 
 # XML helper -- nliteos-namespaced, UNPREFIXED element (mirrors ConvertTo-MiOSPreset).
 function New-El { param([xml]$Doc,[string]$Name,[string]$Text) $e=$Doc.CreateElement($Name,$NLNS); if($PSBoundParameters.ContainsKey('Text')){$e.InnerText=$Text}; return $e }

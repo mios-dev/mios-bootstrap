@@ -11,6 +11,14 @@ internally" with a scripted DISM + oscdimg pipeline that consumes the same merge
 The identity-agnostic merge + SSOT sanitizer already exist and are validated; the servicing
 and ISO-assembly stages are the remaining work.
 
+**Roadmap linkage** (tracked in `mios.git` ROADMAP.md / TASKS.md, WS-XBOX / WS-WEDITION):
+Stage 0 (UUP Dump acquisition) == **T-137 (WISO-06 `mios-uup-fetch`)**. Stages 6-10 (DISM
+offline servicing + optional deep debloat + oscdimg ISO assembly + CI) == **T-138 (WISO-07)**,
+the operator-decided *DISM-native-canonical* path. The SSOT keys this doc references
+(`[autounattend]` iso_out / iso_label / bootstrap_url / computer_name / accounts) are added by
+**T-147 (WEDITION-02)** — until then `ConvertTo-MiOSPreset.ps1` reads them with MiOS-default
+fallbacks (so the flow is forward-accurate but the keys are not yet populated in `mios.toml`).
+
 ## Stage map
 
 | # | Stage | Tool | Input -> Output | Status |
@@ -23,7 +31,7 @@ and ISO-assembly stages are the remaining work.
 | 5 | Mount image | `Mount-WindowsImage` | `install.wim` (index = Pro) -> `M:\mount` | [todo] |
 | 6 | Offline servicing | `DISM` module | remove appx/capabilities/features, add packages/drivers, offline-reg tweaks (per conversion map) | [todo] |
 | 7 | Deep debloat (optional) | **NTLite** *or* skip | the ~200 CBS-only component removals DISM cannot do | [todo]/[ext] |
-| 8 | Commit + optimize | `Dismount-WindowsImage -Save` + `Export-Image` | serviced mount -> trimmed `install.wim`/`.esd` | [todo] |
+| 8 | Commit + optimize | `Dismount-WindowsImage -Save` + `Export-WindowsImage` (or `dism /Export-Image`) | serviced mount -> trimmed `install.wim`/`.esd` | [todo] |
 | 9 | Stage ISO tree | copy | serviced `install.wim` + `autounattend.xml` + boot files -> `M:\MiOS\iso\root\` | [todo] |
 | 10 | Build ISO | **oscdimg.exe** (ADK) | ISO tree -> `MiOS-Xbox.iso` (BIOS+UEFI El-Torito) | [todo] |
 
@@ -80,8 +88,10 @@ reproducibility; (a) is the "maximum-debloat" opt-in.
 
 ### 8 — Commit + optimize
 `Dismount-WindowsImage -Path M:\mount -Save`, then
-`Export-Image -SourceImagePath install.wim -DestinationImagePath install-trim.wim
--CompressionType max` (or `recovery` for `.esd`). Mirrors ApplyOptions `imageSaveTrim`.
+`Export-WindowsImage -SourcePath install.wim -SourceIndex 1 -DestinationImagePath install-trim.wim
+-CompressionType Max` (PS cmdlet; `-CompressionType` accepts `Fast|Max|None`). For `recovery`
+(`.esd`) compression, DISM only: `dism /Export-Image /SourceImageFile:install.wim /SourceIndex:1
+/DestinationImageFile:install.esd /Compress:recovery`. Mirrors ApplyOptions `imageSaveTrim`.
 
 ### 9-10 — Stage + oscdimg
 DISM cannot create an ISO. Assemble the boot tree and call ADK `oscdimg.exe`:
