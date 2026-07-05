@@ -232,6 +232,111 @@ function Set-MiOSDebloatOffline {
     Write-Host "[*] Offline debloat applied ($applied policy ops): telemetry/AI/Copilot/consumer-features/OneDrive off + DiagTrack/dmwappushservice disabled." -ForegroundColor Cyan
 }
 
+# Bake the MiOS FACTORY IDENTITY into the image OFFLINE, all SSOT-driven: the palette
+# (accent -> DWM + dark + transparency), Geist Mono Nerd Font, Bibata-Modern-Classic
+# cursor, a MiOS wallpaper, and OEM branding. Machine-wide bits (fonts/OEM) go into
+# the offline SOFTWARE hive (HKLM -- safe). The PER-USER bits (palette/cursor/wallpaper)
+# are emitted as mios-theme-default.reg for SetupComplete to import into the Default
+# hive LIVE (offline user-hive editing corrupts the profile; live is safe). Every
+# piece is defensive/non-fatal so one download hiccup can't fail the whole build.
+function Set-MiOSIdentityOffline {
+    param([string]$Mount, [string]$ScriptsDst, $Toml)
+    $accent = ([string](Get-Toml $Toml 'colors.accent' '#1A407F')).TrimStart('#')
+    if ($accent.Length -lt 6) { $accent = '1A407F' }
+    $r = $accent.Substring(0,2); $g = $accent.Substring(2,2); $b = $accent.Substring(4,2)
+    $dwm = ("ff$b$g$r").ToLower()   # DWM AccentColor is 0xAABBGGRR
+    Write-Host "[*] MiOS identity bake: accent #$accent -> DWM 0x$dwm (dark + transparency + Geist + Bibata + wallpaper + OEM)" -ForegroundColor Cyan
+
+    # --- wallpaper: generate a MiOS gradient (bg -> accent), stage into the image ---
+    try {
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        $wallDir = Join-Path $Mount 'Windows\Web\Wallpaper\MiOS'; New-Item -ItemType Directory -Force -Path $wallDir | Out-Null
+        $bg = ([string](Get-Toml $Toml 'colors.bg' '#282262')).TrimStart('#')
+        $c1 = [System.Drawing.ColorTranslator]::FromHtml("#$bg"); $c2 = [System.Drawing.ColorTranslator]::FromHtml("#$accent")
+        $bmp = New-Object System.Drawing.Bitmap(2560,1440); $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+        $rectF = New-Object System.Drawing.Rectangle(0,0,2560,1440)
+        $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rectF,$c1,$c2,45.0)
+        $gfx.FillRectangle($brush,$rectF); $bmp.Save((Join-Path $wallDir 'mios.jpg'),[System.Drawing.Imaging.ImageFormat]::Jpeg)
+        $gfx.Dispose(); $bmp.Dispose(); Write-Host "    wallpaper -> Windows\Web\Wallpaper\MiOS\mios.jpg" -ForegroundColor DarkGray
+    } catch { Write-Host "    [!] wallpaper gen skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
+
+    # --- Geist Mono Nerd Font: download, stage to Windows\Fonts, register offline (HKLM) ---
+    $fontReg = @()
+    try {
+        $ftmp = Join-Path $env:TEMP ('mios-geist-'+[guid]::NewGuid().ToString('N').Substring(0,8)); New-Item -ItemType Directory -Force -Path $ftmp | Out-Null
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/GeistMono.zip' -OutFile (Join-Path $ftmp 'g.zip') -ErrorAction Stop
+        Expand-Archive -Path (Join-Path $ftmp 'g.zip') -DestinationPath $ftmp -Force
+        $faces = @(Get-ChildItem $ftmp -Recurse -Include *.ttf,*.otf -File | Where-Object { $_.Name -match 'Mono' -and $_.Name -notmatch 'Propo' })
+        if (-not $faces.Count) { $faces = @(Get-ChildItem $ftmp -Recurse -Include *.ttf,*.otf -File) }
+        $fontsDst = Join-Path $Mount 'Windows\Fonts'
+        foreach ($f in $faces) {
+            Copy-Item $f.FullName (Join-Path $fontsDst $f.Name) -Force
+            $face = ([IO.Path]::GetFileNameWithoutExtension($f.Name)) -replace '([a-z])([A-Z])', '$1 $2'
+            $fontReg += @{ name = "$face $(if($f.Extension -eq '.otf'){'(OpenType)'}else{'(TrueType)'})"; file = $f.Name }
+        }
+        Write-Host "    staged $($faces.Count) Geist Mono face(s) -> Windows\Fonts" -ForegroundColor DarkGray
+    } catch { Write-Host "    [!] Geist font stage skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
+    if ($fontReg.Count) {
+        $sw = Join-Path $Mount 'Windows\System32\config\SOFTWARE'; & reg.exe load 'HKLM\MIOS_FNT' $sw 2>&1 | Out-Null
+        try { foreach ($fr in $fontReg) { & reg.exe add 'HKLM\MIOS_FNT\Microsoft\Windows NT\CurrentVersion\Fonts' /v $fr.name /t REG_SZ /d $fr.file /f 2>&1 | Out-Null } }
+        finally { [gc]::Collect(); & reg.exe unload 'HKLM\MIOS_FNT' 2>&1 | Out-Null }
+    }
+
+    # --- Bibata-Modern-Classic cursor: download, stage the .cur/.ani into the image ---
+    $curScheme = ''
+    try {
+        $btmp = Join-Path $env:TEMP ('mios-bibata-'+[guid]::NewGuid().ToString('N').Substring(0,8)); New-Item -ItemType Directory -Force -Path $btmp | Out-Null
+        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest' -Headers @{ 'User-Agent'='MiOS' } -ErrorAction Stop
+        $url = ($rel.assets | Where-Object { $_.name -eq 'Bibata-Modern-Classic-Windows.zip' } | Select-Object -First 1).browser_download_url
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile (Join-Path $btmp 'b.zip') -ErrorAction Stop
+        Expand-Archive -Path (Join-Path $btmp 'b.zip') -DestinationPath $btmp -Force
+        $src = Get-ChildItem $btmp -Recurse -Directory | Where-Object { @(Get-ChildItem $_.FullName -Include *.cur,*.ani -File).Count -ge 10 } | Select-Object -First 1
+        if ($src) {
+            $curDst = Join-Path $Mount 'Windows\Cursors\Bibata-Modern-Classic'; New-Item -ItemType Directory -Force -Path $curDst | Out-Null
+            Copy-Item (Join-Path $src.FullName '*') $curDst -Recurse -Force; $curScheme = 'Bibata-Modern-Classic'
+            Write-Host "    staged Bibata cursors -> Windows\Cursors\Bibata-Modern-Classic" -ForegroundColor DarkGray
+        }
+    } catch { Write-Host "    [!] Bibata cursor stage skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
+
+    # --- OEM branding (offline SOFTWARE hive, HKLM safe) ---
+    try {
+        $sw = Join-Path $Mount 'Windows\System32\config\SOFTWARE'; & reg.exe load 'HKLM\MIOS_OEM' $sw 2>&1 | Out-Null
+        try {
+            $k = 'HKLM\MIOS_OEM\Microsoft\Windows\CurrentVersion\OEMInformation'
+            & reg.exe add $k /v Manufacturer /t REG_SZ /d 'MiOS' /f 2>&1 | Out-Null
+            & reg.exe add $k /v Model /t REG_SZ /d 'MiOS-XBOX' /f 2>&1 | Out-Null
+            & reg.exe add $k /v SupportURL /t REG_SZ /d 'https://github.com/mios-dev/mios-bootstrap' /f 2>&1 | Out-Null
+        } finally { [gc]::Collect(); & reg.exe unload 'HKLM\MIOS_OEM' 2>&1 | Out-Null }
+    } catch {}
+
+    # --- render mios-theme-default.reg (per-user; SetupComplete imports into Default hive) ---
+    $lines = @(
+        'Windows Registry Editor Version 5.00', '',
+        '[HKEY_USERS\MiOSDef\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize]',
+        '"AppsUseLightTheme"=dword:00000000', '"SystemUsesLightTheme"=dword:00000000',
+        '"EnableTransparency"=dword:00000001', '"ColorPrevalence"=dword:00000001', '',
+        '[HKEY_USERS\MiOSDef\Software\Microsoft\Windows\DWM]',
+        ('"AccentColor"=dword:{0}' -f $dwm), ('"ColorizationColor"=dword:{0}' -f $dwm),
+        ('"ColorizationAfterglow"=dword:{0}' -f $dwm), '"ColorPrevalence"=dword:00000001', '',
+        '[HKEY_USERS\MiOSDef\Control Panel\Desktop]',
+        '"WallPaper"="C:\\Windows\\Web\\Wallpaper\\MiOS\\mios.jpg"', '"WallpaperStyle"="10"', '"TileWallpaper"="0"', ''
+    )
+    if ($curScheme) {
+        $map = [ordered]@{ Arrow='Default.cur'; Help='Help.cur'; AppStarting='Working.ani'; Wait='Busy.ani'; Crosshair='Cross.cur'; IBeam='Text.cur'; NWPen='Handwriting.cur'; No='Unavailiable.cur'; SizeNS='Vertical.cur'; SizeWE='Horizontal.cur'; SizeNWSE='Diagonal_1.cur'; SizeNESW='Diagonal_2.cur'; SizeAll='Move.cur'; UpArrow='Alternate.cur'; Hand='Link.cur'; Pin='Pin.cur'; Person='Person.cur' }
+        $lines += '[HKEY_USERS\MiOSDef\Control Panel\Cursors]'
+        $lines += '@="Bibata Modern Classic"'
+        foreach ($role in $map.Keys) {
+            $p = "%SystemRoot%\Cursors\$curScheme\$($map[$role])"
+            $bytes = [System.Text.Encoding]::Unicode.GetBytes($p + [char]0)
+            $hex = (($bytes | ForEach-Object { $_.ToString('x2') }) -join ',')
+            $lines += ('"{0}"=hex(2):{1}' -f $role, $hex)
+        }
+        $lines += ''
+    }
+    [IO.File]::WriteAllText((Join-Path $ScriptsDst 'mios-theme-default.reg'), (($lines -join "`r`n") + "`r`n"), [System.Text.Encoding]::Unicode)
+    Write-Host "[*] Rendered mios-theme-default.reg (palette + dark + wallpaper$(if($curScheme){' + Bibata'})) -> Setup\Scripts (SetupComplete applies to Default hive, silent)" -ForegroundColor Green
+}
+
 # Offline-service sources\install.wim: features + appx + Xbox reg, then export/trim.
 function Invoke-MiOSImageServicing {
     param([string]$MediaRoot, $Toml, [object]$Removals, [switch]$BuiltNative)
@@ -366,11 +471,11 @@ function Invoke-MiOSImageServicing {
             Write-Host "    baked SetupComplete.cmd -> image \Windows\Setup\Scripts (SYSTEM first-boot trigger)" -ForegroundColor Green
         } else { Write-Host "[!] SetupComplete.cmd NOT found next to New-MiOSISO -- first-boot MiOS trigger MISSING!" -ForegroundColor Red }
         # The interactive first-logon launcher SetupComplete copies to the Startup folder.
-        $fbSrc = Join-Path $PSScriptRoot 'mios-firstboot.cmd'
-        if (Test-Path $fbSrc) {
-            Copy-Item $fbSrc (Join-Path $scriptsDst 'mios-firstboot.cmd') -Force
-            Write-Host "    baked mios-firstboot.cmd -> image \Windows\Setup\Scripts (idempotent interactive bootstrap)" -ForegroundColor DarkGray
-        } else { Write-Host "[!] mios-firstboot.cmd NOT found next to New-MiOSISO -- first-logon bootstrap NOT baked!" -ForegroundColor Red }
+        # Bake the MiOS FACTORY IDENTITY offline (palette/dark/wallpaper reg + Geist
+        # font + Bibata cursor + OEM branding), all from SSOT, applied SILENTLY by
+        # SetupComplete's Default-hive edit. (No interactive mios-firstboot launcher --
+        # the deploy is pre-logon in Session 0; the identity is baked, not scripted.)
+        Set-MiOSIdentityOffline -Mount $mount -ScriptsDst $scriptsDst -Toml $Toml
         # SSOT appx-removal list SetupComplete reads (mios-remove-appx.txt beside it), from
         # the same preset removals -- a fallback strip for anything left provisioned.
         if ($Removals.Appx.Count) {

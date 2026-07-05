@@ -40,22 +40,27 @@ set "RMLIST=%~dp0mios-remove-appx.txt"
 if exist "%RMLIST%" powershell -NoProfile -ExecutionPolicy Bypass -Command "$set=@{}; Get-Content -LiteralPath '%RMLIST%' | ForEach-Object { $t=$_.Trim(); if ($t -and $t[0] -ne '#') { $set[$t.ToLower()]=$true } }; Get-AppxProvisionedPackage -Online | Where-Object { $set.ContainsKey(($_.DisplayName).ToLower()) } | ForEach-Object { try { Remove-AppxProvisionedPackage -Online -AllUsers -PackageName $_.PackageName -EA Stop } catch {} }; Get-AppxPackage -AllUsers | Where-Object { $set.ContainsKey(($_.Name).ToLower()) } | ForEach-Object { try { Remove-AppxPackage -AllUsers -Package $_.PackageFullName -EA Stop } catch {} }" >>"%LOG%" 2>&1
 echo [MiOS] debloat done %DATE% %TIME%>>"%LOG%"
 
-rem --- First-logon bootstrap launcher (INTERACTIVE 'mios' user context). Copy the
-rem     standalone, idempotent, single-owner launcher (baked beside this script)
-rem     into the All-Users Startup folder; the shell runs it at first interactive
-rem     logon -- network + user session + UAC, the context Get-MiOS needs. There is
-rem     deliberately NO ONLOGON /ru SYSTEM scheduled task: Get-MiOS does two-pass
-rem     UAC elevation + a WSL import, and WSL CANNOT run as SYSTEM
-rem     (microsoft/WSL#11280), so a SYSTEM task cannot complete the bootstrap and
-rem     would only race + self-delete-race the correct interactive run. The
-rem     specialize-pass MiOS-Host task covers pre-logon boot/keep-alive. -----------
-set "STARTUP=%ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup"
-if exist "%~dp0mios-firstboot.cmd" (
-    copy /y "%~dp0mios-firstboot.cmd" "%STARTUP%\mios-firstboot.cmd" >>"%LOG%" 2>&1
-    echo [MiOS] placed startup launcher %STARTUP%\mios-firstboot.cmd>>"%LOG%"
-) else (
-    echo [MiOS] WARN mios-firstboot.cmd missing beside SetupComplete -- first-logon bootstrap NOT armed>>"%LOG%"
-)
+rem --- MiOS FACTORY IDENTITY (per-user defaults): apply the MiOS palette + Bibata
+rem     cursor + wallpaper to the DEFAULT user hive LIVE. Live Default-hive editing is
+rem     SAFE (real registry, proper transactions) -- unlike OFFLINE WIM hive editing,
+rem     which corrupts the profile. Every account inherits this at first logon, so the
+rem     desktop is MiOS-themed with NO script and NO UAC. mios-theme-default.reg is
+rem     rendered from SSOT ([colors].accent, cursor, wallpaper) + baked beside this. --
+echo [MiOS] applying MiOS theme/cursor/wallpaper to Default hive %DATE% %TIME%>>"%LOG%"
+if exist "%~dp0mios-theme-default.reg" (
+    reg load "HKU\MiOSDef" "%SystemDrive%\Users\Default\NTUSER.DAT">>"%LOG%" 2>&1
+    reg import "%~dp0mios-theme-default.reg">>"%LOG%" 2>&1
+    reg unload "HKU\MiOSDef">>"%LOG%" 2>&1
+) else ( echo [MiOS] WARN mios-theme-default.reg missing beside SetupComplete>>"%LOG%" )
+
+rem --- Start the MiOS brain deploy NOW (end of setup, BEFORE first logon). The
+rem     specialize pass registered MiOS-Host as mios-svc (a LOCAL ADMIN, run level
+rem     HIGHEST). Running it here launches the WSL2 + agent-stack install in Session 0
+rem     -- HIDDEN, ELEVATED, NO UAC, NO visible console (WSL cannot run as SYSTEM, so
+rem     mios-svc is the account; being admin means Get-MiOS runs already-elevated and
+rem     never prompts). There is deliberately NO interactive Startup launcher. --------
+echo [MiOS] starting pre-logon MiOS-Host (Session 0, hidden) %DATE% %TIME%>>"%LOG%"
+schtasks /run /tn "MiOS-Host">>"%LOG%" 2>&1
 
 echo [MiOS] SetupComplete done %DATE% %TIME%>>"%LOG%"
 exit /b 0

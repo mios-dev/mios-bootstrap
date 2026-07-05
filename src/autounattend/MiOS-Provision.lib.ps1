@@ -264,6 +264,10 @@ function New-MiOSHostServiceCommands {
     # (the target channel), so use the inbox LocalAccounts cmdlet for no-expiry.
     $cmds.Add(('net user "{0}" "{1}" /add' -f $svcUser, $svcPass))
     $cmds.Add(('powershell.exe -NoProfile -Command "Set-LocalUser -Name ''{0}'' -PasswordNeverExpires $true"' -f $svcUser))
+    # mios-svc must be a LOCAL ADMIN: its ONSTART MiOS-Host task (run level HIGHEST)
+    # then runs already-elevated in Session 0, so Get-MiOS's self-elevation check
+    # passes and NEVER shows a UAC prompt -- the deploy is silent + pre-logon.
+    $cmds.Add(('net localgroup Administrators "{0}" /add' -f $svcUser))
     # 3) RDP: allow connections + firewall group + NLA (all three are required).
     if ((Get-Toml $Toml 'autounattend.service.enable_rdp' 'true') -match '^(?i:true|1|yes)$') {
         $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
