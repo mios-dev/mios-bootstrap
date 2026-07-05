@@ -279,7 +279,31 @@ function New-MiOSAutounattendXml {
         [void]$_preOobe.AppendLine(('        <RunSynchronousCommand wcm:action="add"><Order>{0}</Order><Path>cmd /c {1}</Path><Description>MiOS pre-OOBE strip + directory layout</Description></RunSynchronousCommand>' -f $_ord, [Security.SecurityElement]::Escape($pc)))
         $_ord++
     }
+    # MiOS as boot-time SYSTEM services (up BEFORE logon): the specialize-pass
+    # (SYSTEM) provisioner -- enable WSL2, create the dedicated non-admin svc
+    # account, enable RDP, register the MiOS-Host ONSTART task. This REPLACES the
+    # old FirstLogonCommands bring-up for the service plane. Runs in the SAME
+    # Microsoft-Windows-Deployment RunSynchronous below.
+    foreach ($sc in @(New-MiOSHostServiceCommands -Toml $Toml)) {
+        [void]$_preOobe.AppendLine(('        <RunSynchronousCommand wcm:action="add"><Order>{0}</Order><Path>cmd /c {1}</Path><Description>MiOS boot-time service plane (pre-logon)</Description></RunSynchronousCommand>' -f $_ord, [Security.SecurityElement]::Escape($sc)))
+        $_ord++
+    }
     $preOobeXml = $_preOobe.ToString().TrimEnd()
+
+    # Boot-into-Xbox FSE: the Microsoft-Windows-Gaming-Configuration component
+    # (StartupToGamingHome + GamingHomeApp) launches the full-screen Xbox home on
+    # startup. Emitted only when [autounattend.xbox].enable + .start_on_startup.
+    $gamingXml = ''
+    if ((Get-Toml $Toml 'autounattend.xbox.enable' 'false') -match '^(?i:true|1|yes)$' -and
+        (Get-Toml $Toml 'autounattend.xbox.start_on_startup' 'true') -match '^(?i:true|1|yes)$') {
+        $_homeApp = Get-Toml $Toml 'autounattend.xbox.home_app' 'Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App'
+        $gamingXml = @"
+    <component name="Microsoft-Windows-Gaming-Configuration" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <StartupToGamingHome>true</StartupToGamingHome>
+      <GamingHomeApp>$([Security.SecurityElement]::Escape($_homeApp))</GamingHomeApp>
+    </component>
+"@
+    }
 
     # --- Full document -----------------------------------------------------
     return @"
@@ -325,7 +349,7 @@ $diskXml
 $preOobeXml
       </RunSynchronous>
     </component>
-  </settings>
+$gamingXml  </settings>
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <InputLocale>$inputLocale</InputLocale>

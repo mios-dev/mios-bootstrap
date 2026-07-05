@@ -203,6 +203,15 @@ function Invoke-MiOSImageServicing {
         }
         # Xbox FSE override into the image.
         Set-MiOSXboxOfflineReg -Mount $mount -Toml $Toml
+        # Stage the MiOS-Host boot payload into the image so the specialize-pass
+        # ONSTART task (registered by the autounattend) finds it pre-logon.
+        $hostSrc = Join-Path $PSScriptRoot 'MiOS-Host.ps1'
+        if (Test-Path $hostSrc) {
+            $hostDst = Join-Path $mount 'ProgramData\MiOS'
+            New-Item -ItemType Directory -Force -Path $hostDst | Out-Null
+            Copy-Item $hostSrc (Join-Path $hostDst 'MiOS-Host.ps1') -Force
+            Write-Host "    staged MiOS-Host.ps1 -> image ProgramData\MiOS (pre-logon boot service)" -ForegroundColor DarkGray
+        }
         Write-Host "    NTLite-only residue (deep CBS removals DISM cannot do): $($Removals.NtliteOnly) <c> -- see dism-native-conversion-map.md" -ForegroundColor DarkGray
     } finally {
         Write-Host "[*] Committing image (Dismount -Save) ..." -ForegroundColor Cyan

@@ -1205,6 +1205,21 @@ min_build         = "26200"      # informational: 25H2/Dev FSE floor
 home_app          = "Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App"
 start_on_startup  = true         # autounattend Gaming-Configuration StartupToGamingHome
 
+# [autounattend.service] -- MiOS as boot-time SYSTEM services, UP BEFORE LOGON.
+# The MiOS WSL2/podman service plane is registered in the SPECIALIZE pass (SYSTEM,
+# pre-OOBE, pre-logon) and kept alive by the MiOS-Host ONSTART task -- NOT
+# FirstLogonCommands (per-user, post-logon). HARD CONSTRAINT: wsl.exe cannot run
+# as LocalSystem (WSL is tied to a user profile), so the task runs under a
+# dedicated NON-admin account (svc_user); the DESKTOP/Xbox user must be a DIFFERENT
+# account. See docs/pre-logon-system-services.md.
+[autounattend.service]
+enable       = true
+svc_user     = "mios-svc"     # dedicated non-admin account that owns the WSL distro
+svc_password = ""             # empty -> inherits [identity].default_password (first-boot temp cred)
+wsl_distro   = "MiOS"
+host_script  = "C:\\ProgramData\\MiOS\\MiOS-Host.ps1"
+enable_rdp   = true           # RDP up before logon too (Pro+; Home can't host RDP)
+
 # ----------------------------------------------------------------------------
 # [env] -- free-form environment-variable additions. Keys must match POSIX
 # env-var rules ([A-Za-z_][A-Za-z0-9_]*). Anything you put here is exported

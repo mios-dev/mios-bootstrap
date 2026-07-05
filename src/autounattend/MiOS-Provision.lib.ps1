@@ -204,6 +204,53 @@ function Get-MiOSXboxProtectFeatures {
     )
 }
 
+# ── MiOS as a boot-time SYSTEM service, up BEFORE logon (SPECIALIZE pass) ──────
+# Emits the commands that register the MiOS service plane so it starts at Windows
+# BOOT, before any interactive/RDP session shows a desktop. These run in the
+# autounattend `specialize` pass as SYSTEM (pre-OOBE, pre-logon, OEM-key-safe) --
+# NOT FirstLogonCommands (per-user, post-logon), which is what MiOS moves away from.
+#
+# HARD CONSTRAINT (researched, high-confidence): wsl.exe CANNOT run as
+# LocalSystem/SYSTEM -- WSL is tied to a user profile (microsoft/WSL#11280,
+# "by design"). So the persistent boot task runs under a DEDICATED, NON-admin
+# local account (default `mios-svc`), which owns the WSL distro registration and
+# the keep-alive holder. The specialize provisioner (SYSTEM) only: enables the
+# WSL2 optional feature, creates that account, enables RDP, and registers the
+# MiOS-Host ONSTART task. The heavy one-time install (wsl import + podman) is done
+# BY MiOS-Host.ps1 on its first run, under mios-svc. See docs/pre-logon-system-services.md.
+function New-MiOSHostServiceCommands {
+    param($Toml)
+    $cmds = New-Object System.Collections.Generic.List[string]
+    if ((Get-Toml $Toml 'autounattend.service.enable' 'true') -notmatch '^(?i:true|1|yes)$') { return $cmds }
+
+    $svcUser  = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-svc'
+    # Service-account password: SSOT service key, else the global default_password.
+    # An answer-file credential is a first-boot temporary cred (rotate on first run).
+    $svcPass  = Get-Toml $Toml 'autounattend.service.svc_password' (Get-Toml $Toml 'identity.default_password' 'mios')
+    $distro   = Get-Toml $Toml 'autounattend.service.wsl_distro' 'MiOS'
+    $script   = Get-Toml $Toml 'autounattend.service.host_script' 'C:\ProgramData\MiOS\MiOS-Host.ps1'
+    $bootUrl  = Get-Toml $Toml 'autounattend.bootstrap_url' 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1'
+
+    # 1) WSL2 platform feature (the only OC strictly required for the MiOS brain).
+    $cmds.Add('dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart')
+    $cmds.Add('dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart')
+    # 2) Dedicated NON-admin service account (WSL can't run as SYSTEM).
+    $cmds.Add(('net user "{0}" "{1}" /add /y' -f $svcUser, $svcPass))
+    $cmds.Add(('wmic useraccount where "name=''{0}''" set PasswordExpires=false' -f $svcUser))
+    # 3) RDP: allow connections + firewall group + NLA (all three are required).
+    if ((Get-Toml $Toml 'autounattend.service.enable_rdp' 'true') -match '^(?i:true|1|yes)$') {
+        $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
+        $cmds.Add('netsh advfirewall firewall set rule group="remote desktop" new enable=Yes')
+        $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f')
+    }
+    # 4) Register MiOS-Host as an ONSTART task under mios-svc (ONSTART fires in
+    #    Session 0 at boot, before any logon; schtasks grants the batch-logon right).
+    #    HIGHEST run level so the first-run install can elevate.
+    $tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{0}\" -Distro {1} -BootstrapUrl {2}' -f $script, $distro, $bootUrl
+    $cmds.Add(('schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $tr))
+    return $cmds
+}
+
 function New-MiOSBrandingCommands {
     # FULL MiOS visual identity applied GLOBALLY (HKLM + Default hive + first
     # HKCU), ALL from SSOT ([branding], [colors].accent, [theme]).
