@@ -1204,6 +1204,11 @@ min_build         = "26200"      # informational: 25H2/Dev FSE floor
 # AnyFSE) for a no-signin console home instead of the Xbox app.
 home_app          = "Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App"
 start_on_startup  = true         # autounattend Gaming-Configuration StartupToGamingHome
+# First-login HYDRATION: the WU-stripped image can't bake the Store-delivered
+# Gaming Services / WebView2 / framework deps. MiOS-XBOX-Hydrate.ps1 (ONLOGON task)
+# fetches + installs them at first logon (while the user signs into Xbox), retries
+# across logins, self-removes when done. Staged into the image by New-MiOSISO.
+hydrate_script    = "C:\\ProgramData\\MiOS\\MiOS-XBOX-Hydrate.ps1"
 
 # [autounattend.service] -- MiOS as boot-time SYSTEM services, UP BEFORE LOGON.
 # The MiOS WSL2/podman service plane is registered in the SPECIALIZE pass (SYSTEM,

@@ -34,6 +34,10 @@ fallbacks (so the flow is forward-accurate but the keys are not yet populated in
 
 \* **[done]** = script written, parses, unit-verified (SSOT reads, preset parse, command emission). End-to-end run needs elevation + a live UUP Dump Dev fetch + the Windows ADK (oscdimg) on the build host; not executed in this pass (no ISO built).
 
+**Two web-fetch escape hatches for what can't be baked offline:**
+- **Build host** — `Install-MiOSBuildPrereqs.ps1` (winget) fetches the ADK `oscdimg` (and optionally packaged WSL) so `New-MiOSISO.ps1` has its tools. Run once, elevated, before the build.
+- **Target machine, first login** — `MiOS-XBOX-Hydrate.ps1` (ONLOGON task, registered by the specialize provisioner, staged into the image) fetches the Store-delivered gaming runtime the WU-stripped image can't bake: **Gaming Services** (`winget --source msstore 9MWPM2CQNLHN`), the **Xbox app** update, the **WebView2** evergreen runtime, and framework deps. Marker-gated, retries across logins (a fresh Dev box often has no first-boot network), self-removes when done — runs "while the user signs into Xbox."
+
 ## Stage detail
 
 ### 0 — UUP Dump (stock, signed media)

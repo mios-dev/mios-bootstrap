@@ -248,6 +248,18 @@ function New-MiOSHostServiceCommands {
     #    HIGHEST run level so the first-run install can elevate.
     $tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{0}\" -Distro {1} -BootstrapUrl {2}' -f $script, $distro, $bootUrl
     $cmds.Add(('schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $tr))
+
+    # 5) MiOS-XBOX first-login HYDRATION task: an ONLOGON task (runs in the
+    #    interactive/auto-login user's session, HIGHEST) that fetches the
+    #    Store-delivered gaming runtime the WU-stripped image can't bake
+    #    (Gaming Services + WebView2 + deps). No /ru -> runs for whoever logs on
+    #    (the AutoLogon admin); self-removes once its marker is set. Gated on the
+    #    Xbox edition. Runs "post 1 login while the user signs into Xbox".
+    if ((Get-Toml $Toml 'autounattend.xbox.enable' 'false') -match '^(?i:true|1|yes)$') {
+        $hydrate = Get-Toml $Toml 'autounattend.xbox.hydrate_script' 'C:\ProgramData\MiOS\MiOS-XBOX-Hydrate.ps1'
+        $htr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{0}\"' -f $hydrate
+        $cmds.Add(('schtasks /create /tn "MiOS-XBOX-Hydrate" /sc ONLOGON /rl HIGHEST /tr "{0}" /f' -f $htr))
+    }
     return $cmds
 }
 
