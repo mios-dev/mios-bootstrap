@@ -40,22 +40,22 @@ set "RMLIST=%~dp0mios-remove-appx.txt"
 if exist "%RMLIST%" powershell -NoProfile -ExecutionPolicy Bypass -Command "$set=@{}; Get-Content -LiteralPath '%RMLIST%' | ForEach-Object { $t=$_.Trim(); if ($t -and $t[0] -ne '#') { $set[$t.ToLower()]=$true } }; Get-AppxProvisionedPackage -Online | Where-Object { $set.ContainsKey(($_.DisplayName).ToLower()) } | ForEach-Object { try { Remove-AppxProvisionedPackage -Online -AllUsers -PackageName $_.PackageName -EA Stop } catch {} }; Get-AppxPackage -AllUsers | Where-Object { $set.ContainsKey(($_.Name).ToLower()) } | ForEach-Object { try { Remove-AppxPackage -AllUsers -Package $_.PackageFullName -EA Stop } catch {} }" >>"%LOG%" 2>&1
 echo [MiOS] debloat done %DATE% %TIME%>>"%LOG%"
 
-rem --- First-boot bootstrap runner. Placed in the All-Users Startup folder so
-rem     the shell runs it at the first interactive logon (network + user session,
-rem     VISIBLE) -- Startup is reliable here where RunOnce is not. It drops a
-rem     marker (proof it fired), runs the MiOS bootstrap, then removes itself so
-rem     it runs exactly once. A duplicate ONLOGON scheduled task is registered as
-rem     a belt-and-suspenders fallback. No nested quotes / no spaces in paths that
-rem     would trip the unattend validator -- this is a plain .cmd on disk. --------
+rem --- First-logon bootstrap launcher (INTERACTIVE 'mios' user context). Copy the
+rem     standalone, idempotent, single-owner launcher (baked beside this script)
+rem     into the All-Users Startup folder; the shell runs it at first interactive
+rem     logon -- network + user session + UAC, the context Get-MiOS needs. There is
+rem     deliberately NO ONLOGON /ru SYSTEM scheduled task: Get-MiOS does two-pass
+rem     UAC elevation + a WSL import, and WSL CANNOT run as SYSTEM
+rem     (microsoft/WSL#11280), so a SYSTEM task cannot complete the bootstrap and
+rem     would only race + self-delete-race the correct interactive run. The
+rem     specialize-pass MiOS-Host task covers pre-logon boot/keep-alive. -----------
 set "STARTUP=%ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup"
-set "R=%STARTUP%\mios-firstboot.cmd"
->"%R%"  echo @echo off
->>"%R%" echo echo fired %%DATE%% %%TIME%%^> "%ProgramData%\MiOS\firstboot.marker"
->>"%R%" echo powershell -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1' | iex"
->>"%R%" echo del /f /q "%%~f0"
-echo [MiOS] placed startup launcher %R%>>"%LOG%"
-
-schtasks /create /tn MiOS-FirstBoot /sc ONLOGON /rl HIGHEST /ru SYSTEM /tr "%R%" /f >>"%LOG%" 2>&1
+if exist "%~dp0mios-firstboot.cmd" (
+    copy /y "%~dp0mios-firstboot.cmd" "%STARTUP%\mios-firstboot.cmd" >>"%LOG%" 2>&1
+    echo [MiOS] placed startup launcher %STARTUP%\mios-firstboot.cmd>>"%LOG%"
+) else (
+    echo [MiOS] WARN mios-firstboot.cmd missing beside SetupComplete -- first-logon bootstrap NOT armed>>"%LOG%"
+)
 
 echo [MiOS] SetupComplete done %DATE% %TIME%>>"%LOG%"
 exit /b 0

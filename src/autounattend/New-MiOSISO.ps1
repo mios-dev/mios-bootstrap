@@ -340,6 +340,12 @@ function Invoke-MiOSImageServicing {
             Copy-Item $scSrc (Join-Path $scriptsDst 'SetupComplete.cmd') -Force
             Write-Host "    baked SetupComplete.cmd -> image \Windows\Setup\Scripts (SYSTEM first-boot trigger)" -ForegroundColor Green
         } else { Write-Host "[!] SetupComplete.cmd NOT found next to New-MiOSISO -- first-boot MiOS trigger MISSING!" -ForegroundColor Red }
+        # The interactive first-logon launcher SetupComplete copies to the Startup folder.
+        $fbSrc = Join-Path $PSScriptRoot 'mios-firstboot.cmd'
+        if (Test-Path $fbSrc) {
+            Copy-Item $fbSrc (Join-Path $scriptsDst 'mios-firstboot.cmd') -Force
+            Write-Host "    baked mios-firstboot.cmd -> image \Windows\Setup\Scripts (idempotent interactive bootstrap)" -ForegroundColor DarkGray
+        } else { Write-Host "[!] mios-firstboot.cmd NOT found next to New-MiOSISO -- first-logon bootstrap NOT baked!" -ForegroundColor Red }
         # SSOT appx-removal list SetupComplete reads (mios-remove-appx.txt beside it), from
         # the same preset removals -- a fallback strip for anything left provisioned.
         if ($Removals.Appx.Count) {
