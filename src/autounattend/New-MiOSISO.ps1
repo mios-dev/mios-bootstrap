@@ -197,7 +197,12 @@ function Set-MiOSDebloatOffline {
     $hives = @(
         @{ h = 'MIOS_SW';  f = (Join-Path $Mount 'Windows\System32\config\SOFTWARE') }
         @{ h = 'MIOS_SYS'; f = (Join-Path $Mount 'Windows\System32\config\SYSTEM') }
-        @{ h = 'MIOS_DU';  f = (Join-Path $Mount 'Users\Default\NTUSER.DAT') }
+        # NB: DO NOT offline-edit Users\Default\NTUSER.DAT here. Editing a USER hive
+        # inside a mounted WIM corrupts it (the NTUSER.DAT.LOG transaction is not flushed
+        # on dismount), so every profile created from Default fails to load -> "The User
+        # Profile Service service failed the sign-in." The per-user debloat intent is
+        # already covered by the machine-wide HKLM policies above + SetupComplete's LIVE
+        # guest-side Default-hive edit (safe: real registry, proper transactions).
     )
     $ok = @{}
     foreach ($x in $hives) { if (Test-Path $x.f) { & reg.exe load "HKLM\$($x.h)" $x.f 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $ok[$x.h] = $true } } }
@@ -206,7 +211,7 @@ function Set-MiOSDebloatOffline {
         $plan = @()
         if ($ok['MIOS_SW'])  { foreach ($e in @($pol.software))     { $plan += @{ h = 'MIOS_SW';  e = $e } } }
         if ($ok['MIOS_SYS']) { foreach ($e in @($pol.system))       { $plan += @{ h = 'MIOS_SYS'; e = $e } } }
-        if ($ok['MIOS_DU'])  { foreach ($e in @($pol.default_user)) { $plan += @{ h = 'MIOS_DU';  e = $e } } }
+        # (default_user intentionally NOT applied offline -- see the hive list above.)
         foreach ($p in $plan) {
             $full = "HKLM\$($p.h)\$($p.e.key)"
             try {
