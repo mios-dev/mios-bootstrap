@@ -9,7 +9,19 @@ pass cut short by a session limit; the **build-breakers were confirmed + fixed**
 stdout contaminating the returned ISO path, install.esd mount, the TOML
 comment/backslash/prefs parser bugs, the ICMP gate, `foundBuild`, `-Esd` forward).
 
-These remain (none break the DEFAULT build path; ranked):
+**UPDATE (commit a3f40bb): the correctness follow-ups below are now RESOLVED** —
+Linux-layout moved to FirstLogonCommands (user context), servicing DISCARDs on
+error (no half-serviced commit), answer-file scalars XML-escaped, `<TimeZone>`
+IANA→Windows map, `Install-MiOSBuildPrereqs` throws instead of false-green,
+merged-preset written to `$WorkDir` not the repo, BIOS/UEFI boot-file existence
+checks. **Genuinely still open:** (1) the cleartext-cred posture (by-design
+first-boot temp creds; would add `-ObfuscatePasswords` default + an RDP SSOT
+opt-in); (2) the SSOT surface completeness (T-147 — add the in-code-default keys to
+`mios.toml` + `configurator/mios.html`); (3) low: `reg unload` is fire-and-forget
+before `Dismount -Save`; (4) low: branding reads `theme.mode` but the real SSOT is
+`desktop.color_scheme`.
+
+The original ranked list (now mostly resolved, kept for provenance):
 
 ## Medium
 1. **Windows `<TimeZone>` takes a Windows tz ID, not IANA.** `New-MiOSAutounattend`
