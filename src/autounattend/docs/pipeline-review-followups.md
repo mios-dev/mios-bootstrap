@@ -51,6 +51,28 @@ These remain (none break the DEFAULT build path; ranked):
 8. **Staging is inside the `-not $SkipServicing` gate** while the tasks are always
    registered — only matters in the `-SkipServicing` test mode (image is stock anyway).
 
+## Re-review update (post-d889383, commit e525c67)
+
+A second adversarial review (26 agents, 0 errors) of the *fixed* code found — and I
+then fixed (e525c67) — **2 regressions my d889383 fixes had introduced**:
+- CRITICAL: `& native ... 2>&1 | Out-Host` throws `NativeCommandError` under
+  `EAP=Stop` in **PowerShell 5.1** (the build interpreter) on the first stderr line →
+  aborted the default build. Fixed by scoping `EAP=Continue` around the native call.
+- HIGH: `MiOS-Host` keep-alive targeted `wsl -d MiOS`, but the bootstrap registers
+  `podman-MiOS-DEV`/`MiOS-DEV` → `WSL_E_DISTRO_NOT_FOUND`, brain never held alive.
+  Fixed with exact-name `Resolve-MiOSDistro` + a bounded first-run attempt cap.
+
+It also confirmed the Medium/Low items above are real, and added a few **new Low**
+finds still open:
+- `New-MiOSISO` `Build-MiOSBootableIso`: the BIOS boot file `boot\etfsboot.com` is
+  passed to `-bootdata` with **no existence check** (only the UEFI one is checked).
+- `Set-MiOSXboxOfflineReg`: the `reg unload` of the offline hives is fire-and-forget
+  (`| Out-Null`, no retry) — a held handle → the later `Dismount -Save` fails on a
+  locked hive.
+- `Build-MiOSXboxISO`: the merged-preset artifact is written into `$PSScriptRoot`
+  (the repo checkout), not `$WorkDir` — every build mutates a repo file, and two
+  concurrent builds collide on the path.
+
 ## Needs a real elevated+networked build to validate
 The whole pipeline has only been unit-verified. A real run (`Build-MiOSXboxISO.ps1`
 elevated) is the only way to confirm: the live UUP Dump Dev fetch + converter, the
