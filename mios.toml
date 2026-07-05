@@ -1193,6 +1193,9 @@ bootstrap_url  = ""              # empty -> canonical raw Get-MiOS.ps1
 work_root      = ""
 iso_out        = ""              # empty -> <work_root>\MiOS\iso\MiOS-Xbox.iso
 iso_label      = "MiOS-Xbox"
+# Optional pre-built base ISO for the Build-MiOSXbox.ps1 wrapper. Empty -> the
+# wrapper auto-detects a local base, else downloads fresh from UUP Dump.
+source_iso     = ""
 computer_name  = ""              # empty -> inherits [identity].hostname
 
 # [autounattend.xbox] -- Xbox Full Screen Experience "out of the box" (T-140).
