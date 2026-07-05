@@ -34,7 +34,7 @@
 .PARAMETER OutIso      Final MiOS-Xbox ISO. Default: [autounattend].iso_out.
 .PARAMETER TomlPath    mios.toml SSOT.
 .PARAMETER MergedPreset  The merged NTLite preset (debloat intent). Default: .\MiOS-Xbox-Merged.xml.
-.PARAMETER WorkDir     Scratch dir. Default: M:\MiOS\isobuild or $env:TEMP\mios-isobuild.
+.PARAMETER WorkDir     Scratch dir. Default: <work_root>\MiOS\isobuild, where work_root is autounattend.work_root or the most-free fixed drive.
 .PARAMETER SkipServicing  Skip DISM servicing (autounattend + oscdimg only -- fast test).
 .PARAMETER Esd         Prefer install.esd if present.
 
@@ -320,9 +320,10 @@ if (-not $TomlPath) {
     }
 }
 $toml   = if ($TomlPath) { Read-MiosToml -Path $TomlPath } else { @{ scalars=@{}; accounts=@(); prefs=@{} } }
-if (-not $OutIso)  { $OutIso  = Get-Toml $toml 'autounattend.iso_out'   'M:\MiOS\iso\MiOS-Xbox.iso' }
+$buildRoot = Resolve-MiOSBuildRoot $toml
+if (-not $OutIso)  { $OutIso  = Get-Toml $toml 'autounattend.iso_out' (Join-Path $buildRoot 'iso\MiOS-Xbox.iso') }
 $label = Get-Toml $toml 'autounattend.iso_label' 'MiOS-Xbox'
-if (-not $WorkDir) { $WorkDir = if (Test-Path 'M:\') { 'M:\MiOS\isobuild' } else { Join-Path $env:TEMP 'mios-isobuild' } }
+if (-not $WorkDir) { $WorkDir = Join-Path $buildRoot 'isobuild' }
 
 # Stage 0 -- source ISO (fetch Dev-channel if not supplied).
 if (-not $SourceIso) {

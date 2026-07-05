@@ -1187,7 +1187,11 @@ bake_host_drivers = true
 # ISO carve + output.
 c_partition_gb = 96              # C: size; the REST of the disk -> M:\ (MIOS-DEV)
 bootstrap_url  = ""              # empty -> canonical raw Get-MiOS.ps1
-iso_out        = "M:\\MiOS\\iso\\MiOS-Xbox.iso"
+# Build scratch + ISO output volume. Empty -> auto-pick the fixed drive with the
+# MOST free space (install.wim needs ~15-20 GB; the retired M:\ pin overflowed a
+# 95%-full 256 GB volume mid-build). Set e.g. "D:\\MiOSbuild" to force a root.
+work_root      = ""
+iso_out        = ""              # empty -> <work_root>\MiOS\iso\MiOS-Xbox.iso
 iso_label      = "MiOS-Xbox"
 computer_name  = ""              # empty -> inherits [identity].hostname
 

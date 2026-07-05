@@ -26,7 +26,7 @@
     and its CDN links are short-lived, so this retries with backoff and runs promptly.
 
 .PARAMETER TomlPath   mios.toml SSOT (default: M:\etc\mios, M:\usr\share\mios, or <repo>\mios.toml).
-.PARAMETER WorkDir    Scratch dir for the package + conversion. Default: M:\MiOS\uup or $env:TEMP\mios-uup.
+.PARAMETER WorkDir    Scratch dir for the package + conversion. Default: <work_root>\MiOS\uup, where work_root is autounattend.work_root or the most-free fixed drive.
 .PARAMETER OutIso     Final ISO path. Default: <WorkDir>\<build>.iso.
 .PARAMETER Channel    Override [autounattend].uup_channel (dev|beta|releasepreview|retail).
 .PARAMETER Esd        Produce install.esd (smaller) instead of install.wim.
@@ -201,7 +201,7 @@ $arch    = Get-Toml $toml 'autounattend.uup_arch'    'amd64'
 $edition = Get-Toml $toml 'autounattend.uup_edition' 'professional'
 $lang    = Get-Toml $toml 'autounattend.uup_lang'    'en-us'
 $ring    = Get-MiOSUupRing -Channel $chan
-if (-not $WorkDir) { $WorkDir = if (Test-Path 'M:\') { 'M:\MiOS\uup' } else { Join-Path $env:TEMP 'mios-uup' } }
+if (-not $WorkDir) { $WorkDir = Join-Path (Resolve-MiOSBuildRoot $toml) 'uup' }
 
 Write-Host "[*] UUP fetch: channel=$chan (ring=$ring) arch=$arch edition=$edition lang=$lang" -ForegroundColor Cyan
 $b   = Resolve-MiOSUupBuild -Ring $ring -Arch $arch -Edition $edition -Lang $lang

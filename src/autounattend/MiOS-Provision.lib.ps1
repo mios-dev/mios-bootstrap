@@ -64,6 +64,27 @@ function Read-MiosToml {
 }
 function Get-Toml { param($T,[string]$Key,[string]$Def='') if ($T.scalars.ContainsKey($Key) -and $T.scalars[$Key]) { $T.scalars[$Key] } else { $Def } }
 
+# Resolve the volume used for ISO build scratch + output. SSOT autounattend.work_root
+# wins; else auto-select the fixed drive with the MOST free space. NO hardcoded drive
+# letter -- the retired 'M:\' default overflowed a 95%-full 256 GB volume mid-WIM-build
+# (the install.wim archive alone needs ~15-20 GB). Degrade-open to %TEMP% if the drive
+# query fails. Returns a '<drive>\MiOS' root (or the operator's work_root verbatim).
+function Resolve-MiOSBuildRoot {
+    param($Toml)
+    $root = Get-Toml $Toml 'autounattend.work_root' ''
+    if ($root) { return $root.TrimEnd('\') }
+    try {
+        $best = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction Stop |
+                Sort-Object FreeSpace -Descending | Select-Object -First 1
+        if ($best) {
+            Write-Host ("[*] Build volume: {0} ({1} GB free) -- most-free fixed drive" -f `
+                $best.DeviceID, [math]::Round($best.FreeSpace/1GB,1)) -ForegroundColor DarkGray
+            return (Join-Path "$($best.DeviceID)\" 'MiOS')
+        }
+    } catch {}
+    return (Join-Path $env:TEMP 'MiOS')
+}
+
 function Get-MiOSHostname {
     # SSOT-driven hostname generation. NetBIOS-safe, <=15 chars.
     param($Toml)
