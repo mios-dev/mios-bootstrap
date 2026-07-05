@@ -210,16 +210,71 @@ function Set-MiOSAria2 {
     Write-Host "[*] aria2c.exe staged + verified; converter bootstrap neutered." -ForegroundColor DarkGray
 }
 
-# Patch ConvertConfig.ini for a headless run, then drive the converter -> ISO.
+# Build the converter's keep-list (CustomAppsList.txt) from SSOT keep_apps:
+# uncomment ONLY the wanted apps, '#' every other. With [Store_Apps]CustomList=1
+# the converter integrates ONLY these, so the gaming-minimal appx surface is built
+# NATIVELY (the bloat is never added) -- no offline Remove-AppxProvisionedPackage.
+function Set-MiOSCustomAppsList {
+    param([string]$PackageDir, [string[]]$KeepApps)
+    $list = Join-Path $PackageDir 'CustomAppsList.txt'
+    if (-not (Test-Path $list)) { Write-Host "[!] No CustomAppsList.txt in package -- native app selection skipped." -ForegroundColor Yellow; return $false }
+    $keep = @{}; foreach ($k in $KeepApps) { if ($k) { $keep[$k.Trim().ToLower()] = $true } }
+    $seen = @{}
+    $out = foreach ($line in Get-Content -LiteralPath $list) {
+        if ($line -match '^\s*#?\s*([A-Za-z0-9][A-Za-z0-9.]*)_[A-Za-z0-9]+\s*$') {
+            $pkg  = ($line -replace '^\s*#?\s*', '').Trim()   # 'Name_hash'
+            $name = $Matches[1]
+            $seen[$name.ToLower()] = $true
+            if ($keep.ContainsKey($name.ToLower())) { $pkg } else { "# $pkg" }
+        } else { $line }                                       # header/blank -> as-is
+    }
+    Set-Content -LiteralPath $list -Value $out -Encoding ASCII
+    $kept = @($out | Where-Object { $_ -match '^[A-Za-z0-9][A-Za-z0-9.]*_[A-Za-z0-9]+$' }).Count
+    $miss = @($KeepApps | Where-Object { $_ -and -not $seen.ContainsKey($_.Trim().ToLower()) })
+    Write-Host "[*] CustomAppsList: $kept app(s) kept -- converter integrates ONLY these (bloat never added)." -ForegroundColor DarkGray
+    if ($miss.Count) { Write-Host ("    (keep_apps not in this build's template, ignored: {0})" -f ($miss -join ', ')) -ForegroundColor DarkGray }
+    return $true
+}
+
+# Stage this build host's 3rd-party drivers into <package>\Drivers so the converter's
+# AddDrivers integrates them in its single pass -- native, instead of a 2nd Stage-2
+# mount + Add-WindowsDriver. Non-fatal; needs elevation (present in the build).
+function Export-MiOSHostDrivers {
+    param([string]$PackageDir)
+    $drvDir = Join-Path $PackageDir 'Drivers'   # matches ConvertConfig Drv_Source=\Drivers
+    New-Item -ItemType Directory -Force -Path $drvDir | Out-Null
+    if (@(Get-ChildItem $drvDir -Recurse -Filter *.inf -ErrorAction SilentlyContinue).Count) {
+        Write-Host "[*] Host drivers already staged for converter AddDrivers." -ForegroundColor DarkGray; return
+    }
+    try {
+        Write-Host "[*] Exporting host drivers for native converter bake (Export-WindowsDriver -Online) ..." -ForegroundColor Cyan
+        Export-WindowsDriver -Online -Destination $drvDir -ErrorAction Stop | Out-Null
+        $n = @(Get-ChildItem $drvDir -Recurse -Filter *.inf -ErrorAction SilentlyContinue).Count
+        Write-Host "    $n host driver package(s) staged -> converter AddDrivers=1" -ForegroundColor DarkGray
+    } catch { Write-Host "[!] Host-driver export skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
+}
+
+# Patch ConvertConfig.ini (SSOT-driven) then drive the converter -> ISO. Native
+# minimization builds the minimal image at the SOURCE rather than add-then-strip.
 function Invoke-MiOSUupConvert {
-    param([string]$PackageDir, [switch]$Esd)
+    param([string]$PackageDir, $Toml, [switch]$Esd)
+    $b = { param($k, $d) if ((Get-Toml $Toml $k $d) -match '^(?i:true|1|yes)$') { '1' } else { '0' } }
+    $native  = (& $b 'autounattend.uup_convert.native_apps' 'true') -eq '1'
+    $drivers = (& $b 'autounattend.uup_convert.add_drivers'  'true') -eq '1'
     $ini = Join-Path $PackageDir 'ConvertConfig.ini'
     if (Test-Path $ini) {
-        # Re-assert the headless flags in the ini (website checkboxes don't always
-        # propagate). Simple key=value line replace (create if absent).
+        # Re-assert flags in the ini (website checkboxes don't always propagate).
+        # Flat key=value replace -- every key below is unique across the file.
         $set = [ordered]@{
-            AutoStart = '1'; AutoExit = '1'; ResetBase = '1'; ForceDism = '1'
-            wim2esd = $(if ($Esd) { '1' } else { '0' })
+            AutoStart  = '1'; AutoExit = '1'; ForceDism = '1'
+            AddUpdates = (& $b 'autounattend.uup_convert.add_updates' 'true')
+            ResetBase  = (& $b 'autounattend.uup_convert.reset_base'  'true')
+            Cleanup    = (& $b 'autounattend.uup_convert.reset_base'  'true')   # cleanup pairs with resetbase
+            NetFx3     = (& $b 'autounattend.uup_convert.netfx3'      'false')
+            SkipEdge   = (& $b 'autounattend.uup_convert.skip_edge'   'false')
+            wim2esd    = $(if ($Esd) { '1' } else { '0' })
+            CustomList = $(if ($native)  { '1' } else { '0' })   # [Store_Apps]: only keep_apps
+            AddDrivers = $(if ($drivers) { '1' } else { '0' })   # bake host drivers this pass
         }
         $lines = Get-Content -LiteralPath $ini
         foreach ($k in $set.Keys) {
@@ -227,8 +282,14 @@ function Invoke-MiOSUupConvert {
             else { $lines += "$k=$($set[$k])" }
         }
         Set-Content -LiteralPath $ini -Value $lines -Encoding ASCII
-        Write-Host "[*] ConvertConfig.ini patched (AutoStart/AutoExit/ResetBase/ForceDism)." -ForegroundColor DarkGray
+        Write-Host ("[*] ConvertConfig patched: native_apps={0} add_drivers={1} resetbase={2} netfx3={3} skipedge={4}" -f `
+            $native, $drivers, $set.ResetBase, $set.NetFx3, $set.SkipEdge) -ForegroundColor DarkGray
     }
+    if ($native) {
+        $keep = (Get-Toml $Toml 'autounattend.uup_convert.keep_apps' '') -split '\s+' | Where-Object { $_ }
+        [void](Set-MiOSCustomAppsList -PackageDir $PackageDir -KeepApps $keep)
+    }
+    if ($drivers) { Export-MiOSHostDrivers -PackageDir $PackageDir }
     Set-MiOSAria2 -PackageDir $PackageDir
     $cmd = Join-Path $PackageDir 'uup_download_windows.cmd'
     Write-Host "[*] Running UUP converter (aria2 fetch + build ISO) -- this is long ..." -ForegroundColor Cyan
@@ -279,7 +340,7 @@ if (-not $WorkDir) { $WorkDir = Join-Path (Resolve-MiOSBuildRoot $toml) 'uup' }
 Write-Host "[*] UUP fetch: channel=$chan (ring=$ring) arch=$arch edition=$edition lang=$lang" -ForegroundColor Cyan
 $b   = Resolve-MiOSUupBuild -Ring $ring -Arch $arch -Edition $edition -Lang $lang
 $pkg = Get-MiOSUupPackage -Uuid $b.Uuid -Edition $edition -Lang $lang -WorkDir $WorkDir -Esd:$Esd
-$iso = Invoke-MiOSUupConvert -PackageDir $pkg -Esd:$Esd
+$iso = Invoke-MiOSUupConvert -PackageDir $pkg -Toml $toml -Esd:$Esd
 
 if ($OutIso) {
     New-Item -ItemType Directory -Force -Path (Split-Path $OutIso) | Out-Null

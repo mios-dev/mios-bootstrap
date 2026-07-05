@@ -175,7 +175,7 @@ function Set-MiOSXboxOfflineReg {
 
 # Offline-service sources\install.wim: features + appx + Xbox reg, then export/trim.
 function Invoke-MiOSImageServicing {
-    param([string]$MediaRoot, $Toml, [object]$Removals)
+    param([string]$MediaRoot, $Toml, [object]$Removals, [switch]$BuiltNative)
     $wim = Join-Path $MediaRoot 'sources\install.wim'
     if (-not (Test-Path $wim)) {
         # Only a solid install.esd (LZMS) is present (MCT media / esd builds). DISM
@@ -246,7 +246,9 @@ function Invoke-MiOSImageServicing {
         # Export-WindowsDriver -Online dumps the host DriverStore's OEM/3rd-party
         # .inf packages; Add-WindowsDriver injects them offline so the custom image
         # boots this hardware out of the box. One-time, at build. Non-fatal.
-        if ((Get-Toml $Toml 'autounattend.bake_host_drivers' 'true') -match '^(?i:true|1|yes)$') {
+        if ($BuiltNative) {
+            Write-Host "[*] Host drivers baked natively in the converter pass (AddDrivers) -- Stage-2 skip." -ForegroundColor DarkGray
+        } elseif ((Get-Toml $Toml 'autounattend.bake_host_drivers' 'true') -match '^(?i:true|1|yes)$') {
             $drv = Join-Path (Split-Path $MediaRoot) 'hostdrivers'
             New-Item -ItemType Directory -Force -Path $drv | Out-Null
             try {
@@ -280,11 +282,18 @@ function Invoke-MiOSImageServicing {
             Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null
         }
     }
-    # Trim servicing bloat: re-export Max to a new wim, swap in.
-    $trim = "$wim.trim"
-    Write-Host "[*] Export-WindowsImage -CompressionType Max (trim) ..." -ForegroundColor Cyan
-    Export-WindowsImage -SourceImagePath $wim -SourceIndex $idx -DestinationImagePath $trim -CompressionType Max | Out-Null
-    Move-Item -LiteralPath $trim -Destination $wim -Force
+    # Trim servicing bloat: re-export Max to a new wim, swap in. On a slim native
+    # build the converter's ResetBase already shrank the image and Stage-2 changed
+    # little, so this second full re-archive (the big time sink) is skipped.
+    $slim = $BuiltNative -and ((Get-Toml $Toml 'autounattend.uup_convert.slim_build' 'true') -match '^(?i:true|1|yes)$')
+    if ($slim) {
+        Write-Host "[*] Slim native build -- skipping the Stage-2 Export trim (converter ResetBase already shrank)." -ForegroundColor DarkGray
+    } else {
+        $trim = "$wim.trim"
+        Write-Host "[*] Export-WindowsImage -CompressionType Max (trim) ..." -ForegroundColor Cyan
+        Export-WindowsImage -SourceImagePath $wim -SourceIndex $idx -DestinationImagePath $trim -CompressionType Max | Out-Null
+        Move-Item -LiteralPath $trim -Destination $wim -Force
+    }
 }
 
 # Assemble the bootable dual BIOS/UEFI ISO with oscdimg (UDF; no-prompt UEFI).
@@ -325,7 +334,9 @@ if (-not $OutIso)  { $OutIso  = Get-Toml $toml 'autounattend.iso_out' (Join-Path
 $label = Get-Toml $toml 'autounattend.iso_label' 'MiOS-Xbox'
 if (-not $WorkDir) { $WorkDir = Join-Path $buildRoot 'isobuild' }
 
-# Stage 0 -- source ISO (fetch Dev-channel if not supplied).
+# Stage 0 -- source ISO (fetch Dev-channel if not supplied). $fetched tells Stage-2
+# whether the converter built minimal natively (only true when WE ran it, not -SourceIso).
+$fetched = -not $SourceIso
 if (-not $SourceIso) {
     Write-Host "[*] No -SourceIso; fetching stock ISO via mios-uup-fetch (channel from SSOT) ..." -ForegroundColor Cyan
     $SourceIso = & (Join-Path $PSScriptRoot 'mios-uup-fetch.ps1') -TomlPath $TomlPath -Esd:$Esd
@@ -338,7 +349,11 @@ $media = Expand-MiOSIso -Iso $SourceIso -Dest (Join-Path $WorkDir 'media')
 # Stage 2 -- DISM offline servicing (features + appx + Xbox FSE into the image).
 if (-not $SkipServicing) {
     $removals = Get-MiOSMergedRemovals -PresetPath $MergedPreset
-    Invoke-MiOSImageServicing -MediaRoot $media -Toml $toml -Removals $removals
+    # Native fast-path: the converter built minimal (keep-set + drivers) ONLY when we
+    # fetched AND native_apps is on. With an external -SourceIso the image is stock, so
+    # Stage-2 still strips + bakes. BuiltNative lets Stage-2 skip that redundant work.
+    $builtNative = $fetched -and ((Get-Toml $toml 'autounattend.uup_convert.native_apps' 'true') -match '^(?i:true|1|yes)$')
+    Invoke-MiOSImageServicing -MediaRoot $media -Toml $toml -Removals $removals -BuiltNative:$builtNative
 } else { Write-Host "[*] -SkipServicing: image left stock." -ForegroundColor DarkGray }
 
 # Stage 3 -- autounattend.xml (SSOT accounts + LabConfig WinPE bypass + FirstLogonCommands

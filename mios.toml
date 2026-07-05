@@ -1196,6 +1196,27 @@ iso_label      = "MiOS-Xbox"
 # Optional pre-built base ISO for the Build-MiOSXbox.ps1 wrapper. Empty -> the
 # wrapper auto-detects a local base, else downloads fresh from UUP Dump.
 source_iso     = ""
+
+# --- Native minimization (T-137b) --------------------------------------------
+# Build the minimal image AT THE SOURCE instead of adding all the bloat then
+# stripping it back out (that add-then-remove doubles build time: a full appx
+# integration + a full offline Remove-AppxProvisionedPackage pass + a second WIM
+# export). The UUP converter's own CustomAppsList (CustomList=1) integrates ONLY
+# the keep-set below, AddDrivers bakes host drivers in the single converter pass,
+# and Stage-2 DISM then does only what the converter can't (features, Xbox FSE
+# reg, Linux-pattern layout, boot payload) -- no appx loop, no re-export.
+[autounattend.uup_convert]
+native_apps  = true    # CustomList=1: integrate ONLY keep_apps; bloat is never added
+add_drivers  = true    # bake host drivers in the converter pass (not a 2nd Stage-2 mount)
+slim_build   = true    # skip Stage-2's Export-WindowsImage trim (ResetBase already shrank)
+add_updates  = true    # integrate SSU+LCU into the image (ships patched)
+reset_base   = true    # StartComponentCleanup /ResetBase -- drop superseded WinSxS
+netfx3       = false   # bake .NET 3.5 (older games / anti-cheat) -- opt in
+skip_edge    = false   # drop Microsoft Edge (leaner; may affect WebView2 consumers)
+# The keep-set: the ONLY Store apps integrated (space-separated package names, no
+# publisher hash). Everything else the converter would ship is left out entirely.
+# Xbox stack + Store/winget + Defender UI + media codecs (gaming/streaming compat).
+keep_apps    = "Microsoft.WindowsStore Microsoft.StorePurchaseApp Microsoft.DesktopAppInstaller Microsoft.SecHealthUI Microsoft.GamingApp Microsoft.XboxIdentityProvider Microsoft.XboxGamingOverlay Microsoft.XboxGameOverlay Microsoft.XboxSpeechToTextOverlay Microsoft.Xbox.TCUI Microsoft.HEVCVideoExtension Microsoft.VP9VideoExtensions Microsoft.AV1VideoExtension Microsoft.WebMediaExtensions Microsoft.RawImageExtension Microsoft.HEIFImageExtension Microsoft.WebpImageExtension Microsoft.AVCEncoderVideoExtension Microsoft.MPEG2VideoExtension Microsoft.DolbyAudioExtensions"
 computer_name  = ""              # empty -> inherits [identity].hostname
 
 # [autounattend.xbox] -- Xbox Full Screen Experience "out of the box" (T-140).
