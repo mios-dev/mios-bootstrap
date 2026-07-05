@@ -322,10 +322,19 @@ function Invoke-MiOSImageServicing {
         # ONSTART task (registered by the autounattend) finds it pre-logon.
         $hostDst = Join-Path $mount 'ProgramData\MiOS'
         New-Item -ItemType Directory -Force -Path $hostDst | Out-Null
-        foreach ($stage in 'MiOS-Host.ps1','MiOS-XBOX-Hydrate.ps1') {
+        foreach ($stage in 'MiOS-Host.ps1','MiOS-XBOX-Hydrate.ps1','MiOS-Daemon.ps1') {
             $src = Join-Path $PSScriptRoot $stage
             if (Test-Path $src) { Copy-Item $src (Join-Path $hostDst $stage) -Force; Write-Host "    staged $stage -> image ProgramData\MiOS" -ForegroundColor DarkGray }
         }
+        # Render the MiOS-Daemon config from SSOT so intervals/distro are tunable.
+        $daemonCfg = [ordered]@{
+            tick_seconds     = [int](Get-Toml $Toml 'autounattend.daemon.tick_seconds' '60')
+            update_every_min = [int](Get-Toml $Toml 'autounattend.daemon.update_every_min' '30')
+            auto_update      = ((Get-Toml $Toml 'autounattend.daemon.auto_update' 'true') -match '^(?i:true|1|yes)$')
+            distro           = (Get-Toml $Toml 'autounattend.daemon.distro' 'MiOS')
+        }
+        $daemonCfg | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $hostDst 'mios-daemon.json') -Encoding utf8
+        Write-Host "    rendered mios-daemon.json (SSOT) -> image ProgramData\MiOS" -ForegroundColor DarkGray
         # KEYSTONE: bake SetupComplete.cmd -> \Windows\Setup\Scripts\. Windows Setup runs
         # it as SYSTEM at the END of setup (after specialize, before first logon). This is
         # the RELIABLE first-boot trigger -- Win11 26xxx silently skips FirstLogonCommands/

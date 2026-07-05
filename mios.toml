@@ -1252,6 +1252,19 @@ start_on_startup  = true         # autounattend Gaming-Configuration StartupToGa
 # across logins, self-removes when done. Staged into the image by New-MiOSISO.
 hydrate_script    = "C:\\ProgramData\\MiOS\\MiOS-XBOX-Hydrate.ps1"
 
+# [autounattend.daemon] -- the always-on boot+interval supervisor (a Task Scheduler
+# MINUTE task run as mios-svc, registered in the specialize pass). Each tick keeps
+# the WSL service plane warm, health-checks the MiOS endpoints + writes health/logs,
+# and auto-updates the repos (restarting the mios-* units on change). The self-
+# healing owner that circumvents the fragile one-shot first-boot triggers.
+[autounattend.daemon]
+enable           = true
+tick_seconds     = 60      # cadence for -Loop mode; Task Scheduler drives normal ticks
+update_every_min = 30      # git-pull the repos at most this often
+auto_update      = true    # pull mios + mios-bootstrap; restart mios-* on change
+distro           = "MiOS"
+script           = "C:\\ProgramData\\MiOS\\MiOS-Daemon.ps1"
+
 # [autounattend.service] -- MiOS as boot-time SYSTEM services, UP BEFORE LOGON.
 # The MiOS WSL2/podman service plane is registered in the SPECIALIZE pass (SYSTEM,
 # pre-OOBE, pre-logon) and kept alive by the MiOS-Host ONSTART task -- NOT

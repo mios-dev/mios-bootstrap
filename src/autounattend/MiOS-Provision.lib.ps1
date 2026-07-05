@@ -282,6 +282,18 @@ function New-MiOSHostServiceCommands {
     $tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $script
     $cmds.Add(('schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $tr))
 
+    # 4b) Register the MiOS-Daemon -- the always-on supervisor that circumvents the
+    #     fragile one-shot triggers: a MINUTE/1 task (Task Scheduler IS the service)
+    #     run as mios-svc; each run is one tick then exit (keep-warm + health +
+    #     auto-update). MINUTE fires within a minute of boot AND every minute after,
+    #     across reboots -- no infinite-loop / execution-time-limit fragility. Same
+    #     no-nested-quotes rule as MiOS-Host (space-free SSOT script path).
+    if ((Get-Toml $Toml 'autounattend.daemon.enable' 'true') -match '^(?i:true|1|yes)$') {
+        $daemon = Get-Toml $Toml 'autounattend.daemon.script' 'C:\ProgramData\MiOS\MiOS-Daemon.ps1'
+        $dtr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $daemon
+        $cmds.Add(('schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $dtr))
+    }
+
     # 5) MiOS-XBOX first-login HYDRATION task: an ONLOGON task (runs in the
     #    interactive/auto-login user's session, HIGHEST) that fetches the
     #    Store-delivered gaming runtime the WU-stripped image can't bake
