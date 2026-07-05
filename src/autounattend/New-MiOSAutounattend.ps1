@@ -164,6 +164,20 @@ function New-MiOSAutounattendXml {
     $cGb          = [int](Get-Toml $Toml 'autounattend.c_partition_gb' '96')   # Windows C: size; MiOS M:\ gets the rest
     $layoutTree   = (Get-Toml $Toml 'autounattend.layout.linux_tree' 'etc usr var home opt srv tmp bin lib root').Trim()
 
+    # Windows <TimeZone> takes a Windows tz id (tzutil), NOT an IANA name. Map the
+    # common IANA ids; an unmapped '/'-style value falls back to UTC (a valid Windows
+    # id). A plain value (already a Windows id, or the UTC default) passes through.
+    $_iana = @{ 'America/New_York'='Eastern Standard Time'; 'America/Chicago'='Central Standard Time'; 'America/Denver'='Mountain Standard Time'; 'America/Los_Angeles'='Pacific Standard Time'; 'America/Phoenix'='US Mountain Standard Time'; 'Europe/London'='GMT Standard Time'; 'Europe/Paris'='Romance Standard Time'; 'Europe/Berlin'='W. Europe Standard Time'; 'Asia/Tokyo'='Tokyo Standard Time'; 'Australia/Sydney'='AUS Eastern Standard Time' }
+    if ($timezone -match '/') { $timezone = if ($_iana.ContainsKey($timezone)) { $_iana[$timezone] } else { 'UTC' } }
+    # XML-escape scalars that land in the answer-file here-string (an SSOT value with
+    # & / < / > would malform the XML). $bootUrl is escaped at its FirstLogon use.
+    $computerName = [Security.SecurityElement]::Escape($computerName)
+    $timezone     = [Security.SecurityElement]::Escape($timezone)
+    $uiLang       = [Security.SecurityElement]::Escape($uiLang)
+    $inputLocale  = [Security.SecurityElement]::Escape($inputLocale)
+    $edition      = [Security.SecurityElement]::Escape($edition)
+    $productKey   = [Security.SecurityElement]::Escape($productKey)
+
     # --- Accounts (SSOT; fallback to [identity].username as sole admin) -----
     $accounts = @($Toml.accounts)
     if ($accounts.Count -eq 0) {
@@ -196,20 +210,25 @@ function New-MiOSAutounattendXml {
     $firstPw = ConvertTo-UnattendPassword -Pw ([string]$first.password) -Obfuscate:$ObfuscatePasswords
     $firstName = [Security.SecurityElement]::Escape([string]$first.name)
 
-    # --- Nested MiOS irm|iex (the bootstrap that runs DURING install) -------
+    # --- FirstLogonCommands (USER context): per-user Linux-like layout, then the
+    #     nested MiOS irm|iex bootstrap. Layout MUST run here (not specialize) so
+    #     HKCU/%USERPROFILE% resolve to the real user, not the systemprofile. -----
     $firstLogonXml = ''
+    $_flc = New-Object System.Text.StringBuilder
+    $_flOrd = 1
+    foreach ($lc in @(New-MiOSLinuxLayoutCommands -Toml $Toml)) {
+        [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>cmd /c {1}</CommandLine><Description>MiOS user Linux-like layout</Description></SynchronousCommand>' -f $_flOrd, [Security.SecurityElement]::Escape($lc)))
+        $_flOrd++
+    }
     if ($runBootstrap) {
-        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;irm $bootUrl | iex&quot;"
-        $firstLogonXml = @"
-      <FirstLogonCommands>
-        <SynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <CommandLine>$cmd</CommandLine>
-          <Description>MiOS bootstrap (nested irm|iex)</Description>
-          <RequiresUserInput>true</RequiresUserInput>
-        </SynchronousCommand>
-      </FirstLogonCommands>
-"@
+        # Escape $bootUrl -- an SSOT override with '&' would otherwise break the XML.
+        $_url = [Security.SecurityElement]::Escape($bootUrl)
+        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;irm $_url | iex&quot;"
+        [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>{1}</CommandLine><Description>MiOS bootstrap (nested irm|iex)</Description><RequiresUserInput>true</RequiresUserInput></SynchronousCommand>' -f $_flOrd, $cmd))
+        $_flOrd++
+    }
+    if ($_flc.Length -gt 0) {
+        $firstLogonXml = "      <FirstLogonCommands>`n" + $_flc.ToString().TrimEnd() + "`n      </FirstLogonCommands>"
     }
 
     # --- Optional Win11 hardware-check bypass (windowsPE) -------------------
@@ -273,21 +292,16 @@ function New-MiOSAutounattendXml {
         $installPartId = 3
     }
 
-    # --- Pre-OOBE strip + directory layout (Schneegans "DefaultUser" context) ---
-    # Emit the shared strip-and-rebuild layout (OneDrive/shortcuts/redundant
-    # folders removed, then the clean Linux-like tree) as specialize-pass
-    # RunSynchronousCommands so it runs BEFORE OOBE / before any account exists.
+    # --- specialize (SYSTEM) provisioner: boot-time services ---------------------
+    # MiOS as boot-time SYSTEM services (up BEFORE logon): enable WSL2, create the
+    # dedicated non-admin svc account, enable RDP, register the MiOS-Host ONSTART
+    # task. Runs in the Microsoft-Windows-Deployment RunSynchronous below.
+    # NB: the per-USER Linux-like layout is DELIBERATELY NOT here -- specialize runs
+    # as SYSTEM, where HKCU=HKU\S-1-5-18 and %USERPROFILE%=systemprofile, so the
+    # layout would land on the wrong profile. It is emitted in FirstLogonCommands
+    # (user context) below instead.
     $_preOobe = New-Object System.Text.StringBuilder
     $_ord = 2
-    foreach ($pc in @(New-MiOSLinuxLayoutCommands -Toml $Toml)) {
-        [void]$_preOobe.AppendLine(('        <RunSynchronousCommand wcm:action="add"><Order>{0}</Order><Path>cmd /c {1}</Path><Description>MiOS pre-OOBE strip + directory layout</Description></RunSynchronousCommand>' -f $_ord, [Security.SecurityElement]::Escape($pc)))
-        $_ord++
-    }
-    # MiOS as boot-time SYSTEM services (up BEFORE logon): the specialize-pass
-    # (SYSTEM) provisioner -- enable WSL2, create the dedicated non-admin svc
-    # account, enable RDP, register the MiOS-Host ONSTART task. This REPLACES the
-    # old FirstLogonCommands bring-up for the service plane. Runs in the SAME
-    # Microsoft-Windows-Deployment RunSynchronous below.
     foreach ($sc in @(New-MiOSHostServiceCommands -Toml $Toml)) {
         [void]$_preOobe.AppendLine(('        <RunSynchronousCommand wcm:action="add"><Order>{0}</Order><Path>cmd /c {1}</Path><Description>MiOS boot-time service plane (pre-logon)</Description></RunSynchronousCommand>' -f $_ord, [Security.SecurityElement]::Escape($sc)))
         $_ord++

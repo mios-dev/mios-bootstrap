@@ -183,6 +183,7 @@ function Invoke-MiOSImageServicing {
     New-Item -ItemType Directory -Force -Path $mount | Out-Null
     Write-Host "[*] Mounting install image index $idx ..." -ForegroundColor Cyan
     Mount-WindowsImage -Path $mount -ImagePath $wim -Index $idx | Out-Null
+    $_serviced = $false
     try {
         # Remove the merged preset's FoD capabilities (offline).
         if ($Removals.Capabilities.Count) {
@@ -223,9 +224,17 @@ function Invoke-MiOSImageServicing {
             if (Test-Path $src) { Copy-Item $src (Join-Path $hostDst $stage) -Force; Write-Host "    staged $stage -> image ProgramData\MiOS" -ForegroundColor DarkGray }
         }
         Write-Host "    NTLite-only residue (deep CBS removals DISM cannot do): $($Removals.NtliteOnly) <c> -- see dism-native-conversion-map.md" -ForegroundColor DarkGray
+        $_serviced = $true   # reached only if every servicing step above succeeded
     } finally {
-        Write-Host "[*] Committing image (Dismount -Save) ..." -ForegroundColor Cyan
-        Dismount-WindowsImage -Path $mount -Save | Out-Null
+        # DISCARD on any error inside the try -- never COMMIT a half-serviced image
+        # (the original bug: finally always -Save). The exception still propagates.
+        if ($_serviced) {
+            Write-Host "[*] Committing image (Dismount -Save) ..." -ForegroundColor Cyan
+            Dismount-WindowsImage -Path $mount -Save | Out-Null
+        } else {
+            Write-Host "[!] Servicing failed -- discarding the half-serviced image." -ForegroundColor Yellow
+            Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null
+        }
     }
     # Trim servicing bloat: re-export Max to a new wim, swap in.
     $trim = "$wim.trim"
@@ -240,8 +249,10 @@ function Build-MiOSBootableIso {
     $oscdimg = Get-Oscdimg
     if (-not $oscdimg) { throw "oscdimg.exe not found. Install the Windows ADK 'Deployment Tools'. Media tree ready at '$MediaRoot' -- master it manually." }
     $bios = Join-Path $MediaRoot 'boot\etfsboot.com'
+    if (-not (Test-Path $bios)) { throw "BIOS boot file not found: $bios (media tree incomplete / not a bootable Windows source)." }
     $uefi = Join-Path $MediaRoot 'efi\microsoft\boot\efisys_noprompt.bin'
     if (-not (Test-Path $uefi)) { $uefi = Join-Path $MediaRoot 'efi\microsoft\boot\efisys.bin' }
+    if (-not (Test-Path $uefi)) { throw "UEFI boot file not found under $MediaRoot\efi\microsoft\boot\." }
     New-Item -ItemType Directory -Force -Path (Split-Path $OutIso) | Out-Null
     # -bootdata carries '#' -> must be ONE quoted token in PowerShell. -u2 = UDF
     # (install.wim exceeds ISO-9660's 4GB single-file cap). -l<label> no space.

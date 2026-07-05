@@ -19,8 +19,10 @@ function Test-Oscdimg {
     return [bool](Get-Command oscdimg.exe -ErrorAction SilentlyContinue)
 }
 
+# If oscdimg is already present we don't even need winget -- short-circuit success.
+if (Test-Oscdimg) { Write-Host '[=] oscdimg already present (ADK Deployment Tools).' -ForegroundColor DarkGray; if (-not $IncludeWsl) { Write-Host '[+] Build prereqs OK.' -ForegroundColor Green; return } }
 $winget = (Get-Command winget.exe -ErrorAction SilentlyContinue).Source
-if (-not $winget) { Write-Host '[!] winget (Microsoft.DesktopAppInstaller) not found -- install App Installer, then re-run.' -ForegroundColor Yellow; return }
+if (-not $winget) { throw 'winget (Microsoft.DesktopAppInstaller) not found and oscdimg missing -- install App Installer + the Windows ADK Deployment Tools, then re-run.' }
 
 if (Test-Oscdimg) {
     Write-Host '[=] oscdimg already present (ADK Deployment Tools).' -ForegroundColor DarkGray
@@ -28,7 +30,12 @@ if (Test-Oscdimg) {
     Write-Host '[*] Installing Windows ADK (Deployment Tools -> oscdimg) via winget ...' -ForegroundColor Cyan
     & $winget install --id Microsoft.WindowsADK --accept-package-agreements --accept-source-agreements --silent 2>&1 | Out-Null
     if (Test-Oscdimg) { Write-Host '[+] oscdimg available.' -ForegroundColor Green }
-    else { Write-Host '[!] ADK install did not surface oscdimg -- install the ADK "Deployment Tools" feature manually.' -ForegroundColor Yellow }
+    else {
+        # THROW (not warn): oscdimg is mandatory for New-MiOSISO. Failing here stops
+        # the build in the prereqs stage instead of a false-green followed by a wasted
+        # long UUP fetch + full DISM servicing before oscdimg is discovered missing.
+        throw 'ADK install did not surface oscdimg. Install the Windows ADK "Deployment Tools" feature, then re-run.'
+    }
 }
 
 if ($IncludeWsl -and -not (Test-Path "$env:ProgramFiles\WSL\wsl.exe")) {

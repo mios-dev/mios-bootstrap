@@ -93,7 +93,10 @@ if (-not $SkipPrereqs) {
 } else { Write-Host '[skip] prereqs' -ForegroundColor DarkGray }
 
 # --- stage 1: merged preset (protect-clean union) ----------------------------
-$merged = Join-Path $PSScriptRoot 'MiOS-Xbox-Merged.xml'
+# Write the build artifact into $WorkDir, NOT the repo checkout ($PSScriptRoot) --
+# so a build never mutates a tracked file and two builds don't collide on the path.
+$merged = Join-Path $WorkDir 'MiOS-Xbox-Merged.xml'
+New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 if (-not $SkipMerge) {
     Stage 'merge' { & (Join-Path $PSScriptRoot 'Merge-MiOSPresets.ps1') -OutputPreset $merged } 30
 } else { Write-Host '[skip] merge' -ForegroundColor DarkGray }
