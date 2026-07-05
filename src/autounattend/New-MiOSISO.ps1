@@ -419,12 +419,20 @@ function Build-MiOSBootableIso {
     # (install.wim exceeds ISO-9660's 4GB single-file cap). -l<label> no space.
     $bootdata = "-bootdata:2#p0,e,b$bios#pEF,e,b$uefi"
     Write-Host "[*] oscdimg -> $OutIso ..." -ForegroundColor Cyan
-    # Out-Host: keep oscdimg's output in the transcript but out of the success stream
-    # (New-MiOSISO returns $OutIso; a leaked oscdimg log would make the return an array).
-    # Scope EAP=Continue so a stderr line under `2>&1` doesn't throw NativeCommandError
-    # in PS 5.1 before the exit-code check.
-    & { $ErrorActionPreference = 'Continue'; & $oscdimg -m -o -u2 -udfver102 "-l$Label" $bootdata $MediaRoot $OutIso 2>&1 | Out-Host }
-    if ($LASTEXITCODE -ne 0) { throw "oscdimg failed (exit $LASTEXITCODE)" }
+    # oscdimg writes ALL its progress to STDERR; under PowerShell `2>&1` PS 5.1 wraps
+    # each line as a NativeCommandError (alarming red text in the transcript) even
+    # though oscdimg SUCCEEDS and $LASTEXITCODE is 0. Run it through cmd.exe with
+    # cmd-level redirection to a log so PowerShell sees ONLY the exit code -- no
+    # spurious error record. Check the code; surface the log tail only on failure.
+    $ocLog = "$OutIso.oscdimg.log"
+    $cl = '"{0}" -m -o -u2 -udfver102 "-l{1}" "{2}" "{3}" "{4}" > "{5}" 2>&1' -f $oscdimg, $Label, $bootdata, $MediaRoot, $OutIso, $ocLog
+    & cmd.exe /c $cl
+    if ($LASTEXITCODE -ne 0) {
+        Get-Content $ocLog -Tail 12 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
+        throw "oscdimg failed (exit $LASTEXITCODE) -- see $ocLog"
+    }
+    Get-Content $ocLog -Tail 2 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    Remove-Item $ocLog -Force -ErrorAction SilentlyContinue
 }
 
 # ---------------------------------------------------------------------------
