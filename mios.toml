@@ -1196,6 +1196,11 @@ iso_label      = "MiOS-Xbox"
 # Optional pre-built base ISO for the Build-MiOSXbox.ps1 wrapper. Empty -> the
 # wrapper auto-detects a local base, else downloads fresh from UUP Dump.
 source_iso     = ""
+# Neutralize the debloat DISM can't component-remove (telemetry/AI/Copilot/consumer
+# features/OneDrive) via offline registry + service policy (src/autounattend/
+# mios-debloat.json). The deep NTLite CBS component files can't be DISM-deleted, but
+# their behaviour is killed. Applies on every build (native + -SourceIso).
+debloat        = true
 
 # --- Native minimization (T-137b) --------------------------------------------
 # Build the minimal image AT THE SOURCE instead of adding all the bloat then
@@ -1212,7 +1217,7 @@ slim_build   = true    # skip Stage-2's Export-WindowsImage trim (ResetBase alre
 add_updates  = true    # integrate SSU+LCU into the image (ships patched)
 reset_base   = true    # StartComponentCleanup /ResetBase -- drop superseded WinSxS
 netfx3       = false   # bake .NET 3.5 (older games / anti-cheat) -- opt in
-skip_edge    = false   # drop Microsoft Edge (leaner; may affect WebView2 consumers)
+skip_edge    = true    # drop Microsoft Edge -- not a MiOS requirement (MiOS ships Zen)
 # The keep-set: the ONLY Store apps integrated (space-separated package names, no
 # publisher hash). Everything else the converter would ship is left out entirely.
 # Xbox stack + Store/winget + Defender UI + media codecs (gaming/streaming compat).

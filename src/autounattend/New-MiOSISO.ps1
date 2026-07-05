@@ -173,6 +173,52 @@ function Set-MiOSXboxOfflineReg {
     }
 }
 
+# Neutralize the debloat DISM can't component-remove. The ~200 deep NTLite CBS
+# component keys (asimov/ceip/ndu/...) have NO DISM API (dism-native-conversion-map.md)
+# -- their FILES stay, but their telemetry / AI / Copilot / consumer-feature /
+# OneDrive BEHAVIOUR is killed here via offline registry + service policy from the
+# tracked mios-debloat.json. Applied to the mounted image's SOFTWARE + SYSTEM
+# (services) + Default-user NTUSER.DAT. Every op is idempotent + defensive (non-fatal).
+function Set-MiOSDebloatOffline {
+    param([string]$Mount, $Toml, [string]$PolicyPath)
+    if ((Get-Toml $Toml 'autounattend.debloat' 'true') -notmatch '^(?i:true|1|yes)$') {
+        Write-Host "[*] Offline debloat disabled (SSOT autounattend.debloat=false)." -ForegroundColor DarkGray; return
+    }
+    if (-not (Test-Path $PolicyPath)) { Write-Host "[!] Debloat policy not found: $PolicyPath (skipped)." -ForegroundColor Yellow; return }
+    $pol = Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json
+    $hives = @(
+        @{ h = 'MIOS_SW';  f = (Join-Path $Mount 'Windows\System32\config\SOFTWARE') }
+        @{ h = 'MIOS_SYS'; f = (Join-Path $Mount 'Windows\System32\config\SYSTEM') }
+        @{ h = 'MIOS_DU';  f = (Join-Path $Mount 'Users\Default\NTUSER.DAT') }
+    )
+    $ok = @{}
+    foreach ($x in $hives) { if (Test-Path $x.f) { & reg.exe load "HKLM\$($x.h)" $x.f 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $ok[$x.h] = $true } } }
+    $applied = 0
+    try {
+        $plan = @()
+        if ($ok['MIOS_SW'])  { foreach ($e in @($pol.software))     { $plan += @{ h = 'MIOS_SW';  e = $e } } }
+        if ($ok['MIOS_SYS']) { foreach ($e in @($pol.system))       { $plan += @{ h = 'MIOS_SYS'; e = $e } } }
+        if ($ok['MIOS_DU'])  { foreach ($e in @($pol.default_user)) { $plan += @{ h = 'MIOS_DU';  e = $e } } }
+        foreach ($p in $plan) {
+            $full = "HKLM\$($p.h)\$($p.e.key)"
+            try {
+                if ($p.e.delete) { & reg.exe delete $full /v $p.e.name /f 2>&1 | Out-Null }
+                else { & reg.exe add $full /v $p.e.name /t $p.e.type /d "$($p.e.data)" /f 2>&1 | Out-Null }
+                $applied++
+            } catch {}
+        }
+        if ($ok['MIOS_SYS']) {
+            foreach ($s in @($pol.system_services)) {
+                try { & reg.exe add "HKLM\MIOS_SYS\ControlSet001\Services\$($s.name)" /v Start /t REG_DWORD /d $s.start /f 2>&1 | Out-Null; $applied++ } catch {}
+            }
+        }
+    } finally {
+        [gc]::Collect()
+        foreach ($h in $ok.Keys) { & reg.exe unload "HKLM\$h" 2>&1 | Out-Null }
+    }
+    Write-Host "[*] Offline debloat applied ($applied policy ops): telemetry/AI/Copilot/consumer-features/OneDrive off + DiagTrack/dmwappushservice disabled." -ForegroundColor Cyan
+}
+
 # Offline-service sources\install.wim: features + appx + Xbox reg, then export/trim.
 function Invoke-MiOSImageServicing {
     param([string]$MediaRoot, $Toml, [object]$Removals, [switch]$BuiltNative)
@@ -261,6 +307,9 @@ function Invoke-MiOSImageServicing {
         } else { Write-Host "[*] Host-driver bake disabled (SSOT bake_host_drivers=false)." -ForegroundColor DarkGray }
         # Xbox FSE override into the image.
         Set-MiOSXboxOfflineReg -Mount $mount -Toml $Toml
+        # Neutralize telemetry/AI/consumer-features/OneDrive (the debloat DISM can't
+        # component-remove) via offline registry + service policy.
+        Set-MiOSDebloatOffline -Mount $mount -Toml $Toml -PolicyPath (Join-Path $PSScriptRoot 'mios-debloat.json')
         # Stage the MiOS-Host boot payload into the image so the specialize-pass
         # ONSTART task (registered by the autounattend) finds it pre-logon.
         $hostDst = Join-Path $mount 'ProgramData\MiOS'
@@ -269,7 +318,7 @@ function Invoke-MiOSImageServicing {
             $src = Join-Path $PSScriptRoot $stage
             if (Test-Path $src) { Copy-Item $src (Join-Path $hostDst $stage) -Force; Write-Host "    staged $stage -> image ProgramData\MiOS" -ForegroundColor DarkGray }
         }
-        Write-Host "    NTLite-only residue (deep CBS removals DISM cannot do): $($Removals.NtliteOnly) <c> -- see dism-native-conversion-map.md" -ForegroundColor DarkGray
+        Write-Host "    Deep CBS component FILES can't be DISM-removed (of $($Removals.NtliteOnly) <c>; see dism-native-conversion-map.md) -- their telemetry/AI/consumer behaviour is killed by the offline debloat policy above." -ForegroundColor DarkGray
         $_serviced = $true   # reached only if every servicing step above succeeded
     } finally {
         # DISCARD on any error inside the try -- never COMMIT a half-serviced image

@@ -288,6 +288,14 @@ function Invoke-MiOSUupConvert {
     if ($native) {
         $keep = (Get-Toml $Toml 'autounattend.uup_convert.keep_apps' '') -split '\s+' | Where-Object { $_ }
         [void](Set-MiOSCustomAppsList -PackageDir $PackageDir -KeepApps $keep)
+        # Force a fresh minimal build: drop any ISO/WIM a prior (non-native) run left
+        # in the package so convert-UUP re-runs CustomList against the KEPT UUPs\ set
+        # instead of re-mastering a stale bloated image. UUPs\ (the download) is kept.
+        Get-ChildItem -LiteralPath $PackageDir -Filter '*.ISO' -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        foreach ($stray in 'install.wim','install.esd') {
+            $p = Join-Path $PackageDir $stray
+            if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue }
+        }
     }
     if ($drivers) { Export-MiOSHostDrivers -PackageDir $PackageDir }
     Set-MiOSAria2 -PackageDir $PackageDir

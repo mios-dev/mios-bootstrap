@@ -1,0 +1,47 @@
+{
+  "_comment": "Offline debloat policy applied by New-MiOSISO.ps1 Set-MiOSDebloatOffline. The deep NTLite CBS component removals (~200 lowercase keys: asimov/ceip/ndu/...) have NO DISM API (see docs/dism-native-conversion-map.md) -- their FILES cannot be deleted offline, but their telemetry / AI / consumer-feature / OneDrive BEHAVIOUR is neutralised here via policy so the effect matches. Data file (not code): reviewable, versioned, edit here. All ops are idempotent + reversible; the function applies each defensively (per-op try/catch, non-fatal).",
+
+  "software": [
+    { "key": "Policies\\Microsoft\\Windows\\DataCollection",                 "name": "AllowTelemetry",                     "type": "REG_DWORD", "data": 0 },
+    { "key": "Policies\\Microsoft\\Windows\\DataCollection",                 "name": "MaxTelemetryAllowed",               "type": "REG_DWORD", "data": 1 },
+    { "key": "Policies\\Microsoft\\Windows\\DataCollection",                 "name": "DoNotShowFeedbackNotifications",    "type": "REG_DWORD", "data": 1 },
+    { "key": "Policies\\Microsoft\\Windows\\CloudContent",                   "name": "DisableWindowsConsumerFeatures",    "type": "REG_DWORD", "data": 1 },
+    { "key": "Policies\\Microsoft\\Windows\\CloudContent",                   "name": "DisableConsumerAccountStateContent","type": "REG_DWORD", "data": 1 },
+    { "key": "Policies\\Microsoft\\Windows\\CloudContent",                   "name": "DisableCloudOptimizedContent",      "type": "REG_DWORD", "data": 1 },
+    { "key": "Policies\\Microsoft\\Windows\\CloudContent",                   "name": "DisableSoftLanding",                "type": "REG_DWORD", "data": 1 },
+    { "key": "Policies\\Microsoft\\Windows\\WindowsCopilot",                 "name": "TurnOffWindowsCopilot",             "type": "REG_DWORD", "data": 1 },
+    { "key": "Policies\\Microsoft\\Windows\\WindowsAI",                      "name": "DisableAIDataAnalysis",             "type": "REG_DWORD", "data": 1 },
+    { "key": "Policies\\Microsoft\\Windows\\Explorer",                       "name": "DisableSearchBoxSuggestions",       "type": "REG_DWORD", "data": 1 },
+    { "key": "Policies\\Microsoft\\Windows\\System",                         "name": "EnableActivityFeed",                "type": "REG_DWORD", "data": 0 },
+    { "key": "Policies\\Microsoft\\Windows\\System",                         "name": "PublishUserActivities",             "type": "REG_DWORD", "data": 0 },
+    { "key": "Policies\\Microsoft\\Windows\\System",                         "name": "UploadUserActivities",              "type": "REG_DWORD", "data": 0 },
+    { "key": "Policies\\Microsoft\\Windows\\OneDrive",                       "name": "DisableFileSyncNGSC",               "type": "REG_DWORD", "data": 1 },
+    { "key": "Policies\\Microsoft\\Windows\\Windows Feeds",                  "name": "EnableFeeds",                       "type": "REG_DWORD", "data": 0 },
+    { "key": "Policies\\Microsoft\\Dsh",                                     "name": "AllowNewsAndInterests",             "type": "REG_DWORD", "data": 0 },
+    { "key": "Microsoft\\Windows\\CurrentVersion\\Explorer\\Advertising Info","name": "DisabledByGroupPolicy",            "type": "REG_DWORD", "data": 1 }
+  ],
+
+  "system_services": [
+    { "name": "DiagTrack",         "start": 4 },
+    { "name": "dmwappushservice",  "start": 4 }
+  ],
+
+  "system": [
+    { "key": "ControlSet001\\Control\\Session Manager\\Power",               "name": "HiberbootEnabled",                  "type": "REG_DWORD", "data": 0 }
+  ],
+
+  "default_user": [
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", "name": "ContentDeliveryAllowed",       "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", "name": "SilentInstalledAppsEnabled",   "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", "name": "SystemPaneSuggestionsEnabled", "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", "name": "PreInstalledAppsEnabled",      "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", "name": "OemPreInstalledAppsEnabled",   "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", "name": "SubscribedContent-338388Enabled", "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", "name": "SubscribedContent-338389Enabled", "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", "name": "SubscribedContent-310093Enabled", "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo",        "name": "Enabled",                      "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Search",                 "name": "BingSearchEnabled",            "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Search",                 "name": "CortanaConsent",               "type": "REG_DWORD", "data": 0 },
+    { "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Run",                    "name": "OneDriveSetup",                "delete": true }
+  ]
+}
