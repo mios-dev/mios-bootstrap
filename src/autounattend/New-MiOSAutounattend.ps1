@@ -383,8 +383,11 @@ $gamingXml  </settings>
         <HideLocalAccountScreen>true</HideLocalAccountScreen>
         <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
         <ProtectYourPC>3</ProtectYourPC>
-        <SkipMachineOOBE>true</SkipMachineOOBE>
-        <SkipUserOOBE>true</SkipUserOOBE>
+        <!-- NB: do NOT set SkipMachineOOBE/SkipUserOOBE. They are deprecated and
+             SUPPRESS FirstLogonCommands (so the Linux-like layout + the nested
+             irm|iex MiOS bootstrap never fire). The Hide* pages above + the
+             LocalAccount + AutoLogon below already auto-complete OOBE, and
+             leaving the OOBE flow intact is what lets FirstLogonCommands run. -->
       </OOBE>
       <UserAccounts>
         <LocalAccounts>
