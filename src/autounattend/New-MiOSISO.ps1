@@ -97,7 +97,7 @@ function Expand-MiOSIso {
 # the NTLite-only residue (counted, not serviced -- see dism-native-conversion-map.md).
 function Get-MiOSMergedRemovals {
     param([string]$PresetPath)
-    $out = [pscustomobject]@{ Capabilities = @(); Features = @(); EnableFeatures = @(); NtliteOnly = 0 }
+    $out = [pscustomobject]@{ Capabilities = @(); Features = @(); EnableFeatures = @(); Appx = @(); NtliteOnly = 0 }
     if (-not (Test-Path $PresetPath)) { Write-Host "[!] Merged preset not found: $PresetPath (servicing skipped)" -ForegroundColor Yellow; return $out }
     [xml]$xml = Get-Content -LiteralPath $PresetPath -Raw
     $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
@@ -122,10 +122,25 @@ function Get-MiOSMergedRemovals {
     }
     # Posture B minimum: the MiOS brain always needs these enabled.
     $en.Add('VirtualMachinePlatform'); $en.Add('Microsoft-Windows-Subsystem-Linux')
+    # The <c> RemoveComponents are NTLite CBS keys. The appx-package-style ones
+    # (e.g. microsoft.microsoftsolitairecollection, msteams, clipchamp.clipchamp)
+    # ARE removable OFFLINE via Remove-AppxProvisionedPackage (matched by
+    # DisplayName in the servicing step); the deep-OS CBS-only ones (asimov, ceip,
+    # ndu, ...) are the true NtliteOnly residue DISM can't touch. We pass every <c>
+    # first-token as an appx candidate and exact-match it against the image's
+    # provisioned packages, so non-appx tokens are safe no-ops -- no heuristic gate.
+    $capp = New-Object System.Collections.Generic.List[string]
+    $ccnt = 0
+    foreach ($c in @($xml.SelectNodes('//n:RemoveComponents/n:c', $ns))) {
+        $ccnt++
+        $tok = ("$($c.InnerText)".Trim() -split '\s+')[0]
+        if ($tok -and -not (_protected $tok)) { $capp.Add($tok) }
+    }
     $out.Capabilities   = @($caps | Select-Object -Unique)
     $out.Features       = @($feat | Select-Object -Unique)
     $out.EnableFeatures = @($en   | Select-Object -Unique)
-    $out.NtliteOnly     = @($xml.SelectNodes('//n:RemoveComponents/n:c', $ns)).Count
+    $out.Appx           = @($capp | Select-Object -Unique)
+    $out.NtliteOnly     = $ccnt
     return $out
 }
 
@@ -200,6 +215,19 @@ function Invoke-MiOSImageServicing {
             $todo = @($Removals.Features | Where-Object { $present -contains $_ })
             if ($todo.Count) { Write-Host "[*] Disabling $($todo.Count) optional features ..." -ForegroundColor Cyan
                 Disable-WindowsOptionalFeature -Path $mount -FeatureName $todo -Remove -ErrorAction SilentlyContinue | Out-Null }
+        }
+        # Remove the merged preset's provisioned appx OFFLINE -- the gaming-minimal
+        # debloat (Solitaire, Teams, Outlook, Clipchamp, Bing, ...). Match the preset
+        # <c> appx tokens against the image's own provisioned packages by DisplayName
+        # (case-insensitive exact); Xbox/gaming/Store/framework appx are excluded via
+        # the protect-list, and non-appx tokens simply don't match. This bakes DISM's
+        # real Remove-AppxProvisionedPackage into install.wim -- no first-boot script.
+        if ($Removals.Appx.Count) {
+            $prov = @(Get-AppxProvisionedPackage -Path $mount)
+            $rmset = @{}; foreach ($t in $Removals.Appx) { $rmset["$t".ToLower()] = $true }
+            $todo = @($prov | Where-Object { $rmset.ContainsKey("$($_.DisplayName)".ToLower()) })
+            Write-Host "[*] Removing $($todo.Count) provisioned appx (of $($prov.Count) in image; $($Removals.Appx.Count) targeted) ..." -ForegroundColor Cyan
+            foreach ($p in $todo) { try { Remove-AppxProvisionedPackage -Path $mount -PackageName $p.PackageName -ErrorAction Stop | Out-Null; Write-Host "    -appx $($p.DisplayName)" -ForegroundColor DarkGray } catch {} }
         }
         # Posture B: actively ENABLE the MiOS virt stack (WSL2/VMP/Hyper-V) so the
         # brain works out of the box. Enable only features actually present + not
