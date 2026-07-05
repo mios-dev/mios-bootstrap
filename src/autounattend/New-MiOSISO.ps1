@@ -249,7 +249,9 @@ function Build-MiOSBootableIso {
     Write-Host "[*] oscdimg -> $OutIso ..." -ForegroundColor Cyan
     # Out-Host: keep oscdimg's output in the transcript but out of the success stream
     # (New-MiOSISO returns $OutIso; a leaked oscdimg log would make the return an array).
-    & $oscdimg -m -o -u2 -udfver102 "-l$Label" $bootdata $MediaRoot $OutIso 2>&1 | Out-Host
+    # Scope EAP=Continue so a stderr line under `2>&1` doesn't throw NativeCommandError
+    # in PS 5.1 before the exit-code check.
+    & { $ErrorActionPreference = 'Continue'; & $oscdimg -m -o -u2 -udfver102 "-l$Label" $bootdata $MediaRoot $OutIso 2>&1 | Out-Host }
     if ($LASTEXITCODE -ne 0) { throw "oscdimg failed (exit $LASTEXITCODE)" }
 }
 

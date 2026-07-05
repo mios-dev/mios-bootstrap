@@ -26,40 +26,58 @@ function Log { param([string]$m) "$([Environment]::TickCount) $m" | Out-File -Ap
 $wsl = if (Test-Path "$env:ProgramFiles\WSL\wsl.exe") { "$env:ProgramFiles\WSL\wsl.exe" } else { 'wsl.exe' }
 
 # wsl.exe emits --list output as UTF-16LE regardless of codepage (microsoft/WSL#4607);
-# captured by PS 5.1 it becomes NUL-interleaved mojibake so a plain regex never matches.
-# WSL_UTF8=1 makes it emit UTF-8; strip any residual NULs as belt-and-suspenders.
+# captured by PS 5.1 it becomes NUL-interleaved mojibake. WSL_UTF8=1 makes it emit
+# UTF-8; strip any residual NULs as belt-and-suspenders.
 $env:WSL_UTF8 = '1'
-function Test-DistroRegistered { param([string]$Name)
-    $list = (& $wsl --list --quiet 2>$null) -join "`n"
-    return (($list -replace "`0", '') -match [regex]::Escape($Name))
+# Resolve the ACTUAL registered distro by EXACT name. The nested Get-MiOS bootstrap
+# registers 'podman-MiOS-DEV' (or 'MiOS-DEV'), NOT the SSOT hint 'MiOS'; and `wsl -d`
+# needs the exact name -- a substring/regex match would falsely pass the readiness
+# gate while `wsl -d MiOS` still failed with WSL_E_DISTRO_NOT_FOUND. Returns the
+# real name (used for both the readiness check and the keep-alive), or $null.
+$DistroCandidates = @($Distro, 'podman-MiOS-DEV', 'MiOS-DEV') | Where-Object { $_ } | Select-Object -Unique
+function Resolve-MiOSDistro {
+    $names = (((& $wsl --list --quiet 2>$null) -join "`n") -replace "`0", '') -split "`r?`n" |
+             ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    foreach ($c in $DistroCandidates) { if ($names -contains $c) { return $c } }
+    return $null
 }
 
 # --- FIRST RUN: one-time heavy install (as mios-svc, NOT SYSTEM) -------------
-# The nested MiOS installer provisions the WSL2 distro + podman + Quadlet units.
-# It registers the distro in THIS account's Lxss hive (the one the keep-alive uses),
-# which is exactly why the boot service must be a real user, not LocalSystem.
+# The nested MiOS installer provisions the WSL2 distro + podman + Quadlet units in
+# THIS account's Lxss hive (why the boot service must be a real user, not LocalSystem).
 if (-not (Test-Path $marker)) {
-    Log "first-run: MiOS install via $BootstrapUrl"
-    try {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm $BootstrapUrl | iex"
-        # A native exe (powershell.exe) does NOT throw on non-zero exit, so the catch
-        # only fires if it can't launch at all. Mark provisioned ONLY when the install
-        # actually succeeded (exit 0 AND the distro is registered) -- otherwise leave
-        # the marker unset so the next boot retries (fresh boxes often have no/late
-        # network or a reboot-pending WSL feature). Mirrors the $ok gate in Hydrate.
-        $installed = ($LASTEXITCODE -eq 0) -and (Test-DistroRegistered $Distro)
-        if ($installed) { New-Item -ItemType File -Force -Path $marker | Out-Null; Log "first-run: install complete, marker written" }
-        else { Log "first-run: install did not complete (exit=$LASTEXITCODE, distro registered=$(($installed))) -- next boot retries" }
-    } catch { Log "first-run: install FAILED: $($_.Exception.Message)" }
+    # BOUNDED attempts: the nested `irm|iex` begins with a DESTRUCTIVE full-reset. Cap
+    # retries so a persistently-failing install can't wipe-and-reclone on every boot
+    # forever; after the cap, write the marker (give up) rather than loop destructively.
+    $attemptFile = Join-Path $StateDir 'first-run.attempts'
+    $attempts = 0
+    if (Test-Path $attemptFile) { $attempts = [int]((Get-Content $attemptFile -ErrorAction SilentlyContinue | Select-Object -First 1)) }
+    if ($attempts -ge 5) {
+        New-Item -ItemType File -Force -Path $marker | Out-Null
+        Log "first-run: attempt cap ($attempts) reached -- giving up; marker written to stop the destructive loop"
+    } else {
+        Set-Content -Path $attemptFile -Value ($attempts + 1)
+        Log "first-run (attempt $($attempts + 1)): MiOS install via $BootstrapUrl"
+        try {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm $BootstrapUrl | iex"
+            # Native exe does NOT throw on non-zero exit -> check $LASTEXITCODE + that a
+            # real MiOS distro is now registered. Only then mark provisioned; else the
+            # next boot retries (fresh boxes often have no/late network / reboot-pending).
+            $distro = Resolve-MiOSDistro
+            if (($LASTEXITCODE -eq 0) -and $distro) { New-Item -ItemType File -Force -Path $marker | Out-Null; Log "first-run: install complete (distro '$distro'), marker written" }
+            else { Log "first-run: incomplete (exit=$LASTEXITCODE, distro=$distro) -- next boot retries" }
+        } catch { Log "first-run: install FAILED: $($_.Exception.Message)" }
+    }
 }
 
 # --- EVERY BOOT: ensure the distro is registered + running, then hold it ------
-if (-not (Test-DistroRegistered $Distro)) {
-    Log "distro '$Distro' not registered yet (install pending/failed) -- exiting; next boot retries"
+$distro = Resolve-MiOSDistro
+if (-not $distro) {
+    Log "no MiOS distro registered yet (candidates: $($DistroCandidates -join ', ')) -- exiting; next boot retries"
     return
 }
-Log "starting + holding distro '$Distro'"
+Log "starting + holding distro '$distro'"
 # systemd=true in the distro's /etc/wsl.conf brings up podman.socket + the MiOS
 # Quadlet units when systemd starts. This host-side holder keeps the utility VM
 # alive across the (userless) boot session -- the documented reliable keep-alive.
-& $wsl -d $Distro --exec /bin/sh -c 'command -v systemctl >/dev/null 2>&1 && systemctl is-system-running --wait >/dev/null 2>&1; exec /usr/bin/sleep infinity'
+& $wsl -d $distro --exec /bin/sh -c 'command -v systemctl >/dev/null 2>&1 && systemctl is-system-running --wait >/dev/null 2>&1; exec /usr/bin/sleep infinity'

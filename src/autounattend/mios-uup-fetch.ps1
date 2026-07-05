@@ -148,10 +148,12 @@ function Invoke-MiOSUupConvert {
     $cmd = Join-Path $PackageDir 'uup_download_windows.cmd'
     Write-Host "[*] Running UUP converter (aria2 fetch + build ISO) -- this is long ..." -ForegroundColor Cyan
     Push-Location $PackageDir
-    # Pipe the converter's native stdout to the HOST (visible in the transcript) so it
+    # Pipe the converter's native output to the HOST (visible in the transcript) so it
     # does NOT enter the success stream -- otherwise this function returns an ARRAY of
-    # [converter log lines..., iso path] and the caller's $SourceIso is garbage.
-    try { & cmd.exe /c "`"$cmd`"" 2>&1 | Out-Host } finally { Pop-Location }
+    # [converter log lines..., iso path] and the caller's $SourceIso is garbage. Scope
+    # EAP=Continue so the FIRST stderr line under `2>&1` doesn't throw NativeCommandError
+    # in Windows PowerShell 5.1 (the build interpreter) BEFORE the exit-code check.
+    try { & { $ErrorActionPreference = 'Continue'; & cmd.exe /c "`"$cmd`"" 2>&1 | Out-Host } } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw "uup_download_windows.cmd failed (exit $LASTEXITCODE)" }
     $iso = Get-ChildItem -Path $PackageDir -Filter '*.ISO' -File -ErrorAction SilentlyContinue |
            Sort-Object LastWriteTime -Descending | Select-Object -First 1
