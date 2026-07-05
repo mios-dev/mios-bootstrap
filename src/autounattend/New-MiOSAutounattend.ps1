@@ -188,7 +188,12 @@ function New-MiOSAutounattendXml {
     $localAccountsXml = New-Object System.Text.StringBuilder
     foreach ($a in $accounts) {
         $name  = [Security.SecurityElement]::Escape([string]$a.name)
-        $disp  = [Security.SecurityElement]::Escape([string]($a.display_name  | ForEach-Object { if ($_) { $_ } else { $a.name } }))
+        # Strip stylistic 'quoted-word' emphasis from a display name so an SSOT value
+        # like "'MiOS' User" renders clean on the logon screen (-> "MiOS User"), without
+        # destroying legitimate apostrophes (O'Brien has no closing quote, so it is kept).
+        $dispRaw = [string]($a.display_name | ForEach-Object { if ($_) { $_ } else { $a.name } })
+        $dispRaw = ($dispRaw -replace "'([^']+)'", '$1').Trim()
+        $disp  = [Security.SecurityElement]::Escape($dispRaw)
         $group = [string]($a.group | ForEach-Object { if ($_) { $_ } else { 'Users' } })
         $pw    = ConvertTo-UnattendPassword -Pw ([string]$a.password) -Obfuscate:$ObfuscatePasswords
         [void]$localAccountsXml.Append(@"

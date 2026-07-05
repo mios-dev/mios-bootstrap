@@ -201,7 +201,7 @@ hub_shortcut_name    = "MiOS"
 # ----------------------------------------------------------------------------
 [identity]
 username  = "mios"
-fullname  = "'MiOS' User"
+fullname  = "MiOS User"
 hostname  = "mios"
 shell     = "/bin/bash"
 groups    = ["wheel", "libvirt", "kvm", "video", "render", "input", "dialout", "docker"]
