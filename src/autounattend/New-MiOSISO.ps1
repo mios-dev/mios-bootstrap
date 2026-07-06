@@ -698,10 +698,19 @@ function Invoke-MiOSImageServicing {
         # ONSTART task (registered by the autounattend) finds it pre-logon.
         $hostDst = Join-Path $mount 'ProgramData\MiOS'
         New-Item -ItemType Directory -Force -Path $hostDst | Out-Null
-        foreach ($stage in 'MiOS-Host.ps1','MiOS-XBOX-Hydrate.ps1','MiOS-Daemon.ps1') {
+        foreach ($stage in 'MiOS-Host.ps1','MiOS-XBOX-Hydrate.ps1','MiOS-Daemon.ps1','MiOS-FirstBoot.ps1') {
             $src = Join-Path $PSScriptRoot $stage
             if (Test-Path $src) { Copy-Item $src (Join-Path $hostDst $stage) -Force; Write-Host "    staged $stage -> image ProgramData\MiOS" -ForegroundColor DarkGray }
         }
+        # Reliable first-logon brain + gaming trigger: bake MiOS-FirstBoot.cmd into the
+        # All-Users Startup folder. It runs (hidden) in the desktop user's real session --
+        # where WSL works + the bootstrap self-elevates SILENTLY (ConsentPromptBehaviorAdmin
+        # =0) -- fire-and-forget, one-time, self-removing. This is what actually deploys the
+        # brain, since the service-account scheduled tasks do not register/run reliably.
+        $startDst = Join-Path $mount 'ProgramData\Microsoft\Windows\Start Menu\Programs\Startup'
+        New-Item -ItemType Directory -Force -Path $startDst | Out-Null
+        $fbSrc = Join-Path $PSScriptRoot 'MiOS-FirstBoot.cmd'
+        if (Test-Path $fbSrc) { Copy-Item $fbSrc (Join-Path $startDst 'MiOS-FirstBoot.cmd') -Force; Write-Host "    baked MiOS-FirstBoot.cmd -> All-Users Startup (first-logon brain + gaming deploy)" -ForegroundColor Green }
         # Render the MiOS-Daemon config from SSOT so intervals/distro are tunable.
         $daemonCfg = [ordered]@{
             tick_seconds     = [int](Get-Toml $Toml 'autounattend.daemon.tick_seconds' '60')

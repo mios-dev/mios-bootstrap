@@ -20,6 +20,7 @@
     { "key": "Policies\\Microsoft\\Dsh",                                     "name": "AllowNewsAndInterests",             "type": "REG_DWORD", "data": 0 },
     { "key": "Microsoft\\Windows\\CurrentVersion\\Explorer\\Advertising Info","name": "DisabledByGroupPolicy",            "type": "REG_DWORD", "data": 1 },
     { "key": "Microsoft\\Windows\\CurrentVersion\\Policies\\System",          "name": "LocalAccountTokenFilterPolicy",     "type": "REG_DWORD", "data": 1 },
+    { "key": "Microsoft\\Windows\\CurrentVersion\\Policies\\System",          "name": "ConsentPromptBehaviorAdmin",        "type": "REG_DWORD", "data": 0 },
     { "key": "Microsoft\\DirectStorage",                                     "name": "ForceBypassIO",                     "type": "REG_DWORD", "data": 1 },
     { "key": "Microsoft\\DirectStorage",                                     "name": "GpuDecompressionThreshold",         "type": "REG_DWORD", "data": 1 },
     { "key": "Microsoft\\Windows\\Dwm",                                       "name": "OverlayTestMode",                   "type": "REG_DWORD", "data": 5 },
