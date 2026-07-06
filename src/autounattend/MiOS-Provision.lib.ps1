@@ -258,24 +258,21 @@ function New-MiOSHostServiceCommands {
     # 1) WSL2 platform feature (the only OC strictly required for the MiOS brain).
     $cmds.Add('dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart')
     $cmds.Add('dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart')
-    # 2) Dedicated NON-admin service account (WSL can't run as SYSTEM).
-    # `net user` has NO /y switch (that's `net use`) -- with /y it prints usage +
-    # exits 2 without creating the account. And wmic.exe is removed on 25H2/Dev
-    # (the target channel), so use the inbox LocalAccounts cmdlet for no-expiry.
-    $cmds.Add(('net user "{0}" "{1}" /add' -f $svcUser, $svcPass))
+    # 2) SERVICE ACCOUNT = the built-in Administrator (RID 500), renamed to svcUser + hidden.
+    #    ⭐ RID-500 runs with a FULL, UNFILTERED token by default (FilterAdministratorToken=0,
+    #    keyed to the RID not the name) and holds SeBatchLogonRight -- so its scheduled tasks
+    #    (MiOS-Host WSL brain, MiOS-XBOX-Hydrate Gaming Services) actually RUN. A freshly
+    #    created service account instead hit a stored-password batch-logon failure -> EVERY
+    #    task registered but never executed (brain never deployed, Gaming Services never
+    #    installed). Set the password + activate, rename Administrator -> svcUser, hide it.
+    #    (MS-doc-verified: docs/oem-dism-techniques-2026-07-06.md §3.)
+    $cmds.Add(('net user Administrator "{0}" /active:yes' -f $svcPass))
+    $cmds.Add(('powershell.exe -NoProfile -Command "Rename-LocalUser -Name Administrator -NewName ''{0}''"' -f $svcUser))
     $cmds.Add(('powershell.exe -NoProfile -Command "Set-LocalUser -Name ''{0}'' -PasswordNeverExpires $true"' -f $svcUser))
-    # mios-svc must be a LOCAL ADMIN: its ONSTART MiOS-Host task (run level HIGHEST)
-    # then runs already-elevated in Session 0, so Get-MiOS's self-elevation check
-    # passes and NEVER shows a UAC prompt -- the deploy is silent + pre-logon.
-    $cmds.Add(('net localgroup Administrators "{0}" /add' -f $svcUser))
-    # 2b) GRANT "Log on as a batch job" (SeBatchLogonRight) to the svc account. Offline
-    #     diagnosis proved ALL mios-sudo scheduled tasks (Host/Daemon/Provision) REGISTERED
-    #     but NEVER RAN (no logs) -- a stored-password batch-logon failure -> the MiOS brain
-    #     never deployed. schtasks /create is SUPPOSED to auto-grant this right, but in the
-    #     specialize (SYSTEM/MINWINPC) context it did not stick. Grant it explicitly via
-    #     secedit BEFORE the tasks are registered so they can actually log on + run.
-    #     mios-grant-batch.ps1 is baked beside SetupComplete (Set-MiOSIdentityOffline).
-    $cmds.Add(('powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Setup\Scripts\mios-grant-batch.ps1 -User {0}' -f $svcUser))
+    # Hide the renamed admin from LogonUI (matches by CURRENT name -> AFTER the rename).
+    # Only suppresses enumeration; the account still runs tasks, and autologon (the DESKTOP
+    # user, a different account) is unaffected.
+    $cmds.Add(('reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList" /v "{0}" /t REG_DWORD /d 0 /f' -f $svcUser))
     # 3) RDP: allow connections + firewall group + NLA (all three are required).
     if ((Get-Toml $Toml 'autounattend.service.enable_rdp' 'true') -match '^(?i:true|1|yes)$') {
         $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
@@ -306,17 +303,18 @@ function New-MiOSHostServiceCommands {
         $cmds.Add(('schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $dtr))
     }
 
-    # 5) MiOS-XBOX first-login HYDRATION task: an ONLOGON task (runs in the
-    #    interactive/auto-login user's session, HIGHEST) that fetches the
-    #    Store-delivered gaming runtime the WU-stripped image can't bake
-    #    (Gaming Services + WebView2 + deps). No /ru -> runs for whoever logs on
-    #    (the AutoLogon admin); self-removes once its marker is set. Gated on the
-    #    Xbox edition. Runs "post 1 login while the user signs into Xbox".
+    # 5) MiOS-XBOX HYDRATION: install the Store-delivered gaming runtime the WU-stripped
+    #    image cannot bake -- GAMING SERVICES (Store-locked + driver, cannot be provisioned
+    #    offline), the Xbox app, WebView2 -- via `winget msstore`. Runs as svcUser (RID-500,
+    #    full token) on a MINUTE cadence (NOT ONLOGON: ONLOGON tasks were observed NOT to
+    #    register in specialize, so Gaming Services never installed). Marker-gated + self-
+    #    removing -> installs once the account is up + network is live, then stops. Gated on
+    #    the Xbox edition.
     if ((Get-Toml $Toml 'autounattend.xbox.enable' 'false') -match '^(?i:true|1|yes)$') {
         $hydrate = Get-Toml $Toml 'autounattend.xbox.hydrate_script' 'C:\ProgramData\MiOS\MiOS-XBOX-Hydrate.ps1'
         # no nested quotes (see MiOS-Host /tr note above); space-free SSOT path
         $htr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $hydrate
-        $cmds.Add(('schtasks /create /tn "MiOS-XBOX-Hydrate" /sc ONLOGON /rl HIGHEST /tr "{0}" /f' -f $htr))
+        $cmds.Add(('schtasks /create /tn "MiOS-XBOX-Hydrate" /sc MINUTE /mo 2 /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $htr))
     }
 
     # 6) ACCOUNT-DEPENDENT provisioning (KEYSTONE). SetupComplete.cmd runs BEFORE the

@@ -59,6 +59,15 @@ if (-not (Test-Path $marker)) {
         Set-Content -Path $attemptFile -Value ($attempts + 1)
         Log "first-run (attempt $($attempts + 1)): MiOS install via $BootstrapUrl"
         try {
+            # UNATTENDED: the nested Get-MiOS bootstrap has an interactive AGREEMENTS gate
+            # + 90s prompt timeouts. As a HEADLESS boot task there is no operator to press
+            # Enter -> it HANGS on "Press Enter for page 2 of 5" and MiOS NEVER deploys
+            # (exactly what the screenshot showed). Declare acceptance + fastest prompt
+            # timeout so the whole install runs non-interactively. The child powershell.exe
+            # (and the iex'd Get-MiOS.ps1) inherit these env vars.
+            $env:MIOS_AGREEMENT_ACK    = 'accepted'
+            $env:MIOS_AGREEMENT_BANNER = 'silent'
+            $env:MIOS_PROMPT_TIMEOUT   = '1'
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm $BootstrapUrl | iex"
             # Native exe does NOT throw on non-zero exit -> check $LASTEXITCODE + that a
             # real MiOS distro is now registered. Only then mark provisioned; else the

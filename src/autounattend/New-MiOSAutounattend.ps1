@@ -228,7 +228,9 @@ function New-MiOSAutounattendXml {
     if ($runBootstrap) {
         # Escape $bootUrl -- an SSOT override with '&' would otherwise break the XML.
         $_url = [Security.SecurityElement]::Escape($bootUrl)
-        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;irm $_url | iex&quot;"
+        # UNATTENDED: declare agreement acceptance + fastest prompt timeout so the nested
+        # bootstrap never blocks on the interactive AGREEMENTS gate / 90s prompts.
+        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;`$env:MIOS_AGREEMENT_ACK='accepted'; `$env:MIOS_AGREEMENT_BANNER='silent'; `$env:MIOS_PROMPT_TIMEOUT='1'; irm $_url | iex&quot;"
         [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>{1}</CommandLine><Description>MiOS bootstrap (nested irm|iex)</Description><RequiresUserInput>true</RequiresUserInput></SynchronousCommand>' -f $_flOrd, $cmd))
         $_flOrd++
     }

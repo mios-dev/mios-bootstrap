@@ -415,6 +415,10 @@ $log='C:\ProgramData\MiOS\logs\provision-live.log'; New-Item -ItemType Directory
 function Log($m){ "$([DateTime]::Now.ToString('HH:mm:ss')) $m" | Add-Content $log }
 $marker='C:\ProgramData\MiOS\provision-live.done'
 if (Test-Path $marker) { & schtasks.exe /delete /tn 'MiOS-Provision' /f 2>$null | Out-Null; exit 0 }
+# Keep the RID-500 service account enabled -- OOBE can disable the built-in admin once the
+# desktop account is created, which would stop the mios-sudo tasks (brain/Gaming). We run
+# as SYSTEM so we can re-assert it before those tasks need to log on.
+& net.exe user '__SVCUSER__' /active:yes 2>$null | Out-Null
 $exclude=@('Public','Default','Default User','defaultuser0','__SVCUSER__','systemprofile','ServiceProfiles','All Users')
 # Enumerate real desktop profiles via Win32_UserProfile -- it yields the authoritative
 # SID + a Loaded (logged-in) flag DIRECTLY. Do NOT use NTAccount.Translate: as SYSTEM it
