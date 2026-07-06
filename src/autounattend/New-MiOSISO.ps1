@@ -296,9 +296,16 @@ function Set-MiOSIdentityOffline {
     $curScheme = ''
     try {
         $btmp = Join-Path $env:TEMP ('mios-bibata-'+[guid]::NewGuid().ToString('N').Substring(0,8)); New-Item -ItemType Directory -Force -Path $btmp | Out-Null
-        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest' -Headers @{ 'User-Agent'='MiOS' } -ErrorAction Stop
-        $url = ($rel.assets | Where-Object { $_.name -eq 'Bibata-Modern-Classic-Windows.zip' } | Select-Object -First 1).browser_download_url
-        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile (Join-Path $btmp 'b.zip') -ErrorAction Stop
+        # Use the rate-limit-free /releases/latest/download/ redirect (the GitHub API
+        # 403s without a token on a fresh build host -- the prior silent Bibata failure).
+        # SSOT-overridable; fall through the API only if the direct asset name changed.
+        $url = Get-Toml $Toml 'branding.cursor_url' 'https://github.com/ful1e5/Bibata_Cursor/releases/latest/download/Bibata-Modern-Classic-Windows.zip'
+        try { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile (Join-Path $btmp 'b.zip') -ErrorAction Stop }
+        catch {
+            $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest' -Headers @{ 'User-Agent'='MiOS' } -ErrorAction Stop
+            $url = ($rel.assets | Where-Object { $_.name -match 'Modern-Classic.*Windows.*\.zip$' } | Select-Object -First 1).browser_download_url
+            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile (Join-Path $btmp 'b.zip') -ErrorAction Stop
+        }
         Expand-Archive -Path (Join-Path $btmp 'b.zip') -DestinationPath $btmp -Force
         $src = Get-ChildItem $btmp -Recurse -Directory | Where-Object { @(Get-ChildItem $_.FullName -Include *.cur,*.ani -File).Count -ge 10 } | Select-Object -First 1
         if ($src) {
@@ -325,6 +332,67 @@ function Set-MiOSIdentityOffline {
         [IO.File]::WriteAllText((Join-Path $ScriptsDst 'mios-identity.cmd'), (($out -join "`r`n") + "`r`n"), [System.Text.Encoding]::ASCII)
         Write-Host "[*] Baked mios-identity.cmd ($n commands from your New-MiOSProvisionCommands) -> SetupComplete runs it silent, pre-logon" -ForegroundColor Green
     } catch { Write-Host "[!] mios-identity.cmd bake FAILED: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Red }
+
+    # --- ACCOUNT-DEPENDENT provisioning (mios-provision-live.ps1). KEYSTONE FIX:
+    #     SetupComplete runs BEFORE the desktop account is created (PROVEN: mios-remote's
+    #     `net localgroup "Remote Desktop Users" "mios"` returned System error 1317
+    #     "The specified account does not exist" -- mios is created later, in oobeSystem,
+    #     and auto-logs-in AFTER SetupComplete). So the two account-dependent operations --
+    #     (1) adding the real account to Remote Desktop Users (enhanced-session sign-in)
+    #     and (2) applying the PER-USER MiOS theme to the real account's OWN hive (under
+    #     SYSTEM, HKCU is SYSTEM's; the Default-hive copy does NOT carry to mios, which
+    #     Windows creates light-themed) -- must run AFTER the account exists. ONLOGON tasks
+    #     were observed NOT to register in specialize, so this runs via a PROVEN MINUTE task
+    #     (MiOS-Provision, registered by New-MiOSHostServiceCommands) as the admin svc
+    #     account: it waits for the real account, applies RDU + theme to its live HKU\<sid>
+    #     (or a loaded NTUSER.DAT), marker-gates, then self-deletes. --
+    try {
+        $perUserLines = @(Get-MiOSPerUserBrandingReg -Toml $Toml -HivePrefix '__HIVE__')
+        $svcUser = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-svc'
+        $plines = ($perUserLines | ForEach-Object { "  '" + ($_ -replace "'","''") + "'" }) -join ",`r`n"
+        $tpl = @'
+# MiOS live account provisioning. Runs as the admin svc account via the MiOS-Provision
+# MINUTE task until the REAL desktop account exists, then (1) adds it to Remote Desktop
+# Users so Hyper-V enhanced session / RDP signs in, and (2) applies the per-user MiOS
+# theme (dark/accent/transparency/RGB + wallpaper + Bibata) to its ACTUAL profile hive.
+# Marker-gated + self-deleting -- runs exactly once. All values are SSOT-derived at bake.
+$ErrorActionPreference='SilentlyContinue'
+$log='C:\ProgramData\MiOS\logs\provision-live.log'; New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
+function Log($m){ "$([DateTime]::Now.ToString('HH:mm:ss')) $m" | Add-Content $log }
+$marker='C:\ProgramData\MiOS\provision-live.done'
+if (Test-Path $marker) { & schtasks.exe /delete /tn 'MiOS-Provision' /f 2>$null | Out-Null; exit 0 }
+$exclude=@('Public','Default','Default User','defaultuser0','__SVCUSER__','systemprofile','ServiceProfiles','All Users')
+$accts=@(Get-ChildItem 'C:\Users' -Directory -EA SilentlyContinue | Where-Object { $_.Name -notin $exclude -and (Test-Path (Join-Path $_.FullName 'NTUSER.DAT')) })
+if (-not $accts.Count) { Log 'no real desktop account yet -- retry next MINUTE tick'; exit 0 }
+$reg=@(
+__REGLINES__
+)
+$anyThemed=$false
+foreach ($a in $accts) {
+  $u=$a.Name
+  Log "provisioning $u"
+  & net.exe localgroup 'Remote Desktop Users' $u /add 2>&1 | ForEach-Object { Log "  RDU: $_" }
+  $sid=$null; try { $sid=(New-Object Security.Principal.NTAccount($u)).Translate([Security.Principal.SecurityIdentifier]).Value } catch {}
+  $hive=$null; $loaded=$false
+  if ($sid -and (Test-Path "Registry::HKEY_USERS\$sid")) { $hive="HKU\$sid"; $loaded=$true; Log "  hive: live $hive" }
+  else { $hive='HKU\MIOS_LIVE'; & reg.exe load $hive (Join-Path $a.FullName 'NTUSER.DAT') 2>$null | Out-Null; Log "  hive: loaded NTUSER.DAT -> $hive" }
+  foreach ($ln in $reg) { & cmd.exe /c ($ln -replace '__HIVE__', $hive) 2>$null | Out-Null }
+  if (-not $loaded) { [gc]::Collect(); & reg.exe unload $hive 2>$null | Out-Null }
+  else { & RUNDLL32.EXE USER32.DLL,UpdatePerUserSystemParameters ,1 ,True 2>$null | Out-Null }
+  Log "  MiOS theme applied to $u"
+  $anyThemed=$true
+}
+if ($anyThemed) {
+  'done' | Set-Content $marker
+  Log 'provisioning complete -> self-deleting MiOS-Provision task + one reboot so the per-user theme takes visual effect (mios auto-logs-in dark; WSL feature-enable needs a reboot anyway)'
+  & schtasks.exe /delete /tn 'MiOS-Provision' /f 2>$null | Out-Null
+  & shutdown.exe /r /t 25 /c 'MiOS applying identity' 2>$null | Out-Null
+}
+'@
+        $ps = $tpl.Replace('__SVCUSER__', $svcUser).Replace('__REGLINES__', $plines)
+        [IO.File]::WriteAllText((Join-Path $ScriptsDst 'mios-provision-live.ps1'), $ps, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "[*] Baked mios-provision-live.ps1 ($($perUserLines.Count) per-user reg ops) -> MINUTE task adds the real account to Remote Desktop Users + themes its profile post-creation" -ForegroundColor Green
+    } catch { Write-Host "[!] mios-provision-live.ps1 bake FAILED: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Red }
 }
 
 # Bake the MiOS REMOTE-ACCESS + VIRT-INTEGRATION plane into the image so every

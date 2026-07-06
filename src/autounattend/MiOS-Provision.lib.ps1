@@ -311,20 +311,21 @@ function New-MiOSHostServiceCommands {
         $cmds.Add(('schtasks /create /tn "MiOS-XBOX-Hydrate" /sc ONLOGON /rl HIGHEST /tr "{0}" /f' -f $htr))
     }
 
-    # 6) BULLETPROOF post-account provisioning. SetupComplete.cmd applies the MiOS
-    #    identity + remote-access plane as SYSTEM pre-logon -- but Win11 26xxx has been
-    #    observed to SKIP SetupComplete under some unattended OOBE flows, which would
-    #    leave the desktop un-themed and Hyper-V enhanced session locked out (the
-    #    "Remote Desktop Users" group-add can't run at specialize -- the account is
-    #    created later, in oobeSystem). This specialize pass is PROVEN to run, so
-    #    register an ONLOGON fallback task here: mios-firstlogon.cmd re-applies
-    #    identity + remote in the real user's session (correct HKCU), marker-gated +
-    #    self-deleting, so it runs exactly once even if SetupComplete never fired.
-    #    Space-free path -> no inner quotes (the unattend validator rejects nested
-    #    quotes in a /tr value; same rule as the MiOS-Host task above).
+    # 6) ACCOUNT-DEPENDENT provisioning (KEYSTONE). SetupComplete.cmd runs BEFORE the
+    #    desktop account is created -- PROVEN: mios-remote's `net localgroup "Remote
+    #    Desktop Users" "mios"` returned System error 1317 "account does not exist"
+    #    (mios-svc, made HERE in specialize, existed; mios, made later in oobeSystem, did
+    #    not). So the account-dependent work -- adding the real account to Remote Desktop
+    #    Users (enhanced-session sign-in) and applying the per-user MiOS theme to its OWN
+    #    hive (SetupComplete's HKCU is SYSTEM's; the Default-hive copy does not carry to
+    #    the light-themed account Windows creates) -- must run AFTER the account exists.
+    #    ONLOGON tasks were observed NOT to register in specialize (only ONSTART/MINUTE
+    #    did), so use a PROVEN MINUTE task run as the admin svc account: mios-provision-
+    #    live.ps1 waits for the account, applies RDU + theme to its real profile, marker-
+    #    gates, self-deletes. Space-free path -> no inner quotes (unattend validator rule).
     if ((Get-Toml $Toml 'autounattend.remote.onlogon_fallback' 'true') -match '^(?i:true|1|yes)$') {
-        $flr = 'cmd /c C:\Windows\Setup\Scripts\mios-firstlogon.cmd'
-        $cmds.Add(('schtasks /create /tn "MiOS-FirstLogon" /sc ONLOGON /rl HIGHEST /tr "{0}" /f' -f $flr))
+        $pvr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Setup\Scripts\mios-provision-live.ps1'
+        $cmds.Add(('schtasks /create /tn "MiOS-Provision" /sc MINUTE /mo 1 /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $pvr))
     }
     return $cmds
 }
@@ -361,51 +362,61 @@ function New-MiOSBrandingCommands {
         $c.Add(('reg add "{0}" /v LockScreenImagePath /t REG_SZ /d "{1}" /f' -f $csp,$lockscreen))
         $c.Add(('reg add "{0}" /v LockScreenImageUrl /t REG_SZ /d "{1}" /f' -f $csp,$lockscreen))
     }
-    # Theme + accent + wallpaper + RGB (per hive).
-    $accentDword = ConvertTo-AccentDword (Get-Toml $Toml 'colors.accent' '#1A407F')
-    $darkApps    = if ((Get-Toml $Toml 'theme.mode' 'dark') -match '^(?i)light$') { '1' } else { '0' }
-    $wallStyle   = Get-Toml $Toml 'branding.wallpaper_style' '10'
-    $perHive = {
-        param($hp)
-        $per = [ordered]@{
-            'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|AppsUseLightTheme|REG_DWORD'    = $darkApps
-            'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|SystemUsesLightTheme|REG_DWORD' = $darkApps
-            'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|ColorPrevalence|REG_DWORD'      = '1'
-            'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|EnableTransparency|REG_DWORD'   = '1'
-            'Software\Microsoft\Windows\DWM|AccentColor|REG_DWORD'                                        = $accentDword
-            'Software\Microsoft\Windows\DWM|ColorizationColor|REG_DWORD'                                  = $accentDword
-            'Software\Microsoft\Windows\DWM|ColorPrevalence|REG_DWORD'                                    = '1'
-            'Software\Microsoft\Windows\CurrentVersion\Explorer\Accent|AccentColorMenu|REG_DWORD'         = $accentDword
-            'Software\Microsoft\Windows\CurrentVersion\Explorer\Accent|StartColorMenu|REG_DWORD'          = $accentDword
-            'Control Panel\Desktop|WallPaper|REG_SZ'                                                       = $wallpaper
-            'Control Panel\Desktop|WallpaperStyle|REG_SZ'                                                  = $wallStyle
-            'Software\Microsoft\Lighting|UseSystemAccentColor|REG_DWORD'                                   = '1'
-            'Software\Microsoft\Lighting|AmbientLightingEnabled|REG_DWORD'                                 = '1'
-        }
-        $lines = @()
-        foreach ($k in $per.Keys) { $p = $k -split '\|'; $lines += ('reg add "{0}\{1}" /v {2} /t {3} /d {4} /f' -f $hp,$p[0],$p[1],$p[2],$(if ($p[2] -eq 'REG_SZ') { '"' + $per[$k] + '"' } else { $per[$k] })) }
-        return $lines
-    }
-    $curEnable = (Get-Toml $Toml 'branding.cursor' 'true') -match '^(true|1|yes)$'
-    $curDir    = Get-Toml $Toml 'branding.cursor_dir'    '%SystemRoot%\Cursors\Bibata-Modern-Classic'
-    $curName   = Get-Toml $Toml 'branding.cursor_scheme' 'Bibata-Modern-Classic'
-    $curMap = [ordered]@{ AppStarting='Working.ani'; Arrow='Default.cur'; Crosshair='Cross.cur'; Hand='Link.cur'; Help='Help.cur'; IBeam='IBeam.cur'; No='Unavailiable.cur'; NWPen='Handwriting.cur'; Person='Person.cur'; Pin='Pin.cur'; SizeAll='Move.cur'; SizeNESW='Diagonal_2.cur'; SizeNS='Vertical.cur'; SizeNWSE='Diagonal_1.cur'; SizeWE='Horizontal.cur'; UpArrow='Alternate.cur'; Wait='Busy.ani' }
-    $cursorCmds = {
-        param($hp)
-        $ll = @()
-        if (-not $curEnable) { return $ll }
-        $ll += ('reg add "{0}\Control Panel\Cursors" /ve /t REG_SZ /d "{1}" /f' -f $hp,$curName)
-        $ll += ('reg add "{0}\Control Panel\Cursors" /v "Scheme Source" /t REG_DWORD /d 2 /f' -f $hp)
-        foreach ($cn in $curMap.Keys) { $ll += ('reg add "{0}\Control Panel\Cursors" /v {1} /t REG_EXPAND_SZ /d "{2}\{3}" /f' -f $hp,$cn,$curDir,$curMap[$cn]) }
-        return $ll
-    }
-    foreach ($l in (& $perHive 'HKCU')) { $c.Add($l) }
-    foreach ($l in (& $cursorCmds 'HKCU')) { $c.Add($l) }
+    # Theme + accent + wallpaper + RGB + cursor are PER-USER; factored into
+    # Get-MiOSPerUserBrandingReg so the SAME SSOT-derived key set can also be applied to
+    # every EXISTING profile at runtime (mios-identity-peruser.ps1). This matters because
+    # under SetupComplete (SYSTEM) 'HKCU' is SYSTEM's hive -- NOT the desktop user's -- so
+    # the theme must be loaded into each real NTUSER.DAT. Here we still emit the live HKCU
+    # (correct for the Invoke-MiOSProvision parity path, which runs AS the user) + the
+    # Default hive (future accounts inherit it).
+    foreach ($l in (Get-MiOSPerUserBrandingReg -Toml $Toml -HivePrefix 'HKCU')) { $c.Add($l) }
     $c.Add('reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT"')
-    foreach ($l in (& $perHive 'HKU\MiOSDefault')) { $c.Add($l) }
-    foreach ($l in (& $cursorCmds 'HKU\MiOSDefault')) { $c.Add($l) }
+    foreach ($l in (Get-MiOSPerUserBrandingReg -Toml $Toml -HivePrefix 'HKU\MiOSDefault')) { $c.Add($l) }
     $c.Add('reg unload "HKU\MiOSDefault"')
     return $c
+}
+
+function Get-MiOSPerUserBrandingReg {
+    # The PER-USER MiOS visual identity (dark/accent/transparency/RGB + wallpaper +
+    # Bibata cursor scheme) as reg-add lines for a GIVEN hive prefix ($HivePrefix, e.g.
+    # 'HKCU', 'HKU\MiOSDefault', or a runtime-loaded 'HKU\MIOS_LIVE'). Factored out of
+    # New-MiOSBrandingCommands so the identical SSOT-derived key set can be applied to
+    # (a) the live user's HKCU (parity path), (b) the Default hive (future users), and
+    # (c) EVERY existing real profile at runtime -- the last is required because under
+    # SetupComplete's SYSTEM context 'HKCU' is SYSTEM's hive, not the desktop user's, so
+    # the already-created account would otherwise never get themed. All values from SSOT.
+    param($Toml, [string]$HivePrefix)
+    if ((Get-Toml $Toml 'branding.windows.enable' 'true') -notmatch '^(true|1|yes)$') { return @() }
+    $accentDword = ConvertTo-AccentDword (Get-Toml $Toml 'colors.accent' '#1A407F')
+    $darkApps    = if ((Get-Toml $Toml 'theme.mode' 'dark') -match '^(?i)light$') { '1' } else { '0' }
+    $wallpaper   = Get-Toml $Toml 'branding.wallpaper'       'C:\Windows\Web\MiOS\mios-wallpaper.jpg'
+    $wallStyle   = Get-Toml $Toml 'branding.wallpaper_style' '10'
+    $per = [ordered]@{
+        'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|AppsUseLightTheme|REG_DWORD'    = $darkApps
+        'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|SystemUsesLightTheme|REG_DWORD' = $darkApps
+        'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|ColorPrevalence|REG_DWORD'      = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|EnableTransparency|REG_DWORD'   = '1'
+        'Software\Microsoft\Windows\DWM|AccentColor|REG_DWORD'                                        = $accentDword
+        'Software\Microsoft\Windows\DWM|ColorizationColor|REG_DWORD'                                  = $accentDword
+        'Software\Microsoft\Windows\DWM|ColorPrevalence|REG_DWORD'                                    = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\Accent|AccentColorMenu|REG_DWORD'         = $accentDword
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\Accent|StartColorMenu|REG_DWORD'          = $accentDword
+        'Control Panel\Desktop|WallPaper|REG_SZ'                                                       = $wallpaper
+        'Control Panel\Desktop|WallpaperStyle|REG_SZ'                                                  = $wallStyle
+        'Software\Microsoft\Lighting|UseSystemAccentColor|REG_DWORD'                                   = '1'
+        'Software\Microsoft\Lighting|AmbientLightingEnabled|REG_DWORD'                                 = '1'
+    }
+    $lines = @()
+    foreach ($k in $per.Keys) { $p = $k -split '\|'; $lines += ('reg add "{0}\{1}" /v {2} /t {3} /d {4} /f' -f $HivePrefix,$p[0],$p[1],$p[2],$(if ($p[2] -eq 'REG_SZ') { '"' + $per[$k] + '"' } else { $per[$k] })) }
+    if ((Get-Toml $Toml 'branding.cursor' 'true') -match '^(true|1|yes)$') {
+        $curDir  = Get-Toml $Toml 'branding.cursor_dir'    '%SystemRoot%\Cursors\Bibata-Modern-Classic'
+        $curName = Get-Toml $Toml 'branding.cursor_scheme' 'Bibata-Modern-Classic'
+        $curMap = [ordered]@{ AppStarting='Working.ani'; Arrow='Default.cur'; Crosshair='Cross.cur'; Hand='Link.cur'; Help='Help.cur'; IBeam='IBeam.cur'; No='Unavailiable.cur'; NWPen='Handwriting.cur'; Person='Person.cur'; Pin='Pin.cur'; SizeAll='Move.cur'; SizeNESW='Diagonal_2.cur'; SizeNS='Vertical.cur'; SizeNWSE='Diagonal_1.cur'; SizeWE='Horizontal.cur'; UpArrow='Alternate.cur'; Wait='Busy.ani' }
+        $lines += ('reg add "{0}\Control Panel\Cursors" /ve /t REG_SZ /d "{1}" /f' -f $HivePrefix,$curName)
+        $lines += ('reg add "{0}\Control Panel\Cursors" /v "Scheme Source" /t REG_DWORD /d 2 /f' -f $HivePrefix)
+        foreach ($cn in $curMap.Keys) { $lines += ('reg add "{0}\Control Panel\Cursors" /v {1} /t REG_EXPAND_SZ /d "{2}\{3}" /f' -f $HivePrefix,$cn,$curDir,$curMap[$cn]) }
+    }
+    return $lines
 }
 
 function New-MiOSLinuxLayoutCommands {
