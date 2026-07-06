@@ -371,14 +371,17 @@ function Log($m){ "$([DateTime]::Now.ToString('HH:mm:ss')) $m" | Add-Content $lo
 $marker='C:\ProgramData\MiOS\provision-live.done'
 if (Test-Path $marker) { & schtasks.exe /delete /tn 'MiOS-Provision' /f 2>$null | Out-Null; exit 0 }
 $exclude=@('Public','Default','Default User','defaultuser0','__SVCUSER__','systemprofile','ServiceProfiles','All Users')
-$accts=@(Get-ChildItem 'C:\Users' -Directory -EA SilentlyContinue | Where-Object { $_.Name -notin $exclude -and (Test-Path (Join-Path $_.FullName 'NTUSER.DAT')) })
-if (-not $accts.Count) { Log 'no real desktop account yet -- retry next MINUTE tick'; exit 0 }
+# Enumerate real desktop profiles via Win32_UserProfile -- it yields the authoritative
+# SID + a Loaded (logged-in) flag DIRECTLY. Do NOT use NTAccount.Translate: as SYSTEM it
+# throws "identity references could not be translated", which left $sid null so every
+# tick deferred forever + never granted the right.
+$profiles=@(Get-CimInstance Win32_UserProfile -EA SilentlyContinue | Where-Object { $_.LocalPath -like 'C:\Users\*' -and -not $_.Special -and ((Split-Path $_.LocalPath -Leaf) -notin $exclude) })
+if (-not $profiles.Count) { Log 'no real desktop profile yet -- retry next MINUTE tick'; exit 0 }
 $reg=@(
 __REGLINES__
 )
-function Grant-Right($who,$right){
+function Grant-Right($sidv,$right){
   try {
-    $sidv=(New-Object Security.Principal.NTAccount($who)).Translate([Security.Principal.SecurityIdentifier]).Value
     $inf=Join-Path $env:TEMP 'mios-r.inf'; $sdb=Join-Path $env:TEMP 'mios-r.sdb'
     & secedit.exe /export /cfg $inf /areas USER_RIGHTS | Out-Null
     $ls=Get-Content $inf; $o=New-Object System.Collections.Generic.List[string]; $f=$false
@@ -388,35 +391,32 @@ function Grant-Right($who,$right){
     & secedit.exe /import /cfg $inf /db $sdb | Out-Null
     & secedit.exe /configure /db $sdb /areas USER_RIGHTS | Out-Null
     Remove-Item $inf,$sdb -Force -EA SilentlyContinue
-    Log "  granted $right to $who"
+    Log "  granted $right"
   } catch { Log "  grant $right failed: $($_.Exception.Message)" }
 }
 $anyThemed=$false
-foreach ($a in $accts) {
-  $u=$a.Name
-  Log "provisioning $u"
-  # (1) Remote Desktop Users membership -- machine-wide, idempotent. + an EXPLICIT
-  #     SeRemoteInteractiveLogonRight grant (belt-and-suspenders vs a build where the
-  #     right was stripped from the RDU group -> enhanced session still refuses).
-  try { Add-LocalGroupMember -Group 'Remote Desktop Users' -Member $u -ErrorAction Stop; Log "  added $u to Remote Desktop Users" }
+foreach ($p in $profiles) {
+  $u=Split-Path $p.LocalPath -Leaf
+  $sid=$p.SID
+  Log "provisioning $u (sid=$sid loaded=$($p.Loaded))"
+  # (1) Remote Desktop Users membership + SeRemoteInteractiveLogonRight -- BY SID (no name
+  #     translation). machine-wide + idempotent -> enhanced-session / RDP sign-in.
+  try { Add-LocalGroupMember -Group 'Remote Desktop Users' -Member $sid -ErrorAction Stop; Log "  added $u to Remote Desktop Users" }
   catch { if ("$($_.Exception.Message)" -match 'already') { Log "  $u already in Remote Desktop Users" } else { & net.exe localgroup 'Remote Desktop Users' $u /add 2>&1 | ForEach-Object { Log "  net-rdu: $_" } } }
-  Grant-Right $u 'SeRemoteInteractiveLogonRight'
-  # (2) THEME -- write ONLY to the user's LIVE hive (HKU\<sid>). If the user is not
-  #     logged in yet, DEFER: do NOT load the on-disk NTUSER.DAT, because the user's own
-  #     session then flushes ITS (light) copy back over the write on logoff -- the exact
-  #     bug that reverted the theme to light. Retrying each MINUTE tick until logged on.
-  $sid=$null; try { $sid=(New-Object Security.Principal.NTAccount($u)).Translate([Security.Principal.SecurityIdentifier]).Value } catch {}
-  if ($sid -and (Test-Path "Registry::HKEY_USERS\$sid")) {
+  Grant-Right $sid 'SeRemoteInteractiveLogonRight'
+  # (2) THEME -- only when the hive is LOADED (user logged in). Write to the LIVE HKU\<sid>
+  #     ONLY -- never a separately-loaded NTUSER.DAT, which the user's own session clobbers
+  #     on logoff (the bug that reverted the theme to light). Defer until logged on.
+  if ($p.Loaded -and (Test-Path "Registry::HKEY_USERS\$sid")) {
     $hive="HKU\$sid"
     foreach ($ln in $reg) { & cmd.exe /c ($ln -replace '__HIVE__', $hive) 2>$null | Out-Null }
     Log "  MiOS theme applied to LIVE hive $hive"
     # refresh WITHOUT a clobbering reboot: restart this user's explorer so dark + accent +
-    # cursor take effect immediately (explorer re-reads them at start); the live-hive write
-    # persists to NTUSER.DAT on the natural WSL reboot anyway.
+    # cursor apply now (explorer re-reads them at start); the live-hive write persists.
     & RUNDLL32.EXE USER32.DLL,UpdatePerUserSystemParameters ,1 ,True 2>$null | Out-Null
     Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" -EA SilentlyContinue | ForEach-Object { $own=$null; try { $own=$_.GetOwner().User } catch {}; if ($own -eq $u) { & taskkill.exe /PID $_.ProcessId /F 2>$null | Out-Null } }
     $anyThemed=$true
-  } else { Log "  $u not logged in yet -- deferring theme (avoid the NTUSER.DAT-load race); retry next tick" }
+  } else { Log "  $u not logged in (Loaded=$($p.Loaded)) -- deferring theme; retry next tick" }
 }
 if ($anyThemed) {
   'done' | Set-Content $marker
