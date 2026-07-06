@@ -357,7 +357,7 @@ function Set-MiOSIdentityOffline {
     #     (or a loaded NTUSER.DAT), marker-gates, then self-deletes. --
     try {
         $perUserLines = @(Get-MiOSPerUserBrandingReg -Toml $Toml -HivePrefix '__HIVE__')
-        $svcUser = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-svc'
+        $svcUser = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-sudo'
         $plines = ($perUserLines | ForEach-Object { "  '" + ($_ -replace "'","''") + "'" }) -join ",`r`n"
         $tpl = @'
 # MiOS live account provisioning. Runs as the admin svc account via the MiOS-Provision
@@ -656,6 +656,15 @@ function Invoke-MiOSImageServicing {
         if (Test-Path $flSrc) {
             Copy-Item $flSrc (Join-Path $scriptsDst 'mios-firstlogon.cmd') -Force
             Write-Host "    baked mios-firstlogon.cmd -> image \Windows\Setup\Scripts (ONLOGON fallback)" -ForegroundColor Green
+        }
+        # Bake the batch-logon grant helper. The specialize pass runs it (as SYSTEM) right
+        # after creating the svc account so the MiOS-Host/Daemon tasks can actually log on
+        # + run as that account (the stored-password batch-logon failure that kept the brain
+        # from ever deploying). MiOS-Provision itself runs as SYSTEM so it needs no grant.
+        $gbSrc = Join-Path $PSScriptRoot 'mios-grant-batch.ps1'
+        if (Test-Path $gbSrc) {
+            Copy-Item $gbSrc (Join-Path $scriptsDst 'mios-grant-batch.ps1') -Force
+            Write-Host "    baked mios-grant-batch.ps1 -> image \Windows\Setup\Scripts (SeBatchLogonRight grant)" -ForegroundColor Green
         }
         # The interactive first-logon launcher SetupComplete copies to the Startup folder.
         # Bake the MiOS FACTORY IDENTITY offline (palette/dark/wallpaper reg + Geist

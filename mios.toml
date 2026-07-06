@@ -1274,7 +1274,7 @@ script           = "C:\\ProgramData\\MiOS\\MiOS-Daemon.ps1"
 # account. See docs/pre-logon-system-services.md.
 [autounattend.service]
 enable       = true
-svc_user     = "mios-svc"     # dedicated non-admin account that owns the WSL distro
+svc_user     = "mios-sudo"    # dedicated admin service account that owns the WSL distro (operator: name it mios-sudo)
 svc_password = ""             # empty -> inherits [identity].default_password (first-boot temp cred)
 wsl_distro   = "MiOS"
 host_script  = "C:\\ProgramData\\MiOS\\MiOS-Host.ps1"

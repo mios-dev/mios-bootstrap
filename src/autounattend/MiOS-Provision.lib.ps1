@@ -249,7 +249,7 @@ function New-MiOSHostServiceCommands {
     $cmds = New-Object System.Collections.Generic.List[string]
     if ((Get-Toml $Toml 'autounattend.service.enable' 'true') -notmatch '^(?i:true|1|yes)$') { return $cmds }
 
-    $svcUser  = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-svc'
+    $svcUser  = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-sudo'
     # Service-account password: SSOT service key, else the global default_password.
     # An answer-file credential is a first-boot temporary cred (rotate on first run).
     $svcPass  = Get-Toml $Toml 'autounattend.service.svc_password' (Get-Toml $Toml 'identity.default_password' 'mios')
@@ -268,6 +268,14 @@ function New-MiOSHostServiceCommands {
     # then runs already-elevated in Session 0, so Get-MiOS's self-elevation check
     # passes and NEVER shows a UAC prompt -- the deploy is silent + pre-logon.
     $cmds.Add(('net localgroup Administrators "{0}" /add' -f $svcUser))
+    # 2b) GRANT "Log on as a batch job" (SeBatchLogonRight) to the svc account. Offline
+    #     diagnosis proved ALL mios-sudo scheduled tasks (Host/Daemon/Provision) REGISTERED
+    #     but NEVER RAN (no logs) -- a stored-password batch-logon failure -> the MiOS brain
+    #     never deployed. schtasks /create is SUPPOSED to auto-grant this right, but in the
+    #     specialize (SYSTEM/MINWINPC) context it did not stick. Grant it explicitly via
+    #     secedit BEFORE the tasks are registered so they can actually log on + run.
+    #     mios-grant-batch.ps1 is baked beside SetupComplete (Set-MiOSIdentityOffline).
+    $cmds.Add(('powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Setup\Scripts\mios-grant-batch.ps1 -User {0}' -f $svcUser))
     # 3) RDP: allow connections + firewall group + NLA (all three are required).
     if ((Get-Toml $Toml 'autounattend.service.enable_rdp' 'true') -match '^(?i:true|1|yes)$') {
         $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
@@ -325,7 +333,13 @@ function New-MiOSHostServiceCommands {
     #    gates, self-deletes. Space-free path -> no inner quotes (unattend validator rule).
     if ((Get-Toml $Toml 'autounattend.remote.onlogon_fallback' 'true') -match '^(?i:true|1|yes)$') {
         $pvr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Setup\Scripts\mios-provision-live.ps1'
-        $cmds.Add(('schtasks /create /tn "MiOS-Provision" /sc MINUTE /mo 1 /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $pvr))
+        # Run MiOS-Provision as SYSTEM, NOT the svc account. The account-dependent work
+        # (Remote Desktop Users add + per-user theme to the real profile hive + a reboot)
+        # needs NO WSL, so SYSTEM can do all of it -- and a SYSTEM scheduled task is the
+        # MOST RELIABLE execution context: it has no stored-password / batch-logon
+        # dependency (the exact failure that stopped every mios-sudo task from running).
+        # This GUARANTEES the MiOS theme + RDU right actually apply post-account.
+        $cmds.Add(('schtasks /create /tn "MiOS-Provision" /sc MINUTE /mo 1 /rl HIGHEST /ru "SYSTEM" /tr "{0}" /f' -f $pvr))
     }
     return $cmds
 }
