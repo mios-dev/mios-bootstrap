@@ -310,6 +310,22 @@ function New-MiOSHostServiceCommands {
         $htr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $hydrate
         $cmds.Add(('schtasks /create /tn "MiOS-XBOX-Hydrate" /sc ONLOGON /rl HIGHEST /tr "{0}" /f' -f $htr))
     }
+
+    # 6) BULLETPROOF post-account provisioning. SetupComplete.cmd applies the MiOS
+    #    identity + remote-access plane as SYSTEM pre-logon -- but Win11 26xxx has been
+    #    observed to SKIP SetupComplete under some unattended OOBE flows, which would
+    #    leave the desktop un-themed and Hyper-V enhanced session locked out (the
+    #    "Remote Desktop Users" group-add can't run at specialize -- the account is
+    #    created later, in oobeSystem). This specialize pass is PROVEN to run, so
+    #    register an ONLOGON fallback task here: mios-firstlogon.cmd re-applies
+    #    identity + remote in the real user's session (correct HKCU), marker-gated +
+    #    self-deleting, so it runs exactly once even if SetupComplete never fired.
+    #    Space-free path -> no inner quotes (the unattend validator rejects nested
+    #    quotes in a /tr value; same rule as the MiOS-Host task above).
+    if ((Get-Toml $Toml 'autounattend.remote.onlogon_fallback' 'true') -match '^(?i:true|1|yes)$') {
+        $flr = 'cmd /c C:\Windows\Setup\Scripts\mios-firstlogon.cmd'
+        $cmds.Add(('schtasks /create /tn "MiOS-FirstLogon" /sc ONLOGON /rl HIGHEST /tr "{0}" /f' -f $flr))
+    }
     return $cmds
 }
 

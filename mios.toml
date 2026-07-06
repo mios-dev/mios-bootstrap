@@ -1280,6 +1280,29 @@ wsl_distro   = "MiOS"
 host_script  = "C:\\ProgramData\\MiOS\\MiOS-Host.ps1"
 enable_rdp   = true           # RDP up before logon too (Pro+; Home can't host RDP)
 
+# [autounattend.remote] -- REMOTE-ACCESS + VIRT-INTEGRATION plane, BAKED INTO THE
+# IMAGE from factory so every MiOS-XBOX deployment is reachable + host-integrated out
+# of the box (Hyper-V enhanced session, KVM/libvirt/QEMU, bare metal). The specialize
+# pass (autounattend.service.enable_rdp) turns the RDP LISTENER on -- but the
+# interactive desktop account ALSO needs "Remote Desktop Users" membership + the
+# SeRemoteInteractiveLogonRight, or Hyper-V ENHANCED SESSION refuses the sign-in with
+# "you need the right to sign in through Remote Desktop Services." That group-add
+# CANNOT run at specialize (the account is created later, in oobeSystem), so the
+# pipeline renders mios-remote.cmd from SSOT and SetupComplete runs it as SYSTEM
+# (post-account, pre-logon). OpenSSH.Server + sshd autostart, WinRM, and the virtio-win
+# guest drivers are baked offline into install.wim. All SSOT-gated + non-fatal.
+[autounattend.remote]
+enable            = true    # master switch for the whole remote-access bake
+grant_rdp_users   = true    # add the desktop account(s) to Remote Desktop Users (fixes enhanced-session sign-in)
+rdp_nla           = true    # RDP-Tcp UserAuthentication (NLA). true = secure default; false = most permissive
+openssh_server    = true    # bake OpenSSH.Server (offline FoD, online fallback) + sshd/ssh-agent autostart + fw
+enable_psremoting = true    # WinRM / PowerShell remoting (Enable-PSRemoting) for host mgmt
+bake_virtio       = true    # inject virtio-win guest drivers offline (KVM/QEMU/libvirt portability); non-fatal
+virtio_url        = ""      # empty -> canonical fedorapeople stable virtio-win.iso
+virtio_variant    = "w11"   # driver subtree to inject (w11 | w10); amd64 arch under it
+loopback_adapter  = false   # install a Microsoft KM-TEST loopback NIC (niche; opt-in)
+onlogon_fallback  = true    # register a proven-specialize-pass ONLOGON task that re-applies identity+remote if Setup skips SetupComplete on 26xxx
+
 # ----------------------------------------------------------------------------
 # [env] -- free-form environment-variable additions. Keys must match POSIX
 # env-var rules ([A-Za-z_][A-Za-z0-9_]*). Anything you put here is exported

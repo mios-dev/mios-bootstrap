@@ -51,6 +51,18 @@ if exist "%~dp0mios-identity.cmd" (
     call "%~dp0mios-identity.cmd">>"%LOG%" 2>&1
 ) else ( echo [MiOS] WARN mios-identity.cmd missing beside SetupComplete>>"%LOG%" )
 
+rem --- REMOTE-ACCESS + VIRT-INTEGRATION: the specialize pass turned the RDP LISTENER on,
+rem     but the interactive account must ALSO be in "Remote Desktop Users" (+ the logon
+rem     right that group carries) or Hyper-V ENHANCED SESSION refuses sign-in ("you need
+rem     the right to sign in through Remote Desktop Services"). That group-add can only run
+rem     NOW -- post-account (oobeSystem created it), pre-logon. mios-remote.cmd (rendered
+rem     from SSOT [autounattend.remote]) also opens the RDP+SSH firewall, starts sshd, and
+rem     enables WinRM. virtio + host drivers are already baked offline into the image. ----
+echo [MiOS] applying remote-access plane (enhanced-session RDP right / SSH / WinRM) %DATE% %TIME%>>"%LOG%"
+if exist "%~dp0mios-remote.cmd" (
+    call "%~dp0mios-remote.cmd">>"%LOG%" 2>&1
+) else ( echo [MiOS] WARN mios-remote.cmd missing beside SetupComplete>>"%LOG%" )
+
 rem --- Start the MiOS brain deploy NOW (end of setup, BEFORE first logon). The
 rem     specialize pass registered MiOS-Host as mios-svc (a LOCAL ADMIN, run level
 rem     HIGHEST). Running it here launches the WSL2 + agent-stack install in Session 0

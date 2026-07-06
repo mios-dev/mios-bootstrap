@@ -110,6 +110,13 @@ try {
     # Linux/shim template and rejects the Windows bootloader ("signed image's hash is
     # not allowed (DB)").
     Set-VMFirmware -VMName $VMName -EnableSecureBoot On -SecureBootTemplate 'MicrosoftWindows' -FirstBootDevice $dvd
+    # Enhanced Session Mode (HOST side) + all integration services, so the operator's
+    # VMConnect gets the full enhanced experience. The GUEST side is the baked RDP right
+    # (mios-remote.cmd -> Remote Desktop Users). Do NOT set EnhancedSessionTransportType
+    # to HvSocket -- that is the LINUX/xrdp path and breaks Windows enhanced session; the
+    # default VMBus transport is correct for a Windows guest.
+    try { Set-VMHost -EnableEnhancedSessionMode $true -ErrorAction Stop; Log "host Enhanced Session Mode ON" } catch { Log "WARN could not enable host Enhanced Session Mode: $($_.Exception.Message)" Yellow }
+    try { Get-VMIntegrationService -VMName $VMName | Where-Object { -not $_.Enabled } | Enable-VMIntegrationService -ErrorAction SilentlyContinue; Log "all VM integration services enabled" } catch {}
     $swv = Get-VMSwitch -EA SilentlyContinue | Where-Object Name -eq 'Default Switch'
     if (-not $swv) { $swv = Get-VMSwitch -SwitchType External -EA SilentlyContinue | Select-Object -First 1 }
     if ($swv) { Connect-VMNetworkAdapter -VMName $VMName -SwitchName $swv.Name; Log "NIC -> $($swv.Name)" } else { Log "WARN no NAT/External vSwitch -- guest has no internet; MiOS bootstrap will not fetch" Yellow }

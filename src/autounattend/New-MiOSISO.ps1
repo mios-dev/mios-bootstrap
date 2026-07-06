@@ -318,6 +318,105 @@ function Set-MiOSIdentityOffline {
     } catch { Write-Host "[!] mios-identity.cmd bake FAILED: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Red }
 }
 
+# Bake the MiOS REMOTE-ACCESS + VIRT-INTEGRATION plane into the image so every
+# deployment is reachable + host-integrated from factory. Three layers:
+#   (A) OFFLINE SYSTEM hive  -- RDP listener on (fDenyTSConnections=0), NLA per SSOT,
+#       TermService + sshd/ssh-agent set to autostart (safe: HKLM, not a user hive).
+#   (B) OFFLINE OpenSSH.Server capability (Add-WindowsCapability -Path) + virtio-win
+#       guest drivers (Add-WindowsDriver -Path), both non-fatal (online/skip fallback).
+#   (C) mios-remote.cmd rendered from SSOT -- the RUNTIME bits that can't be baked:
+#       adding the interactive desktop account(s) to "Remote Desktop Users" (WITHOUT
+#       this, Hyper-V ENHANCED SESSION refuses sign-in -- "you need the right to sign
+#       in through Remote Desktop Services"; the group carries SeRemoteInteractiveLogon
+#       Right), firewall rules (RDP + SSH), Enable-PSRemoting, optional loopback NIC.
+#       This can't run at specialize (the account is created later, in oobeSystem), so
+#       SetupComplete calls it as SYSTEM (post-account, pre-logon). All SSOT-gated.
+function Set-MiOSRemoteAccessOffline {
+    param([string]$Mount, [string]$ScriptsDst, $Toml, [string]$WorkRoot)
+    if ((Get-Toml $Toml 'autounattend.remote.enable' 'true') -notmatch '^(?i:true|1|yes)$') {
+        Write-Host "[*] Remote-access bake disabled (SSOT autounattend.remote.enable=false)." -ForegroundColor DarkGray; return
+    }
+    Write-Host "[*] Baking the MiOS remote-access + virt-integration plane (RDP/enhanced-session/SSH/virtio) ..." -ForegroundColor Cyan
+    $doSsh  = (Get-Toml $Toml 'autounattend.remote.openssh_server' 'true')    -match '^(?i:true|1|yes)$'
+
+    # ---- (A) OFFLINE SYSTEM hive: RDP listener + NLA + service autostart ----------
+    $sys = Join-Path $Mount 'Windows\System32\config\SYSTEM'
+    $nla = if ((Get-Toml $Toml 'autounattend.remote.rdp_nla' 'true') -match '^(?i:true|1|yes)$') { 1 } else { 0 }
+    & reg.exe load 'HKLM\MIOS_RSYS' $sys | Out-Null
+    try {
+        & reg.exe add 'HKLM\MIOS_RSYS\ControlSet001\Control\Terminal Server' /v fDenyTSConnections /t REG_DWORD /d 0 /f | Out-Null
+        & reg.exe add 'HKLM\MIOS_RSYS\ControlSet001\Control\Terminal Server\WinStations\RDP-Tcp' /v UserAuthentication /t REG_DWORD /d $nla /f | Out-Null
+        & reg.exe add 'HKLM\MIOS_RSYS\ControlSet001\Services\TermService' /v Start /t REG_DWORD /d 2 /f | Out-Null
+        if ($doSsh) { foreach ($svc in 'sshd','ssh-agent') { & reg.exe add "HKLM\MIOS_RSYS\ControlSet001\Services\$svc" /v Start /t REG_DWORD /d 2 /f 2>&1 | Out-Null } }
+        Write-Host "    RDP listener on (NLA=$nla), TermService/sshd autostart -> offline SYSTEM hive" -ForegroundColor DarkGray
+    } finally { [gc]::Collect(); & reg.exe unload 'HKLM\MIOS_RSYS' | Out-Null }
+
+    # ---- (B1) OFFLINE OpenSSH.Server capability (non-fatal; online fallback in cmd) --
+    if ($doSsh) {
+        try {
+            $cap = @(Get-WindowsCapability -Path $Mount -ErrorAction Stop | Where-Object { $_.Name -like 'OpenSSH.Server*' } | Select-Object -First 1)
+            if ($cap -and $cap.State -ne 'Installed') {
+                Add-WindowsCapability -Path $Mount -Name $cap.Name -ErrorAction Stop | Out-Null
+                Write-Host "    +capability $($cap.Name) (offline)" -ForegroundColor DarkGray
+            } elseif ($cap) { Write-Host "    OpenSSH.Server already present in image" -ForegroundColor DarkGray }
+        } catch { Write-Host "    OpenSSH.Server offline add skipped ($($_.Exception.Message.Split([Environment]::NewLine)[0])) -- online fallback in mios-remote.cmd" -ForegroundColor Yellow }
+    }
+
+    # ---- (B2) OFFLINE virtio-win guest drivers (KVM/QEMU/libvirt portability) -------
+    if ((Get-Toml $Toml 'autounattend.remote.bake_virtio' 'true') -match '^(?i:true|1|yes)$') {
+        $viso = $null
+        try {
+            $vurl = Get-Toml $Toml 'autounattend.remote.virtio_url' ''
+            if (-not $vurl) { $vurl = 'https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso' }
+            $variant = Get-Toml $Toml 'autounattend.remote.virtio_variant' 'w11'
+            $cache = Join-Path $WorkRoot 'virtio'; New-Item -ItemType Directory -Force -Path $cache | Out-Null
+            $viso = Join-Path $cache 'virtio-win.iso'
+            if (-not (Test-Path $viso) -or (Get-Item $viso).Length -lt 100MB) {
+                Write-Host "    fetching virtio-win.iso (one-time, cached under $cache) ..." -ForegroundColor DarkGray
+                $op = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri $vurl -OutFile $viso -UseBasicParsing -ErrorAction Stop
+                $ProgressPreference = $op
+            }
+            $vm = Mount-DiskImage -ImagePath $viso -PassThru -ErrorAction Stop
+            $vl = ($vm | Get-Volume).DriveLetter + ':\'
+            $inf = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "\\$variant\\amd64\\" })
+            if (-not $inf.Count) { $inf = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '\\amd64\\' }) }
+            Write-Host "    injecting $($inf.Count) virtio driver package(s) offline ($variant/amd64) ..." -ForegroundColor DarkGray
+            foreach ($d in $inf) { try { Add-WindowsDriver -Path $Mount -Driver $d.FullName -ForceUnsigned -ErrorAction Stop | Out-Null } catch {} }
+        } catch { Write-Host "    virtio bake skipped ($($_.Exception.Message.Split([Environment]::NewLine)[0])) -- non-fatal" -ForegroundColor Yellow }
+        finally { if ($viso) { try { Dismount-DiskImage -ImagePath $viso -ErrorAction SilentlyContinue | Out-Null } catch {} } }
+    }
+
+    # ---- (C) render mios-remote.cmd (runtime: RDU membership + fw + WinRM + loopback) --
+    # Accounts resolve EXACTLY like New-MiOSAutounattendXml: [[accounts]] else [identity].
+    $accounts = @($Toml.accounts)
+    if ($accounts.Count -eq 0) { $accounts = @(@{ name = (Get-Toml $Toml 'identity.username' 'mios') }) }
+    $users = @($accounts | ForEach-Object { "$($_.name)".Trim() } | Where-Object { $_ })
+    $grantUsers = (Get-Toml $Toml 'autounattend.remote.grant_rdp_users' 'true')   -match '^(?i:true|1|yes)$'
+    $doPsr      = (Get-Toml $Toml 'autounattend.remote.enable_psremoting' 'true') -match '^(?i:true|1|yes)$'
+    $doLoop     = (Get-Toml $Toml 'autounattend.remote.loopback_adapter' 'false') -match '^(?i:true|1|yes)$'
+    $r = @('@echo off', 'set "L=%WINDIR%\Temp\mios-remote.log"', 'echo [MiOS] remote-access apply %DATE% %TIME%>>"%L%"')
+    $r += 'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f>>"%L%" 2>&1'
+    $r += 'netsh advfirewall firewall set rule group="remote desktop" new enable=Yes>>"%L%" 2>&1'
+    if ($grantUsers) {
+        foreach ($u in $users) { $r += ('net localgroup "Remote Desktop Users" "{0}" /add>>"%L%" 2>&1' -f $u) }
+        $r += 'echo [MiOS] granted enhanced-session sign-in to: ' + ($users -join ', ') + '>>"%L%"'
+    }
+    if ($doSsh) {
+        $r += 'powershell -NoProfile -ExecutionPolicy Bypass -Command "if ((Get-WindowsCapability -Online -Name ''OpenSSH.Server*'').State -ne ''Installed''){ Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 }">>"%L%" 2>&1'
+        $r += 'sc config sshd start= auto>>"%L%" 2>&1'
+        $r += 'sc config ssh-agent start= auto>>"%L%" 2>&1'
+        $r += 'net start sshd>>"%L%" 2>&1'
+        $r += 'netsh advfirewall firewall add rule name="OpenSSH Server (sshd)" dir=in action=allow protocol=TCP localport=22>>"%L%" 2>&1'
+    }
+    if ($doPsr) { $r += 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck">>"%L%" 2>&1' }
+    if ($doLoop) { $r += 'powershell -NoProfile -ExecutionPolicy Bypass -Command "pnputil /add-driver $env:WINDIR\INF\netloop.inf /install">>"%L%" 2>&1' }
+    $r += 'echo [MiOS] remote-access done %DATE% %TIME%>>"%L%"'
+    $r += 'exit /b 0'
+    [IO.File]::WriteAllText((Join-Path $ScriptsDst 'mios-remote.cmd'), (($r -join "`r`n") + "`r`n"), [System.Text.Encoding]::ASCII)
+    Write-Host "    rendered mios-remote.cmd ($($users.Count) desktop acct(s) -> Remote Desktop Users; SSH=$doSsh PSR=$doPsr Loopback=$doLoop) -> beside SetupComplete" -ForegroundColor Green
+}
+
 # Offline-service sources\install.wim: features + appx + Xbox reg, then export/trim.
 function Invoke-MiOSImageServicing {
     param([string]$MediaRoot, $Toml, [object]$Removals, [switch]$BuiltNative)
@@ -451,12 +550,25 @@ function Invoke-MiOSImageServicing {
             Copy-Item $scSrc (Join-Path $scriptsDst 'SetupComplete.cmd') -Force
             Write-Host "    baked SetupComplete.cmd -> image \Windows\Setup\Scripts (SYSTEM first-boot trigger)" -ForegroundColor Green
         } else { Write-Host "[!] SetupComplete.cmd NOT found next to New-MiOSISO -- first-boot MiOS trigger MISSING!" -ForegroundColor Red }
+        # Bake the ONLOGON fallback cmd next to SetupComplete. The specialize pass
+        # (New-MiOSHostServiceCommands) registers a "MiOS-FirstLogon" task pointing here,
+        # so identity + remote apply even if Windows Setup skips SetupComplete on 26xxx.
+        $flSrc = Join-Path $PSScriptRoot 'mios-firstlogon.cmd'
+        if (Test-Path $flSrc) {
+            Copy-Item $flSrc (Join-Path $scriptsDst 'mios-firstlogon.cmd') -Force
+            Write-Host "    baked mios-firstlogon.cmd -> image \Windows\Setup\Scripts (ONLOGON fallback)" -ForegroundColor Green
+        }
         # The interactive first-logon launcher SetupComplete copies to the Startup folder.
         # Bake the MiOS FACTORY IDENTITY offline (palette/dark/wallpaper reg + Geist
         # font + Bibata cursor + OEM branding), all from SSOT, applied SILENTLY by
         # SetupComplete's Default-hive edit. (No interactive mios-firstboot launcher --
         # the deploy is pre-logon in Session 0; the identity is baked, not scripted.)
         Set-MiOSIdentityOffline -Mount $mount -ScriptsDst $scriptsDst -Toml $Toml
+        # Bake the REMOTE-ACCESS + VIRT-INTEGRATION plane (RDP right for enhanced session,
+        # OpenSSH, WinRM, virtio) so every deployment is reachable + host-integrated from
+        # factory. Renders mios-remote.cmd beside SetupComplete (runtime RDU group-add) +
+        # offline-bakes RDP-on / sshd-autostart / virtio drivers into the image.
+        Set-MiOSRemoteAccessOffline -Mount $mount -ScriptsDst $scriptsDst -Toml $Toml -WorkRoot (Split-Path $MediaRoot)
         # SSOT appx-removal list SetupComplete reads (mios-remove-appx.txt beside it), from
         # the same preset removals -- a fallback strip for anything left provisioned.
         if ($Removals.Appx.Count) {
