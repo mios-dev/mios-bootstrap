@@ -1217,11 +1217,11 @@ slim_build   = true    # skip Stage-2's Export-WindowsImage trim (ResetBase alre
 add_updates  = true    # integrate SSU+LCU into the image (ships patched)
 reset_base   = true    # StartComponentCleanup /ResetBase -- drop superseded WinSxS
 netfx3       = false   # bake .NET 3.5 (older games / anti-cheat) -- opt in
-skip_edge    = true    # drop Microsoft Edge -- not a MiOS requirement (MiOS ships Zen)
+skip_edge    = false   # KEEP Edge (operator wants it)
 # The keep-set: the ONLY Store apps integrated (space-separated package names, no
 # publisher hash). Everything else the converter would ship is left out entirely.
 # Xbox stack + Store/winget + Defender UI + media codecs (gaming/streaming compat).
-keep_apps    = "Microsoft.WindowsStore Microsoft.StorePurchaseApp Microsoft.DesktopAppInstaller Microsoft.SecHealthUI Microsoft.GamingApp Microsoft.XboxIdentityProvider Microsoft.XboxGamingOverlay Microsoft.XboxGameOverlay Microsoft.XboxSpeechToTextOverlay Microsoft.Xbox.TCUI Microsoft.HEVCVideoExtension Microsoft.VP9VideoExtensions Microsoft.AV1VideoExtension Microsoft.WebMediaExtensions Microsoft.RawImageExtension Microsoft.HEIFImageExtension Microsoft.WebpImageExtension Microsoft.AVCEncoderVideoExtension Microsoft.MPEG2VideoExtension Microsoft.DolbyAudioExtensions"
+keep_apps    = "Microsoft.WindowsStore Microsoft.StorePurchaseApp Microsoft.DesktopAppInstaller Microsoft.SecHealthUI Microsoft.ScreenSketch Microsoft.WindowsTerminal Microsoft.GamingApp Microsoft.XboxIdentityProvider Microsoft.XboxGamingOverlay Microsoft.XboxGameOverlay Microsoft.XboxSpeechToTextOverlay Microsoft.Xbox.TCUI Microsoft.HEVCVideoExtension Microsoft.VP9VideoExtensions Microsoft.AV1VideoExtension Microsoft.WebMediaExtensions Microsoft.RawImageExtension Microsoft.HEIFImageExtension Microsoft.WebpImageExtension Microsoft.AVCEncoderVideoExtension Microsoft.MPEG2VideoExtension Microsoft.DolbyAudioExtensions"
 computer_name  = ""              # empty -> inherits [identity].hostname
 
 # [autounattend.xbox] -- Xbox Full Screen Experience "out of the box" (T-140).

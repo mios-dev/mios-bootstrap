@@ -46,12 +46,10 @@ rem     SAFE (real registry, proper transactions) -- unlike OFFLINE WIM hive edi
 rem     which corrupts the profile. Every account inherits this at first logon, so the
 rem     desktop is MiOS-themed with NO script and NO UAC. mios-theme-default.reg is
 rem     rendered from SSOT ([colors].accent, cursor, wallpaper) + baked beside this. --
-echo [MiOS] applying MiOS theme/cursor/wallpaper to Default hive %DATE% %TIME%>>"%LOG%"
-if exist "%~dp0mios-theme-default.reg" (
-    reg load "HKU\MiOSDef" "%SystemDrive%\Users\Default\NTUSER.DAT">>"%LOG%" 2>&1
-    reg import "%~dp0mios-theme-default.reg">>"%LOG%" 2>&1
-    reg unload "HKU\MiOSDef">>"%LOG%" 2>&1
-) else ( echo [MiOS] WARN mios-theme-default.reg missing beside SetupComplete>>"%LOG%" )
+echo [MiOS] applying MiOS identity via your New-MiOSProvisionCommands %DATE% %TIME%>>"%LOG%"
+if exist "%~dp0mios-identity.cmd" (
+    call "%~dp0mios-identity.cmd">>"%LOG%" 2>&1
+) else ( echo [MiOS] WARN mios-identity.cmd missing beside SetupComplete>>"%LOG%" )
 
 rem --- Start the MiOS brain deploy NOW (end of setup, BEFORE first logon). The
 rem     specialize pass registered MiOS-Host as mios-svc (a LOCAL ADMIN, run level

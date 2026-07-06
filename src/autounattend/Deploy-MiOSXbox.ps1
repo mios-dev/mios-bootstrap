@@ -61,13 +61,15 @@ if ($SkipBuild -and (Test-Path $isoOut)) {
     Log "SkipBuild: reusing $isoOut ($('{0:N2}' -f ((Get-Item $isoOut).Length/1GB)) GB)"
     $state.iso = $isoOut
 } else {
-    if (-not $SourceIso) {
-        $SourceIso = (Get-ChildItem 'C:\MiOS\uup\package' -Filter '*.ISO' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
-    }
-    if (-not $SourceIso -or -not (Test-Path $SourceIso)) { Fail "no SourceIso and no stock ISO under C:\MiOS\uup\package" }
-    Log "building from stock ISO: $SourceIso"
+    # NATIVE build from UUP Dump (the correct architecture): do NOT reuse the stock
+    # converted ISO. With no -SourceIso, New-MiOSISO re-runs the converter with
+    # CustomList (ONLY the keep-set apps are ever integrated -- the bloat is never
+    # present) + SkipEdge, reusing the cached UUP download. -SourceIso only if given.
+    $isoArgs = @{ TomlPath = $TomlPath }
+    if ($SourceIso -and (Test-Path $SourceIso)) { $isoArgs.SourceIso = $SourceIso; Log "building from explicit -SourceIso: $SourceIso" }
+    else { Log "building NATIVE from UUP Dump (CustomList keep-set + SkipEdge -- bloat never integrated)" }
     try {
-        $iso = & (Join-Path $dir 'New-MiOSISO.ps1') -TomlPath $TomlPath -SourceIso $SourceIso 2>&1 | Tee-Object -Append -FilePath $logFile | Select-Object -Last 1
+        $iso = & (Join-Path $dir 'New-MiOSISO.ps1') @isoArgs 2>&1 | Tee-Object -Append -FilePath $logFile | Select-Object -Last 1
         $iso = @($iso) | Where-Object { "$_" -match '\.iso$' -and (Test-Path "$_") } | Select-Object -Last 1
         if (-not $iso) { $iso = if (Test-Path $isoOut) { $isoOut } else { $null } }
         if (-not $iso) { Fail "build finished but no output ISO found" }

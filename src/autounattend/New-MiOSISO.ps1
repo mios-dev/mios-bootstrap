@@ -247,18 +247,19 @@ function Set-MiOSIdentityOffline {
     $dwm = ("ff$b$g$r").ToLower()   # DWM AccentColor is 0xAABBGGRR
     Write-Host "[*] MiOS identity bake: accent #$accent -> DWM 0x$dwm (dark + transparency + Geist + Bibata + wallpaper + OEM)" -ForegroundColor Cyan
 
-    # --- wallpaper: generate a MiOS gradient (bg -> accent), stage into the image ---
+    # --- wallpaper + logo -> Windows\Web\MiOS (the exact paths the lib branding references) ---
     try {
         Add-Type -AssemblyName System.Drawing -ErrorAction Stop
-        $wallDir = Join-Path $Mount 'Windows\Web\Wallpaper\MiOS'; New-Item -ItemType Directory -Force -Path $wallDir | Out-Null
+        $webDir = Join-Path $Mount 'Windows\Web\MiOS'; New-Item -ItemType Directory -Force -Path $webDir | Out-Null
         $bg = ([string](Get-Toml $Toml 'colors.bg' '#282262')).TrimStart('#')
         $c1 = [System.Drawing.ColorTranslator]::FromHtml("#$bg"); $c2 = [System.Drawing.ColorTranslator]::FromHtml("#$accent")
         $bmp = New-Object System.Drawing.Bitmap(2560,1440); $gfx = [System.Drawing.Graphics]::FromImage($bmp)
         $rectF = New-Object System.Drawing.Rectangle(0,0,2560,1440)
-        $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rectF,$c1,$c2,45.0)
-        $gfx.FillRectangle($brush,$rectF); $bmp.Save((Join-Path $wallDir 'mios.jpg'),[System.Drawing.Imaging.ImageFormat]::Jpeg)
-        $gfx.Dispose(); $bmp.Dispose(); Write-Host "    wallpaper -> Windows\Web\Wallpaper\MiOS\mios.jpg" -ForegroundColor DarkGray
-    } catch { Write-Host "    [!] wallpaper gen skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
+        $gfx.FillRectangle((New-Object System.Drawing.Drawing2D.LinearGradientBrush($rectF,$c1,$c2,45.0)),$rectF)
+        $bmp.Save((Join-Path $webDir 'mios-wallpaper.jpg'),[System.Drawing.Imaging.ImageFormat]::Jpeg)
+        $lg = New-Object System.Drawing.Bitmap(120,120); $lgx = [System.Drawing.Graphics]::FromImage($lg); $lgx.Clear($c2); $lg.Save((Join-Path $webDir 'mios-logo.bmp'),[System.Drawing.Imaging.ImageFormat]::Bmp)
+        $gfx.Dispose(); $bmp.Dispose(); $lgx.Dispose(); $lg.Dispose(); Write-Host "    wallpaper + logo -> Windows\Web\MiOS" -ForegroundColor DarkGray
+    } catch { Write-Host "    [!] wallpaper/logo skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
 
     # --- Geist Mono Nerd Font: download, stage to Windows\Fonts, register offline (HKLM) ---
     $fontReg = @()
@@ -298,43 +299,23 @@ function Set-MiOSIdentityOffline {
         }
     } catch { Write-Host "    [!] Bibata cursor stage skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
 
-    # --- OEM branding (offline SOFTWARE hive, HKLM safe) ---
+    # --- bake YOUR New-MiOSProvisionCommands as mios-identity.cmd. SetupComplete runs it
+    #     LIVE as SYSTEM, pre-logon, SILENT -- ONE SSOT for OEM + Geist font-substitution +
+    #     lockscreen + theme/accent/wallpaper/RGB + Bibata cursor + Linux layout + Xbox mode.
+    #     HKLM + Default-hive writes apply to every account; OneDrive is removed. This is
+    #     YOUR lib (MiOS-Provision.lib.ps1), not a reinvention. ---
     try {
-        $sw = Join-Path $Mount 'Windows\System32\config\SOFTWARE'; & reg.exe load 'HKLM\MIOS_OEM' $sw 2>&1 | Out-Null
-        try {
-            $k = 'HKLM\MIOS_OEM\Microsoft\Windows\CurrentVersion\OEMInformation'
-            & reg.exe add $k /v Manufacturer /t REG_SZ /d 'MiOS' /f 2>&1 | Out-Null
-            & reg.exe add $k /v Model /t REG_SZ /d 'MiOS-XBOX' /f 2>&1 | Out-Null
-            & reg.exe add $k /v SupportURL /t REG_SZ /d 'https://github.com/mios-dev/mios-bootstrap' /f 2>&1 | Out-Null
-        } finally { [gc]::Collect(); & reg.exe unload 'HKLM\MIOS_OEM' 2>&1 | Out-Null }
-    } catch {}
-
-    # --- render mios-theme-default.reg (per-user; SetupComplete imports into Default hive) ---
-    $lines = @(
-        'Windows Registry Editor Version 5.00', '',
-        '[HKEY_USERS\MiOSDef\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize]',
-        '"AppsUseLightTheme"=dword:00000000', '"SystemUsesLightTheme"=dword:00000000',
-        '"EnableTransparency"=dword:00000001', '"ColorPrevalence"=dword:00000001', '',
-        '[HKEY_USERS\MiOSDef\Software\Microsoft\Windows\DWM]',
-        ('"AccentColor"=dword:{0}' -f $dwm), ('"ColorizationColor"=dword:{0}' -f $dwm),
-        ('"ColorizationAfterglow"=dword:{0}' -f $dwm), '"ColorPrevalence"=dword:00000001', '',
-        '[HKEY_USERS\MiOSDef\Control Panel\Desktop]',
-        '"WallPaper"="C:\\Windows\\Web\\Wallpaper\\MiOS\\mios.jpg"', '"WallpaperStyle"="10"', '"TileWallpaper"="0"', ''
-    )
-    if ($curScheme) {
-        $map = [ordered]@{ Arrow='Default.cur'; Help='Help.cur'; AppStarting='Working.ani'; Wait='Busy.ani'; Crosshair='Cross.cur'; IBeam='Text.cur'; NWPen='Handwriting.cur'; No='Unavailiable.cur'; SizeNS='Vertical.cur'; SizeWE='Horizontal.cur'; SizeNWSE='Diagonal_1.cur'; SizeNESW='Diagonal_2.cur'; SizeAll='Move.cur'; UpArrow='Alternate.cur'; Hand='Link.cur'; Pin='Pin.cur'; Person='Person.cur' }
-        $lines += '[HKEY_USERS\MiOSDef\Control Panel\Cursors]'
-        $lines += '@="Bibata Modern Classic"'
-        foreach ($role in $map.Keys) {
-            $p = "%SystemRoot%\Cursors\$curScheme\$($map[$role])"
-            $bytes = [System.Text.Encoding]::Unicode.GetBytes($p + [char]0)
-            $hex = (($bytes | ForEach-Object { $_.ToString('x2') }) -join ',')
-            $lines += ('"{0}"=hex(2):{1}' -f $role, $hex)
+        $prov = New-MiOSProvisionCommands -Toml $Toml
+        $out = @('@echo off', 'set "L=%WINDIR%\Temp\mios-identity.log"', 'echo [MiOS] identity apply %DATE% %TIME%>>"%L%"')
+        $n = 0
+        foreach ($grp in $prov) {
+            $out += ('echo [MiOS] {0}>>"%L%"' -f $grp.Description)
+            foreach ($cmd in @($grp.Commands)) { $out += ("$cmd>>`"%L%`" 2>&1"); $n++ }
         }
-        $lines += ''
-    }
-    [IO.File]::WriteAllText((Join-Path $ScriptsDst 'mios-theme-default.reg'), (($lines -join "`r`n") + "`r`n"), [System.Text.Encoding]::Unicode)
-    Write-Host "[*] Rendered mios-theme-default.reg (palette + dark + wallpaper$(if($curScheme){' + Bibata'})) -> Setup\Scripts (SetupComplete applies to Default hive, silent)" -ForegroundColor Green
+        $out += 'exit /b 0'
+        [IO.File]::WriteAllText((Join-Path $ScriptsDst 'mios-identity.cmd'), (($out -join "`r`n") + "`r`n"), [System.Text.Encoding]::ASCII)
+        Write-Host "[*] Baked mios-identity.cmd ($n commands from your New-MiOSProvisionCommands) -> SetupComplete runs it silent, pre-logon" -ForegroundColor Green
+    } catch { Write-Host "[!] mios-identity.cmd bake FAILED: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Red }
 }
 
 # Offline-service sources\install.wim: features + appx + Xbox reg, then export/trim.
