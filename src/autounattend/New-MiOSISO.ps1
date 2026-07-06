@@ -306,13 +306,22 @@ function Set-MiOSIdentityOffline {
             $url = ($rel.assets | Where-Object { $_.name -match 'Modern-Classic.*Windows.*\.zip$' } | Select-Object -First 1).browser_download_url
             Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile (Join-Path $btmp 'b.zip') -ErrorAction Stop
         }
-        Expand-Archive -Path (Join-Path $btmp 'b.zip') -DestinationPath $btmp -Force
-        $src = Get-ChildItem $btmp -Recurse -Directory | Where-Object { @(Get-ChildItem $_.FullName -Include *.cur,*.ani -File).Count -ge 10 } | Select-Object -First 1
-        if ($src) {
+        $zip = Join-Path $btmp 'b.zip'
+        if (-not (Test-Path $zip) -or (Get-Item $zip).Length -lt 20KB) { throw "download is not a valid zip ($([math]::Round((Get-Item $zip -EA SilentlyContinue).Length/1KB,1)) KB -- likely an HTML error page from a moved URL)" }
+        Expand-Archive -Path $zip -DestinationPath $btmp -Force
+        # Find the .cur/.ani cursors WHEREVER they landed (archive layout varies: root, a
+        # single folder, or nested) -- group by directory + take the richest. The prior
+        # ">=10 in a SUBdirectory" rule silently missed root/flat layouts (no message).
+        $allCur = @(Get-ChildItem $btmp -Recurse -File -EA SilentlyContinue | Where-Object { $_.Extension -in '.cur','.ani' })
+        $grp = $allCur | Group-Object DirectoryName | Sort-Object Count -Descending | Select-Object -First 1
+        if ($grp -and $grp.Count -ge 8) {
             $curDst = Join-Path $Mount 'Windows\Cursors\Bibata-Modern-Classic'; New-Item -ItemType Directory -Force -Path $curDst | Out-Null
-            Copy-Item (Join-Path $src.FullName '*') $curDst -Recurse -Force; $curScheme = 'Bibata-Modern-Classic'
-            Write-Host "    staged Bibata cursors -> Windows\Cursors\Bibata-Modern-Classic" -ForegroundColor DarkGray
-        }
+            Copy-Item (Join-Path $grp.Name '*.cur') $curDst -Force -EA SilentlyContinue
+            Copy-Item (Join-Path $grp.Name '*.ani') $curDst -Force -EA SilentlyContinue
+            $staged = @(Get-ChildItem $curDst -File -EA SilentlyContinue).Count
+            $curScheme = 'Bibata-Modern-Classic'
+            Write-Host "    staged $staged Bibata cursor(s) -> Windows\Cursors\Bibata-Modern-Classic" -ForegroundColor DarkGray
+        } else { Write-Host "    [!] Bibata: no cursor set found in archive (got $($allCur.Count) .cur/.ani files) -- cursor scheme skipped" -ForegroundColor Yellow }
     } catch { Write-Host "    [!] Bibata cursor stage skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
 
     # --- bake YOUR New-MiOSProvisionCommands as mios-identity.cmd. SetupComplete runs it

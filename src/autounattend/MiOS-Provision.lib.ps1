@@ -411,7 +411,12 @@ function Get-MiOSPerUserBrandingReg {
     if ((Get-Toml $Toml 'branding.cursor' 'true') -match '^(true|1|yes)$') {
         $curDir  = Get-Toml $Toml 'branding.cursor_dir'    '%SystemRoot%\Cursors\Bibata-Modern-Classic'
         $curName = Get-Toml $Toml 'branding.cursor_scheme' 'Bibata-Modern-Classic'
-        $curMap = [ordered]@{ AppStarting='Working.ani'; Arrow='Default.cur'; Crosshair='Cross.cur'; Hand='Link.cur'; Help='Help.cur'; IBeam='IBeam.cur'; No='Unavailiable.cur'; NWPen='Handwriting.cur'; Person='Person.cur'; Pin='Pin.cur'; SizeAll='Move.cur'; SizeNESW='Diagonal_2.cur'; SizeNS='Vertical.cur'; SizeNWSE='Diagonal_1.cur'; SizeWE='Horizontal.cur'; UpArrow='Alternate.cur'; Wait='Busy.ani' }
+        # Role -> Bibata-Modern-Classic-Windows filename, per the package's own install.inf
+        # (authoritative). The prior map used names from an older release (Default/IBeam/
+        # Vertical/Horizontal/Diagonal_1/2/Working) that DO NOT EXIST in the current zip --
+        # so every mismapped role, including Arrow (the main pointer -> Default.cur), fell
+        # back to the Windows default: "no Bibata" even when staged. These match the files.
+        $curMap = [ordered]@{ AppStarting='Work.ani'; Arrow='Pointer.cur'; Crosshair='Cross.cur'; Hand='Link.cur'; Help='Help.cur'; IBeam='Text.cur'; No='Unavailable.cur'; NWPen='Handwriting.cur'; Person='Person.cur'; Pin='Pin.cur'; SizeAll='Move.cur'; SizeNESW='Dgn2.cur'; SizeNS='Vert.cur'; SizeNWSE='Dgn1.cur'; SizeWE='Horz.cur'; UpArrow='Alternate.cur'; Wait='Busy.ani' }
         $lines += ('reg add "{0}\Control Panel\Cursors" /ve /t REG_SZ /d "{1}" /f' -f $HivePrefix,$curName)
         $lines += ('reg add "{0}\Control Panel\Cursors" /v "Scheme Source" /t REG_DWORD /d 2 /f' -f $HivePrefix)
         foreach ($cn in $curMap.Keys) { $lines += ('reg add "{0}\Control Panel\Cursors" /v {1} /t REG_EXPAND_SZ /d "{2}\{3}" /f' -f $HivePrefix,$cn,$curDir,$curMap[$cn]) }
