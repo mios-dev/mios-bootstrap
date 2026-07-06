@@ -102,7 +102,16 @@ $vhd = Join-Path $vmDir "$VMName.vhdx"; Remove-Item $vhd -Force -EA SilentlyCont
 try {
     New-VM -Name $VMName -Generation 2 -MemoryStartupBytes 8GB -NewVHDPath $vhd -NewVHDSizeBytes 100GB -Path $vmDir | Out-Null
     Set-VM -Name $VMName -ProcessorCount 4 -AutomaticCheckpointsEnabled $false
-    Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $true -MinimumBytes 2GB -StartupBytes 8GB -MaximumBytes 8GB
+    # NESTED VIRTUALIZATION: expose VT-x/AMD-V into the guest so WSL2 / podman / nested
+    # Hyper-V run INSIDE the MiOS-XBOX session -- the brain needs WSL2, and the operator
+    # provisions/works with VMs from the remote session. Requires the VM be Off (it is,
+    # just created) + a host CPU that supports it. Nested virt also forces static memory,
+    # so pin StartupBytes and DISABLE dynamic memory (they are mutually exclusive).
+    try { Set-VMProcessor -VMName $VMName -ExposeVirtualizationExtensions $true -ErrorAction Stop; Log "nested virtualization exposed (WSL2 / podman / nested VMs run in the guest)" } catch { Log "WARN nested virt not exposed: $($_.Exception.Message)" Yellow }
+    Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $false -StartupBytes 8GB
+    # MAC-address spoofing on the guest NIC so the guest's nested VMs / WSL2 vNICs get
+    # network out through the host vSwitch (nested guests use their own MACs).
+    try { Get-VMNetworkAdapter -VMName $VMName | Set-VMNetworkAdapter -MacAddressSpoofing On -ErrorAction SilentlyContinue } catch {}
     Add-VMDvdDrive -VMName $VMName -Path $iso
     $dvd = Get-VMDvdDrive -VMName $VMName
     # WINDOWS ISO -> the 'MicrosoftWindows' SB template (its boot files are signed
