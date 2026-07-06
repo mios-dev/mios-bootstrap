@@ -22,8 +22,12 @@ $startup = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Sta
 # fire it on EACH logon until a WSL distro actually exists, then clean up. A one-shot marker
 # would never retry across a reboot -- the exact gap that left the brain un-deployed. MiOS-
 # Host has a bounded attempt cap, so this cannot loop destructively.
-$deployed = ((& wsl.exe -l -q 2>$null) -join "`n") -match '\S'
-if ($deployed) { L 'brain deployed (WSL distro present) -- removing Startup shortcut'; Remove-Item $startup -Force -EA SilentlyContinue; exit 0 }
+# Robust "is the brain deployed?" check = the Lxss registry (a per-user subkey per WSL
+# distro). Do NOT parse `wsl -l -q`: with NO distro it prints "Windows Subsystem for Linux
+# has no installed distributions" to stdout, which a `-match '\S'` reads as "deployed" ->
+# it SKIPPED firing MiOS-Host entirely and the brain never even started.
+$deployed = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' -EA SilentlyContinue | Where-Object { (Get-ItemProperty $_.PSPath -EA SilentlyContinue).DistributionName }).Count -gt 0
+if ($deployed) { L 'brain deployed (WSL distro registered) -- removing Startup shortcut'; Remove-Item $startup -Force -EA SilentlyContinue; exit 0 }
 L 'brain not yet deployed -- firing MiOS brain install + Xbox hydration (hidden, detached)'
 # Declared unattended so the nested Get-MiOS bootstrap never blocks on the AGREEMENTS
 # gate or 90s prompts (inherited by the child processes below).
