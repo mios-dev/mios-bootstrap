@@ -390,6 +390,13 @@ function New-MiOSBrandingCommands {
     return $c
 }
 
+function Get-MiOSCursorMap {
+    # Windows cursor-role -> Bibata-Modern-Classic-Windows filename, per the package's own
+    # install.inf (authoritative). SINGLE SOURCE -- consumed by Get-MiOSPerUserBrandingReg
+    # (the reg scheme) AND the MiOS.theme generator, so the mapping is never duplicated.
+    [ordered]@{ AppStarting='Work.ani'; Arrow='Pointer.cur'; Crosshair='Cross.cur'; Hand='Link.cur'; Help='Help.cur'; IBeam='Text.cur'; No='Unavailable.cur'; NWPen='Handwriting.cur'; Person='Person.cur'; Pin='Pin.cur'; SizeAll='Move.cur'; SizeNESW='Dgn2.cur'; SizeNS='Vert.cur'; SizeNWSE='Dgn1.cur'; SizeWE='Horz.cur'; UpArrow='Alternate.cur'; Wait='Busy.ani' }
+}
+
 function Get-MiOSPerUserBrandingReg {
     # The PER-USER MiOS visual identity (dark/accent/transparency/RGB + wallpaper +
     # Bibata cursor scheme) as reg-add lines for a GIVEN hive prefix ($HivePrefix, e.g.
@@ -430,7 +437,7 @@ function Get-MiOSPerUserBrandingReg {
         # Vertical/Horizontal/Diagonal_1/2/Working) that DO NOT EXIST in the current zip --
         # so every mismapped role, including Arrow (the main pointer -> Default.cur), fell
         # back to the Windows default: "no Bibata" even when staged. These match the files.
-        $curMap = [ordered]@{ AppStarting='Work.ani'; Arrow='Pointer.cur'; Crosshair='Cross.cur'; Hand='Link.cur'; Help='Help.cur'; IBeam='Text.cur'; No='Unavailable.cur'; NWPen='Handwriting.cur'; Person='Person.cur'; Pin='Pin.cur'; SizeAll='Move.cur'; SizeNESW='Dgn2.cur'; SizeNS='Vert.cur'; SizeNWSE='Dgn1.cur'; SizeWE='Horz.cur'; UpArrow='Alternate.cur'; Wait='Busy.ani' }
+        $curMap = Get-MiOSCursorMap
         $lines += ('reg add "{0}\Control Panel\Cursors" /ve /t REG_SZ /d "{1}" /f' -f $HivePrefix,$curName)
         $lines += ('reg add "{0}\Control Panel\Cursors" /v "Scheme Source" /t REG_DWORD /d 2 /f' -f $HivePrefix)
         foreach ($cn in $curMap.Keys) { $lines += ('reg add "{0}\Control Panel\Cursors" /v {1} /t REG_EXPAND_SZ /d "{2}\{3}" /f' -f $HivePrefix,$cn,$curDir,$curMap[$cn]) }

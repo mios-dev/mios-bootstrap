@@ -324,6 +324,51 @@ function Set-MiOSIdentityOffline {
         } else { Write-Host "    [!] Bibata: no cursor set found in archive (got $($allCur.Count) .cur/.ani files) -- cursor scheme skipped" -ForegroundColor Yellow }
     } catch { Write-Host "    [!] Bibata cursor stage skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
 
+    # --- MiOS.theme + Default-profile ACTIVE THEME (OEM full-shell theming that PERSISTS).
+    #     Loose Personalize DWORDs are NOT enough: Windows re-applies the CurrentTheme
+    #     (.theme) at EVERY logon and resets wallpaper / Start / taskbar / titlebar color /
+    #     light-dark back to the default aero.theme -- exactly why the shell showed light
+    #     after a re-logon. Fix the OEM way: ship a real MiOS.theme and make it the Default
+    #     profile's CurrentTheme, so every account created at OOBE logs in with the FULL
+    #     theme applied (dark Start/taskbar/titlebars + Mica transparency + MiOS accent +
+    #     wallpaper + Bibata) and it persists. Offline Default-hive edit uses the CORRECT
+    #     handle-release procedure (reg.exe + [gc]::Collect + WaitForPendingFinalizers +
+    #     sleep before unload) -- the corruption that broke this before was procedural. ---
+    try {
+        $themesDst = Join-Path $Mount 'Windows\Resources\Themes'; New-Item -ItemType Directory -Force -Path $themesDst | Out-Null
+        # ALL scalars from the SSOT; cursor map from the single Get-MiOSCursorMap (shared with
+        # the lib -- never duplicated). accent = colors.accent; mode = theme.mode; the rest = [branding].
+        $themeName = Get-Toml $Toml 'branding.theme_name' (Get-Toml $Toml 'meta.name' 'MiOS')
+        $wpTheme   = (Get-Toml $Toml 'branding.wallpaper' 'C:\Windows\Web\MiOS\mios-wallpaper.jpg') -replace '(?i)^C:\\Windows', '%SystemRoot%'
+        $wpStyle   = Get-Toml $Toml 'branding.wallpaper_style' '10'
+        $curName   = Get-Toml $Toml 'branding.cursor_scheme' 'Bibata-Modern-Classic'
+        $curDir    = Get-Toml $Toml 'branding.cursor_dir'    '%SystemRoot%\Cursors\Bibata-Modern-Classic'
+        $darkVal   = if ((Get-Toml $Toml 'theme.mode' 'dark') -match '^(?i)light$') { '1' } else { '0' }
+        $transp    = if ((Get-Toml $Toml 'theme.transparency' 'true') -match '^(?i:true|1|yes)$') { '1' } else { '0' }
+        $cm = Get-MiOSCursorMap
+        $theme = New-Object System.Collections.Generic.List[string]
+        @('[Theme]',"DisplayName=$themeName",'','[Control Panel\Desktop]',"Wallpaper=$wpTheme","WallpaperStyle=$wpStyle",'',
+          '[VisualStyles]','Path=%SystemRoot%\resources\Themes\Aero\Aero.msstyles','ColorStyle=NormalColor','Size=NormalSize','AutoColorization=0',
+          ('ColorizationColor=0xFF{0}' -f $accent),"AppsUseLightTheme=$darkVal","SystemUsesLightTheme=$darkVal","EnableTransparency=$transp",'') | ForEach-Object { $theme.Add($_) }
+        if ($curScheme) { $theme.Add('[Control Panel\Cursors]'); foreach ($k in $cm.Keys) { $theme.Add(('{0}={1}\{2}' -f $k, $curDir, $cm[$k])) }; $theme.Add("DefaultValue=$curName"); $theme.Add('') }
+        @('[MasterThemeSelector]','MTSM=DABJDKT') | ForEach-Object { $theme.Add($_) }
+        [IO.File]::WriteAllText((Join-Path $themesDst 'MiOS.theme'), (($theme -join "`r`n") + "`r`n"), [System.Text.Encoding]::Unicode)
+        Write-Host "    staged MiOS.theme -> Windows\Resources\Themes" -ForegroundColor DarkGray
+        $defHive = Join-Path $Mount 'Users\Default\NTUSER.DAT'
+        if (Test-Path $defHive) {
+            & reg.exe load 'HKLM\MIOS_DEFT' $defHive 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                foreach ($ln in (Get-MiOSPerUserBrandingReg -Toml $Toml -HivePrefix 'HKLM\MIOS_DEFT')) { & cmd.exe /c $ln 2>&1 | Out-Null }
+                & reg.exe add 'HKLM\MIOS_DEFT\Software\Microsoft\Windows\CurrentVersion\Themes' /v CurrentTheme /t REG_EXPAND_SZ /d '%SystemRoot%\resources\Themes\MiOS.theme' /f 2>&1 | Out-Null
+                [gc]::Collect(); [gc]::WaitForPendingFinalizers(); Start-Sleep -Seconds 3
+                & reg.exe unload 'HKLM\MIOS_DEFT' 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { [gc]::Collect(); Start-Sleep -Seconds 3; & reg.exe unload 'HKLM\MIOS_DEFT' 2>&1 | Out-Null }
+                if ($LASTEXITCODE -eq 0) { Write-Host "    baked MiOS active theme into the Default profile (full-shell dark + accent + Bibata; persists per-account)" -ForegroundColor Green }
+                else { Write-Host "    [!] Default-hive unload FAILED ($LASTEXITCODE) -- theme not baked (would risk profile corruption; skipped safely)" -ForegroundColor Red }
+            } else { Write-Host "    [!] could not load Default NTUSER.DAT (MiOS.theme default-bake skipped)" -ForegroundColor Yellow }
+        }
+    } catch { Write-Host "    [!] MiOS.theme bake skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
+
     # --- bake YOUR New-MiOSProvisionCommands as mios-identity.cmd. SetupComplete runs it
     #     LIVE as SYSTEM, pre-logon, SILENT -- ONE SSOT for OEM + Geist font-substitution +
     #     lockscreen + theme/accent/wallpaper/RGB + Bibata cursor + Linux layout + Xbox mode.
