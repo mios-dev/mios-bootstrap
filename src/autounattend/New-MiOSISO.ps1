@@ -376,27 +376,54 @@ if (-not $accts.Count) { Log 'no real desktop account yet -- retry next MINUTE t
 $reg=@(
 __REGLINES__
 )
+function Grant-Right($who,$right){
+  try {
+    $sidv=(New-Object Security.Principal.NTAccount($who)).Translate([Security.Principal.SecurityIdentifier]).Value
+    $inf=Join-Path $env:TEMP 'mios-r.inf'; $sdb=Join-Path $env:TEMP 'mios-r.sdb'
+    & secedit.exe /export /cfg $inf /areas USER_RIGHTS | Out-Null
+    $ls=Get-Content $inf; $o=New-Object System.Collections.Generic.List[string]; $f=$false
+    foreach($l in $ls){ if($l -match "^$right\s*="){ if($l -notmatch [regex]::Escape($sidv)){ $l=$l.TrimEnd()+",*$sidv" }; $f=$true }; $o.Add($l) }
+    if(-not $f){ for($i=0;$i -lt $o.Count;$i++){ if($o[$i] -match '^\[Privilege Rights\]'){ $o.Insert($i+1,"$right = *$sidv"); break } } }
+    $o | Set-Content $inf -Encoding Unicode
+    & secedit.exe /import /cfg $inf /db $sdb | Out-Null
+    & secedit.exe /configure /db $sdb /areas USER_RIGHTS | Out-Null
+    Remove-Item $inf,$sdb -Force -EA SilentlyContinue
+    Log "  granted $right to $who"
+  } catch { Log "  grant $right failed: $($_.Exception.Message)" }
+}
 $anyThemed=$false
 foreach ($a in $accts) {
   $u=$a.Name
   Log "provisioning $u"
-  & net.exe localgroup 'Remote Desktop Users' $u /add 2>&1 | ForEach-Object { Log "  RDU: $_" }
+  # (1) Remote Desktop Users membership -- machine-wide, idempotent. + an EXPLICIT
+  #     SeRemoteInteractiveLogonRight grant (belt-and-suspenders vs a build where the
+  #     right was stripped from the RDU group -> enhanced session still refuses).
+  try { Add-LocalGroupMember -Group 'Remote Desktop Users' -Member $u -ErrorAction Stop; Log "  added $u to Remote Desktop Users" }
+  catch { if ("$($_.Exception.Message)" -match 'already') { Log "  $u already in Remote Desktop Users" } else { & net.exe localgroup 'Remote Desktop Users' $u /add 2>&1 | ForEach-Object { Log "  net-rdu: $_" } } }
+  Grant-Right $u 'SeRemoteInteractiveLogonRight'
+  # (2) THEME -- write ONLY to the user's LIVE hive (HKU\<sid>). If the user is not
+  #     logged in yet, DEFER: do NOT load the on-disk NTUSER.DAT, because the user's own
+  #     session then flushes ITS (light) copy back over the write on logoff -- the exact
+  #     bug that reverted the theme to light. Retrying each MINUTE tick until logged on.
   $sid=$null; try { $sid=(New-Object Security.Principal.NTAccount($u)).Translate([Security.Principal.SecurityIdentifier]).Value } catch {}
-  $hive=$null; $loaded=$false
-  if ($sid -and (Test-Path "Registry::HKEY_USERS\$sid")) { $hive="HKU\$sid"; $loaded=$true; Log "  hive: live $hive" }
-  else { $hive='HKU\MIOS_LIVE'; & reg.exe load $hive (Join-Path $a.FullName 'NTUSER.DAT') 2>$null | Out-Null; Log "  hive: loaded NTUSER.DAT -> $hive" }
-  foreach ($ln in $reg) { & cmd.exe /c ($ln -replace '__HIVE__', $hive) 2>$null | Out-Null }
-  if (-not $loaded) { [gc]::Collect(); & reg.exe unload $hive 2>$null | Out-Null }
-  else { & RUNDLL32.EXE USER32.DLL,UpdatePerUserSystemParameters ,1 ,True 2>$null | Out-Null }
-  Log "  MiOS theme applied to $u"
-  $anyThemed=$true
+  if ($sid -and (Test-Path "Registry::HKEY_USERS\$sid")) {
+    $hive="HKU\$sid"
+    foreach ($ln in $reg) { & cmd.exe /c ($ln -replace '__HIVE__', $hive) 2>$null | Out-Null }
+    Log "  MiOS theme applied to LIVE hive $hive"
+    # refresh WITHOUT a clobbering reboot: restart this user's explorer so dark + accent +
+    # cursor take effect immediately (explorer re-reads them at start); the live-hive write
+    # persists to NTUSER.DAT on the natural WSL reboot anyway.
+    & RUNDLL32.EXE USER32.DLL,UpdatePerUserSystemParameters ,1 ,True 2>$null | Out-Null
+    Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" -EA SilentlyContinue | ForEach-Object { $own=$null; try { $own=$_.GetOwner().User } catch {}; if ($own -eq $u) { & taskkill.exe /PID $_.ProcessId /F 2>$null | Out-Null } }
+    $anyThemed=$true
+  } else { Log "  $u not logged in yet -- deferring theme (avoid the NTUSER.DAT-load race); retry next tick" }
 }
 if ($anyThemed) {
   'done' | Set-Content $marker
-  Log 'provisioning complete -> self-deleting MiOS-Provision task + one reboot so the per-user theme takes visual effect (mios auto-logs-in dark; WSL feature-enable needs a reboot anyway)'
+  Log 'complete: theme applied to a LIVE session + RDU membership + SeRemoteInteractiveLogonRight granted -> self-deleting MiOS-Provision'
   & schtasks.exe /delete /tn 'MiOS-Provision' /f 2>$null | Out-Null
-  & shutdown.exe /r /t 25 /c 'MiOS applying identity' 2>$null | Out-Null
 }
+# else: nobody logged in yet -- exit WITHOUT the marker so the MINUTE task keeps retrying.
 '@
         $ps = $tpl.Replace('__SVCUSER__', $svcUser).Replace('__REGLINES__', $plines)
         [IO.File]::WriteAllText((Join-Path $ScriptsDst 'mios-provision-live.ps1'), $ps, (New-Object System.Text.UTF8Encoding($false)))
