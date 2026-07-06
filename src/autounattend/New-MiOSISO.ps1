@@ -96,7 +96,7 @@ function Expand-MiOSIso {
 # (e.g. "asimov 'Telemetry Client'") = deep component surgery DISM cannot do =
 # the NTLite-only residue (counted, not serviced -- see dism-native-conversion-map.md).
 function Get-MiOSMergedRemovals {
-    param([string]$PresetPath)
+    param([string]$PresetPath, $Toml)
     $out = [pscustomobject]@{ Capabilities = @(); Features = @(); EnableFeatures = @(); Appx = @(); NtliteOnly = 0 }
     if (-not (Test-Path $PresetPath)) { Write-Host "[!] Merged preset not found: $PresetPath (servicing skipped)" -ForegroundColor Yellow; return $out }
     [xml]$xml = Get-Content -LiteralPath $PresetPath -Raw
@@ -106,6 +106,15 @@ function Get-MiOSMergedRemovals {
     # the merge). Belt-and-suspenders even though the merged preset is protect-clean.
     $protectFeat = @(Get-MiOSXboxProtectFeatures)
     function _protected([string]$n) { foreach ($m in $protectFeat) { if ("$n" -like "*$m*") { return $true } }; return $false }
+    # KEEP-SET: never strip an app the converter's CustomList integrated ON PURPOSE
+    # (SSOT autounattend.uup_convert.keep_apps -- Xbox stack / Store / media codecs /
+    # Snipping / Terminal). The NTLite preset's removal <c> set overlaps the keep-set
+    # (e.g. HEVC/AV1/VP9 codecs), and without this the Stage-2 strip wins -> the gaming/
+    # streaming codecs the operator kept get removed. Excluding here protects BOTH the
+    # offline Remove-AppxProvisionedPackage AND the SetupComplete fallback strip, since
+    # mios-remove-appx.txt + the $rmset both derive from $out.Appx.
+    $keepApps = @{}
+    foreach ($k in (@((Get-Toml $Toml 'autounattend.uup_convert.keep_apps' '') -split '[,\s]+') | Where-Object { $_ })) { $keepApps["$k".ToLower()] = $true }
     $caps = New-Object System.Collections.Generic.List[string]
     $feat = New-Object System.Collections.Generic.List[string]
     $en   = New-Object System.Collections.Generic.List[string]
@@ -134,7 +143,7 @@ function Get-MiOSMergedRemovals {
     foreach ($c in @($xml.SelectNodes('//n:RemoveComponents/n:c', $ns))) {
         $ccnt++
         $tok = ("$($c.InnerText)".Trim() -split '\s+')[0]
-        if ($tok -and -not (_protected $tok)) { $capp.Add($tok) }
+        if ($tok -and -not (_protected $tok) -and -not $keepApps.ContainsKey("$tok".ToLower())) { $capp.Add($tok) }
     }
     $out.Capabilities   = @($caps | Select-Object -Unique)
     $out.Features       = @($feat | Select-Object -Unique)
@@ -371,13 +380,26 @@ function Set-MiOSRemoteAccessOffline {
             $variant = Get-Toml $Toml 'autounattend.remote.virtio_variant' 'w11'
             $cache = Join-Path $WorkRoot 'virtio'; New-Item -ItemType Directory -Force -Path $cache | Out-Null
             $viso = Join-Path $cache 'virtio-win.iso'
-            if (-not (Test-Path $viso) -or (Get-Item $viso).Length -lt 100MB) {
-                Write-Host "    fetching virtio-win.iso (one-time, cached under $cache) ..." -ForegroundColor DarkGray
-                $op = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
-                Invoke-WebRequest -Uri $vurl -OutFile $viso -UseBasicParsing -ErrorAction Stop
-                $ProgressPreference = $op
+            # Fetch + mount with a corrupt-cache retry: a partial/aborted prior download
+            # passes a naive size check but fails Mount-DiskImage ("corrupted and
+            # unreadable"). On a mount failure, DELETE the bad cache and re-fetch ONCE
+            # before giving up -- so a single network hiccup doesn't permanently poison
+            # the cache. virtio-win.iso is ~700 MB, so a <200 MB file is definitely partial.
+            $vm = $null
+            for ($try = 0; $try -lt 2 -and -not $vm; $try++) {
+                if (-not (Test-Path $viso) -or (Get-Item $viso).Length -lt 200MB) {
+                    Write-Host "    fetching virtio-win.iso (one-time, cached under $cache) ..." -ForegroundColor DarkGray
+                    $op = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+                    Invoke-WebRequest -Uri $vurl -OutFile $viso -UseBasicParsing -ErrorAction Stop
+                    $ProgressPreference = $op
+                }
+                try { $vm = Mount-DiskImage -ImagePath $viso -PassThru -ErrorAction Stop }
+                catch {
+                    Write-Host "    cached virtio-win.iso unmountable ($($_.Exception.Message.Split([Environment]::NewLine)[0].Trim())) -- deleting + re-fetching" -ForegroundColor Yellow
+                    Remove-Item $viso -Force -ErrorAction SilentlyContinue
+                }
             }
-            $vm = Mount-DiskImage -ImagePath $viso -PassThru -ErrorAction Stop
+            if (-not $vm) { throw "virtio-win.iso could not be mounted after re-fetch" }
             $vl = ($vm | Get-Volume).DriveLetter + ':\'
             $inf = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "\\$variant\\amd64\\" })
             if (-not $inf.Count) { $inf = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '\\amd64\\' }) }
@@ -662,7 +684,7 @@ $media = Expand-MiOSIso -Iso $SourceIso -Dest (Join-Path $WorkDir 'media')
 
 # Stage 2 -- DISM offline servicing (features + appx + Xbox FSE into the image).
 if (-not $SkipServicing) {
-    $removals = Get-MiOSMergedRemovals -PresetPath $MergedPreset
+    $removals = Get-MiOSMergedRemovals -PresetPath $MergedPreset -Toml $toml
     # Native fast-path: the converter built minimal (keep-set + drivers) ONLY when we
     # fetched AND native_apps is on. With an external -SourceIso the image is stock, so
     # Stage-2 still strips + bakes. BuiltNative lets Stage-2 skip that redundant work.
