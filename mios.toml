@@ -1184,6 +1184,10 @@ uup_lang       = "en-us"
 # build): Export-WindowsDriver -Online -> Add-WindowsDriver offline, so the custom
 # ISO boots this hardware out of the box. User-defined; default yes.
 bake_host_drivers = true
+# AIO-01: embed the mios-bootstrap installer repo into the image (C:\ProgramData\MiOS\repo)
+# so a clean deploy is OFFLINE (self-contained USB/bare-metal ISO); MiOS-Host prefers the
+# local Get-MiOS.ps1, irm|iex is only an update fallback. ~34 MB minus .git.
+embed_repo        = true
 # ISO carve + output.
 c_partition_gb = 96              # C: size; the REST of the disk -> M:\ (MIOS-DEV)
 bootstrap_url  = ""              # empty -> canonical raw Get-MiOS.ps1

@@ -711,6 +711,20 @@ function Invoke-MiOSImageServicing {
         New-Item -ItemType Directory -Force -Path $startDst | Out-Null
         $fbSrc = Join-Path $PSScriptRoot 'MiOS-FirstBoot.cmd'
         if (Test-Path $fbSrc) { Copy-Item $fbSrc (Join-Path $startDst 'MiOS-FirstBoot.cmd') -Force; Write-Host "    baked MiOS-FirstBoot.cmd -> All-Users Startup (first-logon brain + gaming deploy)" -ForegroundColor Green }
+        # AIO-01: EMBED the installer repo (mios-bootstrap) into the image so a clean deploy is
+        # OFFLINE (self-contained USB/bare-metal ISO -- no GitHub dependency). MiOS-Host prefers
+        # this local Get-MiOS.ps1 (see MiOS-Host.ps1). ~34 MB minus .git. SSOT-gated; robocopy
+        # for reliable recursive copy + exclusions.
+        if ((Get-Toml $Toml 'autounattend.embed_repo' 'true') -match '^(?i:true|1|yes)$') {
+            $repoSrc = Split-Path (Split-Path $PSScriptRoot)          # ...\mios-bootstrap
+            $repoDst = Join-Path $mount 'ProgramData\MiOS\repo\mios-bootstrap'
+            if (Test-Path (Join-Path $repoSrc 'Get-MiOS.ps1')) {
+                New-Item -ItemType Directory -Force -Path $repoDst | Out-Null
+                & robocopy.exe $repoSrc $repoDst /E /XD .git .claude node_modules /XF *.iso /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
+                $embN = @(Get-ChildItem $repoDst -Recurse -File -EA SilentlyContinue).Count
+                Write-Host "    embedded mios-bootstrap repo ($embN files) -> image ProgramData\MiOS\repo (offline installer)" -ForegroundColor Green
+            } else { Write-Host "    [!] mios-bootstrap repo not found at $repoSrc -- embed skipped (irm|iex fallback)" -ForegroundColor Yellow }
+        }
         # Render the MiOS-Daemon config from SSOT so intervals/distro are tunable.
         $daemonCfg = [ordered]@{
             tick_seconds     = [int](Get-Toml $Toml 'autounattend.daemon.tick_seconds' '60')

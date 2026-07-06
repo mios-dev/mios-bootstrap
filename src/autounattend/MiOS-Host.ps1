@@ -68,7 +68,20 @@ if (-not (Test-Path $marker)) {
             $env:MIOS_AGREEMENT_ACK    = 'accepted'
             $env:MIOS_AGREEMENT_BANNER = 'silent'
             $env:MIOS_PROMPT_TIMEOUT   = '1'
-            & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm $BootstrapUrl | iex"
+            # AIO: prefer the EMBEDDED installer (self-contained ISO, offline); fall back to
+            # irm|iex only if it's absent. CAPTURE the bootstrap's own streams to a mountable
+            # log -- the harness can't see the guest, so this is how the install is debugged.
+            $blog = 'C:\ProgramData\MiOS\logs\bootstrap.log'
+            New-Item -ItemType Directory -Force -Path (Split-Path $blog) -EA SilentlyContinue | Out-Null
+            $localGetMios = 'C:\ProgramData\MiOS\repo\mios-bootstrap\Get-MiOS.ps1'
+            if (Test-Path $localGetMios) {
+                Log "using EMBEDDED installer (offline): $localGetMios"
+                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $localGetMios -Unattended *>> $blog
+            } else {
+                Log "embedded installer absent -> irm|iex fallback: $BootstrapUrl"
+                & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm $BootstrapUrl | iex" *>> $blog
+            }
+            Log "bootstrap finished (exit=$LASTEXITCODE); output -> $blog"
             # Native exe does NOT throw on non-zero exit -> check $LASTEXITCODE + that a
             # real MiOS distro is now registered. Only then mark provisioned; else the
             # next boot retries (fresh boxes often have no/late network / reboot-pending).

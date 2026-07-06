@@ -18,10 +18,13 @@ New-Item -ItemType Directory -Force -Path (Join-Path $state 'logs') | Out-Null
 $log = Join-Path $state 'logs\firstboot.log'
 function L($m) { "$([DateTime]::Now.ToString('HH:mm:ss')) $m" | Add-Content $log }
 $startup = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Startup\MiOS-FirstBoot.cmd'
-$marker = Join-Path $state 'firstboot.launched'
-if (Test-Path $marker) { L 'already launched -- removing Startup shortcut'; Remove-Item $startup -Force -EA SilentlyContinue; exit 0 }
-'launched' | Set-Content $marker
-L 'first-logon deploy: firing MiOS brain install + Xbox hydration (hidden, detached)'
+# RETRY-UNTIL-DEPLOYED: the brain install may need a reboot (WSL feature) or fail once, so
+# fire it on EACH logon until a WSL distro actually exists, then clean up. A one-shot marker
+# would never retry across a reboot -- the exact gap that left the brain un-deployed. MiOS-
+# Host has a bounded attempt cap, so this cannot loop destructively.
+$deployed = ((& wsl.exe -l -q 2>$null) -join "`n") -match '\S'
+if ($deployed) { L 'brain deployed (WSL distro present) -- removing Startup shortcut'; Remove-Item $startup -Force -EA SilentlyContinue; exit 0 }
+L 'brain not yet deployed -- firing MiOS brain install + Xbox hydration (hidden, detached)'
 # Declared unattended so the nested Get-MiOS bootstrap never blocks on the AGREEMENTS
 # gate or 90s prompts (inherited by the child processes below).
 $env:MIOS_AGREEMENT_ACK    = 'accepted'
@@ -38,6 +41,5 @@ if (Test-Path (Join-Path $state 'MiOS-XBOX-Hydrate.ps1')) {
     Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $state 'MiOS-XBOX-Hydrate.ps1')
     L 'started MiOS-XBOX-Hydrate.ps1 (Gaming Services)'
 }
-Remove-Item $startup -Force -EA SilentlyContinue
-L 'first-logon deploy fired; Startup shortcut removed'
+L 'first-logon deploy fired; Startup shortcut KEPT -- retries each logon until the WSL distro exists'
 exit 0
