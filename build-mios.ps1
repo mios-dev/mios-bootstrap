@@ -1,4 +1,4 @@
-﻿# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver for generating OCI images and disk formats.
+# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver for generating OCI images and disk formats.
 # AI-related: 37-ollama-prep.sh, mios-btop.sh, /usr/libexec/mios/mios-build-driver, /usr/share/mios/mios.toml, /usr/libexec/mios/mios-build-driver., /etc/mios/mios.toml, /usr/share/mios/configurator/mios.html, /usr/libexec/mios/flatpak-launch, /etc/mios/hermes/config.yaml, /etc/mios/hermes/config.local.yaml
 # AI-functions: parse_sections_from_toml, get_pkgs, install_section, parse_pkgs, Disable-ConsoleQuickEdit, Resolve-MiosTomlText, Get-MiosTomlValue, Resolve-MiosInstallRoot, Update-MiosInstallPaths, Invoke-MigrateLegacyInstallRoot, Invoke-DataDiskBootstrap, Test-DashboardCanRedraw
 #Requires -Version 5.1
@@ -993,7 +993,13 @@ Initialize-MiosGlobals
 # mios-dashboard.sh (Linux).  WIDTH = min(WindowWidth - right_margin,
 # frame_width) sourced from the [terminal] section loaded above.
 function Get-MiosFrameWidth {
-    [math]::Max(60, [math]::Min(([Console]::WindowWidth - $script:MiosRightMgn), $script:MiosFrameW))
+    $width = 80
+    try {
+        if ([Console]::WindowWidth -gt 0) {
+            $width = [Console]::WindowWidth
+        }
+    } catch {}
+    [math]::Max(60, [math]::Min(($width - $script:MiosRightMgn), $script:MiosFrameW))
 }
 $script:DW = Get-MiosFrameWidth
 # Per the self-replication architecture, the Windows side (BootstrapOnly,
