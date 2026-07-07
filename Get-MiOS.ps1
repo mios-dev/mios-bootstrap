@@ -414,6 +414,9 @@ function Get-MiosTomlValue {
 # vendor default these vars fall back to.
 function ConvertTo-MiosRawBase {
     param([Parameter(Mandatory)][string]$GitUrl, [Parameter(Mandatory)][string]$Ref)
+    if ($GitUrl -match '^[A-Za-z]:') {
+        return $GitUrl
+    }
     $base = $GitUrl -replace '^https://github\.com/', 'https://raw.githubusercontent.com/' -replace '\.git$', ''
     return "$base/$Ref"
 }
@@ -3041,6 +3044,16 @@ function Get-MiosVendorContent {
     [CmdletBinding()] param(
         [Parameter(Mandatory)] [string] $RelPath
     )
+    if ($Script:MiosRawBase -match '^[A-Za-z]:') {
+        try {
+            $localPath = Join-Path $Script:MiosRawBase "usr/share/mios/$RelPath"
+            if (Test-Path $localPath) {
+                return [IO.File]::ReadAllText($localPath, (New-Object System.Text.UTF8Encoding($false)))
+            }
+        } catch {
+            throw "Get-MiosVendorContent (local): cannot resolve '$RelPath' from '$localPath'. Underlying: $($_.Exception.Message)"
+        }
+    }
     try {
         $cb  = [int][double]::Parse((Get-Date -UFormat %s))
         $url = "$($Script:MiosRawBase)/usr/share/mios/$RelPath" + "?cb=$cb"
