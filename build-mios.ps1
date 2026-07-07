@@ -1293,7 +1293,7 @@ function Show-Dashboard {
     $title = " 'MiOS' $MiosVersion$commitTag  --  Build Dashboard"
     $right = "[ $elStr ] "
     $gap   = [math]::Max(0, $in - $title.Length - $right.Length)
-    $hdr   = "│ $title" + (" " * $gap) + "$right │"
+    $hdr   = [char]0x2502 + " $title" + (" " * $gap) + "$right " + [char]0x2502
     $rows.Add($hdr.PadRight($winW))
     $rows.Add($sepD)
 
@@ -1498,7 +1498,7 @@ function Show-MiosProgressBar {
     $filled = [int](($done / $total) * $barW)
     if ($filled -lt 0) { $filled = 0 }
     if ($filled -gt $barW) { $filled = $barW }
-    $bar = ("█" * $filled) + ("░" * ($barW - $filled))
+    $bar = ((([char]0x2588).ToString()) * $filled) + ((([char]0x2591).ToString()) * ($barW - $filled))
     Write-Host "  [$bar] $done/$total ($pct%)" -ForegroundColor Cyan
 }
 
@@ -1519,10 +1519,10 @@ function _TruncToWidth {
     if ($S -match '\\' -and $S.Length -gt 30) {
         $left  = $S.Substring(0, [int]($MaxW * 0.4))
         $right = $S.Substring($S.Length - [int]($MaxW * 0.5))
-        $cand  = "$left…$right"
+        $cand  = "$left$([char]0x2026)$right"
         if ($cand.Length -le $MaxW) { return $cand }
     }
-    return $S.Substring(0, $MaxW - 1) + '…'
+    return $S.Substring(0, $MaxW - 1) + [char]0x2026
 }
 
 function Set-Step([string]$T) {
@@ -1697,13 +1697,13 @@ function Show-PostBootstrapMenu {
         # tail, etc.) is wiped so the menu draws against blank space.
         try { Clear-Host } catch {}
         $W = $script:DW - 4    # leading "  │ " (4) + trailing " │" handled in row
-        $hr   = "─" * $W
-        $top  = "  ╭" + ("─── MiOS bootstrap complete " + ("─" * 99)).Substring(0, $W) + "╮"
-        $div  = "  ├" + $hr + "┤"
-        $bot  = "  ╰" + $hr + "╯"
+        $hr   = ([char]0x2500).ToString() * $W
+        $top  = "  " + [char]0x256D + ((([char]0x2500).ToString() * 3) + " MiOS bootstrap complete " + (([char]0x2500).ToString() * 99)).Substring(0, $W) + [char]0x256E
+        $div  = "  " + [char]0x251C + $hr + [char]0x2524
+        $bot  = "  " + [char]0x2570 + $hr + [char]0x256F
         function _Row { param([string]$Inner)
             if ($Inner.Length -gt ($W - 2)) { $Inner = $Inner.Substring(0, $W - 2) }
-            "  │ " + $Inner.PadRight($W - 2) + " │"
+            "  " + [char]0x2502 + " " + $Inner.PadRight($W - 2) + " " + [char]0x2502
         }
         Write-Host ""
         Write-Host $top -ForegroundColor Green
@@ -3511,7 +3511,7 @@ function Invoke-MiosQuadletOverlay {
     if (-not $sshOk) {
         Log-Warn "wsl.exe probe into $DevDistro timed out at 8s -- install-time Quadlet overlay skipped."
         Log-Warn "  The mios-build-driver / bootc switch path still delivers the SAME Quadlets via the OCI image,"
-        Log-Warn "  so MiOS-DEV will reach full-parity (MiOS-DEV ≡ MiOS) after the build phase regardless."
+        Log-Warn "  so MiOS-DEV will reach full-parity (MiOS-DEV == MiOS) after the build phase regardless."
         return
     }
 
@@ -4844,7 +4844,7 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
         Log-Warn "seed-merge.ps1 not found at $seedScript -- skipping Universal SEED merge"
     }
 
-    Set-Step "podman build (Windows client → $BuilderDistro)"
+    Set-Step "podman build (Windows client -> $BuilderDistro)"
     Write-Log "BUILD START (Windows API build)  base=$BaseImage  user=$MiosUser  host=$MiosHostname  ai=$AiModel"
 
     # Run via cmd.exe so 2>&1 merges stderr (podman build progress) into stdout stream.
@@ -5028,7 +5028,7 @@ function Export-WslTar([string]$OutFile) {
     $contId = $contId.Trim()
     Write-Log "export container: $contId"
     try {
-        Set-Step "Streaming container filesystem → $([System.IO.Path]::GetFileName($OutFile))..."
+        Set-Step "Streaming container filesystem -> $([System.IO.Path]::GetFileName($OutFile))..."
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName               = "podman"
         $psi.Arguments              = "export $contId"
@@ -5153,7 +5153,7 @@ function New-MiosHyperVVm([string]$RawPath, [int]$RamGB = 8) {
     # Convert raw → vhdx if Convert-VHD is available
     $vhdxPath = [System.IO.Path]::ChangeExtension($RawPath, ".vhdx")
     if (Get-Command Convert-VHD -EA SilentlyContinue) {
-        Set-Step "Converting raw → vhdx..."
+        Set-Step "Converting raw -> vhdx..."
         try {
             Convert-VHD -Path $RawPath -DestinationPath $vhdxPath -VHDType Dynamic -EA Stop
         } catch {
@@ -5196,7 +5196,7 @@ function Invoke-DeployPipeline([hashtable]$HW) {
     try {
         $wslOk = Export-WslTar -OutFile $wslTar
         $sizeMB = [math]::Round((Get-Item $wslTar).Length / 1MB)
-        Log-Ok "WSL2 tar: ${sizeMB}MB → $wslTar"
+        Log-Ok "WSL2 tar: ${sizeMB}MB -> $wslTar"
         End-Phase 10
     } catch {
         Log-Warn "WSL2 export: $_"
@@ -9385,7 +9385,7 @@ $miosRepo = $MiosRepoDir
         $_nvExit = $LASTEXITCODE
         if ($_nvExit -eq 0) {
             $_nvSummary = ($_nvOut | Where-Object { $_ -match '^\s*\[(ok|skip|warn)\]' } | Select-Object -Last 3) -join ' / '
-            if (-not $_nvSummary) { $_nvSummary = '(silent — see install log if needed)' }
+            if (-not $_nvSummary) { $_nvSummary = '(silent - see install log if needed)' }
             Log-Ok "NVIDIA WSL userland: $_nvSummary"
         } else {
             Log-Warn "NVIDIA WSL userland install exit=$_nvExit; GUI apps may fall back to dzn-only Vulkan path"
