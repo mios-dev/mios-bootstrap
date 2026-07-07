@@ -1222,15 +1222,15 @@ function Show-Dashboard {
     # Show-MiosDashboard styling (oh-my-posh framing). $sepTop and
     # $sepBot are the rounded top/bottom corners; $sepD is the
     # divider between sections; sides use thin │.
-    $sepTop = ("╭" + ("─" * ($w - 2)) + "╮").PadRight($winW)
-    $sepBot = ("╰" + ("─" * ($w - 2)) + "╯").PadRight($winW)
-    $sepD   = ("├" + ("─" * ($w - 2)) + "┤").PadRight($winW)
+    $sepTop = ([char]0x256D + (([char]0x2500).ToString() * ($w - 2)) + [char]0x256E).PadRight($winW)
+    $sepBot = ([char]0x2570 + (([char]0x2500).ToString() * ($w - 2)) + [char]0x256F).PadRight($winW)
+    $sepD   = ([char]0x251C + (([char]0x2500).ToString() * ($w - 2)) + [char]0x2524).PadRight($winW)
     $sepE   = $sepTop   # legacy alias -- header uses top corner the first time
 
     # ── Row helper -- script block closes over $in/$winW from caller scope ─────
     $mkRow = {
         param([string]$c)
-        ("│ " + $c.PadRight($in) + " │").PadRight($winW)
+        ([char]0x2502 + " " + $c.PadRight($in) + " " + [char]0x2502).PadRight($winW)
     }
 
     # ── State ─────────────────────────────────────────────────────────────────
@@ -6843,7 +6843,7 @@ function Header {
     param([string]$T, [string]$Sub = '')
     Write-Host ''
     Write-Host "  $T" -ForegroundColor $accent
-    Write-Host ('  ' + ('─' * [math]::Min(76, $T.Length + 4))) -ForegroundColor $muted
+    Write-Host ('  ' + ((([char]0x2500).ToString()) * [math]::Min(76, $T.Length + 4))) -ForegroundColor $muted
     if ($Sub) { Write-Host "  $Sub" -ForegroundColor $muted; Write-Host '' }
 }
 
