@@ -982,8 +982,8 @@ function Initialize-MiosGlobals {
     $script:MiosTagline        = [string](Get-MiosTomlValue -Section 'branding' -Key 'tagline'      -Default 'My Personal Operating System')
     $script:MiosTaglineLong    = [string](Get-MiosTomlValue -Section 'branding' -Key 'tagline_long' -Default 'My Personal Operating System  --  Immutable Fedora AI Workstation')
     $script:MiosTaglineApp     = [string](Get-MiosTomlValue -Section 'branding' -Key 'tagline_app'  -Default $script:MiosTagline)
-    $script:MiosFrameChars     = [string](Get-MiosTomlValue -Section 'branding.dashboard' -Key 'frame_chars' -Default '╭─╮│╰╯')
-    if ($script:MiosFrameChars.Length -lt 6) { $script:MiosFrameChars = '╭─╮│╰╯' }
+    $script:MiosFrameChars     = [string](Get-MiosTomlValue -Section 'branding.dashboard' -Key 'frame_chars' -Default "$([char]0x256D)$([char]0x2500)$([char]0x256E)$([char]0x2502)$([char]0x2570)$([char]0x256F)")
+    if ($script:MiosFrameChars.Length -lt 6) { $script:MiosFrameChars = "$([char]0x256D)$([char]0x2500)$([char]0x256E)$([char]0x2502)$([char]0x2570)$([char]0x256F)" }
 }
 Initialize-MiosGlobals
 
@@ -6185,16 +6185,16 @@ function Install-WindowsBranding {
             # current vendor default is  (right) or  (left);
             # we don't know which segments use which without parsing,
             # so we substitute by current literal in two passes.
-            if ($_eR -and $_eR -ne '') { $_omp = $_omp -replace '\\ue0b4', $_eR }
-            if ($_eL -and $_eL -ne '') { $_omp = $_omp -replace '\\ue0b6', $_eL }
+            if ($_eR -and $_eR -ne "$([char]0xE0B4)") { $_omp = $_omp -replace '\\ue0b4', $_eR }
+            if ($_eL -and $_eL -ne "$([char]0xE0B6)") { $_omp = $_omp -replace '\\ue0b6', $_eL }
             # leading_diamond / trailing_diamond appear only on diamond-
             # style segments (the leading text + trailing time caps).
             # Patch by JSON key: "leading_diamond": "" -> the new
             # value. Same for trailing_diamond.
-            if ($_eLD -and $_eLD -ne '') {
+            if ($_eLD -and $_eLD -ne "$([char]0xE0B6)") {
                 $_omp = $_omp -replace '("leading_diamond"\s*:\s*")\\u[0-9a-fA-F]{4}', ('${1}' + $_eLD)
             }
-            if ($_eTD -and $_eTD -ne '') {
+            if ($_eTD -and $_eTD -ne "$([char]0xE0B4)") {
                 $_omp = $_omp -replace '("trailing_diamond"\s*:\s*")\\u[0-9a-fA-F]{4}', ('${1}' + $_eTD)
             }
             # ── Color substitution from mios.toml [colors] (SSOT) ───
@@ -6859,8 +6859,8 @@ function Note {
 
 Clear-Host
 Write-Host ''
-Write-Host '  ╭──────────────────────────────────────────────────────────────────────────╮' -ForegroundColor $accent
-Write-Host '  │                   MiOS  --  Help / Verb Reference                        │' -ForegroundColor $accent
+Write-Host ("  $([char]0x256D)" + ("$([char]0x2500)" * 74) + "$([char]0x256E)") -ForegroundColor $accent
+Write-Host "  $([char]0x2502)                   MiOS  --  Help / Verb Reference                        $([char]0x2502)" -ForegroundColor $accent
 # Tagline resolves through mios.toml [branding].tagline_long at runtime
 # (SSOT). No hardcoding -- per operator: "no hardcoding ANYWHERE".
 $_helpTagline = 'Immutable Fedora AI Workstation  --  Self-replicating bootc OS'
@@ -6875,8 +6875,8 @@ foreach ($_tcand in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mio
     }
 }
 $_helpTagPad = $_helpTagline.PadRight(72).Substring(0, [math]::Min(72, $_helpTagline.Length))
-Write-Host ('  │   ' + $_helpTagPad.PadRight(72) + '   │') -ForegroundColor $accent
-Write-Host '  ╰──────────────────────────────────────────────────────────────────────────╯' -ForegroundColor $accent
+Write-Host ("  $([char]0x2502)   " + $_helpTagPad.PadRight(72) + "   $([char]0x2502)") -ForegroundColor $accent
+Write-Host ("  $([char]0x2570)" + ("$([char]0x2500)" * 74) + "$([char]0x256F)") -ForegroundColor $accent
 
 Header 'Core verbs' 'Type any of these in a MiOS terminal, OR click the matching Start Menu shortcut.'
 Verb 'mios'         '(no arg) -- open this help; runs `mios help` by default'
@@ -8339,8 +8339,8 @@ $script:DashboardMode = if ($env:MIOS_DASHBOARD_MODE -eq 'interactive' -and (Tes
 
 # ── Banner ───────────────────────────────────────────────────────────────────
 Clear-Host
-$bTop = "╭" + ("─" * ($script:DW - 2)) + "╮"
-$bBot = "╰" + ("─" * ($script:DW - 2)) + "╯"
+$bTop = [char]0x256D + (([char]0x2500).ToString() * ($script:DW - 2)) + [char]0x256E
+$bBot = [char]0x2570 + (([char]0x2500).ToString() * ($script:DW - 2)) + [char]0x256F
 
 # Box-row helper -- guarantees every banner row is exactly $DW visible
 # chars wide, regardless of content length, so the right border lines
@@ -8355,7 +8355,7 @@ function _BoxRow {
     if ($Inner.Length -gt $maxInner) {
         $Inner = $Inner.Substring(0, $maxInner)
     }
-    "│ " + $Inner.PadRight($maxInner) + " │"
+    [char]0x2502 + " " + $Inner.PadRight($maxInner) + " " + [char]0x2502
 }
 
 # Top-of-script banner. Title + tagline lines resolve through mios.toml
@@ -8365,7 +8365,7 @@ function _BoxRow {
 $_bannerTitle    = Get-MiosTomlValue -Section 'messages.installer_banner' -Key 'title'    -Default "'MiOS' {version}  --  Unified Windows Installer"
 $_bannerTaglines = @(Get-MiosTomlValue -Section 'messages.installer_banner' -Key 'taglines' -Default @(
     'Immutable Fedora AI Workstation',
-    'WSL2 + Podman  │  Offline Build Pipeline'
+    "WSL2 + Podman  $([char]0x2502)  Offline Build Pipeline"
 ))
 $_bannerTitle = $_bannerTitle -replace '\{version\}', $MiosVersion
 Write-Host $bTop -ForegroundColor Cyan
@@ -9902,8 +9902,8 @@ exit 0
         # piping are all scattered and not fitting because they aren't
         # TRULY based off the toml code as source for everything".
         # Vendor default '╭─╮│╰╯' if mios.toml is unreachable.
-        $_fc = Get-MiosTomlValue -Section 'branding.dashboard' -Key 'frame_chars' -Default '╭─╮│╰╯'
-        if (-not $_fc -or $_fc.Length -lt 6) { $_fc = '╭─╮│╰╯' }
+        $_fc = Get-MiosTomlValue -Section 'branding.dashboard' -Key 'frame_chars' -Default "$([char]0x256D)$([char]0x2500)$([char]0x256E)$([char]0x2502)$([char]0x2570)$([char]0x256F)"
+        if (-not $_fc -or $_fc.Length -lt 6) { $_fc = "$([char]0x256D)$([char]0x2500)$([char]0x256E)$([char]0x2502)$([char]0x2570)$([char]0x256F)" }
         $_TL = $_fc[0]; $_TH = $_fc[1]; $_TR = $_fc[2]
         $_TV = $_fc[3]; $_BL = $_fc[4]; $_BR = $_fc[5]
         # Frame width comes from the SAME Get-MiosFrameWidth helper that

@@ -1,4 +1,4 @@
-﻿# AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
+# AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
 # AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, /etc/mios/., /usr/share/mios/branding/mios.txt, /usr/share/mios/branding/mios, mios-dev, mios-bootstrap, mios-pull, mios-launch, mios-install
 # AI-functions: Disable-ConsoleQuickEdit, Resolve-MiosTomlText, Get-MiosTomlValue, Show-MiOSBanner, Show-MiOSAgreement, Invoke-MiOSAgreementGate, _Center-MiOSGateConsole, Get-MiosPalette, _hex, Test-MiOSFontInstalled, Wait-MiOSWindowsTerminalReady, Ensure-MiOSWinget
 <#
@@ -3844,7 +3844,7 @@ if (`$true) {
             `$visible = _Strip `$Line
             if (`$visible.Length -gt `$INNER) {
                 # Truncate with ellipsis preserving ANSI prefix.
-                `$Line = `$Line.Substring(0, [math]::Min(`$Line.Length, `$INNER + (`$Line.Length - `$visible.Length) - 1)) + '…'
+                `$Line = `$Line.Substring(0, [math]::Min(`$Line.Length, `$INNER + (`$Line.Length - `$visible.Length) - 1)) + [char]0x2026
                 `$visible = _Strip `$Line
             }
             `$pad = ' ' * [math]::Max(0, `$INNER - `$visible.Length)
@@ -4116,7 +4116,7 @@ if (`$true) {
                 }
                 if (-not `$_val) { `$_val = '' }
                 if (`$_val.Length -gt `$_colW) {
-                    `$_val = `$_val.Substring(0, [math]::Max(1, `$_colW - 1)) + '…'
+                    `$_val = `$_val.Substring(0, [math]::Max(1, `$_colW - 1)) + [char]0x2026
                 }
                 `$_cells += `$_val.PadRight(`$_colW)
             }
