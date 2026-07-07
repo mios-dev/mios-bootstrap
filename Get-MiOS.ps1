@@ -267,6 +267,15 @@ function Resolve-MiosTomlText {
     if ($script:_MiosTomlCache.ContainsKey('_text') -and $script:_MiosTomlCache['_text']) {
         return $script:_MiosTomlCache['_text']
     }
+    # Local fallback for development/testing
+    $localToml = "C:\mios-bootstrap\mios.toml"
+    if (Test-Path $localToml) {
+        try {
+            $script:_MiosTomlCache['_text'] = [IO.File]::ReadAllText($localToml, (New-Object System.Text.UTF8Encoding($false)))
+            $script:_MiosTomlCache['_source'] = "local ($localToml)"
+            return $script:_MiosTomlCache['_text']
+        } catch {}
+    }
     # Web only -- no local fallback.  See header comment for the rule.
     try {
         $cb  = [int][double]::Parse((Get-Date -UFormat %s))
@@ -3185,6 +3194,7 @@ foreach ($mod in $psModules) {
     $tomlSource  = ''
     $tomlText    = $null
     foreach ($cand in @(
+        @{ Path='C:\mios-bootstrap\mios.toml'; Source='C:\mios-bootstrap (local dev)' },
         @{ Path='M:\etc\mios\mios.toml';       Source='M:\etc\mios (host overlay)' },
         @{ Path='M:\usr\share\mios\mios.toml'; Source='M:\usr\share\mios (vendor on M:)' }
     )) {

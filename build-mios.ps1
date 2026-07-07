@@ -5095,13 +5095,14 @@ function Invoke-BibBuild([string[]]$Types, [string]$MachineOutDir, [int]$Timeout
         Write-Log "WARN: BIB output-dir mkdir returned $LASTEXITCODE -- BIB will likely fail with statfs ENOENT"
     }
 
+    $bibImage = Get-MiosTomlValue -Section 'image' -Key 'bib' -Default 'quay.io/centos-bootc/bootc-image-builder:latest'
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = "cmd.exe"
     $psi.Arguments = ("/c podman run --rm --privileged --pull=newer " +
         "--security-opt label=type:unconfined_t " +
         "-v /var/lib/containers/storage:/var/lib/containers/storage " +
         "-v ${MachineOutDir}:/output:z " +
-        "quay.io/centos-bootc/bootc-image-builder:latest " +
+        "$bibImage " +
         "$typeArgs --local localhost/mios:latest 2>&1")
     $psi.RedirectStandardOutput = $true
     $psi.UseShellExecute        = $false
@@ -7325,8 +7326,18 @@ if (-not $query) { return }
 # Resolution is per field. Model: MIOS_AI_MODEL env, else the layered
 # mios.toml [ai].model (the SSOT default chat model), else a vendor fallback
 # -- so an unset env never pins a stale model id. Key: MIOS_AI_KEY env, else
-# install.env. Endpoint: MIOS_AI_ENDPOINT env, else the vendor default.
-$endpoint = if ($env:MIOS_AI_ENDPOINT) { $env:MIOS_AI_ENDPOINT } else { 'http://localhost:8642/v1' }
+# install.env. Endpoint: MIOS_AI_ENDPOINT env, else resolved from mios.toml [ports].hermes.
+$hermesPort = 8642
+foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
+    if (Test-Path -LiteralPath $_t) {
+        try {
+            $_txt = [IO.File]::ReadAllText($_t, (New-Object System.Text.UTF8Encoding($false)))
+            $_m = [regex]::Match($_txt, '(?ms)^\[ports\].*?^\s*hermes\s*=\s*(\d+)')
+            if ($_m.Success) { $hermesPort = [int]$_m.Groups[1].Value; break }
+        } catch {}
+    }
+}
+$endpoint = if ($env:MIOS_AI_ENDPOINT) { $env:MIOS_AI_ENDPOINT } else { "http://localhost:$hermesPort/v1" }
 $model    = if ($env:MIOS_AI_MODEL)    { $env:MIOS_AI_MODEL }    else { '' }
 $apiKey   = if ($env:MIOS_AI_KEY)      { $env:MIOS_AI_KEY }      else { '' }
 

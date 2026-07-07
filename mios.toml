@@ -1092,8 +1092,8 @@ ansi_15_bright_white    = "#FFFFFF"
 # ----------------------------------------------------------------------------
 [bootstrap]
 mode             = "auto"
-mios_repo        = "https://github.com/mios-dev/mios.git"
-bootstrap_repo   = "https://github.com/mios-dev/mios-bootstrap.git"
+mios_repo        = "C:/MiOS"
+bootstrap_repo   = "C:/mios-bootstrap"
 mios_ref         = "main"                 # pin to a tag or SHA for a reproducible install
 bootstrap_ref    = "main"                 # pin to a tag or SHA for a reproducible install
 dev_distro       = "MiOS-DEV"             # WSL distro name for podman-MiOS-DEV machine
