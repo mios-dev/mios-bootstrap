@@ -1318,3 +1318,86 @@ onlogon_fallback  = true    # register a proven-specialize-pass ONLOGON task tha
 #   MIOS_AI_GRADER = "o3"
 # ----------------------------------------------------------------------------
 [env]
+
+
+[packages.windows]
+# Windows-side winget package list installed by mios-bootstrap's
+# Get-MiOS.ps1 Pass-1 (current-user scope). Read by the bootstrap
+# at install time -- this is the SSOT for "what gets installed on
+# the operator's Windows host"; the hardcoded list previously in
+# Get-MiOS.ps1 has been removed in favor of this section per
+# operator instruction "ALL Global packages SOURCE FROM THE
+# TOML/HTML FILE!!!".
+#
+# To override per-operator: drop a [packages.windows] table in
+# ~/.config/mios/mios.toml with your own pkgs = [...] -- replaces
+# this list field-for-field per the layered TOML resolver.
+#
+# Default = strictly-needed runtime/toolchain + MiOS terminal CLI
+# surface only. No browser/editor/utility GUIs (operator brings
+# their own). Bloat-free per 2026-05 directive.
+enable = true
+pkgs = [
+    # ── Critical runtime / toolchain ─────────────────────────────
+    "Git.Git",                       # git for clone + fetch + reset
+    "Microsoft.PowerShell",          # pwsh 7 (trampoline target)
+    "Microsoft.WSL",                 # Windows Subsystem for Linux 2
+    "Microsoft.WindowsTerminal",     # WT (also installed earlier; idempotent)
+    "7zip.7zip",                     # archive support
+    "Microsoft.VCRedist.2015+.x64",  # VC++ runtime
+    "Python.Python.3.14",            # python 3.14 (matches MiOS-DEV 3.14.x) -- host-side MiOS python tooling
+    # ── MiOS terminal CLI surface (mirrors the deployed Linux side) ─
+    "sharkdp.bat",                   # syntax-highlighted cat
+    "sharkdp.fd",                    # fast find
+    "BurntSushi.ripgrep.MSVC",       # rg
+    "junegunn.fzf",                  # fuzzy finder
+    "jqlang.jq",                     # JSON query
+    "GitHub.cli",                    # gh
+    "aristocratos.btop4win",         # btop (Windows port)
+    "fastfetch-cli.fastfetch",       # fastfetch
+]
+
+# Post-install PATH verification probes -- the binaries build-mios.ps1's
+# Install-MiosWindowsTools loops through to confirm `Get-Command <name>`
+# resolves after the winget installs + PATH augmentation. Operators who
+# add a custom package above (or remove the default set) extend / shrink
+# this list to match.
+verify_probes = [
+    "python",
+    "fastfetch",
+    "btop",
+    "rg",
+    "fzf",
+    "jq",
+    "gh",
+    "bat",
+    "fd",
+    "pwsh",
+    "oh-my-posh"
+]
+
+# ─── Browser AI: Zen Twilight wired to the MiOS OWUI pipeline ─────────────────
+# Installs Zen Browser (Twilight channel, Firefox-based) on the Windows host and
+# points Firefox/Zen's built-in AI chatbot SIDEBAR at the local OWUI / MiOS-Agent
+# pipeline -- MiOS AI, natively in the browser. Applied by mios-bootstrap
+# (install-host-tools.ps1 Configure-MiosBrowserAI): installs `package` via winget,
+# then writes these as a per-profile user.js (the reliable method) plus a
+# best-effort distribution/policies.json, so Zen's AI sidebar drives the MiOS
+# pipeline. All operator-tunable here (SSOT); the installer hardcodes nothing.
+[browser_ai]
+enable       = true
+package      = "Zen-Team.Zen-Browser.Twilight"   # Zen Browser - Twilight (winget id)
+provider_url = "http://localhost:3033"            # OWUI front door = the MiOS AI pipeline
+# Firefox/Zen prefs as "name|type|value" (type = bool|string|int) so the bootstrap
+# can build policies.json without a full TOML parser. Add Zen-specific zen.* AI
+# flags here as they stabilise -- they flow through unchanged.
+prefs = [
+    "browser.ml.enable|bool|true",                # master ML/AI toggle
+    "browser.smartwindow.enabled|bool|true",      # the NEW AI Window (Smart Window) mode -- replaces the old sidebar
+    "browser.ml.chat.enabled|bool|true",          # AI chatbot sidebar (fallback path)
+    "browser.ml.chat.hideLocalhost|bool|false",   # REQUIRED so a localhost (OWUI) provider is allowed
+    "browser.ml.chat.shortcuts|bool|true",        # AI prompts on text selection
+    "browser.ml.chat.menu|bool|true",             # AI entries in the context menu
+    "browser.ml.pageAssist.enabled|bool|true",    # page-assist AI
+    "browser.ml.linkPreview.enabled|bool|true",   # AI link previews
+]
