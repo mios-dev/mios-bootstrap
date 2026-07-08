@@ -239,11 +239,11 @@ function Get-MiOSXboxProtectFeatures {
 # HARD CONSTRAINT (researched, high-confidence): wsl.exe CANNOT run as
 # LocalSystem/SYSTEM -- WSL is tied to a user profile (microsoft/WSL#11280,
 # "by design"). So the persistent boot task runs under a DEDICATED, NON-admin
-# local account (default `mios-svc`), which owns the WSL distro registration and
+# local account (default `mios-sudo`), which owns the WSL distro registration and
 # the keep-alive holder. The specialize provisioner (SYSTEM) only: enables the
 # WSL2 optional feature, creates that account, enables RDP, and registers the
 # MiOS-Host ONSTART task. The heavy one-time install (wsl import + podman) is done
-# BY MiOS-Host.ps1 on its first run, under mios-svc. See docs/pre-logon-system-services.md.
+# BY MiOS-Host.ps1 on its first run, under mios-sudo. See docs/pre-logon-system-services.md.
 function New-MiOSHostServiceCommands {
     param($Toml)
     $cmds = New-Object System.Collections.Generic.List[string]
@@ -279,7 +279,7 @@ function New-MiOSHostServiceCommands {
         $cmds.Add('netsh advfirewall firewall set rule group="remote desktop" new enable=Yes')
         $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f')
     }
-    # 4) Register MiOS-Host as an ONSTART task under mios-svc (ONSTART fires in
+    # 4) Register MiOS-Host as an ONSTART task under mios-sudo (ONSTART fires in
     #    Session 0 at boot, before any logon; schtasks grants the batch-logon right).
     #    HIGHEST run level so the first-run install can elevate.
     #    NB: the /tr value must NOT contain nested/escaped quotes (\"...\") -- Windows
@@ -293,7 +293,7 @@ function New-MiOSHostServiceCommands {
 
     # 4b) Register the MiOS-Daemon -- the always-on supervisor that circumvents the
     #     fragile one-shot triggers: a MINUTE/1 task (Task Scheduler IS the service)
-    #     run as mios-svc; each run is one tick then exit (keep-warm + health +
+    #     run as mios-sudo; each run is one tick then exit (keep-warm + health +
     #     auto-update). MINUTE fires within a minute of boot AND every minute after,
     #     across reboots -- no infinite-loop / execution-time-limit fragility. Same
     #     no-nested-quotes rule as MiOS-Host (space-free SSOT script path).
@@ -320,7 +320,7 @@ function New-MiOSHostServiceCommands {
     # 6) ACCOUNT-DEPENDENT provisioning (KEYSTONE). SetupComplete.cmd runs BEFORE the
     #    desktop account is created -- PROVEN: mios-remote's `net localgroup "Remote
     #    Desktop Users" "mios"` returned System error 1317 "account does not exist"
-    #    (mios-svc, made HERE in specialize, existed; mios, made later in oobeSystem, did
+    #    (mios-sudo, made HERE in specialize, existed; mios, made later in oobeSystem, did
     #    not). So the account-dependent work -- adding the real account to Remote Desktop
     #    Users (enhanced-session sign-in) and applying the per-user MiOS theme to its OWN
     #    hive (SetupComplete's HKCU is SYSTEM's; the Default-hive copy does not carry to

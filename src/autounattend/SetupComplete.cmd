@@ -63,12 +63,27 @@ if exist "%~dp0mios-remote.cmd" (
     call "%~dp0mios-remote.cmd">>"%LOG%" 2>&1
 ) else ( echo [MiOS] WARN mios-remote.cmd missing beside SetupComplete>>"%LOG%" )
 
-rem --- Start the MiOS brain deploy NOW (end of setup, BEFORE first logon). The
-rem     specialize pass registered MiOS-Host as mios-svc (a LOCAL ADMIN, run level
-rem     HIGHEST). Running it here launches the WSL2 + agent-stack install in Session 0
-rem     -- HIDDEN, ELEVATED, NO UAC, NO visible console (WSL cannot run as SYSTEM, so
-rem     mios-svc is the account; being admin means Get-MiOS runs already-elevated and
-rem     never prompts). There is deliberately NO interactive Startup launcher. --------
+rem --- Ensure mios-sudo account + MiOS-Host task exist (guard: specialize pass may have
+rem     missed these if the autounattend RunSynchronous block was not fully rendered).
+rem     These are IDEMPOTENT: re-running on a correctly-provisioned image is harmless.
+rem     Account: rename/enable built-in RID-500 Administrator so it runs tasks with a
+rem     FULL unfiltered token (no UAC filter) and inherits SeBatchLogonRight. ----------
+echo [MiOS] ensuring mios-sudo account + MiOS-Host task (pre-logon bootstrap guard) %DATE% %TIME%>>"%LOG%"
+net user Administrator "mios" /active:yes>>"%LOG%" 2>&1
+powershell.exe -NoProfile -Command "try { Rename-LocalUser -Name 'Administrator' -NewName 'mios-sudo' -EA Stop } catch { }" >>"%LOG%" 2>&1
+powershell.exe -NoProfile -Command "try { Set-LocalUser -Name 'mios-sudo' -PasswordNeverExpires $true -EA Stop } catch { }" >>"%LOG%" 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList" /v "mios-sudo" /t REG_DWORD /d 0 /f >>"%LOG%" 2>&1
+rem     Register MiOS-Host ONSTART task (idempotent /f overwrites if it already exists).
+rem     Run level HIGHEST so the first-run install auto-elevates. WSL cannot run as
+rem     LocalSystem (microsoft/WSL#11280) -- mios-sudo (RID-500, full token) is the runner.
+schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "mios-sudo" /rp "mios" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Host.ps1" /f >>"%LOG%" 2>&1
+rem     Also register the MINUTE supervisor daemon (keeps the brain alive across reboots).
+schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "mios-sudo" /rp "mios" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Daemon.ps1" /f >>"%LOG%" 2>&1
+rem --- Start the MiOS brain deploy NOW (end of setup, BEFORE first logon). Running
+rem     MiOS-Host here launches the WSL2 + agent-stack install in Session 0 -- HIDDEN,
+rem     ELEVATED, NO UAC, NO visible console. There is deliberately NO interactive
+rem     Startup launcher (the MiOS-FirstBoot.cmd in All-Users Startup is a fallback
+rem     only; the real install should complete here, pre-logon, via MiOS-Host). -------
 echo [MiOS] starting pre-logon MiOS-Host (Session 0, hidden) %DATE% %TIME%>>"%LOG%"
 schtasks /run /tn "MiOS-Host">>"%LOG%" 2>&1
 

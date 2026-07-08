@@ -104,12 +104,20 @@ $candidates += 'C:\MiOS-XBOX\MiOS-XBOX.iso'       # last-known deployed base
 $localBase = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 
 $mode = $null
-if     ($Fresh)      { $mode = 'fresh' }
-elseif ($localBase)  { $mode = 'local' }
-else {
-    Write-Host '[*] No local base ISO -- probing network (api.uupdump.net:443) ...' -ForegroundColor Cyan
-    if (Test-Reachable -HostName 'api.uupdump.net') { $mode = 'fresh' }
-    else { throw "No local base ISO and UUP Dump is unreachable. Restore connectivity or pass -SourceIso <path>." }
+if ($SourceIso) {
+    $mode = 'local'
+} elseif ($Fresh) {
+    $mode = 'fresh'
+} else {
+    Write-Host '[*] Probing network (api.uupdump.net:443) to fetch latest UUP Dump flight...' -ForegroundColor Cyan
+    if (Test-Reachable -HostName 'api.uupdump.net') {
+        $mode = 'fresh'
+    } elseif ($localBase) {
+        Write-Host "[!] UUP Dump is unreachable. Falling back to local base ISO: $localBase" -ForegroundColor Yellow
+        $mode = 'local'
+    } else {
+        throw "UUP Dump is unreachable and no local base ISO exists."
+    }
 }
 
 $root = Resolve-MiOSBuildRoot $toml

@@ -1,10 +1,10 @@
-# AI-hint: The MiOS-Host boot payload -- runs at Windows startup (ONSTART scheduled task) under the dedicated NON-admin local account (.\mios-svc), BEFORE any interactive/RDP logon, to bring the MiOS WSL2+systemd+podman service plane up as a system service. On FIRST run it does the one-time heavy install (nested MiOS irm|iex bootstrap); on EVERY boot it (re)starts the distro and holds it alive with a host-side `--exec sleep infinity` process (the reliable keep-alive; vmIdleTimeout/-in-distro-systemd are not sufficient). CANNOT run as LocalSystem: WSL is tied to a user profile (microsoft/WSL#11280) -- hence the mios-svc identity.
+# AI-hint: The MiOS-Host boot payload -- runs at Windows startup (ONSTART scheduled task) under the dedicated NON-admin local account (.\mios-sudo), BEFORE any interactive/RDP logon, to bring the MiOS WSL2+systemd+podman service plane up as a system service. On FIRST run it does the one-time heavy install (nested MiOS irm|iex bootstrap); on EVERY boot it (re)starts the distro and holds it alive with a host-side `--exec sleep infinity` process (the reliable keep-alive; vmIdleTimeout/-in-distro-systemd are not sufficient). CANNOT run as LocalSystem: WSL is tied to a user profile (microsoft/WSL#11280) -- hence the mios-sudo identity.
 # AI-related: mios-bootstrap, New-MiOSHostServiceCommands (MiOS-Provision.lib.ps1), New-MiOSAutounattend.ps1, Get-MiOS.ps1, docs/pre-logon-system-services.md
 #Requires -Version 5.1
 <#
 .SYNOPSIS
     Boot the MiOS WSL2 service plane before logon, keep it alive. Payload of the
-    MiOS-Host ONSTART task (runs as .\mios-svc, Session 0, pre-logon).
+    MiOS-Host ONSTART task (runs as .\mios-sudo, Session 0, pre-logon).
 .PARAMETER Distro        WSL distro name (default MiOS).
 .PARAMETER BootstrapUrl  Nested MiOS installer for the one-time first-run install.
 .PARAMETER StateDir      Where the provisioned marker + logs live.
@@ -42,7 +42,7 @@ function Resolve-MiOSDistro {
     return $null
 }
 
-# --- FIRST RUN: one-time heavy install (as mios-svc, NOT SYSTEM) -------------
+# --- FIRST RUN: one-time heavy install (as mios-sudo, NOT SYSTEM) -------------
 # The nested MiOS installer provisions the WSL2 distro + podman + Quadlet units in
 # THIS account's Lxss hive (why the boot service must be a real user, not LocalSystem).
 if (-not (Test-Path $marker)) {
