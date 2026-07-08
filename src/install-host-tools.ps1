@@ -498,7 +498,7 @@ function Configure-MiosBrowserAI {
         return
     }
     $pkg         = "$(Get-MiosTomlValue -Section 'browser_ai' -Key 'package' -Default 'Zen-Team.Zen-Browser.Twilight')"
-    $providerUrl = "$(Get-MiosTomlValue -Section 'browser_ai' -Key 'provider_url' -Default 'http://localhost:3030')"
+    $providerUrl = "$(Get-MiosTomlValue -Section 'browser_ai' -Key 'provider_url' -Default 'http://localhost:8033')"
     $prefStrings = @(Get-MiosTomlValue -Section 'browser_ai' -Key 'prefs' -Default @(
         'browser.ml.chat.enabled|bool|true',
         'browser.ml.chat.hideLocalhost|bool|false',

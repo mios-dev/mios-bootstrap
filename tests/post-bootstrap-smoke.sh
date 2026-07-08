@@ -202,8 +202,8 @@ fi
 # answers as soon as llama-swap is up (it does NOT require a model to finish
 # loading), so a bounded retry confirms the lane without waiting on GGUF warm-up.
 hdr "AI plane"
-_ai_light="${MIOS_AI_LIGHT_URL:-http://127.0.0.1:11450/v1/models}"
-_ai_pipe="${MIOS_AI_PIPE_URL:-http://127.0.0.1:8640/health}"
+_ai_light="${MIOS_AI_LIGHT_URL:-http://127.0.0.1:${MIOS_PORT_LLM_LIGHT:-8450}/v1/models}"
+_ai_pipe="${MIOS_AI_PIPE_URL:-http://127.0.0.1:${MIOS_PORT_AGENT_PIPE:-8640}/health}"
 if ! command -v curl >/dev/null 2>&1; then
     warn "curl not present -- skipping AI-plane reachability check"
 else
@@ -213,15 +213,15 @@ else
         sleep 3
     done
     if [[ "$_ok_light" == 1 ]]; then
-        ok "llm-light lane serving (/v1/models @ :11450) -- MiOS AI is reachable"
+        ok "llm-light lane serving (/v1/models @ :${MIOS_PORT_LLM_LIGHT:-8450}) -- MiOS AI is reachable"
     else
-        fail "llm-light lane NOT reachable after ~60s (:11450/v1/models)" "systemctl status mios-llm-light -- the AI plane is not operational" P0
+        fail "llm-light lane NOT reachable after ~60s (:${MIOS_PORT_LLM_LIGHT:-8450}/v1/models)" "systemctl status mios-llm-light -- the AI plane is not operational" P0
     fi
     # agent-pipe front door (P1: depends on hermes + llm-light warming; warns).
     if curl -fsS --max-time 8 "$_ai_pipe" >/dev/null 2>&1; then
-        ok "agent-pipe front door responding (:8640)"
+        ok "agent-pipe front door responding (:${MIOS_PORT_AGENT_PIPE:-8640})"
     else
-        warn "agent-pipe front door not yet responding (:8640)" "may still be warming -- re-run 'mios smoke'"
+        warn "agent-pipe front door not yet responding (:${MIOS_PORT_AGENT_PIPE:-8640})" "may still be warming -- re-run 'mios smoke'"
     fi
 fi
 

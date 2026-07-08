@@ -4526,17 +4526,17 @@ sudo tee /etc/mios/hermes/config.local.yaml >/dev/null <<'CFGLOCAL'
 # override to /var/lib/mios/hermes/operator.yaml + adjust the
 # include path.
 backend:
-  base_url: http://localhost:11450
+  base_url: http://localhost:${MIOS_PORT_LLM_LIGHT:-8450}
 auxiliary:
   # LLM Light's OpenAI-compatible surface for compression / summarization /
   # memory flush. Port 8080 was the legacy LocalAI bind -- after the
   # LocalAI purge, 8080 is code-server, so the previous default 8080/v1
   # made Hermes 401 against code-server then fall through to its
   # openrouter auto-detect (which also 401'd without an API key).
-  base_url: http://localhost:11450/v1
+  base_url: http://localhost:${MIOS_PORT_LLM_LIGHT:-8450}/v1
 tools:
   web_search:
-    base_url: http://localhost:8888
+    base_url: http://localhost:${MIOS_PORT_SEARXNG:-8899}
 
 # model / custom_providers / agent are intentionally NOT defined here.
 # mios-hermes-firstboot seeds /var/lib/mios/hermes/config.yaml (=
@@ -4724,9 +4724,25 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     # keys so they carry vendor defaults here. Mirrors the offline
     # 25-firewall-ports.sh surface baked into the OCI image.
     $_fwServicePorts = [ordered]@{
-        forge = 3000; webui = 3030; ai = 8080; hermes = 8642; searxng = 8888; cockpit = 9090; ollama = 11434
+        forge_http       = 8300
+        open_webui       = 8033
+        code_server      = 8800
+        cockpit          = 8090
+        llm_light        = 8450
+        searxng          = 8899
+        hermes           = 8642
+        hermes_dashboard = 8119
+        guacamole_web    = 8080
+        ceph_dashboard   = 8444
+        rdp              = 8389
+        ssh              = 8222
+        forge_ssh        = 8301
+        cpu_node         = 8458
+        agent_pipe       = 8640
+        ttyd_bash        = 8681
+        ttyd_powershell  = 8682
     }
-    $_fwPortList = [System.Collections.Generic.List[int]]@(22, 2222, 6333, 6334, 9119, 19090)
+    $_fwPortList = [System.Collections.Generic.List[int]]@(22, 53, 8053, 8235, 8302, 8633, 8441, 8442)
     foreach ($_k in $_fwServicePorts.Keys) {
         $_fwPortList.Add([int](Get-MiosTomlValue -Section 'ports' -Key $_k -Default $_fwServicePorts[$_k]))
     }
@@ -5572,13 +5588,17 @@ function Set-MiosLanFirewallRules {
     }
 
     $_defaultPorts = [ordered]@{
-        forge   = 3000
-        webui   = 3030
-        ai      = 8080
-        hermes  = 8642
-        searxng = 8888
-        cockpit = 9090
-        ollama  = 11434
+        forge_http       = 8300
+        open_webui       = 8033
+        code_server      = 8800
+        cockpit          = 8090
+        llm_light        = 8450
+        searxng          = 8899
+        hermes           = 8642
+        hermes_dashboard = 8119
+        guacamole_web    = 8080
+        ceph_dashboard   = 8444
+        rdp              = 8389
     }
 
     # Resolve per-service ports from [ports].<key>, falling back to vendor.
@@ -5669,14 +5689,17 @@ function Set-MiosLanPortProxy {
     # mapping before adding so re-runs converge cleanly without
     # accumulating duplicate listeners.
     $_defaultPorts = [ordered]@{
-        forge            = 3000
-        webui            = 3030
-        ai               = 8080
+        forge_http       = 8300
+        open_webui       = 8033
+        code_server      = 8800
+        cockpit          = 8090
+        llm_light        = 8450
+        searxng          = 8899
         hermes           = 8642
-        searxng          = 8888
-        cockpit          = 9090
-        hermes_dashboard = 9119
-        ollama           = 11434
+        hermes_dashboard = 8119
+        guacamole_web    = 8080
+        ceph_dashboard   = 8444
+        rdp              = 8389
     }
     $_ports = [ordered]@{}
     foreach ($k in $_defaultPorts.Keys) {
@@ -8156,29 +8179,29 @@ $endMark
             New-Item -ItemType Directory -Path $servicesDir -Force | Out-Null
         }
         $_defaultPorts = [ordered]@{
-            forge            = 3000
-            hermes_workspace = 3030
-            code_server      = 8080
+            forge_http       = 8300
+            open_webui       = 8033
+            code_server      = 8800
             hermes           = 8642
-            guacamole_web    = 8090
-            ceph_dashboard   = 8443
-            searxng          = 8888
-            cockpit          = 9090
-            ollama           = 11434
+            guacamole_web    = 8080
+            ceph_dashboard   = 8444
+            searxng          = 8899
+            cockpit          = 8090
+            llm_light        = 8450
         }
         # HTTPS for Cockpit + Ceph (self-signed; click through once). All
         # logins default to the global MiOS password (mios.toml [identity].
-        # default_password = "mios"). Hermes Workspace is the default
+        # default_password = "mios"). Open WebUI is the default
         # chat front-end; code-server pairs with mios-forge for an
         # in-browser dev workflow.
         $_webLinks = @(
-            @{ Key='hermes_workspace'; Name='MiOS Chat (Hermes Workspace)'; Scheme='http';  Path='/' }
+            @{ Key='open_webui';       Name='MiOS Chat (Open WebUI)';       Scheme='http';  Path='/' }
             @{ Key='code_server';      Name='MiOS Code (code-server)';      Scheme='http';  Path='/' }
             @{ Key='cockpit';          Name='MiOS Cockpit';                 Scheme='https'; Path='/' }
-            @{ Key='forge';            Name='MiOS Forge';                   Scheme='http';  Path='/' }
+            @{ Key='forge_http';       Name='MiOS Forge';                   Scheme='http';  Path='/' }
             @{ Key='searxng';          Name='MiOS Search (SearXNG)';        Scheme='http';  Path='/' }
             @{ Key='hermes';           Name='MiOS Hermes API';              Scheme='http';  Path='/v1/models' }
-            @{ Key='ollama';           Name='MiOS Ollama API';              Scheme='http';  Path='/' }
+            @{ Key='llm_light';        Name='MiOS LLM Light API';           Scheme='http';  Path='/' }
             @{ Key='guacamole_web';    Name='MiOS Guacamole';               Scheme='http';  Path='/guacamole/' }
             @{ Key='ceph_dashboard';   Name='MiOS Ceph Dashboard';          Scheme='https'; Path='/' }
         )

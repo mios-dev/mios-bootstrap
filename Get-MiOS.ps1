@@ -4170,22 +4170,22 @@ if (`$true) {
         }
         Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
         Write-Host (_Frame "  `$_esc[1m`$_esc[36mAI surface`$_esc[0m") -ForegroundColor Blue
-        `$_c_agent  = _ServiceCell -Name "Agent-Pipe"  -Port 8640 -Probe "/health"
-        `$_c_herm   = _ServiceCell -Name "Hermes"      -Port 8642 -Probe "/health"
-        `$_c_pg     = _ServiceCell -Name "pgvector"    -Port 5432
-        `$_c_dash   = _ServiceCell -Name "Dash-AI"     -Port 9119
-        `$_c_llm    = _ServiceCell -Name "LLM-Light"   -Port 11450
+        `$_c_agent  = _ServiceCell -Name "Agent-Pipe"  -Port $(Get-MiosTomlValue -Section 'ports' -Key 'agent_pipe' -Default 8640) -Probe "/health"
+        `$_c_herm   = _ServiceCell -Name "Hermes"      -Port $(Get-MiosTomlValue -Section 'ports' -Key 'hermes' -Default 8642) -Probe "/health"
+        `$_c_pg     = _ServiceCell -Name "pgvector"    -Port $(Get-MiosTomlValue -Section 'ports' -Key 'pgvector' -Default 8432)
+        `$_c_dash   = _ServiceCell -Name "Dash-AI"     -Port $(Get-MiosTomlValue -Section 'ports' -Key 'hermes_dashboard' -Default 8119)
+        `$_c_llm    = _ServiceCell -Name "LLM-Light"   -Port $(Get-MiosTomlValue -Section 'ports' -Key 'llm_light' -Default 8450)
         _ServiceRow `$_c_agent `$_c_herm
         _ServiceRow `$_c_pg    `$_c_dash
         _ServiceRow `$_c_llm   (' ' * 20)
         Write-Host (_Frame "  `$_esc[1m`$_esc[36mUser surface`$_esc[0m") -ForegroundColor Blue
-        `$_c_webui  = _ServiceCell -Name "WebUI"       -Port 3030
-        `$_c_cock   = _ServiceCell -Name "Cockpit"     -Port 9090 -Https `$true
-        `$_c_code   = _ServiceCell -Name "Code"        -Port 8080
-        `$_c_forge  = _ServiceCell -Name "Forge"       -Port 3000
-        `$_c_srch   = _ServiceCell -Name "Search"      -Port 8888
-        `$_c_ttyb   = _ServiceCell -Name "ttyd-bash"   -Port 7681
-        `$_c_ttyp   = _ServiceCell -Name "ttyd-PS"     -Port 7682
+        `$_c_webui  = _ServiceCell -Name "WebUI"       -Port $(Get-MiosTomlValue -Section 'ports' -Key 'open_webui' -Default 8033)
+        `$_c_cock   = _ServiceCell -Name "Cockpit"     -Port $(Get-MiosTomlValue -Section 'ports' -Key 'cockpit' -Default 8090) -Https `$true
+        `$_c_code   = _ServiceCell -Name "Code"        -Port $(Get-MiosTomlValue -Section 'ports' -Key 'code_server' -Default 8800)
+        `$_c_forge  = _ServiceCell -Name "Forge"       -Port $(Get-MiosTomlValue -Section 'ports' -Key 'forge_http' -Default 8300)
+        `$_c_srch   = _ServiceCell -Name "Search"      -Port $(Get-MiosTomlValue -Section 'ports' -Key 'searxng' -Default 8899)
+        `$_c_ttyb   = _ServiceCell -Name "ttyd-bash"   -Port $(Get-MiosTomlValue -Section 'ports' -Key 'ttyd_bash' -Default 8681)
+        `$_c_ttyp   = _ServiceCell -Name "ttyd-PS"     -Port $(Get-MiosTomlValue -Section 'ports' -Key 'ttyd_powershell' -Default 8682)
         _ServiceRow `$_c_webui `$_c_cock
         _ServiceRow `$_c_code  `$_c_forge
         _ServiceRow `$_c_srch  `$_c_ttyb
@@ -5954,8 +5954,8 @@ try { Add-MiosDefenderExclusions } catch { Write-Host "  [!] Defender exclusion 
 # If .wslconfig isn't on disk by then, the utility VM that those reap
 # calls implicitly boot lands in legacy NAT mode and STAYS there until
 # the next time someone explicitly stops it. Symptom the operator hit
-# every container port (cockpit 9090, forge 3000, ai 8080,
-# webui 3030, hermes 8642, searxng 8888, llm-light 11450) timed out from
+# every container port (cockpit 8090, forge_http 8300,
+# open_webui 8033, hermes 8642, searxng 8899, llm-light 8450) timed out from
 # Windows even though `ss -tlnp` inside MiOS-DEV showed the binds, and
 # the host showed `vEthernet (WSL (Hyper-V firewall))` (NAT-only
 # adapter) instead of the IP-mirrored topology.
