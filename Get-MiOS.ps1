@@ -4568,7 +4568,10 @@ function mios-dash {
     Write-Host '  --------------' -ForegroundColor DarkCyan
     if (Get-Command podman -ErrorAction SilentlyContinue) {
         try { & podman machine list 2>&1 | Out-Host } catch {}
-        try { & podman info --format '  Hostname:   {{.Host.Hostname}}{{`"``n`"}}  Server OS:  {{.Host.OS}}{{`"``n`"}}  CPUs:       {{.Host.CPUs}}{{`"``n`"}}  Memory:     {{.Host.MemTotal}} bytes' 2>`$null } catch {}
+        try { & podman info --format '  Hostname:   {{.Host.Hostname}}
+  Server OS:  {{.Host.OS}}
+  CPUs:       {{.Host.CPUs}}
+  Memory:     {{.Host.MemTotal}} bytes' 2>$null } catch {}
     } else {
         Write-Host '  [podman not on PATH]' -ForegroundColor DarkGray
     }
@@ -5164,24 +5167,32 @@ function Ensure-PodmanDesktop {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-Err "winget not found and podman not installed."
         Write-Err "  Install App Installer from the Microsoft Store, or install"
-        Write-Err "  Podman Desktop manually from https://podman-desktop.io"
+        Write-Err "  Podman CLI manually via the installer from https://podman.io (or github.com/containers/podman/releases)"
         exit 1
     }
-    # Install Podman Desktop (the GUI). It bundles podman.exe inside its
-    # resources tree -- but does NOT put it on PATH by default.
-    # TOML-first -- Podman Desktop winget ID from mios.toml [bootstrap.prereqs].podman_pkg
-    $_podmanPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_pkg' -Default 'RedHat.Podman-Desktop')
-    Write-Info "Installing Podman Desktop via winget ($_podmanPkg) ..."
-    & winget install --exact --id $_podmanPkg `
-        --silent --accept-source-agreements --accept-package-agreements `
-        --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Info "Retrying winget install at user scope ..."
+    # Check if we should install Podman Desktop
+    $_installDesktop = Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'install_podman_desktop' -Default $false
+    if ($_installDesktop -eq 'true') { $_installDesktop = $true }
+    elseif ($_installDesktop -eq 'false') { $_installDesktop = $false }
+    if ($_installDesktop -isnot [bool]) { $_installDesktop = $false }
+
+    if ($_installDesktop) {
+        # Install Podman Desktop (the GUI). It bundles podman.exe inside its
+        # resources tree -- but does NOT put it on PATH by default.
+        # TOML-first -- Podman Desktop winget ID from mios.toml [bootstrap.prereqs].podman_pkg
+        $_podmanPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_pkg' -Default 'RedHat.Podman-Desktop')
+        Write-Info "Installing Podman Desktop via winget ($_podmanPkg) ..."
         & winget install --exact --id $_podmanPkg `
-            --silent --accept-source-agreements --accept-package-agreements 2>&1 |
-            ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+            --silent --accept-source-agreements --accept-package-agreements `
+            --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Info "Retrying winget install at user scope ..."
+            & winget install --exact --id $_podmanPkg `
+                --silent --accept-source-agreements --accept-package-agreements 2>&1 |
+                ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        }
     }
-    # ALSO install RedHat.Podman (the CLI MSI) -- this is what actually
+    # ALWAYS install RedHat.Podman (the CLI MSI) -- this is what actually
     # lays down podman.exe with PATH integration. Podman Desktop alone
     # bundles the CLI internally but doesn't expose it on PATH; the
     # standalone CLI package does. Idempotent: winget no-ops if already
@@ -5626,14 +5637,25 @@ function Invoke-MiOSFullReap {
     }
 
     # 14. HKCU\Run autostart + kill mios-gui-watch.ps1 daemon
-    & $_log '[14/17] HKCU\Run autostart entries + mios-gui-watch daemon ...'
-    foreach ($runVal in @('MiOS-GuiWatch','MiOS','MiOSGuiWatch')) {
+    & $_log '[14/17] HKCU\Run autostart entries + mios-gui-watch daemon + scheduled tasks ...'
+    foreach ($runVal in @('MiOS-GuiWatch','MiOS','MiOSGuiWatch','MiOS-Autostart')) {
         try { Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $runVal -ErrorAction SilentlyContinue } catch {}
     }
     try {
         Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
             Where-Object { $_.CommandLine -match 'mios-gui-watch' } |
             ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+    } catch {}
+    try {
+        if (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName 'MiOS-Autostart' -Confirm:$false -ErrorAction SilentlyContinue
+        }
+    } catch {}
+    try {
+        $stagedAutostart = Join-Path $env:ProgramData 'MiOS\mios-autostart.ps1'
+        if (Test-Path $stagedAutostart) {
+            Remove-Item -Path $stagedAutostart -Force -ErrorAction SilentlyContinue
+        }
     } catch {}
 
     # 15. Windows Defender exclusions (paired with Add-MiosDefenderExclusions)

@@ -56,6 +56,24 @@ mios_version  = "0.2.4"
 tagline       = "My Personal Operating System"
 tagline_long  = "My Personal Operating System  --  Immutable Fedora AI Workstation"
 tagline_app   = "My Personal Operating System"
+logo_ascii    = "fastfetch/mios.txt"
+logo_image    = "branding/mios-logo.png"
+icon_ico      = "branding/mios.ico"
+oem_manufacturer = "MiOS"
+oem_model     = "My Personal Operating System"
+oem_support_url = "https://github.com/mios-dev"
+oem_support_hours = "Always on"
+oem_support_phone = ""
+oem_logo      = "C:\\Windows\\Web\\MiOS\\mios-logo.bmp"
+wallpaper     = "C:\\Windows\\Web\\MiOS\\mios-wallpaper.jpg"
+lockscreen    = "C:\\Windows\\Web\\MiOS\\mios-wallpaper.jpg"
+wallpaper_style = "10"
+ui_font       = "Geist"
+font_substitute = true
+cursor        = true
+cursor_dir    = "%SystemRoot%\\Cursors\\Bibata-Modern-Classic"
+cursor_scheme = "Bibata-Modern-Classic"
+windows.enable = true
 
 [branding.dashboard]
 frame_chars   = "╭─╮│╰╯"
@@ -302,6 +320,12 @@ adguard_ui         = 8053     # AdGuard Home web UI + REST API (3000 is forge_ht
 opencode_gateway   = 8633     # opencode -> OpenAI /v1 gateway shim (mios-opencode-gateway.service); makes [agents.opencode] a REAL /v1 council peer. LOOPBACK only (127.0.0.1).
 vllm               = 8441    # vLLM heavy dGPU lane (re-scoped mios-llm-heavy Quadlet; OpenAI /v1, PagedAttention+APC). Off the iGPU's :11436 + finetune-serve :11438. GATED/disabled by default (VRAM). [ai.vllm] + [nodes.local-vllm].
 sglang             = 8442    # SGLang heavy dGPU lane (OpenAI /v1, HiCache CPU KV-offload). GATED/disabled by default (VRAM). [ai.sglang] + [nodes.local-sglang].
+prefilter          = 8641    # mios-delegation-prefilter: conversational-bypass classifier + delegation gate (OpenAI /v1 shim in front of hermes). LOOPBACK only.
+arbiter            = 8650    # mios-policy-arbiter: risk-tier arbiter (verb/risk allow-list enforcer). LOOPBACK only. (Mirrors agent.arbiter_port; SSOT migrated here for port-table completeness.)
+daemon_agent       = 8644    # mios-daemon-agent: background inference worker lane (low-priority; CPU-affined). LOOPBACK only.
+model_router       = 8645    # mios-model-router: internal model-selection micro-router (routes by modality/task). LOOPBACK only.
+oscontrol          = 8453    # mios-oscontrol-server: Windows-side UI Automation / PowerShell executor (HTTP gate; mios-computer-use-server mirrors protocol). LOOPBACK only.
+mcp                = 8460    # MCP host server (/mcp + A2A /.well-known; served by hermes-agent). LOOPBACK only. (Matches [agent].server_port when that key is absent.)
 
 # [ports.lan_firewall] -- Windows Firewall rule scope for the ports above.
 # profiles: which Windows Firewall profiles get the inbound TCP allow rule.
@@ -1144,6 +1168,14 @@ volume_label      = "MIOS-DEV"
 [bootstrap.dev_vm]
 base_image        = "quay.io/podman/machine-os:6.0"
 
+[bootstrap.prereqs]
+install_podman_desktop = false
+podman_pkg             = "RedHat.Podman-Desktop"
+podman_cli_pkg         = "RedHat.Podman"
+
+[bootstrap.autostart]
+enable                 = true
+
 # ----------------------------------------------------------------------------
 # [smoke_tests] -- attempts + interval the dev-VM smoketests use during
 # bootstrap. Phase-3 brings up the podman-MiOS-DEV machine and runs four
@@ -1198,6 +1230,7 @@ mios-guacd              = true
 # (mios.git usr/share/mios/mios.toml -- the T-147 configurator surface).
 # ----------------------------------------------------------------------------
 [autounattend]
+computer_name = "MIOS"
 # UUP Dump source acquisition (T-137). Target the DEV channel -- it carries the
 # newest feature IDs (Xbox Full Screen Experience) before they reach Retail.
 uup_channel    = "dev"           # dev | beta | releasepreview | retail  (maps to WU ring)
@@ -1264,7 +1297,7 @@ computer_name  = ""              # empty -> inherits [identity].hostname
 # account at first run -- that cannot be pre-baked.
 [autounattend.xbox]
 enable            = true
-feature_ids       = "59765208"   # Dev/25H2; 24H2 retail: "58989070,59765208"
+feature_ids       = "58989070,59765208"   # Xbox Full Screen Experience (FSE) feature IDs
 device_form_spoof = true         # DeviceForm=0x2E so FSE surfaces on desktops/laptops
 min_build         = "26200"      # informational: 25H2/Dev FSE floor
 # Boot-into-Xbox: the gaming HOME APP + start-on-startup. Operator-chosen LOGGED-OUT
@@ -1330,6 +1363,19 @@ virtio_url        = ""      # empty -> canonical fedorapeople stable virtio-win.
 virtio_variant    = "w11"   # driver subtree to inject (w11 | w10); amd64 arch under it
 loopback_adapter  = false   # install a Microsoft KM-TEST loopback NIC (niche; opt-in)
 onlogon_fallback  = true    # register a proven-specialize-pass ONLOGON task that re-applies identity+remote if Setup skips SetupComplete on 26xxx
+
+[[autounattend.accounts]]
+name = "mios"
+password = "mios"
+display_name = "MiOS User"
+group = "Administrators"
+
+[autounattend.layout]
+strip_defaults = true
+strip_folders = "3D Objects;Contacts;Favorites;Links;Saved Games;Searches;OneDrive"
+linux_tree = "etc usr var home opt srv tmp bin lib root"
+lowercase_userfolders = true
+strip_thispc = "{0DB7E03F-FC29-4DC6-9020-FF41B59E513A}"
 
 # ----------------------------------------------------------------------------
 # [env] -- free-form environment-variable additions. Keys must match POSIX
@@ -1425,3 +1471,13 @@ prefs = [
     "browser.ml.pageAssist.enabled|bool|true",    # page-assist AI
     "browser.ml.linkPreview.enabled|bool|true",   # AI link previews
 ]
+
+[agent_pipe]
+tool_max_iters = 15
+replan_max = 5
+tool_loop_limit = 15
+reflexion_limit = 5
+no_progress_window = 3
+max_consecutive_failures = 3
+wall_clock_budget_s = 300
+reflexion_enable = true

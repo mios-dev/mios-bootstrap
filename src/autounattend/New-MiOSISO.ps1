@@ -159,7 +159,7 @@ function Set-MiOSXboxOfflineReg {
     if ((Get-Toml $Toml 'autounattend.xbox.enable' 'false') -notmatch '^(?i:true|1|yes)$') { return }
     $sys = Join-Path $Mount 'Windows\System32\config\SYSTEM'
     $sw  = Join-Path $Mount 'Windows\System32\config\SOFTWARE'
-    $ids = @((Get-Toml $Toml 'autounattend.xbox.feature_ids' '59765208') -split '[,\s]+' | Where-Object { $_ -match '^\d+$' })
+    $ids = @((Get-Toml $Toml 'autounattend.xbox.feature_ids' '58989070,59765208') -split '[,\s]+' | Where-Object { $_ -match '^\d+$' })
     # Union the full god-mode set from the reviewable data file so the image boots with
     # ALL Xbox/gaming/2026-UI features on, not just the FSE flag. Non-existent ids on a
     # given build are harmless no-ops (an unused override key).

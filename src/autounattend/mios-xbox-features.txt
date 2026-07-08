@@ -9,6 +9,7 @@
 # (Runtime caveat: the Xbox FSE *home* still needs a signed-in Xbox/MS account.)
 
 # --- Xbox Full Screen Experience / handheld gaming shell ---
+58989070    # Xbox Full Screen Experience (FSE) - Copilot/taskbar replacement
 59765208    # Xbox Full Screen Experience (FSE)
 52580392    # Handheld compact-mode UI
 50902630    # Handheld compact-mode UI

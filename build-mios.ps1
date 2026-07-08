@@ -7823,8 +7823,75 @@ $endMark
             $_runVal = '"{0}" -NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}"' -f $_pwsh, $miosGuiWatch
             Set-ItemProperty -Path $_runKey -Name 'MiOS-GuiWatch' -Value $_runVal -Type String -Force
             Log-Ok "mios-gui-watch autostart registered (HKCU\...\Run\MiOS-GuiWatch)"
+
+            # Register MiOS-Autostart (AtLogon trigger, RunLevel Highest, hidden)
+            $_autostartEnabled = Get-MiosTomlValue -Section 'bootstrap.autostart' -Key 'enable' -Default $true
+            if ($_autostartEnabled -eq 'true') { $_autostartEnabled = $true }
+            elseif ($_autostartEnabled -eq 'false') { $_autostartEnabled = $false }
+            if ($_autostartEnabled -isnot [bool]) { $_autostartEnabled = $true }
+
+            if ($_autostartEnabled) {
+                # Ensure local ProgramData\MiOS directory exists
+                $hostProgData = Join-Path $env:ProgramData 'MiOS'
+                if (-not (Test-Path $hostProgData)) { New-Item -ItemType Directory -Path $hostProgData -Force | Out-Null }
+                $autostartScript = Join-Path $hostProgData 'mios-autostart.ps1'
+                $autostartBody = @"
+#Requires -Version 5.1
+`$logPath = "C:\ProgramData\MiOS\logs\autostart.log"
+`$null = New-Item -ItemType Directory -Path (Split-Path `$logPath) -Force -ErrorAction SilentlyContinue
+`$null = New-Item -ItemType File -Path `$logPath -Force -ErrorAction SilentlyContinue
+function Log {
+    param(`$msg)
+    "`$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - `$msg" | Out-File -FilePath `$logPath -Append -Encoding UTF8
+}
+Log "MiOS Autostart triggered."
+`$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
+if (Get-Command podman -ErrorAction SilentlyContinue) {
+    try {
+        `$state = & podman machine list --format "{{.Running}}" --filter "name=$BuilderDistro" 2>&1
+        Log "Current state of machine '$BuilderDistro': `$state"
+        if (`$state -notmatch "true") {
+            Log "Starting machine '$BuilderDistro'..."
+            `$startOut = & podman machine start $BuilderDistro 2>&1
+            Log "Start output: `$startOut"
+        } else {
+            Log "Machine '$BuilderDistro' is already running."
+        }
+    } catch {
+        Log "Error starting machine: `$(`$_.Exception.Message)"
+    }
+} else {
+    Log "Error: podman command not found on PATH."
+}
+"@
+                Set-Content -Path $autostartScript -Value $autostartBody -Encoding UTF8
+                Log-Ok "Staged autostart script: $autostartScript"
+
+                $registered = $false
+                if (Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue) {
+                    try {
+                        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$autostartScript`""
+                        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+                        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+                        $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
+                        $null = Register-ScheduledTask -TaskName 'MiOS-Autostart' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force -ErrorAction Stop
+                        $registered = $true
+                        Log-Ok "MiOS-Autostart Scheduled Task registered (AtLogon, RunLevel Highest, hidden)."
+                    } catch {
+                        Log-Warn "Failed to register scheduled task: $($_.Exception.Message). Falling back to HKCU\Run..."
+                    }
+                } else {
+                    Log-Warn "Register-ScheduledTask cmdlet not available. Falling back to HKCU\Run..."
+                }
+
+                if (-not $registered) {
+                    $_runValAutostart = '"{0}" -NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}"' -f $_pwsh, $autostartScript
+                    Set-ItemProperty -Path $_runKey -Name 'MiOS-Autostart' -Value $_runValAutostart -Type String -Force
+                    Log-Ok "MiOS-Autostart registered in HKCU\Run (fallback)."
+                }
+            }
         } catch {
-            Log-Warn "mios-gui-watch staging failed: $($_.Exception.Message)"
+            Log-Warn "mios-gui-watch / autostart staging failed: $($_.Exception.Message)"
         }
     } else {
         Log-Warn "mios-gui-watch.ps1 source not found in repo (probed: $($_gwSrcCands -join ', '))"
@@ -10607,9 +10674,9 @@ foreach (`$scope in @('User','Machine')) {
     } catch {}
 }
 
-# 13. HKCU\Run autostart entries (MiOS-GuiWatch background daemon)
-Write-Host '  [14/17] Removing HKCU\Run autostart entries...' -ForegroundColor Cyan
-foreach (`$runVal in @('MiOS-GuiWatch','MiOS','MiOSGuiWatch')) {
+# 13. HKCU\Run autostart entries (MiOS-GuiWatch background daemon) + scheduled tasks
+Write-Host '  [14/17] Removing HKCU\Run autostart entries + scheduled tasks...' -ForegroundColor Cyan
+foreach (`$runVal in @('MiOS-GuiWatch','MiOS','MiOSGuiWatch','MiOS-Autostart')) {
     try { Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name `$runVal -ErrorAction SilentlyContinue } catch {}
 }
 # Kill any running mios-gui-watch.ps1 pwsh process (it auto-resizes WSLg
@@ -10618,6 +10685,17 @@ try {
     Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
         Where-Object { `$_.CommandLine -match 'mios-gui-watch' } |
         ForEach-Object { try { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+} catch {}
+try {
+    if (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName 'MiOS-Autostart' -Confirm:`$false -ErrorAction SilentlyContinue
+    }
+} catch {}
+try {
+    `$stagedAutostart = Join-Path `$env:ProgramData 'MiOS\mios-autostart.ps1'
+    if (Test-Path `$stagedAutostart) {
+        Remove-Item -Path `$stagedAutostart -Force -ErrorAction SilentlyContinue
+    }
 } catch {}
 
 # 14. Windows Defender exclusions (added by Add-MiosDefenderExclusions)

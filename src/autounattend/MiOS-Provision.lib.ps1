@@ -164,7 +164,7 @@ function New-MiOSXboxModeCommands {
     if ((Get-Toml $Toml 'autounattend.xbox.enable' 'false') -notmatch '^(?i:true|1|yes)$') { return $cmds }
 
     $ov = 'HKLM\SYSTEM\CurrentControlSet\Control\FeatureManagement\Overrides\8'
-    $ids = (Get-Toml $Toml 'autounattend.xbox.feature_ids' '59765208') -split '[,\s]+' | Where-Object { $_ -match '^\d+$' }
+    $ids = (Get-Toml $Toml 'autounattend.xbox.feature_ids' '58989070,59765208') -split '[,\s]+' | Where-Object { $_ -match '^\d+$' }
     foreach ($id in $ids) {
         $cmds.Add(('reg add "{0}\{1}" /v EnabledState /t REG_DWORD /d 2 /f'        -f $ov,$id))   # 2 = Enabled
         $cmds.Add(('reg add "{0}\{1}" /v EnabledStateOptions /t REG_DWORD /d 0 /f' -f $ov,$id))
