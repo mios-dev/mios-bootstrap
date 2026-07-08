@@ -1935,9 +1935,11 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
     # so an absent/unreadable card lands on the same values the canonical
     # mios.toml declares; bake = model + embed.
     $defaults = @{
-        Model       = "qwen3.5:2b"
-        EmbedModel  = "nomic-embed-text"
-        BakeModels  = "qwen3.5:2b,nomic-embed-text"
+        Model               = "qwen3.5:2b"
+        EmbedModel          = "nomic-embed-text"
+        BakeModels          = "qwen3.5:2b,nomic-embed-text"
+        LlamacppBakeModels  = "granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf"
+        VllmBakeModel       = "Qwen/Qwen2.5-0.5B-Instruct"
     }
     $layers = @()
     foreach ($p in @(
@@ -1950,19 +1952,38 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
         try {
             $text = Get-Content -Raw -Path $card -ErrorAction Stop
         } catch { continue }
-        # Extract the [ai] section body up to the next [section] header
-        # or end-of-file. (?ms) for multiline + dot-matches-newline.
+        
+        # 1. Parse [ai] section
         $m = [regex]::Match($text, '(?ms)^\[ai\]\s*$(.*?)(?=^\[|\z)')
-        if (-not $m.Success) { continue }
-        $body = $m.Groups[1].Value
-        foreach ($kv in @(
-            @{ Key='model';        Slot='Model' },
-            @{ Key='embed_model';  Slot='EmbedModel' },
-            @{ Key='bake_models';  Slot='BakeModels' }
-        )) {
-            $rx = [regex]::new('(?m)^\s*' + [regex]::Escape($kv.Key) + '\s*=\s*"([^"]*)"')
+        if ($m.Success) {
+            $body = $m.Groups[1].Value
+            foreach ($kv in @(
+                @{ Key='model';        Slot='Model' },
+                @{ Key='embed_model';  Slot='EmbedModel' },
+                @{ Key='bake_models';  Slot='BakeModels' }
+            )) {
+                $rx = [regex]::new('(?m)^\s*' + [regex]::Escape($kv.Key) + '\s*=\s*"([^"]*)"')
+                $hit = $rx.Match($body)
+                if ($hit.Success) { $defaults[$kv.Slot] = $hit.Groups[1].Value }
+            }
+        }
+        
+        # 2. Parse [llamacpp] section
+        $m = [regex]::Match($text, '(?ms)^\[llamacpp\]\s*$(.*?)(?=^\[|\z)')
+        if ($m.Success) {
+            $body = $m.Groups[1].Value
+            $rx = [regex]::new('(?m)^\s*bake_models\s*=\s*"([^"]*)"')
             $hit = $rx.Match($body)
-            if ($hit.Success) { $defaults[$kv.Slot] = $hit.Groups[1].Value }
+            if ($hit.Success) { $defaults['LlamacppBakeModels'] = $hit.Groups[1].Value }
+        }
+        
+        # 3. Parse [ai.vllm] section
+        $m = [regex]::Match($text, '(?ms)^\[ai\.vllm\]\s*$(.*?)(?=^\[|\z)')
+        if ($m.Success) {
+            $body = $m.Groups[1].Value
+            $rx = [regex]::new('(?m)^\s*bake_model\s*=\s*"([^"]*)"')
+            $hit = $rx.Match($body)
+            if ($hit.Success) { $defaults['VllmBakeModel'] = $hit.Groups[1].Value }
         }
     }
     return $defaults
@@ -10061,6 +10082,8 @@ exit 0
 
     # ── Phase 7 -- Write identity ─────────────────────────────────────────────
     Start-Phase 7
+    $MiosLlamacppBakeModels = $aiDefaults.LlamacppBakeModels
+    $MiosVllmBakeModel       = $aiDefaults.VllmBakeModel
     $envContent = @"
 MIOS_USER="$MiosUser"
 MIOS_HOSTNAME="$MiosHostname"
@@ -10068,6 +10091,8 @@ MIOS_USER_PASSWORD_HASH="$MiosHash"
 MIOS_AI_MODEL="$MiosAiModel"
 MIOS_AI_EMBED_MODEL="$MiosAiEmbedModel"
 MIOS_OLLAMA_BAKE_MODELS="$MiosOllamaBakeModels"
+MIOS_LLAMACPP_BAKE_MODELS="$MiosLlamacppBakeModels"
+MIOS_VLLM_BAKE_MODEL="$MiosVllmBakeModel"
 "@.Trim()
     $writeCmd  = "mkdir -p /etc/mios && cat > /etc/mios/install.env && chmod 0640 /etc/mios/install.env"
     $written = $false
