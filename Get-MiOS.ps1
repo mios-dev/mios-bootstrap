@@ -5209,6 +5209,36 @@ function Ensure-PodmanDesktop {
             --silent --accept-source-agreements --accept-package-agreements 2>&1 |
             ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     }
+
+    # Direct MSI download and silent installation fallback if winget failed/is missing
+    if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
+        Write-Info "winget install failed or unavailable. Attempting direct MSI download and install of Podman CLI..."
+        $podmanVersion = "6.0.0"
+        try {
+            $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/containers/podman/releases/latest" -UseBasicParsing -ErrorAction Stop
+            if ($latestRelease.tag_name -match '^v?([0-9\.]+)$') {
+                $podmanVersion = $Matches[1]
+            }
+        } catch {
+            Write-Info "Failed to query latest version from GitHub API (offline or rate-limited). Using default fallback version v6.0.0"
+        }
+        $msiUrl = "https://github.com/containers/podman/releases/download/v$podmanVersion/podman-v$podmanVersion.msi"
+        $msiPath = Join-Path $env:TEMP "podman-installer.msi"
+        Write-Info "Downloading Podman CLI MSI from $msiUrl ..."
+        try {
+            $webClient = New-Object System.Net.WebClient
+            $webClient.DownloadFile($msiUrl, $msiPath)
+            Write-Info "Installing Podman CLI silently via msiexec..."
+            $proc = Start-Process msiexec.exe -ArgumentList "/i `"$msiPath`" /qn /norestart" -Wait -NoNewWindow -PassThru
+            if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
+                Write-Err "msiexec exited with non-zero code: $($proc.ExitCode)"
+            }
+            Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Err "Direct MSI installation failed: $_"
+        }
+    }
+
     # Refresh PATH from registry so the just-installed podman.exe is
     # visible to Get-Command in THIS pwsh session.
     $env:PATH = `

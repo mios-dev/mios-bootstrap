@@ -68,6 +68,8 @@ oem_logo      = "C:\\Windows\\Web\\MiOS\\mios-logo.bmp"
 wallpaper     = "C:\\Windows\\Web\\MiOS\\mios-wallpaper.jpg"
 lockscreen    = "C:\\Windows\\Web\\MiOS\\mios-wallpaper.jpg"
 wallpaper_style = "10"
+living_wallpaper = true
+living_wallpaper_mode = "shader"
 ui_font       = "Geist"
 font_substitute = true
 cursor        = true
@@ -491,7 +493,7 @@ name            = "ghcr.io/mios-dev/mios"
 tag             = "latest"
 local_tag       = "localhost/mios:latest"
 machine_os_repo = "quay.io/podman/machine-os"
-machine_os_tag  = "6.0"
+machine_os_tag  = "latest"
 
 # ----------------------------------------------------------------------------
 # [packages] -- SSOT mapping mios.toml -> usr/share/mios/PACKAGES.md sections.
@@ -1166,7 +1168,7 @@ volume_label      = "MIOS-DEV"
 # the podman-machine VHDX is bootstrapped from before mios-build-driver
 # bootc-switches it to localhost/mios:latest.
 [bootstrap.dev_vm]
-base_image        = "quay.io/podman/machine-os:6.0"
+base_image        = "quay.io/podman/machine-os:latest"
 
 [bootstrap.prereqs]
 install_podman_desktop = false

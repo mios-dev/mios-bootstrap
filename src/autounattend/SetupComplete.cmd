@@ -86,6 +86,14 @@ rem     Startup launcher (the MiOS-FirstBoot.cmd in All-Users Startup is a fallb
 rem     only; the real install should complete here, pre-logon, via MiOS-Host). -------
 echo [MiOS] starting pre-logon MiOS-Host (Session 0, hidden) %DATE% %TIME%>>"%LOG%"
 schtasks /run /tn "MiOS-Host">>"%LOG%" 2>&1
+rem --- Custom Unattend Generator defaults -------------------------------------
+echo [MiOS] Running custom Specialize script %DATE% %TIME%>>"%LOG%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SystemRoot%\Setup\Scripts\Specialize.ps1" >>"%LOG%" 2>&1
+
+echo [MiOS] Running custom DefaultUser script %DATE% %TIME%>>"%LOG%"
+reg load "HKU\DefaultUser" "%SystemDrive%\Users\Default\NTUSER.DAT" >>"%LOG%" 2>&1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SystemRoot%\Setup\Scripts\DefaultUser.ps1" >>"%LOG%" 2>&1
+reg unload "HKU\DefaultUser" >>"%LOG%" 2>&1
 
 echo [MiOS] SetupComplete done %DATE% %TIME%>>"%LOG%"
 exit /b 0

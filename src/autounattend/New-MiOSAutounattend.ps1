@@ -225,6 +225,11 @@ function New-MiOSAutounattendXml {
         [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>cmd /c {1}</CommandLine><Description>MiOS user Linux-like layout</Description></SynchronousCommand>' -f $_flOrd, [Security.SecurityElement]::Escape($lc)))
         $_flOrd++
     }
+    # Run the custom FirstLogon.ps1 script containing guest tools installs
+    $flCmd = "powershell.exe -WindowStyle Normal -ExecutionPolicy Unrestricted -NoProfile -File C:\Windows\Setup\Scripts\FirstLogon.ps1"
+    [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>{1}</CommandLine><Description>Custom FirstLogon defaults</Description></SynchronousCommand>' -f $_flOrd, [Security.SecurityElement]::Escape($flCmd)))
+    $_flOrd++
+
     if ($runBootstrap) {
         # Escape $bootUrl -- an SSOT override with '&' would otherwise break the XML.
         $_url = [Security.SecurityElement]::Escape($bootUrl)
