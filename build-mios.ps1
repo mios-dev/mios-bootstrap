@@ -2925,6 +2925,7 @@ function New-BuilderDistro([hashtable]$HW) {
         '--memory',    $ramMB,
         '--disk-size', $diskGB,
         '--rootful',
+        '--update-connection',
         '--now'
     )
     if ($MachineImage) {
