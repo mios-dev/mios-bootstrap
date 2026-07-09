@@ -50,7 +50,8 @@ param(
     [string]$MergedPreset = (Join-Path $PSScriptRoot 'MiOS-Xbox-Merged.xml'),
     [string]$WorkDir,
     [switch]$SkipServicing,
-    [switch]$Esd
+    [switch]$Esd,
+    [string]$Edition
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1')
@@ -929,6 +930,7 @@ if (-not $TomlPath) {
     }
 }
 $toml   = if ($TomlPath) { Read-MiosToml -Path $TomlPath } else { @{ scalars=@{}; accounts=@(); prefs=@{} } }
+$toml   = Apply-MiosEdition -T $toml -Edition $Edition
 $buildRoot = Resolve-MiOSBuildRoot $toml
 if (-not $OutIso)  { $OutIso  = Get-Toml $toml 'autounattend.iso_out' (Join-Path $buildRoot 'iso\MiOS-Xbox.iso') }
 $label = Get-Toml $toml 'autounattend.iso_label' 'MiOS-Xbox'
@@ -939,7 +941,7 @@ if (-not $WorkDir) { $WorkDir = Join-Path $buildRoot 'isobuild' }
 $fetched = -not $SourceIso
 if (-not $SourceIso) {
     Write-Host "[*] No -SourceIso; fetching stock ISO via mios-uup-fetch (channel from SSOT) ..." -ForegroundColor Cyan
-    $SourceIso = & (Join-Path $PSScriptRoot 'mios-uup-fetch.ps1') -TomlPath $TomlPath -Esd:$Esd
+    $SourceIso = & (Join-Path $PSScriptRoot 'mios-uup-fetch.ps1') -TomlPath $TomlPath -Esd:$Esd -Edition $Edition
 }
 if (-not (Test-Path $SourceIso)) { throw "Source ISO not found: $SourceIso" }
 
@@ -959,7 +961,7 @@ if (-not $SkipServicing) {
 # Stage 3 -- autounattend.xml (SSOT accounts + LabConfig WinPE bypass + FirstLogonCommands
 # incl. Xbox reg + nested irm|iex) to the media root.
 Write-Host "[*] Generating autounattend.xml (SSOT + Xbox FirstLogonCommands) ..." -ForegroundColor Cyan
-& (Join-Path $PSScriptRoot 'New-MiOSAutounattend.ps1') -TomlPath $TomlPath -OutXml (Join-Path $media 'autounattend.xml') | Out-Null
+& (Join-Path $PSScriptRoot 'New-MiOSAutounattend.ps1') -TomlPath $TomlPath -OutXml (Join-Path $media 'autounattend.xml') -Edition $Edition | Out-Null
 Copy-Item (Join-Path $media 'autounattend.xml') (Join-Path $media 'sources\autounattend.xml') -Force -ErrorAction SilentlyContinue
 
 # Stage 4 -- master the bootable ISO.

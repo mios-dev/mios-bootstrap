@@ -1483,3 +1483,35 @@ no_progress_window = 3
 max_consecutive_failures = 3
 wall_clock_budget_s = 300
 reflexion_enable = true
+
+# ─── Editions Matrix ─────────────────────────────────────────────────────────
+# Defines the different flavors/editions of MiOS that can be built by the
+# pipeline (T-146). The build scripts can load an edition profile to override
+# the default autounattend and branding keys from a single SSOT.
+[editions.mios]
+autounattend.uup_channel     = "retail"
+autounattend.uup_arch        = "amd64"
+autounattend.posture         = "B"
+autounattend.debloat_profile  = "minimal"
+autounattend.xbox.enable     = "false"
+colors.accent                = "#1A407F"
+branding.living_wallpaper    = "false"
+
+[editions.mios-xbox]
+autounattend.uup_channel     = "dev"
+autounattend.uup_arch        = "amd64"
+autounattend.posture         = "C"
+autounattend.debloat_profile  = "gaming"
+autounattend.xbox.enable     = "true"
+colors.accent                = "#282262"
+branding.living_wallpaper    = "true"
+
+[editions.mios-xbox-arm]
+autounattend.uup_channel     = "dev"
+autounattend.uup_arch        = "arm64"
+autounattend.posture         = "C"
+autounattend.debloat_profile  = "gaming"
+autounattend.xbox.enable     = "true"
+colors.accent                = "#4B105C"
+branding.living_wallpaper    = "true"
+

@@ -44,7 +44,8 @@ param(
     [switch]$Fresh,
     [switch]$TestVM,
     [switch]$SkipServicing,
-    [bool]$SecureBoot = $true
+    [bool]$SecureBoot = $true,
+    [string]$Edition
 )
 
 $ErrorActionPreference = 'Stop'
@@ -137,6 +138,7 @@ Write-Host ''
 $isoArgs = @{ TomlPath = $TomlPath }
 if ($mode -eq 'local') { $isoArgs.SourceIso = $localBase }
 if ($SkipServicing)    { $isoArgs.SkipServicing = $true }
+if ($Edition)          { $isoArgs.Edition = $Edition }
 
 $out = & (Join-Path $here 'New-MiOSISO.ps1') @isoArgs
 # New-MiOSISO returns $OutIso; guard against any leaked host lines.

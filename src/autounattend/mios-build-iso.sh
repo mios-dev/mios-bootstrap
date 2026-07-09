@@ -9,6 +9,56 @@ OUTISO="${MIOS_ISO_OUT:-$WORKDIR/MiOS-Xbox.iso}"
 AUTOUNATTEND="${MIOS_AUTOUNATTEND:-/mnt/c/../M/MiOS/iso/autounattend.xml}"   # overridden by caller
 EDITION="${MIOS_EDITION:-professional}"
 LANG_="${MIOS_LANG:-en-us}"
+
+# Accept optional edition as the first argument (T-146)
+EDITION_ARG="${1:-}"
+if [ -n "$EDITION_ARG" ]; then
+  TOML_PATH="${MIOS_TOML:-/mnt/c/mios-bootstrap/mios.toml}"
+  if [ ! -f "$TOML_PATH" ]; then
+    TOML_PATH="$(dirname "$0")/../../mios.toml"
+  fi
+  if [ -f "$TOML_PATH" ]; then
+    eval "$(python3 -c "
+import sys, tomllib
+def get_val(d, k):
+    for p in k.split('.'):
+        d = d.get(p) if isinstance(d, dict) else None
+    return d
+try:
+    with open('$TOML_PATH', 'rb') as f:
+        data = tomllib.load(f)
+    ed = data.get('editions', {}).get('$EDITION_ARG', {})
+    if ed:
+        mapping = {
+            'autounattend.uup_channel': 'MIOS_CHANNEL',
+            'autounattend.uup_arch': 'MIOS_ARCH',
+            'autounattend.uup_edition': 'EDITION',
+            'autounattend.posture': 'MIOS_POSTURE',
+            'autounattend.debloat_profile': 'MIOS_DEBLOAT_PROFILE',
+            'autounattend.xbox.enable': 'MIOS_XBOX_ENABLE',
+            'colors.accent': 'MIOS_ACCENT'
+        }
+        for toml_key, env_var in mapping.items():
+            val = get_val(ed, toml_key)
+            if val is not None:
+                print(f'{env_var}=\"{val}\"')
+except Exception as e:
+    print(f'echo \"[!] Error parsing edition overrides: {e}\" >&2', file=sys.stderr)
+")"
+  fi
+fi
+
+MIOS_CHANNEL="${MIOS_CHANNEL:-dev}"
+MIOS_ARCH="${MIOS_ARCH:-amd64}"
+export MIOS_ARCH
+
+case "${MIOS_CHANNEL,,}" in
+  dev)      RING="Dev";;
+  beta)     RING="Beta";;
+  release*) RING="ReleasePreview";;
+  *)        RING="Retail";;
+esac
+
 API=https://api.uupdump.net
 WEB=https://uupdump.net
 
@@ -80,20 +130,20 @@ if [ ! -s "$UUIDFILE" ]; then
   UUID=''; BUILD=''
   # try live Dev scan a few times
   for i in 1 2 3; do
-    J=$(curl -sS --max-time 30 "$API/fetchupd.php?arch=amd64&ring=Dev&flight=Mainline" 2>/dev/null)
+    J=$(curl -sS --max-time 30 "$API/fetchupd.php?arch=$MIOS_ARCH&ring=$RING&flight=Mainline" 2>/dev/null)
     UUID=$(echo "$J" | pick 'import sys,json;a=json.load(sys.stdin).get("response",{}).get("updateArray",[]);print(a[0]["updateId"] if a else "")')
-    [ -n "$UUID" ] && { BUILD=$(echo "$J" | pick 'import sys,json;a=json.load(sys.stdin).get("response",{}).get("updateArray",[]);print(a[0].get("foundBuild",""))'); say "fetchupd Dev -> $UUID ($BUILD)"; break; }
+    [ -n "$UUID" ] && { BUILD=$(echo "$J" | pick 'import sys,json;a=json.load(sys.stdin).get("response",{}).get("updateArray",[]);print(a[0].get("foundBuild",""))'); say "fetchupd $RING -> $UUID ($BUILD)"; break; }
     say "fetchupd attempt $i: $(echo "$J" | head -c 80)"; sleep 20
   done
-  # catalog fallback: newest amd64 full "Feature Update" (buildable base), prefer 26200
+  # catalog fallback: newest arch full "Feature Update" (buildable base), prefer 26200
   if [ -z "$UUID" ]; then
     for i in 1 2 3 4 5 6; do
       L=$(curl -sS --max-time 40 "$API/listid.php?search=Windows%2011%20Insider%20Preview%20Feature%20Update&sortByDate=1" 2>/dev/null)
       RES=$(echo "$L" | pick '
-import sys,json
+import sys,json,os
 r=json.load(sys.stdin).get("response",{}); b=r.get("builds",[])
 if isinstance(b,dict): b=list(b.values())
-cand=[x for x in b if x.get("arch")=="amd64" and "Feature Update" in x.get("title","")]
+cand=[x for x in b if x.get("arch")==os.environ.get("MIOS_ARCH", "amd64") and "Feature Update" in x.get("title","")]
 pref=[x for x in cand if x.get("build","").startswith("26200") or x.get("build","").startswith("26120")]
 pick=(pref or cand)
 if pick: print(pick[0]["uuid"], pick[0].get("build",""))

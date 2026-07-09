@@ -79,7 +79,8 @@ param(
     [string]$WinutilToolsDir,
     [switch]$FullDiskWindows,
     [switch]$ObfuscatePasswords,
-    [string]$BootstrapUrl
+    [string]$BootstrapUrl,
+    [string]$Edition
 )
 $ErrorActionPreference = 'Stop'
 
@@ -90,51 +91,6 @@ $CANONICAL_BOOTSTRAP = 'https://raw.githubusercontent.com/mios-dev/mios-bootstra
 # use, so all three stay in parity. (Provides New-MiOSLinuxLayoutCommands, etc.)
 . (Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1')
 
-# ---------------------------------------------------------------------------
-# Minimal TOML reader -- just enough for [autounattend] scalars,
-# [[autounattend.accounts]] array-of-tables, and [identity]/[locale] fallbacks.
-# Not a general TOML parser; MiOS mios.toml uses simple key = "value" lines.
-# ---------------------------------------------------------------------------
-function Read-MiosToml {
-    param([string]$Path)
-    $result = @{ scalars = @{}; accounts = @() }
-    if (-not (Test-Path -LiteralPath $Path)) { return $result }
-    $lines = [IO.File]::ReadAllLines($Path)
-    $section = ''
-    $curAccount = $null
-    foreach ($raw in $lines) {
-        $line = $raw.Trim()
-        # Skip blank + full-line comments; strip only whitespace-preceded trailing
-        # comments so a hex value like accent="#1A407F" survives (matches the lib).
-        if (-not $line -or $line.StartsWith('#')) { continue }
-        $line = ($line -replace '\s+#.*$', '').Trim()
-        if (-not $line) { continue }
-        if ($line -eq '[[autounattend.accounts]]') {
-            if ($curAccount) { $result.accounts += ,$curAccount }
-            $curAccount = @{}
-            $section = 'account'
-            continue
-        }
-        if ($line -match '^\[(?<s>[^\]]+)\]$') {
-            if ($curAccount) { $result.accounts += ,$curAccount; $curAccount = $null }
-            $section = $Matches['s']
-            continue
-        }
-        if ($line -match '^(?<k>[A-Za-z0-9_\-\.]+)\s*=\s*(?<v>.+)$') {
-            $k = $Matches['k'].Trim()
-            $v = ($Matches['v'].Trim().Trim('"', "'")) -replace '\\\\', '\'   # unescape TOML "\\" -> "\"
-            if ($section -eq 'account' -and $curAccount -ne $null) {
-                $curAccount[$k] = $v
-            } else {
-                $result.scalars["$section.$k"] = $v
-            }
-        }
-    }
-    if ($curAccount) { $result.accounts += ,$curAccount }
-    return $result
-}
-
-function Get-Toml { param($T,[string]$Key,[string]$Default='') if ($T.scalars.ContainsKey($Key) -and $T.scalars[$Key]) { $T.scalars[$Key] } else { $Default } }
 
 function ConvertTo-UnattendPassword {
     # Emits the <Value>/<PlainText> pair for a LocalAccount/AutoLogon password.
@@ -458,6 +414,7 @@ if (-not $TomlPath) {
 }
 Write-Host "[*] Reading SSOT: $(if ($TomlPath) { $TomlPath } else { '(none found -- using identity defaults)' })" -ForegroundColor DarkGray
 $toml = if ($TomlPath) { Read-MiosToml -Path $TomlPath } else { @{ scalars=@{}; accounts=@() } }
+$toml = Apply-MiosEdition -T $toml -Edition $Edition
 
 $xml = New-MiOSAutounattendXml -Toml $toml
 [IO.File]::WriteAllText($OutXml, $xml, (New-Object System.Text.UTF8Encoding($false)))

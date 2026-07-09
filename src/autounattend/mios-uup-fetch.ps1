@@ -41,7 +41,8 @@ param(
     [string]$WorkDir,
     [string]$OutIso,
     [string]$Channel,
-    [switch]$Esd
+    [switch]$Esd,
+    [string]$Edition
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1')
@@ -338,6 +339,7 @@ if (-not $TomlPath) {
     }
 }
 $toml    = if ($TomlPath) { Read-MiosToml -Path $TomlPath } else { @{ scalars=@{}; accounts=@(); prefs=@{} } }
+$toml    = Apply-MiosEdition -T $toml -Edition $Edition
 $chan    = if ($Channel) { $Channel } else { Get-Toml $toml 'autounattend.uup_channel' 'dev' }
 $arch    = Get-Toml $toml 'autounattend.uup_arch'    'amd64'
 $edition = Get-Toml $toml 'autounattend.uup_edition' 'professional'

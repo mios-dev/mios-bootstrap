@@ -64,6 +64,28 @@ function Read-MiosToml {
 }
 function Get-Toml { param($T,[string]$Key,[string]$Def='') if ($T.scalars.ContainsKey($Key) -and $T.scalars[$Key]) { $T.scalars[$Key] } else { $Def } }
 
+function Apply-MiosEdition {
+    param($T, [string]$Edition)
+    if (-not $Edition) { return $T }
+    $prefix = "editions.$Edition."
+    $found = $false
+    $keys = @($T.scalars.Keys)
+    foreach ($k in $keys) {
+        if ($k.StartsWith($prefix)) {
+            $baseKey = $k.Substring($prefix.Length)
+            $T.scalars[$baseKey] = $T.scalars[$k]
+            $found = $true
+        }
+    }
+    if (-not $found) {
+        Write-Warning "Edition '$Edition' not found in mios.toml (no prefix '$prefix' matched). Using base configuration."
+    } else {
+        Write-Host "[*] Applied edition overrides for '$Edition'." -ForegroundColor Cyan
+    }
+    return $T
+}
+
+
 # Resolve the volume used for ISO build scratch + output. SSOT autounattend.work_root
 # wins; else auto-select the fixed drive with the MOST free space. NO hardcoded drive
 # letter -- the retired 'M:\' default overflowed a 95%-full 256 GB volume mid-WIM-build
