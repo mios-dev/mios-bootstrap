@@ -5783,21 +5783,50 @@ function Invoke-MiOSFullReap {
     }
     try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
 
-    # 17. FULL FORMAT M:\ partition ("FULLY format
-    # the M:\ partition only"). Only formats if M:\ exists AND its label
-    # starts with MIOS (the partition we provisioned). NEVER repartitions,
-    # never touches any other drive letter.
-    & $_log '[17/17] Reformatting M:\ partition (NTFS, label MIOS-DEV) ...'
+    # 17. Prepare M:\ for a fresh MiOS tree. HISTORICALLY this FULL-formatted
+    # M:\ on the premise "MiOS owns this entire volume" -- true on a clean
+    # provision. But a MiOS-Xbox-provisioned host (this machine was the first
+    # MiOS-Xbox deployment) can later carry the ACTIVE Windows pagefile and
+    # Windows UUP staging on M:\ because C:\ is too small to hold them.
+    # Formatting there would strip the live pagefile with nowhere to recreate
+    # it (C:\ full) and destroy unrelated data. So: full-format ONLY when M:\
+    # is a DEDICATED MiOS volume (no pagefile, nothing but MiOS artifacts);
+    # otherwise surgically remove just the MiOS dirs and preserve the rest.
+    & $_log '[17/17] Preparing M:\ (format if dedicated MiOS volume, else clean MiOS dirs) ...'
     try {
         $mVol = Get-Volume -DriveLetter M -ErrorAction SilentlyContinue
         if ($mVol -and $mVol.FileSystemLabel -match '^MIOS') {
-            Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel 'MIOS-DEV' -Force -Confirm:$false -ErrorAction Stop | Out-Null
-            & $_log '  [+] M:\ reformatted (NTFS, label MIOS-DEV, empty)'
+            # KEEP  = never delete (pagefile + system/volume metadata + genuine user data).
+            # PURGE = disposable junk cleared for a fresh MiOS state (Windows UUP staging).
+            # MIOS_DIRS = the FHS/repo/runtime tree MiOS itself lays down on M:\.
+            $_keep  = @('$RECYCLE.BIN','System Volume Information','pagefile.sys','swapfile.sys',
+                        'hiberfil.sys','DumpStack.log.tmp','SteamLibrary','winget','images','research','config')
+            $_purge = @('W10UIuup','MountUUP')
+            $_miosDirs = @('.devcontainer','.forgejo','.git','.github','automation','etc','MiOS',
+                           'podman','root','src','tests','tools','usr','var','powershell')
+            $_hasPagefile = [bool](Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue |
+                                   Where-Object { $_.Name -match '^M:' })
+            $_foreign = @(Get-ChildItem 'M:\' -Force -ErrorAction SilentlyContinue |
+                          Where-Object { $_keep -notcontains $_.Name -and $_purge -notcontains $_.Name -and $_miosDirs -notcontains $_.Name })
+            if (-not $_hasPagefile -and $_foreign.Count -eq 0) {
+                Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel 'MIOS-DEV' -Force -Confirm:$false -ErrorAction Stop | Out-Null
+                & $_log '  [+] M:\ reformatted (dedicated MiOS volume, NTFS, label MIOS-DEV, empty)'
+            } else {
+                $_why = if ($_hasPagefile) { 'active pagefile on M:\' } else { "non-MiOS data present ($(($_foreign.Name) -join ', '))" }
+                & $_log "  M:\ is a SHARED volume ($_why); preserving pagefile/user data -- clearing MiOS tree + UUP staging."
+                foreach ($_d in ($_miosDirs + $_purge)) {
+                    $_p = Join-Path 'M:\' $_d
+                    if (Test-Path -LiteralPath $_p) {
+                        try { Remove-Item -LiteralPath $_p -Recurse -Force -ErrorAction Stop; & $_log "    [removed] M:\$_d" }
+                        catch { & $_log "    [!] could not remove M:\$_d -- $($_.Exception.Message)" }
+                    }
+                }
+            }
         } else {
-            & $_log '  M:\ not present or label != MIOS-DEV; skipping format (safety guard)'
+            & $_log '  M:\ not present or label != MIOS-DEV; skipping (safety guard)'
         }
     } catch {
-        & $_log ("  [!] M:\ format failed: " + $_.Exception.Message)
+        & $_log ("  [!] M:\ prepare failed: " + $_.Exception.Message)
     }
 
     if (-not $Quiet) {
