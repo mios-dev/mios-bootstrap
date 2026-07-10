@@ -40,8 +40,8 @@ in*.
   future users.
 - `system-prompt.md` -- host AI prompt redirector. Bootstrap deploys this
   to `/etc/mios/ai/system-prompt.md`; the local agent stack loads it for
-  chat completions through the unified AI endpoint (`MIOS_AI_ENDPOINT`,
-  default `http://localhost:8080/v1` — Architectural Law 5). Per-user
+  chat completions through the unified AI endpoint (`MIOS_AI_ENDPOINT`
+  — Architectural Law 5). Per-user
   copies live at `~/.config/mios/system-prompt.md`.
 - `.env.mios` (deprecated, legacy) -- env-style user defaults; sourced
   by `install.sh` after TOML layers so explicit TOML wins. Migrate to
@@ -195,7 +195,7 @@ Operators can still set a flag to `false` to force-disable. See
 | `[auth] ssh_key_type` | `ed25519` |
 | `[auth] ssh_key_action` | `generate` |
 | `[image] ref` | `ghcr.io/mios-dev/mios:latest` |
-| `[ai] endpoint` | `http://localhost:8080/v1` |
+| `[ai] endpoint` | `http://localhost:8642/v1` |
 
 `[ai] endpoint` is the **single OpenAI-compatible front door** (Law 5,
 UNIFIED-AI-REDIRECTS) that every agent, tool, and editor on a deployed

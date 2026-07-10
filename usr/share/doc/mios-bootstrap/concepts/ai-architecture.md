@@ -21,7 +21,7 @@ operator customizing a deployment and the agent loading its own configuration.
 
 The locally hosted MiOS AI models orchestrate all work in this stack.
 Every agent CLI, IDE plugin, and runtime tool routes through
-`MIOS_AI_ENDPOINT=http://localhost:8080/v1` (Architectural Law 5,
+`MIOS_AI_ENDPOINT` (Architectural Law 5,
 **UNIFIED-AI-REDIRECTS**) and defers to those models. Strict adherence to OpenAI
 API standards and patterns -- no vendor branding, no vendor-native protocols, no
 proprietary side-channels. The AI files inventoried below are what those locally
@@ -41,7 +41,7 @@ build pipeline (numbered automation/) → OCI image → bootc lifecycle on the h
                                                           │
    this repo's AI files overlay the vendor defaults ──────┤
                                                           ▼
-   MIOS_AI_ENDPOINT (http://localhost:8080/v1, Law 5)
+   MIOS_AI_ENDPOINT (Law 5)
                                                           │
    ┌──────────────────────────────────────────────────────────────────────┐
    │ inference lanes → agent-pipe/Hermes orchestration → pgvector memory →  │
@@ -127,7 +127,7 @@ $MIOS_AI_SYSTEM_PROMPT > ~/.config/mios/system-prompt.md > /etc/mios/ai/system-p
 
 ## Local AI stack
 
-- **base_url:** `http://localhost:8080/v1` (`MIOS_AI_ENDPOINT`) -- the single
+- **base_url:** `MIOS_AI_ENDPOINT` -- the single
   OpenAI-compatible front door; resolves to the local inference lanes above. No
   vendor-cloud URLs.
 - **model:** resolved from `[ai].model` in `mios.toml` (the served reasoning

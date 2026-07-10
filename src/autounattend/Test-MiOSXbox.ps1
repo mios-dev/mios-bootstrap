@@ -66,7 +66,7 @@ Test-Item 'MiOS scheduled task registered'      { [bool](& schtasks.exe /query /
 Test-Item 'MiOS repo cloned (bootstrap ran)'    { Test-Path 'C:\mios-bootstrap' }
 Test-Item 'MiOS-DEV builder present (WSL)'      { [bool]((& wsl.exe -l -q 2>$null) -match 'MiOS') }
 # MiOS AI front door -- only up once the Linux plane deployed; informational, not critical.
-Test-Item 'MiOS AI endpoint :8080 reachable'    { try { $null = Invoke-WebRequest 'http://localhost:8080/v1/models' -UseBasicParsing -TimeoutSec 4 -ErrorAction Stop; $true } catch { $false } }
+Test-Item 'MiOS AI endpoint :8642 reachable'    { try { $null = Invoke-WebRequest 'http://localhost:8642/v1/models' -UseBasicParsing -TimeoutSec 4 -ErrorAction Stop; $true } catch { $false } }
 
 # --- report ---
 $pass = @($R | Where-Object Result -eq 'PASS').Count

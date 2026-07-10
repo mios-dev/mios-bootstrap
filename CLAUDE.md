@@ -1,5 +1,5 @@
 <!-- AI-hint: Claude Code entry overlay for the mios-bootstrap repo — the interactive installer + user-editable layer of MiOS (an immutable bootc/OCI Fedora workstation that is also a local agentic AI OS). Use this to navigate the installer, the 3-layer mios.toml overlay, the `mios` verb dispatcher, and the binding operator session rules; defers to the canonical agent prompt for runtime identity.
-     AI-related: /usr/share/mios/ai/system.md, /etc/mios/ai/system-prompt.md, /etc/mios/profile.toml, /usr/share/mios/profile.toml, /usr/share/mios/llamacpp/llama-swap.yaml, mios-dev, mios-bootstrap, mios-pull, mios-llm-light, mios-pgvector, http://localhost:8080/v1 -->
+     AI-related: /usr/share/mios/ai/system.md, /etc/mios/ai/system-prompt.md, /etc/mios/profile.toml, /usr/share/mios/profile.toml, /usr/share/mios/llamacpp/llama-swap.yaml, mios-dev, mios-bootstrap, mios-pull, mios-llm-light, mios-pgvector, MIOS_AI_ENDPOINT -->
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -125,7 +125,7 @@ All build operations (`podman build`, BIB, `bootc switch`, manifest gen) run **i
 
 The local agent stack is the "agentic AI OS" half of MiOS; this repo owns its operator-facing prompt and manifest files, while `mios.git` ships the inference lanes and agent units. The contract every client honors:
 
-**`http://localhost:8080/v1`** — the single OpenAI-compatible front door. Every client resolves through `MIOS_AI_ENDPOINT`, `MIOS_AI_MODEL`, `MIOS_AI_KEY` (Architectural Law 5: UNIFIED-AI-REDIRECTS). **No vendor-cloud URLs. No vendor-specific agent names anywhere.**
+**`MIOS_AI_ENDPOINT`** — the single OpenAI-compatible front door. Every client resolves through `MIOS_AI_ENDPOINT`, `MIOS_AI_MODEL`, `MIOS_AI_KEY` (Architectural Law 5: UNIFIED-AI-REDIRECTS). **No vendor-cloud URLs. No vendor-specific agent names anywhere.**
 
 Behind that endpoint, inference is served by the **`mios-llm-light`** lane (`:11450`) — the primary local engine, `llama.cpp` fronted by the upstream `llama-swap` proxy image (`ghcr.io/mostlygeek/llama-swap`). It auto-swaps the everyday chat/reasoning models behind one port, KV-pages each conversation to disk, and **also serves embeddings** (`nomic-embed-text`, OpenAI-compatible `/v1/embeddings`) plus the `mios-opencode` coder model. Its model map is `/usr/share/mios/llamacpp/llama-swap.yaml`. Two heavy GPU lanes — `mios-llm-heavy` (SGLang, `:11441`) and `mios-llm-heavy-alt` (vLLM) — are gated off by default on VRAM grounds. The engines speak the OpenAI/Ollama-compatible API, so any OpenAI-API client talks to them unchanged; those are legitimate upstream references — the MiOS *unit identity* is `mios-llm-light`, not a hosted service. (These lanes live in `mios.git`; this repo configures the model/endpoint that points at them.)
 

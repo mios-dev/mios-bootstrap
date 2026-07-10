@@ -86,11 +86,11 @@ to them unchanged.
 
 | Variable | Default | Description |
 |---|---|---|
-| `MIOS_AI_ENDPOINT` | `http://localhost:8080/v1` | The single OpenAI-compatible base URL every agent/tool targets (LAW 5). No vendor-cloud URLs. |
+| `MIOS_AI_ENDPOINT` | `http://localhost:8642/v1` | The single OpenAI-compatible base URL every agent/tool targets (LAW 5). No vendor-cloud URLs. |
 | `MIOS_AI_MODEL` | `gemma4:12b` | Default inference model id (auto-selected by host RAM from `mios.toml [ai.host_thresholds]`) |
 | `MIOS_AI_EMBED_MODEL` | `nomic-embed-text` | Embedding model id — served by `mios-llm-light`'s `/v1/embeddings` lane; backs pgvector recall |
 | `MIOS_AI_KEY` | `` | API key (empty = no auth; the local stack requires none) |
-| `MIOS_AI_PORT` | `8080` | Service port for the unified `MIOS_AI_ENDPOINT` contract |
+| `MIOS_AI_PORT` | `8642` | Service port for the unified `MIOS_AI_ENDPOINT` contract |
 
 > **Note.** `MIOS_AI_ENDPOINT`/`MIOS_AI_PORT` name the *unified contract*
 > endpoint (Law 5). The underlying inference lanes — `mios-llm-light` on

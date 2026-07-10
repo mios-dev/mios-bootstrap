@@ -1,5 +1,5 @@
 # AI-hint: Machine-readable repository index (llms.txt) for mios-bootstrap — the user-facing installer + AI/knowledge layer of MiOS. Orients an LLM/agent to what MiOS IS (an immutable bootc/OCI Fedora workstation that is also a local, self-replicating agentic AI OS), what this repo contributes to that whole (Phase 0..4 installer, three-layer profile overlay, deployed AI assets), the OpenAI-compatible endpoint contract (Architectural Law 5), and where the canonical files live.
-# AI-related: mios-dev, mios-bootstrap, Get-MiOS.ps1, build-mios.sh, install.sh, install.ps1, etc/mios/profile.toml, usr/share/mios/ai/system.md, http://localhost:8080/v1
+# AI-related: mios-dev, mios-bootstrap, Get-MiOS.ps1, build-mios.sh, install.sh, install.ps1, etc/mios/profile.toml, usr/share/mios/ai/system.md, MIOS_AI_ENDPOINT
 # mios-dev/mios-bootstrap
 
 > Machine-readable index for `mios-bootstrap` v0.2.0 — the **interactive
@@ -147,7 +147,7 @@ but the *engines* are `llama.cpp`/SGLang/vLLM, not a hosted service.
 
 ## Standards
 
-- OpenAI REST API v1 at `http://localhost:8080/v1` (`MIOS_AI_ENDPOINT`; no vendor-cloud endpoints, no vendor-specific agent/dev-tool product names)
+- OpenAI REST API v1 via `MIOS_AI_ENDPOINT` (no vendor-cloud endpoints, no vendor-specific agent/dev-tool product names)
 - Linux FHS 3.0 and XDG Base Directory spec
 - systemd / Podman Quadlet (unprivileged)
 - bootc / OCI image format
@@ -158,7 +158,7 @@ but the *engines* are `llama.cpp`/SGLang/vLLM, not a hosted service.
 2. **NO-MKDIR-IN-VAR** — every `/var/` path declared via `usr/lib/tmpfiles.d/*.conf`; never written at build time.
 3. **BOUND-IMAGES** — every Quadlet image symlinked into `/usr/lib/bootc/bound-images.d/` and baked into the image (the AI containers ship *inside* the host).
 4. **BOOTC-CONTAINER-LINT** — final `RUN` of the `Containerfile`. Fail the lint, fail the build.
-5. **UNIFIED-AI-REDIRECTS** — every agent/tool targets `MIOS_AI_ENDPOINT` (default `http://localhost:8080/v1`). No vendor-hardcoded URLs.
+5. **UNIFIED-AI-REDIRECTS** — every agent/tool targets `MIOS_AI_ENDPOINT`. No vendor-hardcoded URLs.
 6. **UNPRIVILEGED-QUADLETS** — every Quadlet declares `User=`, `Group=`, `Delegate=yes`. Documented exceptions: `mios-ceph`, `mios-k3s`, `mios-forgejo-runner` (rationale in their headers).
 
 Laws 1–4 keep the image deterministic, atomic, and self-contained so bootc

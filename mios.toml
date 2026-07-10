@@ -357,7 +357,7 @@ expose   = ["forge_http", "open_webui", "hermes", "searxng", "cockpit", "llm_lig
 # MIOS_SYSTEM_PROMPT_FILE, MIOS_MCP_REGISTRY.
 # ----------------------------------------------------------------------------
 [ai]
-endpoint            = "http://localhost:8080/v1"
+endpoint            = "http://localhost:8642/v1"
 model               = "qwen3.5:2b"
 embed_model         = "nomic-embed-text"
 api_key             = ""                # empty for localhost; cloud needs a key

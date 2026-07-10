@@ -210,8 +210,8 @@ local agent stack loads it for chat completions.
 ## 11. Endpoint contract (OpenAI-compatible)
 
 Architectural Law 5 (**UNIFIED-AI-REDIRECTS**) — every OpenAI-API-shaped
-client on the system resolves through `MIOS_AI_ENDPOINT`
-(default `http://localhost:8080/v1`), `MIOS_AI_MODEL`, `MIOS_AI_KEY`.
+client on the system resolves through `MIOS_AI_ENDPOINT`,
+`MIOS_AI_MODEL`, `MIOS_AI_KEY`.
 **No vendor-cloud URLs. No vendor-specific agent / dev-tool product names
 anywhere.** This is what lets any OpenAI-API-compatible editor/CLI client
 talk to the same local brain with no vendor lock-in.

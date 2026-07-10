@@ -17,7 +17,7 @@ language        = "en_US.UTF-8"
 
 [ai]
 # Per-user AI overrides. `endpoint` MUST stay on localhost (LAW 5).
-endpoint = "http://localhost:8080/v1"
+endpoint = "http://localhost:8642/v1"
 model    = "default"
 api_key  = ""
 

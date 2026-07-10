@@ -3,7 +3,7 @@
   "version": "0.2.2",
   "type": "bootc-immutable-os",
   "base": "Fedora CoreOS 44 + ucore-hci:stable-nvidia",
-  "ai_endpoint": "http://localhost:8080/v1",
+  "ai_endpoint": "http://localhost:8642/v1",
 
   "repos": {
     "system":    "https://github.com/mios-dev/MiOS",
@@ -59,7 +59,7 @@
     "NO-MKDIR-IN-VAR: every /var/ path declared via usr/lib/tmpfiles.d/*.conf",
     "BOUND-IMAGES: every Quadlet sidecar image symlinked in /usr/lib/bootc/bound-images.d/",
     "BOOTC-CONTAINER-LINT: RUN bootc container lint is the final Containerfile instruction",
-    "UNIFIED-AI-REDIRECTS: MIOS_AI_ENDPOINT/MODEL/KEY target http://localhost:8080/v1; zero vendor URLs in committed files",
+    "UNIFIED-AI-REDIRECTS: MIOS_AI_ENDPOINT/MODEL/KEY target http://localhost:8642/v1; zero vendor URLs in committed files",
     "UNPRIVILEGED-QUADLETS: every Quadlet defines User=, Group=, Delegate=yes; exceptions: mios-k3s.container, mios-ceph.container"
   ],
 
@@ -96,7 +96,7 @@
 
   "openai_api": {
     "spec": "OpenAI API v1 (LocalAI backend)",
-    "base_url": "http://localhost:8080/v1",
+    "base_url": "http://localhost:8642/v1",
     "env_var": "MIOS_AI_ENDPOINT",
     "endpoints": {
       "GET  /v1/models":             "list available models; static catalog at /usr/share/mios/ai/models.json",
@@ -106,7 +106,7 @@
       "GET  /v1/mcp":                "MCP tool registry; config at /usr/share/mios/ai/mcp.json"
     },
     "agent_env": {
-      "OPENAI_BASE_URL":  "http://localhost:8080/v1",
+      "OPENAI_BASE_URL":  "http://localhost:8642/v1",
       "OPENAI_API_KEY":   "not-required -- local endpoint accepts any non-empty value",
       "model":            "$MIOS_AI_MODEL (default: qwen2.5-coder:7b)",
       "embed_model":      "$MIOS_AI_EMBED_MODEL (default: nomic-embed-text)"
@@ -118,7 +118,7 @@
       "system":   "/usr/share/mios/ai/system.md"
     },
     "notes": [
-      "All MIOS_AI_* vars must resolve to http://localhost:8080/v1 -- no vendor endpoints in committed files",
+      "All MIOS_AI_* vars must resolve to http://localhost:8642/v1 -- no vendor endpoints in committed files",
       "Agent tools that accept OPENAI_BASE_URL work unmodified against this endpoint",
       "MCP server: /usr/bin/mios-status --mcp-mode (registered in mcp.json)"
     ]
@@ -136,10 +136,10 @@
     "MIOS_K3S_IMAGE":          "rancher/k3s:v1.32.1-k3s1",
     "MIOS_CEPH_VERSION":       "v18",
     "MIOS_CEPH_IMAGE":         "quay.io/ceph/ceph:v18",
-    "MIOS_AI_ENDPOINT":        "http://localhost:8080/v1",
+    "MIOS_AI_ENDPOINT":        "http://localhost:8642/v1",
     "MIOS_AI_MODEL":           "qwen2.5-coder:7b",
     "MIOS_AI_EMBED_MODEL":     "nomic-embed-text",
-    "MIOS_AI_PORT":            "8080",
+    "MIOS_AI_PORT":            "8642",
     "MIOS_QUADLET_SUBNET":     "10.89.0.0/24",
     "MIOS_SSH_PORT":           "22",
     "MIOS_COCKPIT_PORT":       "9090",
@@ -163,11 +163,11 @@
   },
 
   "ai_stack": {
-    "base_url":     "http://localhost:8080/v1",
+    "base_url":     "http://localhost:8642/v1",
     "model":        "qwen2.5-coder:7b",
     "embed_model":  "nomic-embed-text",
     "quadlet_unit": "mios-ai.container",
-    "port":         8080,
+    "port":         8642,
     "model_volume": "/srv/ai/models"
   },
 

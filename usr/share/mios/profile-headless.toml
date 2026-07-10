@@ -53,7 +53,7 @@ allow_cockpit          = true   # server management UI (9090/tcp) -- kept for he
 allow_libvirt_bridge   = true
 
 [ai]
-endpoint        = "http://localhost:8080/v1"
+endpoint        = "http://localhost:8642/v1"
 model           = "qwen3.5:2b"
 embed_model     = "nomic-embed-text"
 api_key         = ""

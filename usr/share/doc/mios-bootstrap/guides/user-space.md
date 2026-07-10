@@ -67,7 +67,7 @@ the AI fields below point at.
 | `[auth]` | `ssh_key_type` | `ed25519` |
 | `[auth]` | `ssh_key_action` | `generate` |
 | `[image]` | `ref` | `ghcr.io/mios-dev/mios:latest` |
-| `[ai]` | `endpoint` | `http://localhost:8080/v1` |
+| `[ai]` | `endpoint` | `http://localhost:8642/v1` |
 | `[ai]` | `model` | `qwen2.5-coder:7b` |
 | `[ai]` | `embed_model` | `nomic-embed-text` |
 

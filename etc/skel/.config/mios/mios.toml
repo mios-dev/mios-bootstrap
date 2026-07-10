@@ -25,7 +25,7 @@ language        = "en_US.UTF-8"
 [ai]
 # Per-user AI overrides. endpoint MUST stay on localhost (Architectural
 # Law 5: UNIFIED-AI-REDIRECTS). Postcheck #12 enforces this in active config.
-endpoint = "http://localhost:8080/v1"
+endpoint = "http://localhost:8642/v1"
 model    = "default"
 api_key  = ""
 

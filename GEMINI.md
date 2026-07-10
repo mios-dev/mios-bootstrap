@@ -1,5 +1,5 @@
-<!-- AI-hint: Per-tool entry stub for the Gemini CLI on the mios-bootstrap repo (the user-facing installer + user-editable layer of MiOS). Defers all agent identity to the canonical agent prompt (AGENTS.md -> /usr/share/mios/ai/system.md) and records only the Gemini-CLI delta: layered prompt loading order and the binding to the single OpenAI-compatible AI endpoint (MIOS_AI_ENDPOINT, default http://localhost:8080/v1) per Architectural Law 5. The endpoint fronts the local mios-llm-light inference lane, the agent-pipe/MiOS-Hermes orchestration, and PostgreSQL+pgvector memory.
-     AI-related: AGENTS.md, /usr/share/mios/ai/system.md, /etc/mios/ai/system-prompt.md, ~/.config/mios/system-prompt.md, MIOS_AI_ENDPOINT, http://localhost:8080/v1, usr/share/mios/llamacpp/llama-swap.yaml, mios-llm-light, mios-agent-pipe, mios-pgvector -->
+<!-- AI-hint: Per-tool entry stub for the Gemini CLI on the mios-bootstrap repo (the user-facing installer + user-editable layer of MiOS). Defers all agent identity to the canonical agent prompt (AGENTS.md -> /usr/share/mios/ai/system.md) and records only the Gemini-CLI delta: layered prompt loading order and the binding to the single OpenAI-compatible AI endpoint (MIOS_AI_ENDPOINT) per Architectural Law 5. The endpoint fronts the local mios-llm-light inference lane, the agent-pipe/MiOS-Hermes orchestration, and PostgreSQL+pgvector memory.
+     AI-related: AGENTS.md, /usr/share/mios/ai/system.md, /etc/mios/ai/system-prompt.md, ~/.config/mios/system-prompt.md, MIOS_AI_ENDPOINT, usr/share/mios/llamacpp/llama-swap.yaml, mios-llm-light, mios-agent-pipe, mios-pgvector -->
 # GEMINI.md
 
 > _`GEMINI.md` — per-tool stub for the **Gemini CLI** on `mios-bootstrap.git`.
@@ -54,7 +54,7 @@ override layer if present:
 ## Endpoint binding (Architectural Law 5)
 
 The Gemini CLI routes through the **same OpenAI-API-compatible endpoint as every
-other MiOS agent** — `MIOS_AI_ENDPOINT`, default `http://localhost:8080/v1` —
+other MiOS agent** — `MIOS_AI_ENDPOINT` —
 per **Architectural Law 5 (UNIFIED-AI-REDIRECTS)**: no agent or tool may hardcode
 a vendor URL or port; they all resolve this one endpoint. No
 `gemini.googleapis.com` endpoints; no proprietary protocols — function-calling

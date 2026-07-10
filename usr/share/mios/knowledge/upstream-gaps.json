@@ -112,7 +112,7 @@
 
   "openai_api_surface": {
     "description": "All AI API endpoints follow OpenAI v1 spec. No vendor-specific extensions.",
-    "base_url": "http://localhost:8080/v1",
+    "base_url": "http://localhost:8642/v1",
     "endpoints": {
       "GET /v1/models":              "static catalog from /usr/share/mios/ai/v1/models.json",
       "POST /v1/chat/completions":   "LocalAI container on MIOS_AI_PORT=8080",
