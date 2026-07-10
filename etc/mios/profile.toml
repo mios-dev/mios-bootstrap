@@ -126,7 +126,6 @@ mios-ai            = true
 mios-ceph          = true
 mios-k3s           = true
 mios-crowdsec-dashboard = true
-mios-ollama             = true
 mios-guacamole  = true
 mios-pxe-hub    = true
 mios-guacamole-postgres = true
