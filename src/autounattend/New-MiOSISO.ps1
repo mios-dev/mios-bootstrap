@@ -204,15 +204,13 @@ function Set-MiOSDebloatOffline {
     }
     if (-not (Test-Path $PolicyPath)) { Write-Host "[!] Debloat policy not found: $PolicyPath (skipped)." -ForegroundColor Yellow; return }
     $pol = Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json
+    # SOFTWARE + SYSTEM unload cleanly with a plain [gc]::Collect() (no user-hive .LOG
+    # transaction to flush). The per-user default_user array is handled SEPARATELY below
+    # against Users\Default\NTUSER.DAT with the proven handle-release procedure -- see the
+    # default_user block after the finally.
     $hives = @(
         @{ h = 'MIOS_SW';  f = (Join-Path $Mount 'Windows\System32\config\SOFTWARE') }
         @{ h = 'MIOS_SYS'; f = (Join-Path $Mount 'Windows\System32\config\SYSTEM') }
-        # NB: DO NOT offline-edit Users\Default\NTUSER.DAT here. Editing a USER hive
-        # inside a mounted WIM corrupts it (the NTUSER.DAT.LOG transaction is not flushed
-        # on dismount), so every profile created from Default fails to load -> "The User
-        # Profile Service service failed the sign-in." The per-user debloat intent is
-        # already covered by the machine-wide HKLM policies above + SetupComplete's LIVE
-        # guest-side Default-hive edit (safe: real registry, proper transactions).
     )
     $ok = @{}
     foreach ($x in $hives) { if (Test-Path $x.f) { & reg.exe load "HKLM\$($x.h)" $x.f 2>&1 | Out-Null; if ($LASTEXITCODE -eq 0) { $ok[$x.h] = $true } } }
@@ -221,7 +219,7 @@ function Set-MiOSDebloatOffline {
         $plan = @()
         if ($ok['MIOS_SW'])  { foreach ($e in @($pol.software))     { $plan += @{ h = 'MIOS_SW';  e = $e } } }
         if ($ok['MIOS_SYS']) { foreach ($e in @($pol.system))       { $plan += @{ h = 'MIOS_SYS'; e = $e } } }
-        # (default_user intentionally NOT applied offline -- see the hive list above.)
+        # (default_user is applied in its own pass after this finally -- see below.)
         foreach ($p in $plan) {
             $full = "HKLM\$($p.h)\$($p.e.key)"
             try {
@@ -239,7 +237,39 @@ function Set-MiOSDebloatOffline {
         [gc]::Collect()
         foreach ($h in $ok.Keys) { & reg.exe unload "HKLM\$h" 2>&1 | Out-Null }
     }
-    Write-Host "[*] Offline debloat applied ($applied policy ops): telemetry/AI/Copilot/consumer-features/OneDrive off + DiagTrack/dmwappushservice disabled." -ForegroundColor Cyan
+    # default_user: apply the per-user Content Delivery Manager / advertising-id / Bing-search
+    # debloat to the mounted Default NTUSER.DAT so EVERY account created at OOBE inherits a
+    # clean Start (this is what the JSON's default_user array was for -- it was previously
+    # dead). This is the SAME offline Default-hive edit Set-MiOSIdentityOffline performs a few
+    # steps later in this very servicing pass, and it is SAFE with the proven handle-release
+    # procedure (reg.exe + [gc]::Collect + [gc]::WaitForPendingFinalizers + Start-Sleep before
+    # unload, with a retry). The old "offline user-hive editing corrupts the profile" warning
+    # was PROCEDURAL (missing the flush/sleep), not inherent. Loaded/unloaded here in its own
+    # pass under a DISTINCT key (MIOS_DEFU) and sequentially before the identity-bake's own
+    # Default-hive load, so the two never overlap. Every op is idempotent + per-op non-fatal.
+    $du = @($pol.default_user)
+    $defHive = Join-Path $Mount 'Users\Default\NTUSER.DAT'
+    if ($du.Count -and (Test-Path $defHive)) {
+        & reg.exe load 'HKLM\MIOS_DEFU' $defHive 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            try {
+                foreach ($e in $du) {
+                    $full = "HKLM\MIOS_DEFU\$($e.key)"
+                    try {
+                        if ($e.delete) { & reg.exe delete $full /v $e.name /f 2>&1 | Out-Null }
+                        else { & reg.exe add $full /v $e.name /t $e.type /d "$($e.data)" /f 2>&1 | Out-Null }
+                        $applied++
+                    } catch {}
+                }
+            } finally {
+                [gc]::Collect(); [gc]::WaitForPendingFinalizers(); Start-Sleep -Seconds 3
+                & reg.exe unload 'HKLM\MIOS_DEFU' 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { [gc]::Collect(); Start-Sleep -Seconds 3; & reg.exe unload 'HKLM\MIOS_DEFU' 2>&1 | Out-Null }
+            }
+            Write-Host "    default_user debloat -> Default NTUSER.DAT ($($du.Count) CDM/ad-id/Bing-search ops; inherited by every OOBE account)" -ForegroundColor DarkGray
+        } else { Write-Host "    [!] could not load Default NTUSER.DAT (default_user debloat skipped -- non-fatal)" -ForegroundColor Yellow }
+    }
+    Write-Host "[*] Offline debloat applied ($applied policy ops): telemetry/AI/Copilot/consumer-features/OneDrive off + DiagTrack/dmwappushservice disabled + per-user CDM/ad-id/search cleaned in Default hive." -ForegroundColor Cyan
 }
 
 function Set-MiOSCustomDefaults {
@@ -872,6 +902,30 @@ function Invoke-MiOSImageServicing {
             Write-Host "    baked mios-remove-appx.txt ($($Removals.Appx.Count) tokens) beside SetupComplete.cmd" -ForegroundColor DarkGray
         }
         Write-Host "    Deep CBS component FILES can't be DISM-removed (of $($Removals.NtliteOnly) <c>; see dism-native-conversion-map.md) -- their telemetry/AI/consumer behaviour is killed by the offline debloat policy above." -ForegroundColor DarkGray
+        # DISM research gap P1 (component-store cleanup): reclaim the WinSxS bloat the
+        # offline appx/feature/capability removals above leave behind by compacting the
+        # component store (StartComponentCleanup) while the image is still mounted, BEFORE
+        # the Dismount -Save. On the non-native (-SourceIso) path the UUP converter did NO
+        # ResetBase, so add /ResetBase to shrink the store to a fresh baseline (fine for a
+        # FACTORY image -- see RISK note in the change record). On a native build the
+        # converter already ran /ResetBase, so this is skipped (mirrors the Stage-2 Export
+        # trim skip below). Runs against the mounted image with an explicit roomy local
+        # /ScratchDir on the work volume. NON-FATAL: any failure warns + continues so a
+        # cleanup hiccup can NEVER discard the fully-serviced image ($_serviced stays true).
+        if ((Get-Toml $Toml 'autounattend.component_cleanup' 'true') -notmatch '^(?i:true|1|yes)$') {
+            Write-Host "[*] Component-store cleanup disabled (SSOT autounattend.component_cleanup=false)." -ForegroundColor DarkGray
+        } elseif ($BuiltNative) {
+            Write-Host "[*] Component-store cleanup skipped -- native converter already ran /ResetBase." -ForegroundColor DarkGray
+        } else {
+            try {
+                $dismScratch = Join-Path (Split-Path $MediaRoot) 'dismscratch'
+                New-Item -ItemType Directory -Force -Path $dismScratch | Out-Null
+                Write-Host "[*] Component-store cleanup (DISM /Cleanup-Image /StartComponentCleanup /ResetBase) ..." -ForegroundColor Cyan
+                & dism.exe /Image:$mount /Cleanup-Image /StartComponentCleanup /ResetBase /ScratchDir:$dismScratch 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) { Write-Host "    WinSxS compacted + baseline reset (superseded updates now non-removable -- factory image)." -ForegroundColor Green }
+                else { Write-Host "    [!] component cleanup returned exit $LASTEXITCODE -- continuing (serviced image kept)." -ForegroundColor Yellow }
+            } catch { Write-Host "    [!] component cleanup skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0]) -- continuing (serviced image kept)." -ForegroundColor Yellow }
+        }
         $_serviced = $true   # reached only if every servicing step above succeeded
     } finally {
         # DISCARD on any error inside the try -- never COMMIT a half-serviced image
