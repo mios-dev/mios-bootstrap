@@ -6830,8 +6830,26 @@ if (Test-Path $RepoDir) {
             exit 1
         }
         Write-Good "Bootstrap clone updated to origin/$Branch in place at $RepoDir"
+    } elseif (@(Get-ChildItem -LiteralPath $RepoDir -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+        # Exists but EMPTY: a prior uninstall emptied it, yet a lingering WSL2 /
+        # minifilter handle can leave the now-empty dir undeletable (rmdir ->
+        # "device or resource busy", no Restart-Manager holder). git clone into
+        # an existing EMPTY dir succeeds, so don't abort the whole install over
+        # an empty leftover -- clone in place.
+        Write-Info "$RepoDir exists but is empty (undeletable leftover) -- cloning $RepoUrl into it in place ..."
+        $cr = $null
+        for ($_cattempt = 1; $_cattempt -le 3; $_cattempt++) {
+            $cr = Invoke-GitProc -ArgList @('clone','--branch',$Branch,'--depth','1',$RepoUrl,$RepoDir)
+            if ($cr.ExitCode -eq 0) { break }
+            if ($_cattempt -lt 3) { Start-Sleep -Seconds @(2,5,10)[$_cattempt-1] }
+        }
+        if ($cr.ExitCode -ne 0) {
+            Write-Err "git clone into empty $RepoDir failed (exit $($cr.ExitCode)). Stderr: $($cr.Stderr.Trim())"
+            exit 1
+        }
+        Write-Good "Fresh bootstrap clone into empty $RepoDir"
     } else {
-        Write-Err "$RepoDir exists but is not a git repository."
+        Write-Err "$RepoDir exists, is not a git repository, and is NOT empty."
         Write-Err "I won't delete it -- contents may be operator-managed. Either:"
         Write-Err "  - Move it aside:   Rename-Item `"$RepoDir`" `"$RepoDir.bak`""
         Write-Err "  - Or pass -RepoDir <other-path> to use a different target."
