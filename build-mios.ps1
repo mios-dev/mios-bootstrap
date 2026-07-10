@@ -4706,7 +4706,7 @@ done
 
 active=$($NS systemctl --no-legend list-units 'mios-*' 2>/dev/null | wc -l)
 echo "[quadlet-overlay] done -- $active mios-* units active"
-echo "[quadlet-overlay] Cockpit:        https://localhost:9090/  (host LAN reachable via mirrored networking)"
+echo "[quadlet-overlay] Cockpit:        https://localhost:__MIOS_COCKPIT_PORT__/  (host LAN reachable via mirrored networking)"
 echo "[quadlet-overlay] Podman Desktop: containers under MiOS-DEV machine carry openInBrowser labels"
 echo "[quadlet-overlay] Terminal:       Ptyxis flatpak ready -- launch via WSLg, default tab is host shell"
 echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for the local Ollama Quadlet"
@@ -4763,13 +4763,28 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
         agent_pipe       = 8640
         ttyd_bash        = 8681
         ttyd_powershell  = 8682
+        adguard_dns      = 53
+        adguard_ui       = 8053
+        crawl4ai         = 8235
+        firecrawl        = 8302
+        opencode_gateway = 8633
+        vllm             = 8441
+        sglang           = 8442
+        prefilter        = 8641
+        arbiter          = 8650
+        daemon_agent     = 8644
+        model_router     = 8645
+        oscontrol        = 8453
+        mcp              = 8460
     }
-    $_fwPortList = [System.Collections.Generic.List[int]]@(22, 53, 8053, 8235, 8302, 8633, 8441, 8442)
+    $_fwPortList = [System.Collections.Generic.List[int]]@(22)
     foreach ($_k in $_fwServicePorts.Keys) {
         $_fwPortList.Add([int](Get-MiosTomlValue -Section 'ports' -Key $_k -Default $_fwServicePorts[$_k]))
     }
     $_fwPortsStr = (($_fwPortList | Sort-Object -Unique) -join ' ')
     $overlayScript = $overlayScript -replace '__MIOS_FIREWALL_PORTS__', $_fwPortsStr
+    $cockpitPort = [int](Get-MiosTomlValue -Section 'ports' -Key 'cockpit' -Default 8090)
+    $overlayScript = $overlayScript -replace '__MIOS_COCKPIT_PORT__', $cockpitPort
 
     # __MIOS_LOGIN_PASSWORD__ -- the operator-facing dev-VM login (also
     # the credential Cockpit web at https://localhost:9090/ accepts).
@@ -8566,6 +8581,11 @@ Start-Phase 0
 $HW = Get-Hardware
 Write-Log "hw: CPU=$($HW.Cpus)  RAM=$($HW.RamGB)GB  Disk=$($HW.DiskGB)GB  GPU=$($HW.GpuName)"
 Write-Log "hw: Base=$($HW.BaseImage)  Model=$($HW.AiModel)"
+if ($HW.GpuName -eq "Unknown" -or $HW.GpuName -match "Microsoft Basic|Microsoft Hyper-V|Remote Display") {
+    Log-Warn "Host GPU driver is missing or basic (detected: '$($HW.GpuName)')."
+    Log-Warn "  -> To enable hardware acceleration inside WSL2/Podman, install official vendor drivers (NVIDIA/AMD/Intel)."
+    Log-Warn "  -> Without vendor drivers, the AI plane will silently degrade to CPU execution."
+}
 $gpuShort = $HW.GpuName -replace 'NVIDIA GeForce ','RTX ' -replace 'NVIDIA Quadro ','Quadro '
 $script:HWInfo    = "Host:$($env:COMPUTERNAME)  RAM:$($HW.RamGB)GB  CPU:$($HW.Cpus)c  GPU:$gpuShort  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')"
 $script:IdentInfo = "Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')  Model:$($HW.AiModel)"

@@ -80,6 +80,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Set TLS 1.2 explicitly for down-level/.NET-old hosts
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+} catch {}
+
 # Disable console QuickEdit immediately so an accidental click/select in the
 # (elevated) window can't freeze the installer on its next write -- Windows
 # "mark" mode blocks the process until Enter/Esc is pressed (a click
@@ -5159,16 +5164,68 @@ function Enable-MiOSWindowsFeatures {
     return [pscustomobject]@{ Status = 'ok'; RebootRequired = $false; HaltRequested = $false }
 }
 
+function Ensure-Git {
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        Write-Good "Git already installed ($((git --version) 2>&1))"
+        return
+    }
+    
+    $_gitPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'git_pkg' -Default 'Git.Git')
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Info "Installing Git via winget ($_gitPkg) ..."
+        & winget install --exact --id $_gitPkg `
+            --silent --accept-source-agreements --accept-package-agreements `
+            --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Info "Retrying Git winget install at user scope ..."
+            & winget install --exact --id $_gitPkg `
+                --silent --accept-source-agreements --accept-package-agreements 2>&1 |
+                ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        }
+    }
+    
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Info "winget install failed or unavailable. Attempting PortableGit direct download..."
+        $_gitUrl = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'git_url' -Default 'https://api.github.com/repos/git-for-windows/git/releases/latest')
+        try {
+            $rel = Invoke-RestMethod -Uri $_gitUrl -Headers @{'User-Agent'='mios-bootstrap'} -ErrorAction Stop
+            $asset = $rel.assets | Where-Object { $_.name -match '^PortableGit-.*-64-bit\.7z\.exe$' } | Select-Object -First 1
+            if (-not $asset) {
+                throw "No PortableGit 64-bit asset in latest release."
+            }
+            $sfx = Join-Path $env:TEMP "PortableGit-$(Get-Random).7z.exe"
+            Write-Info "Downloading PortableGit from $($asset.browser_download_url) ..."
+            $webClient = New-Object System.Net.WebClient
+            $webClient.DownloadFile($asset.browser_download_url, $sfx)
+            
+            $_root = Join-Path $env:LOCALAPPDATA 'MiOS'
+            $gitDir = Join-Path $_root 'PortableGit'
+            if (Test-Path $gitDir) { Remove-Item $gitDir -Recurse -Force -ErrorAction SilentlyContinue }
+            New-Item -ItemType Directory -Path $gitDir -Force | Out-Null
+            
+            Write-Info "Extracting PortableGit to $gitDir ..."
+            & $sfx "-o$gitDir" -y | Out-Null
+            Remove-Item $sfx -Force -ErrorAction SilentlyContinue
+            
+            $gitCmd = Join-Path $gitDir 'cmd'
+            if (Test-Path (Join-Path $gitCmd 'git.exe')) {
+                $_u = [Environment]::GetEnvironmentVariable('Path','User')
+                if (-not (($_u -split ';') | Where-Object { $_ -ieq $gitCmd })) {
+                    [Environment]::SetEnvironmentVariable('Path', "$_u;$gitCmd", 'User')
+                }
+                $env:PATH = "$env:PATH;$gitCmd"
+                Write-Good "PortableGit installed successfully."
+            }
+        } catch {
+            Write-Err "Direct PortableGit installation failed: $_"
+        }
+    }
+}
+
 function Ensure-PodmanDesktop {
     if (Get-Command podman -ErrorAction SilentlyContinue) {
         Write-Good "Podman already installed ($((podman --version) 2>&1))"
         return
-    }
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        Write-Err "winget not found and podman not installed."
-        Write-Err "  Install App Installer from the Microsoft Store, or install"
-        Write-Err "  Podman CLI manually via the installer from https://podman.io (or github.com/containers/podman/releases)"
-        exit 1
     }
     # Check if we should install Podman Desktop
     $_installDesktop = Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'install_podman_desktop' -Default $false
@@ -5176,38 +5233,40 @@ function Ensure-PodmanDesktop {
     elseif ($_installDesktop -eq 'false') { $_installDesktop = $false }
     if ($_installDesktop -isnot [bool]) { $_installDesktop = $false }
 
-    if ($_installDesktop) {
-        # Install Podman Desktop (the GUI). It bundles podman.exe inside its
-        # resources tree -- but does NOT put it on PATH by default.
-        # TOML-first -- Podman Desktop winget ID from mios.toml [bootstrap.prereqs].podman_pkg
-        $_podmanPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_pkg' -Default 'RedHat.Podman-Desktop')
-        Write-Info "Installing Podman Desktop via winget ($_podmanPkg) ..."
-        & winget install --exact --id $_podmanPkg `
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        if ($_installDesktop) {
+            # Install Podman Desktop (the GUI). It bundles podman.exe inside its
+            # resources tree -- but does NOT put it on PATH by default.
+            # TOML-first -- Podman Desktop winget ID from mios.toml [bootstrap.prereqs].podman_pkg
+            $_podmanPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_pkg' -Default 'RedHat.Podman-Desktop')
+            Write-Info "Installing Podman Desktop via winget ($_podmanPkg) ..."
+            & winget install --exact --id $_podmanPkg `
+                --silent --accept-source-agreements --accept-package-agreements `
+                --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+            if ($LASTEXITCODE -ne 0) {
+                Write-Info "Retrying winget install at user scope ..."
+                & winget install --exact --id $_podmanPkg `
+                    --silent --accept-source-agreements --accept-package-agreements 2>&1 |
+                    ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+            }
+        }
+        # ALWAYS install RedHat.Podman (the CLI MSI) -- this is what actually
+        # lays down podman.exe with PATH integration. Podman Desktop alone
+        # bundles the CLI internally but doesn't expose it on PATH; the
+        # standalone CLI package does. Idempotent: winget no-ops if already
+        # present.
+        # TOML-first -- Podman CLI MSI ID from mios.toml [bootstrap.prereqs].podman_cli_pkg
+        $_podmanCliPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_cli_pkg' -Default 'RedHat.Podman')
+        Write-Info "Installing Podman CLI via winget ($_podmanCliPkg) ..."
+        & winget install --exact --id $_podmanCliPkg `
             --silent --accept-source-agreements --accept-package-agreements `
             --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
         if ($LASTEXITCODE -ne 0) {
-            Write-Info "Retrying winget install at user scope ..."
-            & winget install --exact --id $_podmanPkg `
+            Write-Info "Retrying CLI winget install at user scope ..."
+            & winget install --exact --id $_podmanCliPkg `
                 --silent --accept-source-agreements --accept-package-agreements 2>&1 |
                 ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
         }
-    }
-    # ALWAYS install RedHat.Podman (the CLI MSI) -- this is what actually
-    # lays down podman.exe with PATH integration. Podman Desktop alone
-    # bundles the CLI internally but doesn't expose it on PATH; the
-    # standalone CLI package does. Idempotent: winget no-ops if already
-    # present.
-    # TOML-first -- Podman CLI MSI ID from mios.toml [bootstrap.prereqs].podman_cli_pkg
-    $_podmanCliPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_cli_pkg' -Default 'RedHat.Podman')
-    Write-Info "Installing Podman CLI via winget ($_podmanCliPkg) ..."
-    & winget install --exact --id $_podmanCliPkg `
-        --silent --accept-source-agreements --accept-package-agreements `
-        --scope machine 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Info "Retrying CLI winget install at user scope ..."
-        & winget install --exact --id $_podmanCliPkg `
-            --silent --accept-source-agreements --accept-package-agreements 2>&1 |
-            ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     }
 
     # Direct MSI download and silent installation fallback if winget failed/is missing
@@ -5215,7 +5274,8 @@ function Ensure-PodmanDesktop {
         Write-Info "winget install failed or unavailable. Attempting direct MSI download and install of Podman CLI..."
         $podmanVersion = "6.0.0"
         try {
-            $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/containers/podman/releases/latest" -UseBasicParsing -ErrorAction Stop
+            $podmanUrl = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_url' -Default 'https://api.github.com/repos/containers/podman/releases/latest')
+            $latestRelease = Invoke-RestMethod -Uri $podmanUrl -UseBasicParsing -ErrorAction Stop
             if ($latestRelease.tag_name -match '^v?([0-9\.]+)$') {
                 $podmanVersion = $Matches[1]
             }
@@ -5236,6 +5296,8 @@ function Ensure-PodmanDesktop {
             Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
         } catch {
             Write-Err "Direct MSI installation failed: $_"
+            Write-Err "  Please download and install Podman CLI manually via the setup/MSI from the official release page:"
+            Write-Err "  https://github.com/containers/podman/releases"
         }
     }
 
@@ -6126,6 +6188,20 @@ $_msgPodmanFailed   = Get-MiosTomlValue -Section 'messages.steps' -Key 'podman_s
 $_msgWingetRedirect = Get-MiosTomlValue -Section 'messages.steps' -Key 'winget_storage_redirect' -Default 'Redirecting winget package storage to M:\\winget\\* ...'
 $_msgWingetFailed   = Get-MiosTomlValue -Section 'messages.steps' -Key 'winget_storage_failed_template' -Default '[!] Set-WingetStorageOnM failed: {0}'
 
+# Install-robustness (B2): hardware-virtualization preflight. WSL2 +
+# `podman machine init` cannot start without VT-x/AMD-V (SVM) enabled in BIOS/
+# UEFI. Fail fast before Initialize-DataDisk (reboot/disk changes).
+try {
+    $_virtFw = $true; $_hyperv = $true
+    try { $_virtFw = [bool](Get-CimInstance Win32_Processor -EA Stop | Select-Object -First 1 -Expand VirtualizationFirmwareEnabled) } catch {}
+    try { $_hyperv = [bool](Get-CimInstance Win32_ComputerSystem -EA Stop).HypervisorPresent } catch {}
+    if (-not $_virtFw -and -not $_hyperv) {
+        Write-Err "Hardware virtualization is DISABLED -- WSL2 + podman machine cannot start."
+        Write-Err "  -> Enable Intel VT-x / AMD-V (SVM) in BIOS/UEFI, then re-run the bootstrap."
+        exit 1
+    }
+} catch {}
+
 Write-Host ''
 Write-Host "  $_msgStep0" -ForegroundColor Cyan
 try { Initialize-DataDisk } catch { Write-Host ('  ' + ($_msgStep0Failed -f $_.Exception.Message)) -ForegroundColor Yellow }
@@ -6261,6 +6337,12 @@ if ($true) {
         Set-ItemProperty -Path $personalize -Name 'AppsUseLightTheme'    -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
         Set-ItemProperty -Path $personalize -Name 'SystemUsesLightTheme' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
         Set-ItemProperty -Path $personalize -Name 'ColorPrevalence'      -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+
+        # Enable LongPathsEnabled for path compatibility
+        $fileSystemPath = 'HKLM:\System\CurrentControlSet\Control\FileSystem'
+        if (Test-Path $fileSystemPath) {
+            Set-ItemProperty -Path $fileSystemPath -Name 'LongPathsEnabled' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+        }
 
         # Use reg.exe directly. Both Set-ItemProperty -Type DWord AND
         # .NET Microsoft.Win32.RegistryKey.SetValue('DWord') reject
@@ -6556,6 +6638,7 @@ Write-Host "------------------------------------" -ForegroundColor Cyan
 # RedHat.Podman-Desktop unattended without bouncing the operator out
 # to a browser. Latest stable (per memory: target latest) -- no
 # version pin, winget picks whatever the manifest currently advertises.
+Ensure-Git
 Require-Cmd "git"    "Install Git from https://git-scm.com/download/win"
 Ensure-PodmanDesktop
 Write-Good "Prerequisites OK (git, podman)"

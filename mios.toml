@@ -220,16 +220,22 @@ hub_shortcut_name    = "MiOS"
 # MIOS_USER_GROUPS.
 # ----------------------------------------------------------------------------
 [identity]
-username  = "mios"
-fullname  = "MiOS User"
-hostname  = "mios"
+username  = "user"
+fullname  = "User"
+hostname  = "user"
 shell     = "/bin/bash"
 groups    = ["wheel", "libvirt", "kvm", "video", "render", "input", "dialout", "docker"]
 # Vendor default first-boot credential. The autounattend accounts + the mios-svc
 # service account resolve to this (rotate on first run -- an answer-file/task cred
 # is temporary). Referenced by [autounattend.service].svc_password and the account
 # defaults; defining it here makes that SSOT chain resolve (was a dangling ref).
-default_password = "mios"
+default_password = "user"
+
+# ----------------------------------------------------------------------------
+# [accounts] -- DB-backed account control plane (T-151/T-152)
+# ----------------------------------------------------------------------------
+[accounts]
+db_backed = true
 
 # ----------------------------------------------------------------------------
 # [locale] -- system-wide defaults applied via systemd-localed at first boot.
@@ -326,7 +332,7 @@ prefilter          = 8641    # mios-delegation-prefilter: conversational-bypass 
 arbiter            = 8650    # mios-policy-arbiter: risk-tier arbiter (verb/risk allow-list enforcer). LOOPBACK only. (Mirrors agent.arbiter_port; SSOT migrated here for port-table completeness.)
 daemon_agent       = 8644    # mios-daemon-agent: background inference worker lane (low-priority; CPU-affined). LOOPBACK only.
 model_router       = 8645    # mios-model-router: internal model-selection micro-router (routes by modality/task). LOOPBACK only.
-oscontrol          = 8453    # mios-oscontrol-server: Windows-side UI Automation / PowerShell executor (HTTP gate; mios-computer-use-server mirrors protocol). LOOPBACK only.
+oscontrol          = 11437   # mios-oscontrol-server: Windows-side UI Automation / PowerShell executor (HTTP gate; mios-computer-use-server mirrors protocol). LOOPBACK only.
 mcp                = 8460    # MCP host server (/mcp + A2A /.well-known; served by hermes-agent). LOOPBACK only. (Matches [agent].server_port when that key is absent.)
 
 # [ports.lan_firewall] -- Windows Firewall rule scope for the ports above.
@@ -854,6 +860,8 @@ pkgs = [
     "setools-console",
     "cosign",
     "iptables-legacy",
+    "libnss-pgsql2",
+    "pam_pgsql",
 ]
 
 [packages.gaming]
@@ -1174,6 +1182,9 @@ base_image        = "quay.io/podman/machine-os:latest"
 install_podman_desktop = false
 podman_pkg             = "RedHat.Podman-Desktop"
 podman_cli_pkg         = "RedHat.Podman"
+git_pkg                = "Git.Git"
+git_url                = "https://api.github.com/repos/git-for-windows/git/releases/latest"
+podman_url             = "https://api.github.com/repos/containers/podman/releases/latest"
 
 [bootstrap.autostart]
 enable                 = true
@@ -1367,9 +1378,9 @@ loopback_adapter  = false   # install a Microsoft KM-TEST loopback NIC (niche; o
 onlogon_fallback  = true    # register a proven-specialize-pass ONLOGON task that re-applies identity+remote if Setup skips SetupComplete on 26xxx
 
 [[autounattend.accounts]]
-name = "mios"
-password = "mios"
-display_name = "MiOS User"
+name = "user"
+password = "user"
+display_name = "User"
 group = "Administrators"
 
 [autounattend.layout]

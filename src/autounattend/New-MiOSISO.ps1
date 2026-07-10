@@ -774,7 +774,7 @@ function Invoke-MiOSImageServicing {
         # ONSTART task (registered by the autounattend) finds it pre-logon.
         $hostDst = Join-Path $mount 'ProgramData\MiOS'
         New-Item -ItemType Directory -Force -Path $hostDst | Out-Null
-        foreach ($stage in 'MiOS-Host.ps1','MiOS-XBOX-Hydrate.ps1','MiOS-Daemon.ps1','MiOS-FirstBoot.ps1') {
+        foreach ($stage in 'MiOS-Host.ps1','MiOS-XBOX-Hydrate.ps1','MiOS-Daemon.ps1','MiOS-FirstBoot.ps1','MiOS-AccountSync.ps1') {
             $src = Join-Path $PSScriptRoot $stage
             if (Test-Path $src) { Copy-Item $src (Join-Path $hostDst $stage) -Force; Write-Host "    staged $stage -> image ProgramData\MiOS" -ForegroundColor DarkGray }
         }

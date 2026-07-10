@@ -186,6 +186,13 @@ function New-MiOSAutounattendXml {
     [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>{1}</CommandLine><Description>Custom FirstLogon defaults</Description></SynchronousCommand>' -f $_flOrd, [Security.SecurityElement]::Escape($flCmd)))
     $_flOrd++
 
+    # Expire passwords of all local interactive/non-service accounts to force rotation on next logon
+    $svcUser = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-sudo'
+    $expireCmd = 'powershell.exe -NoProfile -Command "Get-LocalUser | Where-Object { $_.Name -ne ''Administrator'' -and $_.Name -ne ''' + $svcUser + ''' -and $_.Name -ne ''Guest'' -and $_.Name -ne ''DefaultAccount'' -and $_.Name -ne ''WDAGUtilityAccount'' } | Set-LocalUser -PasswordExpired $true"'
+    [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>{1}</CommandLine><Description>Expire first-boot temporary passwords</Description></SynchronousCommand>' -f $_flOrd, [Security.SecurityElement]::Escape($expireCmd)))
+    $_flOrd++
+
+
     if ($runBootstrap) {
         # Escape $bootUrl -- an SSOT override with '&' would otherwise break the XML.
         $_url = [Security.SecurityElement]::Escape($bootUrl)

@@ -59,9 +59,9 @@ esac
 # load_profile_defaults() below parses the TOML on-the-fly with sed/grep so
 # we don't pull in any TOML library at install time.
 # ============================================================================
-DEFAULT_USER="mios"
-DEFAULT_HOST="mios"
-DEFAULT_USER_FULLNAME="MiOS User"
+DEFAULT_USER="user"
+DEFAULT_HOST="user"
+DEFAULT_USER_FULLNAME="User"
 DEFAULT_USER_SHELL="/bin/bash"
 DEFAULT_USER_GROUPS="wheel,libvirt,kvm,video,render,input,dialout,docker"
 DEFAULT_SSH_KEY_TYPE="ed25519"

@@ -498,7 +498,8 @@ function Configure-MiosBrowserAI {
         return
     }
     $pkg         = "$(Get-MiosTomlValue -Section 'browser_ai' -Key 'package' -Default 'Zen-Team.Zen-Browser.Twilight')"
-    $providerUrl = "$(Get-MiosTomlValue -Section 'browser_ai' -Key 'provider_url' -Default 'http://localhost:8033')"
+    $owuiPort    = [int](Get-MiosTomlValue -Section 'ports' -Key 'open_webui' -Default 8033)
+    $providerUrl = "$(Get-MiosTomlValue -Section 'browser_ai' -Key 'provider_url' -Default "http://localhost:$owuiPort")"
     $prefStrings = @(Get-MiosTomlValue -Section 'browser_ai' -Key 'prefs' -Default @(
         'browser.ml.chat.enabled|bool|true',
         'browser.ml.chat.hideLocalhost|bool|false',

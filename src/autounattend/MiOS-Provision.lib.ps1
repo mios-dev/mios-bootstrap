@@ -274,7 +274,7 @@ function New-MiOSHostServiceCommands {
     $svcUser  = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-sudo'
     # Service-account password: SSOT service key, else the global default_password.
     # An answer-file credential is a first-boot temporary cred (rotate on first run).
-    $svcPass  = Get-Toml $Toml 'autounattend.service.svc_password' (Get-Toml $Toml 'identity.default_password' 'mios')
+    $svcPass  = Get-Toml $Toml 'autounattend.service.svc_password' (Get-Toml $Toml 'identity.default_password' 'user')
     $script   = Get-Toml $Toml 'autounattend.service.host_script' 'C:\ProgramData\MiOS\MiOS-Host.ps1'
 
     # 1) WSL2 platform feature (the only OC strictly required for the MiOS brain).
@@ -323,6 +323,13 @@ function New-MiOSHostServiceCommands {
         $daemon = Get-Toml $Toml 'autounattend.daemon.script' 'C:\ProgramData\MiOS\MiOS-Daemon.ps1'
         $dtr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $daemon
         $cmds.Add(('schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $dtr))
+    }
+
+    # 4c) Register the MiOS-AccountSync scheduled task if accounts.db_backed is enabled.
+    if ((Get-Toml $Toml 'accounts.db_backed' 'false') -match '^(?i:true|1|yes)$') {
+        $syncScript = 'C:\ProgramData\MiOS\MiOS-AccountSync.ps1'
+        $strCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $syncScript
+        $cmds.Add(('schtasks /create /tn "MiOS-AccountSync" /sc MINUTE /mo 1 /rl HIGHEST /ru "SYSTEM" /tr "{0}" /f' -f $strCmd))
     }
 
     # 5) MiOS-XBOX HYDRATION: install the Store-delivered gaming runtime the WU-stripped

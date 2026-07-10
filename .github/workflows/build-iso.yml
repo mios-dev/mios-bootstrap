@@ -1,0 +1,62 @@
+name: build-iso
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate-windows:
+    runs-on: windows-2025
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify PowerShell script syntax
+        shell: pwsh
+        run: |
+          Get-ChildItem -Filter *.ps1 -Recurse | ForEach-Object {
+              Write-Host "Checking syntax of: $($_.FullName)"
+              $contents = Get-Content -LiteralPath $_.FullName -Raw
+              $null = [System.Management.Automation.Language.Parser]::ParseInput($contents, [ref]$null, [ref]$null)
+          }
+
+      - name: Install Windows ADK (oscdimg)
+        shell: powershell
+        run: |
+          # Download and install the ADK Deployment Tools (contains oscdimg)
+          $url = "https://go.microsoft.com/fwlink/?linkid=2271338" # ADK for Windows 11 24H2/25H2
+          $adkInstaller = Join-Path $env:TEMP "adksetup.exe"
+          Write-Host "Downloading ADK installer from $url ..."
+          Invoke-WebRequest -Uri $url -OutFile $adkInstaller
+          Write-Host "Installing ADK Deployment Tools ..."
+          Start-Process $adkInstaller -ArgumentList "/features OptionId.DeploymentTools /quiet /norestart" -Wait
+          Write-Host "ADK Deployment Tools installed."
+
+      - name: Run New-MiOSAutounattend XML Generation
+        shell: pwsh
+        run: |
+          cd src/autounattend
+          ./New-MiOSAutounattend.ps1 -TomlPath ../../mios.toml -OutXml ./autounattend.xml
+
+      - name: Verify Generated autounattend.xml
+        shell: pwsh
+        run: |
+          cd src/autounattend
+          if (-not (Test-Path ./autounattend.xml)) {
+              throw "autounattend.xml was not generated!"
+          }
+          [xml]$xml = Get-Content ./autounattend.xml
+          Write-Host "autounattend.xml is well-formed XML."
+
+  validate-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Lint shell scripts
+        run: |
+          find . -name "*.sh" | xargs -I {} bash -n {}

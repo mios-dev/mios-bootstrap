@@ -1,4 +1,4 @@
-﻿# AI-hint: The primary entry point for Windows environment provisioning; it automates preflight checks, Podman machine setup, disk partitioning, and local MiOS installation to prepare the local dev environment.
+# AI-hint: The primary entry point for Windows environment provisioning; it automates preflight checks, Podman machine setup, disk partitioning, and local MiOS installation to prepare the local dev environment.
 # AI-related: mios-dev, mios-bootstrap
 #Requires -Version 5.1
 <#
@@ -72,8 +72,9 @@ if (Test-Path $target) {
 }
 
 # Running piped via irm | iex -- $PSScriptRoot is empty. Fetch the
-# canonical build-mios.ps1 from the same branch and dot-source it.
-$url = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/build-mios.ps1"
+# canonical Get-MiOS.ps1 from the same branch and dot-source it to ensure
+# WT staging + elevation + M:\ partitioning are applied.
+$url = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1"
 # Install-robustness retry the fetch 3x with backoff + cache-bust +
 # body validation. A single transient network failure here otherwise killed the
 # whole irm|iex bootstrap with a bare Invoke-RestMethod exception (the canonical
@@ -86,14 +87,17 @@ for ($_a = 1; $_a -le 3; $_a++) {
         if ($src -and $src.Length -gt 200) { break }
         $src = $null
     } catch {
-        Write-Warning ("[mios] build-mios.ps1 fetch attempt {0} failed: {1}" -f $_a, $_.Exception.Message)
+        Write-Warning ("[mios] Get-MiOS.ps1 fetch attempt {0} failed: {1}" -f $_a, $_.Exception.Message)
     }
     if ($_a -lt 3) { Start-Sleep -Seconds (@(2,5,10)[$_a-1]) }
 }
 if (-not $src) {
-    [Console]::Error.WriteLine("[mios] FATAL: could not fetch build-mios.ps1 from $url after 3 attempts. Check your network and re-run: irm .../bootstrap.ps1 | iex")
+    [Console]::Error.WriteLine("[mios] FATAL: could not fetch Get-MiOS.ps1 from $url after 3 attempts. Check your network and re-run: irm .../bootstrap.ps1 | iex")
     exit 1
 }
+$forwardArgs = @()
+if ($FullBuild)  { $forwardArgs += '-FullBuild' }
+if ($Unattended) { $forwardArgs += '-Unattended' }
 $sb  = [scriptblock]::Create($src)
 & $sb @forwardArgs
 exit $LASTEXITCODE

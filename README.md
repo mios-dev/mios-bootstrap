@@ -145,6 +145,14 @@ The installer:
    uid ≥ 1000 home from `/etc/skel/.config/mios/`.
 5. **Phase-4** -- reboot prompt.
 
+## Offline / Air-Gapped and Proxy Support
+
+The MiOS bootstrap installer has built-in support for offline/air-gapped and proxied environments:
+- **System Proxy**: If your host is behind a system proxy, `Get-MiOS.ps1` (via `Invoke-WebRequest` / `Invoke-RestMethod` using `-UseBasicParsing`), `git` clones, and `winget` packages will respect the standard Windows system proxy settings.
+- **Offline Fallbacks**: When internet access is unavailable or limited, the installer automatically falls back to direct download/offline setups. For instance:
+  - If `winget` is missing or fails, a direct MSI/executable installation is attempted for prerequisites like Git and Podman CLI.
+  - Pre-seeded local packages and offline configuration are utilized where possible to minimize external network requests during initial provisioning.
+
 ## Profile resolution
 
 Identity and tunables flow from one TOML with three layers, higher
