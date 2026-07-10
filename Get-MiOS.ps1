@@ -783,7 +783,7 @@ function Invoke-MiOSAgreementGate {
         $isLast = ($p -eq $pages.Count - 1)
         $pageNum = $p + 1
         $subt = "Project Acknowledgement (page $pageNum of $($pages.Count))"
-        Clear-Host
+        try { Clear-Host } catch {}
         # Re-center the conhost window on the OPERATOR'S active monitor
         # captured at gate entry. Without this, conhost drifts a few
         # pixels per Clear-Host (font cache / DPI renegotiation).
@@ -4576,7 +4576,7 @@ function mios-dash {
         try { & podman info --format '  Hostname:   {{.Host.Hostname}}
   Server OS:  {{.Host.OS}}
   CPUs:       {{.Host.CPUs}}
-  Memory:     {{.Host.MemTotal}} bytes' 2>$null } catch {}
+  Memory:     {{.Host.MemTotal}} bytes' 2>`$null } catch {}
     } else {
         Write-Host '  [podman not on PATH]' -ForegroundColor DarkGray
     }
@@ -5039,9 +5039,20 @@ function Enable-MiOSWindowsFeatures {
         try {
             $state = Get-WindowsOptionalFeature -Online -FeatureName $name -ErrorAction Stop
         } catch {
-            # Feature not present on this Windows edition (e.g. Hyper-V
-            # absent on Home). Continue with the rest.
-            Write-Host "  [-] $label not available on this Windows edition -- skipping." -ForegroundColor DarkGray
+            # Get-WindowsOptionalFeature threw. Either the feature genuinely
+            # isn't on this edition (e.g. Hyper-V on Home), OR the legacy
+            # optional-feature name no longer exists because WSL is now
+            # Store-distributed (WSL 2.x MSIX needs only VirtualMachinePlatform,
+            # not the deprecated 'Microsoft-Windows-Subsystem-Linux' feature).
+            # If wsl.exe already works, the substrate is satisfied regardless
+            # of optional-feature state -- don't emit a scary "not available".
+            $_wslOk = $false
+            try { & wsl.exe --version *> $null; if ($LASTEXITCODE -eq 0) { $_wslOk = $true } } catch {}
+            if ($_wslOk -and ($name -like '*Subsystem-Linux*')) {
+                Write-Host "  [+] $label satisfied (wsl.exe present; Store-based WSL needs no optional feature)." -ForegroundColor DarkGray
+            } else {
+                Write-Host "  [-] $label not available on this Windows edition -- skipping." -ForegroundColor DarkGray
+            }
             continue
         }
         if ($state.State -eq 'Enabled') {
@@ -6656,7 +6667,7 @@ try {
 # create M:\ before Pass-1 stages files). Their original definitions
 # moved up; this section header retained for orientation.
 
-Clear-Host
+try { Clear-Host } catch {}
 Write-Host "MiOS Bootstrap (irm | iex web entry)" -ForegroundColor Cyan
 Write-Host "------------------------------------" -ForegroundColor Cyan
 
