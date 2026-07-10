@@ -344,6 +344,15 @@ function Set-MiOSIdentityOffline {
         $bmp.Save((Join-Path $webDir 'mios-wallpaper.jpg'),[System.Drawing.Imaging.ImageFormat]::Jpeg)
         $lg = New-Object System.Drawing.Bitmap(120,120); $lgx = [System.Drawing.Graphics]::FromImage($lg); $lgx.Clear($c2); $lg.Save((Join-Path $webDir 'mios-logo.bmp'),[System.Drawing.Imaging.ImageFormat]::Bmp)
         $gfx.Dispose(); $bmp.Dispose(); $lgx.Dispose(); $lg.Dispose(); Write-Host "    wallpaper + logo -> Windows\Web\MiOS" -ForegroundColor DarkGray
+        
+        # Stage the compiled wallpaper executables and WebView2 DLLs into the offline image
+        $hostWebDir = "C:\Windows\Web\MiOS"
+        if (Test-Path $hostWebDir) {
+            Get-ChildItem -Path $hostWebDir -Include *.exe, *.dll, *.html, *.cs -File | ForEach-Object {
+                Copy-Item $_.FullName (Join-Path $webDir $_.Name) -Force
+            }
+            Write-Host "    staged wallpaper service binaries and DLLs into the image offline" -ForegroundColor Green
+        }
     } catch { Write-Host "    [!] wallpaper/logo skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
 
     # --- Geist Mono Nerd Font: download, stage to Windows\Fonts, register offline (HKLM) ---

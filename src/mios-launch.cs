@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -12,6 +14,11 @@ class MiOSLaunch {
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L,T,R,B; }
 
     static int Main(string[] args) {
@@ -61,8 +68,7 @@ class MiOSLaunch {
         DateTime deadline = DateTime.UtcNow.AddMilliseconds(8000);
         while (DateTime.UtcNow < deadline && hwnd == IntPtr.Zero) {
             try {
-                var ps = Process.GetProcessesByName("WindowsTerminal").Where(p => p.StartTime.ToUniversalTime() >= spawnAt.AddSeconds(-1)).OrderByDescending(p => p.StartTime).FirstOrDefault();
-                if (ps != null && ps.MainWindowHandle != IntPtr.Zero && IsWindowVisible(ps.MainWindowHandle)) hwnd = ps.MainWindowHandle;
+                hwnd = FindMiosTerminalWindow();
             } catch {}
             if (hwnd == IntPtr.Zero) Thread.Sleep(150);
         }
@@ -83,5 +89,39 @@ class MiOSLaunch {
             Thread.Sleep(500);
         }
         return 0;
+    }
+
+    static IntPtr FindMiosTerminalWindow() {
+        IntPtr foundHwnd = IntPtr.Zero;
+        var processes = Process.GetProcessesByName("WindowsTerminal");
+        if (processes.Length == 0) return IntPtr.Zero;
+        
+        var pids = new HashSet<uint>(processes.Select(p => (uint)p.Id));
+
+        EnumWindows((h, _) => {
+            if (IsWindowVisible(h)) {
+                uint pid;
+                GetWindowThreadProcessId(h, out pid);
+                if (pids.Contains(pid)) {
+                    StringBuilder className = new StringBuilder(256);
+                    GetClassName(h, className, 256);
+                    if (className.ToString() == "CASCADIA_HOSTING_WINDOW_CLASS") {
+                        StringBuilder text = new StringBuilder(256);
+                        GetWindowText(h, text, 256);
+                        string title = text.ToString();
+                        if (title.Contains("MiOS")) {
+                            foundHwnd = h;
+                            return false; // stop enumeration
+                        }
+                        if (foundHwnd == IntPtr.Zero) {
+                            foundHwnd = h;
+                        }
+                    }
+                }
+            }
+            return true; // continue
+        }, IntPtr.Zero);
+
+        return foundHwnd;
     }
 }
