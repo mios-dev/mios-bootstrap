@@ -57,8 +57,6 @@ endpoint        = "http://localhost:8642/v1"
 model           = "qwen3.5:2b"
 embed_model     = "nomic-embed-text"
 api_key         = ""
-enable_ollama   = true
-enable_localai  = true
 mcp_registry    = "/usr/share/mios/ai/mcp.json"
 
 #------------------------------------------------------------------------------

@@ -100,7 +100,7 @@ what you edit to steer that pipeline without touching the engines.
 | `[identity]` | `username`, `fullname`, `hostname`, `shell`, `groups` |
 | `[locale]` | `timezone`, `keyboard_layout`, `language` |
 | `[auth]` | `ssh_key_action`, `password_policy`, `github_pat` |
-| `[ai]` | `endpoint`, `model`, `embed_model`, `enable_localai` |
+| `[ai]` | `endpoint`, `model`, `embed_model` |
 | `[desktop]` | `session`, `color_scheme`, `flatpaks` |
 | `[image]` | `ref`, `branch` (bootc switch target) |
 | `[bootstrap]` | `mode` (`auto`/`bootc`/`fhs`), repo URLs, `reboot_on_finish` |
