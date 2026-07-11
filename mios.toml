@@ -464,16 +464,19 @@ flatpaks      = [
     # ── Developer (FOSS rebuild of VS Code; only IDE shipped globally) ──
     "com.vscodium.codium",                             # VSCodium (replaces removed VSCodium RPM)
     # ── Virt GUI front-ends (libvirt/qemu daemons stay as RPMs) ──
-    "org.virt_manager.Manager",                        # virt-manager (replaces RPM)
+    # NOTE: "org.virt_manager.Manager" removed 2026-07 -- virt-manager has
+    # no official Flathub app; every non-interactive install of it fails.
+    # Use the virt-manager RPM (in [packages]) instead.
     "org.remmina.Remmina",                             # SPICE/VNC/RDP viewer (replaces virt-viewer RPM)
     # ── Gaming clients (Wine/Proton bundled inside Steam + Bottles) ──
     "com.valvesoftware.Steam",                         # Steam (replaces RPM; bundles Proton)
     "net.lutris.Lutris",                               # Lutris (replaces RPM)
     "com.usebottles.bottles",                          # Wine/DXVK/winetricks for non-Steam apps
-    "io.github.dosbox_staging.dosbox-staging",         # DOSBox (replaces RPM)
+    # NOTE: "io.github.dosbox_staging.dosbox-staging" removed 2026-07 --
+    # not published on Flathub; the install fails every run.
     "com.github.Matoking.protontricks",                # protontricks (replaces RPM)
     # MangoHud ships as a Flatpak extension auto-pulled by Steam/Lutris/Bottles:
-    "org.freedesktop.Platform.VulkanLayer.MangoHud",
+    "org.freedesktop.Platform.VulkanLayer.MangoHud//24.08",  # explicit runtime branch -- non-interactive install can't resolve an ambiguous branch
 ]
 
 # ----------------------------------------------------------------------------
