@@ -10172,15 +10172,19 @@ exit 0
     Start-Phase 7
     $MiosLlamacppBakeModels = $aiDefaults.LlamacppBakeModels
     $MiosVllmBakeModel       = $aiDefaults.VllmBakeModel
+    # SINGLE-quote every value: install.env is SOURCED by services (many under
+    # `set -u`), and the sha512crypt hash is `$6$salt$digest` -- double-quotes let
+    # the shell expand $6/$salt as unbound vars -> "line 3: $6: unbound variable"
+    # -> EVERY install.env-sourcing service fails to start (mios-forge-firstboot,
+    # sys-env-refresh, podman-mnt-bindings, ...). Single quotes keep the literal.
     $envContent = @"
-MIOS_USER="$MiosUser"
-MIOS_HOSTNAME="$MiosHostname"
-MIOS_USER_PASSWORD_HASH="$MiosHash"
-MIOS_AI_MODEL="$MiosAiModel"
-MIOS_AI_EMBED_MODEL="$MiosAiEmbedModel"
-MIOS_OLLAMA_BAKE_MODELS="$MiosOllamaBakeModels"
-MIOS_LLAMACPP_BAKE_MODELS="$MiosLlamacppBakeModels"
-MIOS_VLLM_BAKE_MODEL="$MiosVllmBakeModel"
+MIOS_USER='$MiosUser'
+MIOS_HOSTNAME='$MiosHostname'
+MIOS_USER_PASSWORD_HASH='$MiosHash'
+MIOS_AI_MODEL='$MiosAiModel'
+MIOS_AI_EMBED_MODEL='$MiosAiEmbedModel'
+MIOS_LLAMACPP_BAKE_MODELS='$MiosLlamacppBakeModels'
+MIOS_VLLM_BAKE_MODEL='$MiosVllmBakeModel'
 "@.Trim()
     $writeCmd  = "mkdir -p /etc/mios && cat > /etc/mios/install.env && chmod 0640 /etc/mios/install.env"
     $written = $false
