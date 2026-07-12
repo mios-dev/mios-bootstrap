@@ -707,6 +707,74 @@ function Set-MiOSRemoteAccessOffline {
     Write-Host "    rendered mios-remote.cmd ($($users.Count) desktop acct(s) -> Remote Desktop Users; SSH=$doSsh PSR=$doPsr Loopback=$doLoop) -> beside SetupComplete" -ForegroundColor Green
 }
 
+# STAGE-1 provisioning WIRING: render mios-provision.cmd from SSOT beside SetupComplete.
+# SetupComplete `call`s it (as SYSTEM, pre-first-logon) to (1) register the reboot-
+# surviving MiOS-Setup-Driver MINUTE task (MiOS-Provision.ps1, run as the RID-500 admin),
+# (2) re-arm interactive AUTO-LOGON so the full-screen progress bar returns across the
+# WSL/podman reboots (the driver clears the count at 100%), (3) arm the bar
+# (MiOS-SetupExperience.ps1) at every interactive logon (it self-removes at 100%), and
+# (4) kick the driver immediately so provisioning starts pre-logon in Session 0. The svc
+# user/password are passed in by SetupComplete (%1/%2 = the LIVE creds it just set on the
+# RID-500 account) with the SSOT-rendered values as standalone fallbacks. Gated on
+# autounattend.provision.enable; degrade-open (skips cleanly if the driver isn't baked).
+function Set-MiOSProvisionWiring {
+    param([string]$Mount, [string]$ScriptsDst, $Toml)
+    if ((Get-Toml $Toml 'autounattend.provision.enable' 'true') -notmatch '^(?i:true|1|yes)$') {
+        Write-Host "[*] Stage-1 provision wiring disabled (SSOT autounattend.provision.enable=false)." -ForegroundColor DarkGray; return
+    }
+    $svcUser = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-sudo'
+    $svcPass = Get-Toml $Toml 'autounattend.service.svc_password' (Get-Toml $Toml 'identity.default_password' 'user')
+    $accts   = Get-MiOSAccounts -Toml $Toml
+    $desk    = @($accts)[0]
+    $deskUser = [string]$desk.name
+    $deskPw   = [string]$desk.password
+    $count    = [int](Get-Toml $Toml 'autounattend.provision.autologon_count' '6')
+
+    $WL  = 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    $RUN = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+    $barTr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File %MIOSPD%\MiOS-SetupExperience.ps1'
+    $drvTr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File %MIOSPD%\MiOS-Provision.ps1'
+
+    $p = New-Object System.Collections.Generic.List[string]
+    $p.Add('@echo off')
+    $p.Add('rem ============================================================================')
+    $p.Add('rem  MiOS-Xbox STAGE-1 provisioning wiring  (RENDERED from SSOT by New-MiOSISO.ps1)')
+    $p.Add('rem  Called by SetupComplete.cmd as SYSTEM, pre-first-logon. Registers the reboot-')
+    $p.Add('rem  surviving provision DRIVER (MiOS-Provision.ps1) + the full-screen progress bar')
+    $p.Add('rem  (MiOS-SetupExperience.ps1), and re-arms interactive auto-logon so the bar')
+    $p.Add('rem  returns across the WSL/podman reboots and the desktop is withheld until 100%.')
+    $p.Add('rem  Args: %1 = service account, %2 = service password (LIVE creds from SetupComplete);')
+    $p.Add('rem  both fall back to the SSOT-rendered defaults below when not supplied.')
+    $p.Add('rem ============================================================================')
+    $p.Add('set "LOG=%WINDIR%\Temp\mios-setupcomplete.log"')
+    $p.Add('set "MIOSPD=%ProgramData%\MiOS"')
+    $p.Add('set "SVCUSER=%~1"')
+    $p.Add('set "SVCPW=%~2"')
+    $p.Add(('if "%SVCUSER%"=="" set "SVCUSER={0}"' -f $svcUser))
+    $p.Add(('if "%SVCPW%"=="" set "SVCPW={0}"' -f $svcPass))
+    $p.Add('if not exist "%MIOSPD%\MiOS-Provision.ps1" ( echo [MiOS] Stage-1 provision driver not baked -- wiring skipped>>"%LOG%" ^& goto :eof )')
+    $p.Add('rem --- reboot-surviving DRIVER: MINUTE task as the RID-500 admin, HIGHEST ---------')
+    $p.Add(('schtasks /create /tn "MiOS-Setup-Driver" /sc MINUTE /mo 1 /rl HIGHEST /ru "%SVCUSER%" /rp "%SVCPW%" /tr "{0}" /f>>"%LOG%" 2>&1' -f $drvTr))
+    $p.Add('rem --- re-arm interactive AUTO-LOGON so the full-screen bar returns each boot -------')
+    $p.Add('rem     (the driver clears AutoLogonCount when provisioning hits 100%). On Win11 26xxx')
+    $p.Add('rem     -- the MiOS-Xbox target -- FirstLogonCommands (incl. the temp-password expire)')
+    $p.Add('rem     are skipped, so this survives every provisioning reboot.')
+    $p.Add(('reg add "{0}" /v AutoAdminLogon /t REG_SZ /d 1 /f>>"%LOG%" 2>&1' -f $WL))
+    $p.Add(('reg add "{0}" /v DefaultUserName /t REG_SZ /d "{1}" /f>>"%LOG%" 2>&1' -f $WL, $deskUser))
+    $p.Add(('reg add "{0}" /v DefaultDomainName /t REG_SZ /d "." /f>>"%LOG%" 2>&1' -f $WL))
+    $p.Add(('reg add "{0}" /v DefaultPassword /t REG_SZ /d "{1}" /f>>"%LOG%" 2>&1' -f $WL, $deskPw))
+    $p.Add(('reg add "{0}" /v AutoLogonCount /t REG_DWORD /d {1} /f>>"%LOG%" 2>&1' -f $WL, $count))
+    $p.Add('rem --- arm the FULL-SCREEN progress bar at every interactive logon (self-removes at 100%) --')
+    $p.Add(('reg add "{0}" /v "MiOS-SetupExperience" /t REG_SZ /d "{1}" /f>>"%LOG%" 2>&1' -f $RUN, $barTr))
+    $p.Add('rem --- start provisioning NOW (pre-logon, Session 0) so the bar has progress to show --')
+    $p.Add('schtasks /run /tn "MiOS-Setup-Driver">>"%LOG%" 2>&1')
+    $p.Add('echo [MiOS] Stage-1 provision wiring armed (driver + full-screen bar + auto-logon re-arm)>>"%LOG%"')
+    $p.Add('exit /b 0')
+
+    [IO.File]::WriteAllText((Join-Path $ScriptsDst 'mios-provision.cmd'), (($p -join "`r`n") + "`r`n"), [System.Text.Encoding]::ASCII)
+    Write-Host "    rendered mios-provision.cmd (driver task + full-screen bar + auto-logon re-arm; svc=$svcUser desktop=$deskUser count=$count) -> beside SetupComplete" -ForegroundColor Green
+}
+
 # Offline-service sources\install.wim: features + appx + Xbox reg, then export/trim.
 function Invoke-MiOSImageServicing {
     param([string]$MediaRoot, $Toml, [object]$Removals, [switch]$BuiltNative)
@@ -813,7 +881,8 @@ function Invoke-MiOSImageServicing {
         # ONSTART task (registered by the autounattend) finds it pre-logon.
         $hostDst = Join-Path $mount 'ProgramData\MiOS'
         New-Item -ItemType Directory -Force -Path $hostDst | Out-Null
-        foreach ($stage in 'MiOS-Host.ps1','MiOS-XBOX-Hydrate.ps1','MiOS-Daemon.ps1','MiOS-FirstBoot.ps1','MiOS-AccountSync.ps1') {
+        foreach ($stage in 'MiOS-Host.ps1','MiOS-XBOX-Hydrate.ps1','MiOS-Daemon.ps1','MiOS-FirstBoot.ps1','MiOS-AccountSync.ps1',
+                            'MiOS-Progress.psm1','MiOS-Provision.ps1','MiOS-SetupExperience.ps1','write-mios-progress.sh') {
             $src = Join-Path $PSScriptRoot $stage
             if (Test-Path $src) { Copy-Item $src (Join-Path $hostDst $stage) -Force; Write-Host "    staged $stage -> image ProgramData\MiOS" -ForegroundColor DarkGray }
         }
@@ -840,6 +909,46 @@ function Invoke-MiOSImageServicing {
                 Write-Host "    embedded mios-bootstrap repo ($embN files) -> image ProgramData\MiOS\repo (offline installer)" -ForegroundColor Green
             } else { Write-Host "    [!] mios-bootstrap repo not found at $repoSrc -- embed skipped (irm|iex fallback)" -ForegroundColor Yellow }
         }
+        # STAGE-1 SEED BAKE: copy the BAKED-IN provisioning seed blobs (WSL rootfs +
+        # OCI-archive [+ optional podman-machine]) into the image so the first-boot driver
+        # (MiOS-Provision.ps1) loads them OFFLINE -- no download/build on the critical path.
+        # SSOT-gated (autounattend.seed.enable) + GUARDED: absent seeds are tolerated (the
+        # driver falls back to today's embedded Get-MiOS build path). Blobs are large, so
+        # they are staged VERBATIM inside the image at ProgramData\MiOS\seed (NOT re-exported
+        # twice) -- the Export-WindowsImage Max pass below still compresses them once.
+        if ((Get-Toml $Toml 'autounattend.seed.enable' 'true') -match '^(?i:true|1|yes)$') {
+            $seedSrc = Get-Toml $Toml 'autounattend.seed.source' ''
+            $seedCandidates = @()
+            if ($seedSrc) { $seedCandidates += $seedSrc }
+            $seedCandidates += @(
+                (Join-Path (Resolve-MiOSBuildRoot $Toml) 'MiOS\seed')
+                (Join-Path (Split-Path $MediaRoot) 'seed')
+                (Join-Path $PSScriptRoot 'seed')
+                'M:\MiOS\seed'
+            )
+            $seedFrom = $seedCandidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+            $seedBlobs = @(
+                (Get-Toml $Toml 'autounattend.seed.rootfs'         'mios-rootfs.tar')
+                (Get-Toml $Toml 'autounattend.seed.oci_archive'    'mios-image.oci.tar')
+                (Get-Toml $Toml 'autounattend.seed.podman_machine' 'podman-machine.tar')
+            )
+            if ($seedFrom) {
+                $seedDst = Join-Path $mount 'ProgramData\MiOS\seed'
+                New-Item -ItemType Directory -Force -Path $seedDst | Out-Null
+                $staged = 0
+                foreach ($blob in $seedBlobs) {
+                    $bsrc = Join-Path $seedFrom $blob
+                    if (Test-Path -LiteralPath $bsrc) {
+                        Copy-Item -LiteralPath $bsrc (Join-Path $seedDst $blob) -Force
+                        Write-Host ("    staged seed {0} ({1:N0} MB) -> image ProgramData\MiOS\seed" -f $blob, ((Get-Item $bsrc).Length/1MB)) -ForegroundColor Green
+                        $staged++
+                    }
+                }
+                if ($staged -eq 0) { Write-Host "    [!] seed dir '$seedFrom' has no known blobs -- Stage-1 falls back to embedded Get-MiOS build (degrade-open)." -ForegroundColor Yellow }
+            } else {
+                Write-Host "    [*] No seed dir found (autounattend.seed.source / build_root\MiOS\seed) -- Stage-1 provisioning falls back to embedded Get-MiOS build (degrade-open). Run Build-MiOSSeed.ps1 on MiOS-DEV to bake offline seeds." -ForegroundColor DarkGray
+            }
+        } else { Write-Host "    [*] Seed bake disabled (SSOT autounattend.seed.enable=false)." -ForegroundColor DarkGray }
         # Render the MiOS-Daemon config from SSOT so intervals/distro are tunable.
         $daemonCfg = [ordered]@{
             tick_seconds     = [int](Get-Toml $Toml 'autounattend.daemon.tick_seconds' '60')
@@ -863,6 +972,10 @@ function Invoke-MiOSImageServicing {
             Copy-Item $scSrc (Join-Path $scriptsDst 'SetupComplete.cmd') -Force
             Write-Host "    baked SetupComplete.cmd -> image \Windows\Setup\Scripts (SYSTEM first-boot trigger)" -ForegroundColor Green
         } else { Write-Host "[!] SetupComplete.cmd NOT found next to New-MiOSISO -- first-boot MiOS trigger MISSING!" -ForegroundColor Red }
+
+        # STAGE-1: render mios-provision.cmd beside SetupComplete (driver task + full-screen
+        # progress bar + auto-logon re-arm, all from SSOT). SetupComplete `call`s it pre-logon.
+        Set-MiOSProvisionWiring -Mount $mount -ScriptsDst $scriptsDst -Toml $Toml
 
         # Bake the custom unattend settings as offline defaults
         Set-MiOSCustomDefaults -Mount $mount

@@ -79,13 +79,25 @@ rem     LocalSystem (microsoft/WSL#11280) -- mios-sudo (RID-500, full token) is 
 schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "mios-sudo" /rp "mios" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Host.ps1" /f >>"%LOG%" 2>&1
 rem     Also register the MINUTE supervisor daemon (keeps the brain alive across reboots).
 schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "mios-sudo" /rp "mios" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Daemon.ps1" /f >>"%LOG%" 2>&1
-rem --- Start the MiOS brain deploy NOW (end of setup, BEFORE first logon). Running
-rem     MiOS-Host here launches the WSL2 + agent-stack install in Session 0 -- HIDDEN,
-rem     ELEVATED, NO UAC, NO visible console. There is deliberately NO interactive
-rem     Startup launcher (the MiOS-FirstBoot.cmd in All-Users Startup is a fallback
-rem     only; the real install should complete here, pre-logon, via MiOS-Host). -------
-echo [MiOS] starting pre-logon MiOS-Host (Session 0, hidden) %DATE% %TIME%>>"%LOG%"
-schtasks /run /tn "MiOS-Host">>"%LOG%" 2>&1
+rem --- STAGE-1: MiOS-Xbox provisioning DRIVER + FULL-SCREEN PROGRESS BAR. When the
+rem     rendered mios-provision.cmd is present (New-MiOSISO Set-MiOSProvisionWiring), it
+rem     OWNS the first-boot deploy: it registers the reboot-surviving MiOS-Setup-Driver
+rem     (MiOS-Provision.ps1) that wsl --imports the BAKED-IN seed OFFLINE -- no download/
+rem     build on the critical path -- reporting into the ONE aggregate bar
+rem     (MiOS-SetupExperience.ps1) that withholds the desktop until 100%. It also re-arms
+rem     interactive auto-logon (bar returns across the WSL/podman reboots), arms the bar,
+rem     and kicks the driver NOW in Session 0. In that mode we deliberately do NOT also
+rem     fire MiOS-Host here (the driver's firstboot phase registers + keeps MiOS-Host/
+rem     Daemon alive) -- running both would DOUBLE-IMPORT the distro. The %1/%2 are the
+rem     LIVE RID-500 creds set just above (net user / rename), so the driver task logs on.
+rem     Fallback (no Stage-1 driver baked): today's fire-and-forget pre-logon MiOS-Host. --
+if exist "%~dp0mios-provision.cmd" (
+    echo [MiOS] Stage-1 provisioning: arming driver + full-screen bar via mios-provision.cmd %DATE% %TIME%>>"%LOG%"
+    call "%~dp0mios-provision.cmd" "mios-sudo" "mios">>"%LOG%" 2>&1
+) else (
+    echo [MiOS] starting pre-logon MiOS-Host (Session 0, hidden; no Stage-1 driver) %DATE% %TIME%>>"%LOG%"
+    schtasks /run /tn "MiOS-Host">>"%LOG%"
+) 2>&1
 rem --- Custom Unattend Generator defaults -------------------------------------
 echo [MiOS] Running custom Specialize script %DATE% %TIME%>>"%LOG%"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SystemRoot%\Setup\Scripts\Specialize.ps1" >>"%LOG%" 2>&1
