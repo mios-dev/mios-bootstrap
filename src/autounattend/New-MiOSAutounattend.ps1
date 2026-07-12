@@ -419,6 +419,23 @@ if (-not $TomlPath) {
         if (Test-Path -LiteralPath $c) { $TomlPath = (Resolve-Path $c).Path; break }
     }
 }
+# A caller-supplied -TomlPath may be relative. Read-MiosToml reads via .NET file
+# APIs ([IO.File]::ReadAllLines), whose working directory is the PROCESS start dir,
+# NOT PowerShell's $PWD -- so a relative path after `cd` resolves against the wrong
+# root (CI runs `cd src/autounattend; -TomlPath ../../mios.toml`, which .NET
+# resolved to D:\a\mios.toml and failed). Resolve against $PWD to an absolute path.
+if ($TomlPath -and -not [System.IO.Path]::IsPathRooted($TomlPath)) {
+    $resolved = Resolve-Path -LiteralPath $TomlPath -ErrorAction SilentlyContinue
+    if ($resolved) { $TomlPath = $resolved.Path }
+}
+# Same $PWD-vs-.NET-cwd hazard for the OUTPUT: [IO.File]::WriteAllText resolves a
+# relative -OutXml against the process cwd, not $PWD -- so `cd src/autounattend;
+# -OutXml ./autounattend.xml` would write to the wrong dir and the CI verify step
+# (cd src/autounattend; Test-Path ./autounattend.xml) would not find it. Anchor a
+# relative -OutXml to $PWD.
+if (-not [System.IO.Path]::IsPathRooted($OutXml)) {
+    $OutXml = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $OutXml))
+}
 Write-Host "[*] Reading SSOT: $(if ($TomlPath) { $TomlPath } else { '(none found -- using identity defaults)' })" -ForegroundColor DarkGray
 $toml = if ($TomlPath) { Read-MiosToml -Path $TomlPath } else { @{ scalars=@{}; accounts=@() } }
 $toml = Apply-MiosEdition -T $toml -Edition $Edition
