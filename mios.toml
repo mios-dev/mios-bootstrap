@@ -1340,6 +1340,49 @@ auto_update      = true    # pull mios + mios-bootstrap; restart mios-* on chang
 distro           = "MiOS"
 script           = "C:\\ProgramData\\MiOS\\MiOS-Daemon.ps1"
 
+# [autounattend.provision] -- MiOS-Xbox STAGE-1 provisioning driver + full-screen
+# progress bar. The reboot-surviving state machine (MiOS-Provision.ps1, a MINUTE task
+# run as the RID-500 admin) turns the BAKED-IN seed blobs into a running MiOS brain
+# with NO download/build on the critical path, reporting weighted progress into the
+# single provision-state.json bar (MiOS-SetupExperience.ps1) that withholds the desktop
+# until 100%. Degrade-open: a failed phase shows an error + Esc-to-desktop, never a brick.
+[autounattend.provision]
+enable            = true    # master switch for the Stage-1 driver + full-screen bar
+phase_attempt_cap = 3       # per-phase bounded retries (NOT the old destructive per-boot reset)
+phase_timeout_sec = 1800    # per-phase hard timeout -> state:error (degrade-open)
+autologon_count   = 6       # re-arm interactive auto-logon this many boots so the bar returns across WSL/podman reboots
+
+# [autounattend.provision.weights] -- OPERATOR-TUNABLE per-phase weights for the ONE
+# aggregate bar. They need NOT sum to 100 (the total is normalized by the weight sum),
+# so a retuned table stays a valid 0..100 bar. MUST mirror the phase ids in
+# MiOS-Progress.psm1 / write-mios-progress.sh. Bigger weight = bigger slice of the bar.
+[autounattend.provision.weights]
+wsl-feature    = 8     # enable VirtualMachinePlatform + WSL optional features
+seed-stage     = 5     # stage/verify the baked seed blobs
+wsl-import     = 30    # wsl --import the baked rootfs (the heavy, long slice)
+m-volume       = 5     # prepare the M: data volume (non-destructive in Stage-1)
+podman-machine = 10    # start the container engine (in-distro by default)
+image-load     = 22    # podman load the baked oci-archive (offline)
+distro-boot    = 15    # systemd + podman.socket up; endpoint health gate
+firstboot      = 5     # finalize, register keep-alive tasks, hand off
+
+# [autounattend.seed] -- the BAKED-IN Stage-1 seed blobs. Build-MiOSSeed.ps1 produces
+# them on the MiOS-DEV builder (wsl --export / skopeo|podman save) into `source`;
+# New-MiOSISO.ps1 bakes them into the image at ProgramData\MiOS\seed\ when enable=true
+# (guarded -- absent seeds fall back to today's embedded Get-MiOS build path);
+# MiOS-Provision.ps1 loads them offline. Stage-1 TOLERATES missing seeds.
+[autounattend.seed]
+enable         = true                          # bake the seed blobs into the image (if present in `source`)
+source         = ""                            # build-side seed dir; empty -> <build_root>\MiOS\seed (Build-MiOSSeed.ps1 default)
+rootfs         = "mios-rootfs.tar"             # WSL2 rootfs tarball (wsl --import target)
+oci_archive    = "mios-image.oci.tar"          # bootc/OCI image as an oci-archive (podman load target)
+podman_machine = "podman-machine.tar"          # OPTIONAL podman-machine image (engine normally runs in-distro)
+distro         = "MiOS"                         # runtime WSL distro name the rootfs imports as
+builder_distro = "MiOS-DEV"                     # source distro Build-MiOSSeed.ps1 exports from
+image_ref      = "ghcr.io/mios-dev/mios:latest" # OCI ref the oci-archive carries / is loaded as
+install_dir    = "M:\\wsl\\MiOS"               # where wsl --import lands the distro (falls back to C: if M: absent)
+build_machine  = false                          # also export a podman-machine image (opt-in; engine runs in-distro by default)
+
 # [autounattend.service] -- MiOS as boot-time SYSTEM services, UP BEFORE LOGON.
 # The MiOS WSL2/podman service plane is registered in the SPECIALIZE pass (SYSTEM,
 # pre-OOBE, pre-logon) and kept alive by the MiOS-Host ONSTART task -- NOT
