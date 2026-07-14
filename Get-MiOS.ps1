@@ -600,6 +600,7 @@ in the host environment to bypass this prompt as declared policy.
 }
 
 function Invoke-MiOSAgreementGate {
+    if ($Unattended) { return $true }
     # Skip-paths in priority order.
     $quietValues   = @('quiet','silent','off','0','false','FALSE')
     $acceptValues  = @('accepted','ACCEPTED','yes','YES','y','1','true','TRUE')
