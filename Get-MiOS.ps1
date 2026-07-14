@@ -216,7 +216,7 @@ if (-not $env:MIOS_CACHE_BUSTED -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
         $freshSrc = Invoke-RestMethod -Uri $bustedUrl -Headers $noCacheHdr -ErrorAction Stop
         if ($freshSrc -and $freshSrc.Length -gt 1000) {
             # Got a real script back -- relaunch with the fresh copy.
-            & ([scriptblock]::Create($freshSrc))
+            & ([scriptblock]::Create($freshSrc)) -RepoUrl "$RepoUrl" -Branch "$Branch" -RepoDir "$RepoDir" -Workflow "$Workflow" $(if ($FullBuild) { '-FullBuild' }) $(if ($Unattended) { '-Unattended' })
             return
         }
         # Empty / suspiciously small response -- fall through to the
