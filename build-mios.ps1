@@ -4777,7 +4777,8 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
         oscontrol        = 8453
         mcp              = 8460
     }
-    $_fwPortList = [System.Collections.Generic.List[int]]@(22)
+    $_fwPortList = [System.Collections.Generic.List[int]]::new()
+    $null = $_fwPortList.Add(22)
     foreach ($_k in $_fwServicePorts.Keys) {
         $_fwPortList.Add([int](Get-MiosTomlValue -Section 'ports' -Key $_k -Default $_fwServicePorts[$_k]))
     }
