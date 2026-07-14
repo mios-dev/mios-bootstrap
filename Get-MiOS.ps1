@@ -1122,7 +1122,7 @@ try {
     # at the bottom of the inner cmd to fire.
     `$_rc = 0
     try {
-        & ([scriptblock]::Create(`$src))
+        & ([scriptblock]::Create(`$src)) -RepoUrl "$RepoUrl" -Branch "$Branch" -RepoDir "$RepoDir" -Workflow "$Workflow" $(if ($FullBuild) { '-FullBuild' }) $(if ($Unattended) { '-Unattended' })
     } catch {
         Write-Host ''
         Write-Host ('  [!] In-process bootstrap throw: ' + `$_.Exception.Message) -ForegroundColor Red
