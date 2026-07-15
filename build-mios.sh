@@ -617,13 +617,17 @@ apply_user_profile() {
 
     local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
     if [[ "$SSH_KEY_PATH" == "generate" ]]; then
-        log_info "Generating ${DEFAULT_SSH_KEY_TYPE} key for ${LINUX_USER}"
-        sudo -u "${LINUX_USER}" mkdir -p "${home}/.ssh"
-        chmod 0700 "${home}/.ssh"
-        sudo -u "${LINUX_USER}" ssh-keygen -q -t "${DEFAULT_SSH_KEY_TYPE}" -N '' \
-            -C "mios@${HOSTNAME_VAL}" \
-            -f "${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE}"
-        log_ok "SSH key generated: ${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE}"
+        if [[ -f "${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE}" ]]; then
+            log_info "SSH key already exists at ${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE} -- skipping generation"
+        else
+            log_info "Generating ${DEFAULT_SSH_KEY_TYPE} key for ${LINUX_USER}"
+            sudo -u "${LINUX_USER}" mkdir -p "${home}/.ssh"
+            chmod 0700 "${home}/.ssh"
+            sudo -u "${LINUX_USER}" ssh-keygen -q -t "${DEFAULT_SSH_KEY_TYPE}" -N '' \
+                -C "mios@${HOSTNAME_VAL}" \
+                -f "${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE}"
+            log_ok "SSH key generated: ${home}/.ssh/id_${DEFAULT_SSH_KEY_TYPE}"
+        fi
     elif [[ -n "$SSH_KEY_PATH" ]]; then
         if [[ ! -f "$SSH_KEY_PATH" ]]; then
             log_warn "SSH key path not found: ${SSH_KEY_PATH} -- skipping"
