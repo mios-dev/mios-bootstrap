@@ -296,8 +296,7 @@ check_network() {
     local host
     for host in github.com ghcr.io; do
         if ! curl -fsSL --max-time 5 -o /dev/null "https://${host}/" 2>/dev/null; then
-            log_err "No network reachability to ${host}. Check your network and re-run."
-            exit 1
+            log_warn "No network reachability to ${host}. Proceeding best-effort."
         fi
     done
     log_ok "Network reachability verified"
@@ -487,6 +486,10 @@ launch_configurator() {
 
 prompt_password() {
     local prompt="$1" pw1 pw2
+    if [[ -n "${MIOS_PASSWORD:-}" ]]; then
+        echo "${MIOS_PASSWORD}"
+        return 0
+    fi
     while :; do
         printf '%s%s%s: ' "${_BOLD}" "${prompt}" "${_RESET}" >&2
         read -rs pw1; echo >&2
@@ -507,8 +510,17 @@ prompt_password() {
 prompt_yesno() {
     local question="$1" default="${2:-y}" answer hint
     if [[ "$default" == "y" ]]; then hint="[Y/n]"; else hint="[y/N]"; fi
-    read -r -p "$(printf '%s%s%s %s: ' "${_BOLD}" "${question}" "${_RESET}" "${hint}")" answer
-    answer="${answer:-$default}"
+    if [[ "${MIOS_PROMPT_TIMEOUT:-0}" -gt 0 ]]; then
+        if read -r -t "${MIOS_PROMPT_TIMEOUT}" -p "$(printf '%s%s%s %s (auto-accept in %ds): ' "${_BOLD}" "${question}" "${_RESET}" "${hint}" "${MIOS_PROMPT_TIMEOUT}")" answer; then
+            answer="${answer:-$default}"
+        else
+            printf '\n%s%s%s [auto-accept after %ds] -> %s\n' "${_DIM}" "${question}" "${_RESET}" "${MIOS_PROMPT_TIMEOUT}" "${default}" >&2
+            answer="${default}"
+        fi
+    else
+        read -r -p "$(printf '%s%s%s %s: ' "${_BOLD}" "${question}" "${_RESET}" "${hint}")" answer
+        answer="${answer:-$default}"
+    fi
     case "${answer,,}" in
         y|yes) return 0 ;;
         *) return 1 ;;
@@ -562,7 +574,7 @@ gather_user_choices() {
 
     local hostkind
     hostkind="$(detect_host_kind)"
-    if [[ "$hostkind" == "bootc" ]]; then
+    if [[ "${INSTALL_MODE:-}" != "fhs" ]] && [[ "$hostkind" == "bootc" ]]; then
         IMAGE_TAG="$(prompt_default 'MiOS bootc image' "${DEFAULT_IMAGE}")"
         INSTALL_MODE="bootc"
     else
@@ -915,8 +927,24 @@ get_all_packages_except() {
         fi
     done
     echo ""
+}
 
 trigger_mios_install() {
+    # Translate Windows paths to WSL mount paths
+    if [[ "${BOOTSTRAP_REPO}" =~ ^[a-zA-Z]:[/\\] ]]; then
+        local drive="${BOOTSTRAP_REPO:0:1}"
+        BOOTSTRAP_REPO="/mnt/${drive,,}/${BOOTSTRAP_REPO#??}"
+        BOOTSTRAP_REPO="${BOOTSTRAP_REPO//\\//}"
+    fi
+    if [[ "${MIOS_REPO}" =~ ^[a-zA-Z]:[/\\] ]]; then
+        local drive="${MIOS_REPO:0:1}"
+        MIOS_REPO="/mnt/${drive,,}/${MIOS_REPO#??}"
+        MIOS_REPO="${MIOS_REPO//\\//}"
+    fi
+
+    # Bypass dubious ownership checks for local repository mounts
+    git config --global --add safe.directory '*' || true
+
     log_phase "Phase-1 -- Total Root Merge"
     
     case "${INSTALL_MODE}" in
