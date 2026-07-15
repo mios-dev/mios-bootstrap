@@ -814,6 +814,7 @@ pkgs = [
 
 [packages.cockpit]
 pkgs = [
+    "sscg",
     "cockpit",
     "cockpit-system",
     "cockpit-ws",

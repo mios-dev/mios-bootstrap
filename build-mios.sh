@@ -79,8 +79,8 @@ DEFAULT_AI_MODEL="qwen3.5:2b"
 DEFAULT_AI_EMBED_MODEL="nomic-embed-text"
 DEFAULT_AI_BAKE="qwen3.5:2b,nomic-embed-text"
 
-MIOS_REPO="https://github.com/mios-dev/mios.git"
-BOOTSTRAP_REPO="https://github.com/mios-dev/mios-bootstrap.git"
+: "${MIOS_REPO:=https://github.com/mios-dev/mios.git}"
+: "${BOOTSTRAP_REPO:=https://github.com/mios-dev/mios-bootstrap.git}"
 PROFILE_DIR="/etc/mios"
 # Canonical user-edit copy lives in mios-bootstrap.git/mios.toml (repo root).
 # /etc/mios/mios.toml is the host-installed copy of that file. Legacy
@@ -831,11 +831,11 @@ _resolve_mios_toml() {
     return 1
 }
 
-get_packages_from_toml() {
+_get_pkgs_from_file() {
     local category="$1"
-    local toml_path
-    toml_path="$(_resolve_mios_toml)" || return 1
-
+    local file="$2"
+    [[ -f "$file" ]] || return 1
+    
     awk -v section="packages.${category}" '
         /^\[/ {
             in_section = 0
@@ -854,53 +854,62 @@ get_packages_from_toml() {
             print
             if ($0 ~ /\][[:space:]]*$/) { collecting = 0 }
         }
-    ' "$toml_path" \
+    ' "$file" \
         | tr -d '[]' \
         | tr ',' '\n' \
         | sed -E "s/[[:space:]]*\"([^\"]*)\"[[:space:]]*\$/\\1/" \
         | sed '/^[[:space:]]*$/d' \
         | sed -E 's/[[:space:]]*#.*$//' \
         | tr '\n' ' '
+}
+
+get_packages_from_toml() {
+    local category="$1"
+    local pkgs
+    
+    if [[ -f "/etc/mios/mios.toml" ]]; then
+        pkgs=$(_get_pkgs_from_file "$category" "/etc/mios/mios.toml")
+        if [[ -n "${pkgs// }" ]]; then
+            echo "$pkgs"
+            return 0
+        fi
+    fi
+    
+    if [[ -f "/usr/share/mios/mios.toml" ]]; then
+        pkgs=$(_get_pkgs_from_file "$category" "/usr/share/mios/mios.toml")
+        if [[ -n "${pkgs// }" ]]; then
+            echo "$pkgs"
+            return 0
+        fi
+    fi
+    
+    return 1
 }
 
 get_all_packages_except() {
-    local toml_path
-    toml_path="$(_resolve_mios_toml)" || return 1
-    # Exclude: repos + the standard excluded ones
     local excl="^(repos|kernel|k3s-selinux-build|looking-glass-build|cockpit-plugins-build|self-build|build-toolchain)$"
-
-    awk -v excl="$excl" '
-        /^\[/ {
-            in_section = 0
-            collecting = 0
-            line = $0
-            sub(/^\[/, "", line); sub(/\][[:space:]]*$/, "", line)
-            gsub(/[[:space:]]/, "", line)
-            if (line ~ /^packages\./) {
-                category = line
-                sub(/^packages\./, "", category)
-                if (category !~ excl) {
-                    in_section = 1
-                }
-            }
-            next
-        }
-        in_section && /^[[:space:]]*pkgs[[:space:]]*=/ {
-            sub(/^[^=]*=[[:space:]]*/, "", $0)
-            collecting = 1
-        }
-        collecting {
-            print
-            if ($0 ~ /\][[:space:]]*$/) { collecting = 0 }
-        }
-    ' "$toml_path" \
-        | tr -d '[]' \
-        | tr ',' '\n' \
-        | sed -E "s/[[:space:]]*\"([^\"]*)\"[[:space:]]*\$/\\1/" \
-        | sed '/^[[:space:]]*$/d' \
-        | sed -E 's/[[:space:]]*#.*$//' \
-        | tr '\n' ' '
-}
+    local master_toml="/usr/share/mios/mios.toml"
+    [[ -f "$master_toml" ]] || return 1
+    
+    local categories
+    categories=$(awk '/^\[packages\./ {
+        line = $0
+        sub(/^\[packages\./, "", line)
+        sub(/\][[:space:]]*$/, "", line)
+        gsub(/[[:space:]]/, "", line)
+        print line
+    }' "$master_toml")
+    
+    local cat pkgs
+    for cat in $categories; do
+        if [[ ! "$cat" =~ $excl ]]; then
+            pkgs=$(get_packages_from_toml "$cat")
+            if [[ -n "$pkgs" ]]; then
+                echo -n "$pkgs "
+            fi
+        fi
+    done
+    echo ""
 
 trigger_mios_install() {
     log_phase "Phase-1 -- Total Root Merge"
