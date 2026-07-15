@@ -1047,6 +1047,11 @@ trigger_mios_install() {
             chmod +x /automation/*.sh /usr/bin/mios* 2>/dev/null || true
             find /usr/libexec/mios -type f -exec chmod +x {} + 2>/dev/null || true
 
+            log_info "Synchronizing environment configuration..."
+            if [[ -f "/usr/libexec/mios/system-sync-env.sh" ]]; then
+                /usr/libexec/mios/system-sync-env.sh 2>/dev/null || log_warn "system-sync-env.sh failed"
+            fi
+
             spin_start "Running systemd-sysusers"
             systemctl-sysusers 2>/dev/null || systemd-sysusers 2>/dev/null || log_warn "systemd-sysusers not available"
             spin_stop
