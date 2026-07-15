@@ -892,8 +892,9 @@ get_packages_from_toml() {
 
 get_all_packages_except() {
     local excl="^(repos|kernel|k3s-selinux-build|looking-glass-build|cockpit-plugins-build|self-build|build-toolchain)$"
-    local master_toml="/usr/share/mios/mios.toml"
-    [[ -f "$master_toml" ]] || return 1
+    local master_toml
+    master_toml="$(_resolve_mios_toml)"
+    [[ -n "$master_toml" ]] || return 1
     
     local categories
     categories=$(awk '/^\[packages\./ {
@@ -959,8 +960,19 @@ trigger_mios_install() {
                 git -C / remote add origin "${MIOS_REPO}"
             fi
             spin_start "Fetching mios.git (system layer)"
-            git -C / fetch --depth=1 origin "${DEFAULT_BRANCH}" 2>&1 | tail -3
-            git -C / reset --hard FETCH_HEAD
+            local fetch_err
+            fetch_err=$(git -C / fetch --depth=1 origin "${DEFAULT_BRANCH}" 2>&1)
+            local fetch_rc=$?
+            if [[ $fetch_rc -ne 0 ]]; then
+                spin_stop
+                log_err "Failed to fetch mios.git from ${MIOS_REPO}: ${fetch_err}"
+                return 1
+            fi
+            if ! git -C / reset --hard FETCH_HEAD; then
+                spin_stop
+                log_err "Failed to reset root filesystem to FETCH_HEAD"
+                return 1
+            fi
             spin_stop
             log_ok "MiOS core (mios.git) merged to /"
 
@@ -969,7 +981,14 @@ trigger_mios_install() {
             log_info "Fetching MiOS-bootstrap overlays from ${BOOTSTRAP_REPO}"
             spin_start "Cloning mios-bootstrap.git (user layer)"
             rm -rf "${bootstrap_tmp}"
-            git clone --depth=1 "${BOOTSTRAP_REPO}" "${bootstrap_tmp}" 2>&1 | tail -3
+            local clone_err
+            clone_err=$(git clone --depth=1 "${BOOTSTRAP_REPO}" "${bootstrap_tmp}" 2>&1)
+            local clone_rc=$?
+            if [[ $clone_rc -ne 0 ]]; then
+                spin_stop
+                log_err "Failed to clone mios-bootstrap: ${clone_err}"
+                return 1
+            fi
             spin_stop
 
             log_info "Merging bootstrap system folders (etc, usr) to /"
@@ -988,34 +1007,35 @@ trigger_mios_install() {
             log_phase "Phase-2 -- FHS package install (from mios.toml)"
             local toml_path
             toml_path="$(_resolve_mios_toml)"
-            if [[ -n "$toml_path" ]]; then
-                local repo_pkgs
-                repo_pkgs=$(get_packages_from_toml "repos")
-                if [[ -n "$repo_pkgs" ]]; then
-                    log_info "Setting up additional repos..."
-                    spin_start "Installing repo packages"
-                    # shellcheck disable=SC2086
-                    $dnf_cmd install -y --skip-unavailable $repo_pkgs 2>&1 | grep -E '^(Install|Upgrade|Error|Warning|Failed)' || true
-                    spin_stop
-                    $dnf_cmd makecache --refresh 2>/dev/null || true
-                    log_ok "Repos configured"
-                fi
-
-                local pkgs
-                pkgs=$(get_all_packages_except)
-                if [[ -n "$pkgs" ]]; then
-                    log_info "Installing full 'MiOS' component stack..."
-                    spin_start "dnf install (this takes several minutes)"
-                    # shellcheck disable=SC2086
-                    $dnf_cmd install -y --skip-unavailable --best $pkgs 2>&1 \
-                        | grep -E '^\s*(Installing|Upgrading|Removing|Error|Warning|Nothing)' || true
-                    spin_stop
-                    log_ok "Package installation complete"
-                else
-                    log_warn "No packages extracted from mios.toml"
-                fi
-            else
+            if [[ -z "$toml_path" ]]; then
                 log_err "mios.toml not found -- package installation skipped"
+                return 1
+            fi
+
+            local repo_pkgs
+            repo_pkgs=$(get_packages_from_toml "repos")
+            if [[ -n "$repo_pkgs" ]]; then
+                log_info "Setting up additional repos..."
+                spin_start "Installing repo packages"
+                # shellcheck disable=SC2086
+                $dnf_cmd install -y --skip-unavailable $repo_pkgs 2>&1 | grep -E '^(Install|Upgrade|Error|Warning|Failed)' || true
+                spin_stop
+                $dnf_cmd makecache --refresh 2>/dev/null || true
+                log_ok "Repos configured"
+            fi
+
+            local pkgs
+            pkgs=$(get_all_packages_except)
+            if [[ -n "$pkgs" ]]; then
+                log_info "Installing full 'MiOS' component stack..."
+                spin_start "dnf install (this takes several minutes)"
+                # shellcheck disable=SC2086
+                $dnf_cmd install -y --skip-unavailable --best $pkgs 2>&1 \
+                    | grep -E '^\s*(Installing|Upgrading|Removing|Error|Warning|Nothing)' || true
+                spin_stop
+                log_ok "Package installation complete"
+            else
+                log_warn "No packages extracted from mios.toml"
             fi
 
             # 4. Phase-3: systemd-sysusers, systemd-tmpfiles, daemon-reload.
@@ -1028,6 +1048,11 @@ trigger_mios_install() {
             spin_start "Running systemd-tmpfiles --create"
             systemd-tmpfiles --create 2>/dev/null || log_warn "systemd-tmpfiles failed"
             spin_stop
+            if [[ -f "/automation/15-render-quadlets.sh" ]]; then
+                spin_start "Rendering Quadlet container files"
+                (cd /automation && ./15-render-quadlets.sh) 2>/dev/null || log_warn "15-render-quadlets.sh failed"
+                spin_stop
+            fi
             if systemctl is-system-running --quiet 2>/dev/null; then
                 spin_start "Reloading systemd daemon"
                 systemctl daemon-reload
