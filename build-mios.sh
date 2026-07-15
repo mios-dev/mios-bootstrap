@@ -1042,6 +1042,11 @@ trigger_mios_install() {
             # This wires up 'MiOS' user/group definitions and creates /var/ paths
             # declared in usr/lib/tmpfiles.d/mios*.conf.
             log_phase "Phase-3 -- System init (sysusers + tmpfiles + daemon-reload)"
+            
+            log_info "Ensuring executable permissions on all core binaries and scripts..."
+            chmod +x /automation/*.sh /usr/bin/mios* 2>/dev/null || true
+            find /usr/libexec/mios -type f -exec chmod +x {} + 2>/dev/null || true
+
             spin_start "Running systemd-sysusers"
             systemctl-sysusers 2>/dev/null || systemd-sysusers 2>/dev/null || log_warn "systemd-sysusers not available"
             spin_stop
