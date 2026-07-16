@@ -469,8 +469,9 @@ copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
 copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 
 :: Stage offline copies of the repositories on the secure USB partition as fallback sources
-set "repodrive="
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; $p = Get-Partition -DiskNumber $d.Number | Where-Object { $_.PartitionNumber -eq 3 }; if ($p) { $p.DriveLetter } else { '%drivepath%' }"`) do set "repodrive=%%i"
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; $p = Get-Partition -DiskNumber $d.Number | Where-Object { $_.PartitionNumber -eq 3 }; $dr = if ($p) { $p.DriveLetter } else { '%drivepath%' }; [System.IO.File]::WriteAllText(\"%~dp0repo_path.txt\", $dr)"
+set /p repodrive=<"%~dp0repo_path.txt"
+del "%~dp0repo_path.txt" /Q >nul 2>&1
 if "%repodrive%"=="" set "repodrive=%drivepath%"
 
 echo Staging offline repository fallback copies to secure partition %repodrive%:...
