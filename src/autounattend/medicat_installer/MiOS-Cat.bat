@@ -684,6 +684,8 @@ if not exist "%wim_path%" (
 )
 
 echo Performing offline servicing on MiOS_PE.wim to inject MiOS custom wallpaper...
+echo Cleaning up any stale/orphaned DISM mount points...
+dism /Cleanup-Wim >nul 2>&1
 mkdir "%stage_dir%\mount" >nul 2>&1
 echo Mounting WIM image (Index 1)...
 dism /Mount-Image /ImageFile:"%wim_path%" /Index:1 /MountDir:"%stage_dir%\mount"
@@ -691,7 +693,7 @@ dism /Mount-Image /ImageFile:"%wim_path%" /Index:1 /MountDir:"%stage_dir%\mount"
 if "%bake_drivers%"=="Enabled" (
     echo.
     echo [DRIVER BAKE] Exporting build-host drivers for WinPE injection...
-    echo (This may take several minutes depending on the number of host drivers...)
+    echo This may take several minutes depending on the number of host drivers...
     mkdir "%stage_dir%\hostdrivers" >nul 2>&1
     dism /Online /Export-Driver /Destination:"%stage_dir%\hostdrivers"
     echo.
