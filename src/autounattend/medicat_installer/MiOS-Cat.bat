@@ -135,8 +135,8 @@ copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 
 :: Overwrite stock System images
 echo Customizing System folder thumbnails...
-copy "%maindir%\resources\theme\uefi\background.png" "%drivepath%:\System\background.png" /Y >nul
-copy "%maindir%\resources\theme\uefi\background.png" "%drivepath%:\System\Antivirus.jpg" /Y >nul
+copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\System\background.jpg" /Y >nul
+copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\System\Antivirus.jpg" /Y >nul
 
 :: Write autorun.inf for USB drive branding and custom icon
 echo Injecting custom USB drive branding and icons...
@@ -194,9 +194,9 @@ copy "%maindir%\resources\ventoy\mios-kickstart.cfg" "%drivepath%:\ventoy\mios-k
 :: Brand the PortableApps Menu to match MiOS
 echo Theming PortableApps Platform...
 mkdir "%drivepath%:\PortableApps\PortableApps.com\App\Graphics" >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.png" "%drivepath%:\PortableApps\PortableApps.com\App\Graphics\logo.png" /Y >nul
-copy "%maindir%\resources\theme\uefi\background.png" "%drivepath%:\PortableApps\PortableApps.com\App\Graphics\header.png" /Y >nul
-copy "%maindir%\resources\theme\uefi\background.png" "%drivepath%:\PortableApps\PortableApps.com\App\Graphics\menu_bg.png" /Y >nul
+copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\PortableApps\PortableApps.com\App\Graphics\logo.png" /Y >nul
+copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\PortableApps\PortableApps.com\App\Graphics\header.png" /Y >nul
+copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\PortableApps\PortableApps.com\App\Graphics\menu_bg.png" /Y >nul
 
 :: Create custom themed ini config for PortableApps Menu
 mkdir "%drivepath%:\PortableApps\PortableApps.com\Data" >nul 2>&1
@@ -273,19 +273,19 @@ dism /Mount-Image /ImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\M
 echo Replacing wallpapers inside WIM image...
 takeown /f "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /a >nul 2>&1
 icacls "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.png" "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /Y >nul
+copy "%maindir%\resources\theme\uefi\background.jpg" "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /Y >nul
 
 takeown /f "%maindir%\mount\Windows\System32\winpe.jpg" /a >nul 2>&1
 icacls "%maindir%\mount\Windows\System32\winpe.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.png" "%maindir%\mount\Windows\System32\winpe.jpg" /Y >nul
+copy "%maindir%\resources\theme\uefi\background.jpg" "%maindir%\mount\Windows\System32\winpe.jpg" /Y >nul
 
 takeown /f "%maindir%\mount\Windows\System32\winre.jpg" /a >nul 2>&1
 icacls "%maindir%\mount\Windows\System32\winre.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.png" "%maindir%\mount\Windows\System32\winre.jpg" /Y >nul
+copy "%maindir%\resources\theme\uefi\background.jpg" "%maindir%\mount\Windows\System32\winre.jpg" /Y >nul
 
 takeown /f "%maindir%\mount\Windows\Web\Screen\img100.jpg" /a >nul 2>&1
 icacls "%maindir%\mount\Windows\Web\Screen\img100.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.png" "%maindir%\mount\Windows\Web\Screen\img100.jpg" /Y >nul
+copy "%maindir%\resources\theme\uefi\background.jpg" "%maindir%\mount\Windows\Web\Screen\img100.jpg" /Y >nul
 
 echo Injecting Geist Mono font and custom Console colors into WIM image...
 copy "C:\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" "%maindir%\mount\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" /Y >nul
@@ -338,3 +338,4 @@ echo ==========================================================
 echo Drive %drivepath%: is now ready to boot into MiOS-Cat!
 echo ==========================================================
 pause
+
