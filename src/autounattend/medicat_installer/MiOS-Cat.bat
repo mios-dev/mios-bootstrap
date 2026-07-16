@@ -691,8 +691,8 @@ if "%build_xbox%"=="Enabled" (
         "  $c = $c -replace '(?s)(\[editions\.mios-xbox\].*?autounattend\.debloat_profile\s*=\s*\")[^\"]*(\")', \"${1}${game}${2}\";" ^
         "  $c | Set-Content \"$env:TEMP\mios_run.toml\" -Force;" ^
         "}"
-        
-    powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -SkipWsl
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$v = (Get-Volume | Where-Object { $_.DriveType -eq 'Fixed' -and $_.SizeRemaining -gt 15GB } | Sort-Object SizeRemaining -Descending | Select-Object -First 1); if ($v) { $v.DriveLetter + ':\MiOS\isobuild_live' } else { 'C:\MiOS\isobuild_live' }"`) do set "workdir_path=%%i"
+    powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%workdir_path%" -SkipWsl -SkipPrereqs
 )
 
 echo.
