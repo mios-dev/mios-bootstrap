@@ -886,8 +886,12 @@ function Invoke-MiOSImageServicing {
                         try {
                             Add-WindowsDriver -Path $bootMount -Driver $drv -Recurse -ForceUnsigned -ErrorAction SilentlyContinue | Out-Null
                         } finally {
-                            Dismount-WindowsImage -Path $bootMount -Save | Out-Null
-                            Remove-Item $bootMount -Recurse -Force -ErrorAction SilentlyContinue
+                            try { Dismount-WindowsImage -Path $bootMount -Save -ErrorAction Stop | Out-Null }
+                            catch {
+                                Write-Host "    [!] Dismount save failed, discarding changes for index $bIdx ($($_.Exception.Message.Split([Environment]::NewLine)[0]))" -ForegroundColor Yellow
+                                try { Dismount-WindowsImage -Path $bootMount -Discard -ErrorAction SilentlyContinue | Out-Null } catch {}
+                            }
+                            try { Remove-Item $bootMount -Recurse -Force -ErrorAction SilentlyContinue } catch {}
                         }
                     }
                 }
