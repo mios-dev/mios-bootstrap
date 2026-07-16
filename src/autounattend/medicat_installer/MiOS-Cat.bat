@@ -463,10 +463,35 @@ copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 
 :: Stage offline copies of the repositories on the USB drive as fallback sources
 echo Staging offline repository fallback copies...
-mkdir "%drivepath%:\ventoy\repo\mios-bootstrap" >nul 2>&1
-robocopy "C:\mios-bootstrap" "%drivepath%:\ventoy\repo\mios-bootstrap" /E /XD .git /R:2 /W:2 >nul
-mkdir "%drivepath%:\ventoy\repo\MiOS" >nul 2>&1
-robocopy "C:\MiOS" "%drivepath%:\ventoy\repo\MiOS" /E /XD .git /R:2 /W:2 >nul
+ping -n 1 github.com >nul 2>&1
+if %errorlevel% equ 0 (
+    echo [ONLINE] Pulling/cloning live repositories from GitHub...
+    
+    if exist "%drivepath%:\ventoy\repo\mios-bootstrap\.git" (
+        echo Updating mios-bootstrap repository...
+        cd /d "%drivepath%:\ventoy\repo\mios-bootstrap"
+        git pull >nul 2>&1
+    ) else (
+        echo Cloning mios-bootstrap repository...
+        git clone https://github.com/mios-dev/mios-bootstrap.git "%drivepath%:\ventoy\repo\mios-bootstrap" >nul 2>&1
+    )
+    
+    if exist "%drivepath%:\ventoy\repo\MiOS\.git" (
+        echo Updating MiOS repository...
+        cd /d "%drivepath%:\ventoy\repo\MiOS"
+        git pull >nul 2>&1
+    ) else (
+        echo Cloning MiOS repository...
+        git clone https://github.com/mios-dev/MiOS.git "%drivepath%:\ventoy\repo\MiOS" >nul 2>&1
+    )
+    cd /d "%maindir%"
+) else (
+    echo [OFFLINE] Internet unreachable. Falling back to local developer repository copies...
+    mkdir "%drivepath%:\ventoy\repo\mios-bootstrap" >nul 2>&1
+    robocopy "C:\mios-bootstrap" "%drivepath%:\ventoy\repo\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+    mkdir "%drivepath%:\ventoy\repo\MiOS" >nul 2>&1
+    robocopy "C:\MiOS" "%drivepath%:\ventoy\repo\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+)
 
 :: Overwrite stock System images
 echo Customizing System folder thumbnails...
