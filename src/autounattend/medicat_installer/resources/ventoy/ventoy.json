@@ -3,7 +3,7 @@
         { "VTOY_DEFAULT_MENU_MODE": "1" },
         { "VTOY_TREE_VIEW_MENU_STYLE": "1" },
         { "VTOY_WIN11_BYPASS_CHECK": "1" },
-        { "VTOY_DEFAULT_IMAGE": "/Live_Operating_Systems/Mini_Windows/MiOS_PE.wim" },
+        { "VTOY_DEFAULT_IMAGE": "/Live_Operating_Systems/MiOS-Xbox.iso" },
         { "VTOY_MENU_TIMEOUT": "5" },
         { "VTOY_LINUX_REMOUNT": "1" },
         { "VTOY_SECONDARY_BOOT_MENU": "0" }
@@ -55,4 +55,5 @@
         }
     ]
 }
+
 
