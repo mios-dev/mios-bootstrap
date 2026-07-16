@@ -789,7 +789,7 @@ function Invoke-MiOSImageServicing {
         $ei = (Get-WindowsImage -ImagePath $esd | Where-Object { $_.ImageName -match 'Pro' } | Select-Object -First 1)
         if (-not $ei) { $ei = Get-WindowsImage -ImagePath $esd | Select-Object -First 1 }
         Write-Host "[*] Converting install.esd (index $($ei.ImageIndex)) -> mountable install.wim ..." -ForegroundColor Cyan
-        Export-WindowsImage -SourceImagePath $esd -SourceIndex $ei.ImageIndex -DestinationImagePath $wim -CompressionType Max | Out-Null
+        & dism.exe /Export-Image /SourceImageFile:"$esd" /SourceIndex:"$($ei.ImageIndex)" /DestinationImageFile:"$wim" /Compress:max | Out-Null
         Remove-Item $esd -Force -ErrorAction SilentlyContinue
     }
     Get-ChildItem $wim | ForEach-Object { $_.IsReadOnly = $false }
@@ -1051,18 +1051,11 @@ function Invoke-MiOSImageServicing {
             Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null
         }
     }
-    # Trim servicing bloat: re-export Max to a new wim, swap in. On a slim native
-    # build the converter's ResetBase already shrank the image and Stage-2 changed
-    # little, so this second full re-archive (the big time sink) is skipped.
-    $slim = $BuiltNative -and ((Get-Toml $Toml 'autounattend.uup_convert.slim_build' 'true') -match '^(?i:true|1|yes)$')
-    if ($slim) {
-        Write-Host "[*] Slim native build -- skipping the Stage-2 Export trim (converter ResetBase already shrank)." -ForegroundColor DarkGray
-    } else {
-        $trim = "$wim.trim"
-        Write-Host "[*] Export-WindowsImage -CompressionType Max (trim) ..." -ForegroundColor Cyan
-        Export-WindowsImage -SourceImagePath $wim -SourceIndex $idx -DestinationImagePath $trim -CompressionType Max | Out-Null
-        Move-Item -LiteralPath $trim -Destination $wim -Force
-    }
+    # Trim servicing bloat and convert to compressed ESD (Recovery) layout to fit small USB drives (14 GB).
+    $esdFile = Join-Path (Split-Path $wim) 'install.esd'
+    Write-Host "[*] Exporting and compressing to install.esd (Recovery/LZMS compression) ..." -ForegroundColor Cyan
+    & dism.exe /Export-Image /SourceImageFile:"$wim" /SourceIndex:"$idx" /DestinationImageFile:"$esdFile" /Compress:recovery | Out-Null
+    Remove-Item $wim -Force -ErrorAction SilentlyContinue
 }
 
 # Assemble the bootable dual BIOS/UEFI ISO with oscdimg (UDF; no-prompt UEFI).
