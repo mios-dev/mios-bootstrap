@@ -8,6 +8,10 @@ if not exist "%toml_path%" set "toml_path=%~dp0..\..\..\..\..\mios.toml"
 
 set "drivepath=D"
 set "medicatver=21.12"
+powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 25GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\medicat_stage' } else { $env:TEMP + '\medicat_stage' }; [System.IO.File]::WriteAllText(\"%~dp0stage_path.txt\", $p)"
+set /p stage_dir=<"%~dp0stage_path.txt"
+del "%~dp0stage_path.txt" /Q >nul 2>&1
+mkdir "%stage_dir%" >nul 2>&1
 set "file=M:\MediCat.USB.v21.12.7z"
 set "bg_color=#282262"
 set "fg_color=#E7DFD3"
@@ -374,18 +378,18 @@ if not exist "%drivepath%:\" (
 
 :: 4. Download Ventoy bootloader
 echo Checking Ventoy files...
-if not exist Ventoy2Disk (
+if not exist "%stage_dir%\Ventoy2Disk" (
     echo Downloading latest Ventoy windows release...
-    curl -s -L "https://github.com/ventoy/Ventoy/releases/download/v1.0.99/ventoy-1.0.99-windows.zip" -o ./ventoy.zip
-    bin\7z.exe x ventoy.zip -aoa >nul
-    ren ventoy-1.0.99 Ventoy2Disk
-    del ventoy.zip /Q
+    curl -s -L "https://github.com/ventoy/Ventoy/releases/download/v1.0.99/ventoy-1.0.99-windows.zip" -o "%stage_dir%\ventoy.zip"
+    "%stage_dir%\bin\7z.exe" x "%stage_dir%\ventoy.zip" -o"%stage_dir%" -aoa >nul
+    ren "%stage_dir%\ventoy-1.0.99" Ventoy2Disk
+    del "%stage_dir%\ventoy.zip" /Q
 )
 
 :: 5. Install Ventoy to USB drive
 echo.
 echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
-cd Ventoy2Disk
+cd /d "%stage_dir%\Ventoy2Disk"
 set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme%"
 if "%secure_boot%"=="Enabled" (
     set "vtoy_args=%vtoy_args% /S"
@@ -393,7 +397,7 @@ if "%secure_boot%"=="Enabled" (
     set "vtoy_args=%vtoy_args% /NOUSBCheck"
 )
 Ventoy2Disk.exe VTOYCLI %vtoy_args%
-cd %maindir%
+cd /d "%maindir%"
 
 echo Waiting 5s for partition remount...
 ping localhost -n 6 >nul
@@ -443,11 +447,11 @@ if "%extract_mode%"=="Surgical" (
     echo.
     echo Extracting minimal boot files and portable apps from %file% to %drivepath%:...
     echo (Extracting only PE, SystemRescue, and core startup structures...)
-    bin\7z.exe x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* -aoa -y
+    "%stage_dir%\bin\7z.exe" x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* -aoa -y
 ) else (
     echo.
     echo Extracting ALL files from %file% to %drivepath%:...
-    bin\7z.exe x "%file%" -o%drivepath%:\ -aoa -y
+    "%stage_dir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -aoa -y
 )
 
 :: 8. Apply custom MiOS templates and layouts
@@ -601,31 +605,31 @@ move "%drivepath%:\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" "%dr
 
 echo.
 echo Performing offline servicing on MiOS_PE.wim to inject MiOS custom wallpaper...
-mkdir "%maindir%\mount" >nul 2>&1
+mkdir "%stage_dir%\mount" >nul 2>&1
 echo Mounting WIM image (Index 1)...
-dism /Mount-Image /ImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" /Index:1 /MountDir:"%maindir%\mount"
+dism /Mount-Image /ImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" /Index:1 /MountDir:"%stage_dir%\mount"
 
 echo Replacing wallpapers inside WIM image...
-takeown /f "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /a >nul 2>&1
-icacls "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.jpg" "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /Y >nul
+takeown /f "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /a >nul 2>&1
+icacls "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /grant administrators:F >nul 2>&1
+copy "%maindir%\resources\theme\uefi\background.jpg" "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /Y >nul
 
-takeown /f "%maindir%\mount\Windows\System32\winpe.jpg" /a >nul 2>&1
-icacls "%maindir%\mount\Windows\System32\winpe.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.jpg" "%maindir%\mount\Windows\System32\winpe.jpg" /Y >nul
+takeown /f "%stage_dir%\mount\Windows\System32\winpe.jpg" /a >nul 2>&1
+icacls "%stage_dir%\mount\Windows\System32\winpe.jpg" /grant administrators:F >nul 2>&1
+copy "%maindir%\resources\theme\uefi\background.jpg" "%stage_dir%\mount\Windows\System32\winpe.jpg" /Y >nul
 
-takeown /f "%maindir%\mount\Windows\System32\winre.jpg" /a >nul 2>&1
-icacls "%maindir%\mount\Windows\System32\winre.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.jpg" "%maindir%\mount\Windows\System32\winre.jpg" /Y >nul
+takeown /f "%stage_dir%\mount\Windows\System32\winre.jpg" /a >nul 2>&1
+icacls "%stage_dir%\mount\Windows\System32\winre.jpg" /grant administrators:F >nul 2>&1
+copy "%maindir%\resources\theme\uefi\background.jpg" "%stage_dir%\mount\Windows\System32\winre.jpg" /Y >nul
 
-takeown /f "%maindir%\mount\Windows\Web\Screen\img100.jpg" /a >nul 2>&1
-icacls "%maindir%\mount\Windows\Web\Screen\img100.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.jpg" "%maindir%\mount\Windows\Web\Screen\img100.jpg" /Y >nul
+takeown /f "%stage_dir%\mount\Windows\Web\Screen\img100.jpg" /a >nul 2>&1
+icacls "%stage_dir%\mount\Windows\Web\Screen\img100.jpg" /grant administrators:F >nul 2>&1
+copy "%maindir%\resources\theme\uefi\background.jpg" "%stage_dir%\mount\Windows\Web\Screen\img100.jpg" /Y >nul
 
 echo Injecting Geist Mono font and custom Console colors into WIM image...
-copy "C:\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" "%maindir%\mount\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" /Y >nul
-reg load HKEY_USERS\pe-default "%maindir%\mount\Windows\System32\config\DEFAULT" >nul
-reg load HKEY_USERS\pe-software "%maindir%\mount\Windows\System32\config\SOFTWARE" >nul
+copy "C:\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" "%stage_dir%\mount\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" /Y >nul
+reg load HKEY_USERS\pe-default "%stage_dir%\mount\Windows\System32\config\DEFAULT" >nul
+reg load HKEY_USERS\pe-software "%stage_dir%\mount\Windows\System32\config\SOFTWARE" >nul
 reg add "HKEY_USERS\pe-software\Microsoft\Windows NT\CurrentVersion\Fonts" /v "GeistMono Nerd Font Mono Regular (TrueType)" /t REG_SZ /d "GeistMonoNerdFontMono-Regular.otf" /f >nul
 reg add "HKEY_USERS\pe-default\Console" /v "ColorTable00" /t REG_DWORD /d 6431272 /f >nul
 reg add "HKEY_USERS\pe-default\Console" /v "ColorTable07" /t REG_DWORD /d 13885415 /f >nul
@@ -643,8 +647,8 @@ reg unload HKEY_USERS\pe-software >nul
 
 
 echo Committing changes and unmounting WIM image...
-dism /Unmount-Image /MountDir:"%maindir%\mount" /Commit
-rmdir "%maindir%\mount" /S /Q >nul 2>&1
+dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Commit
+rmdir "%stage_dir%\mount" /S /Q >nul 2>&1
 
 echo Exporting and compressing MiOS_PE.wim to reclaim space...
 dism /Export-Image /SourceImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" /SourceIndex:1 /DestinationImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim" /Compress:max >nul 2>&1
@@ -684,8 +688,10 @@ if "%build_xbox%"=="Enabled" (
         "  $c = $c -replace '(?s)(\[editions\.mios-xbox\].*?autounattend\.debloat_profile\s*=\s*\")[^\"]*(\")', \"${1}${game}${2}\";" ^
         "  $c | Set-Content \"$env:TEMP\mios_run.toml\" -Force;" ^
         "}"
-        
-    powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -SkipWsl
+    powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 15GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\isobuild_live' } else { 'C:\MiOS\isobuild_live' }; [System.IO.File]::WriteAllText(\"%~dp0work_path.txt\", $p)"
+    set /p workdir_path=<"%~dp0work_path.txt"
+    del "%~dp0work_path.txt" /Q >nul 2>&1
+    powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%workdir_path%" -SkipWsl -SkipPrereqs
 )
 
 echo.
@@ -695,4 +701,5 @@ echo ==========================================================
 echo Drive %drivepath%: is now ready to boot into MiOS-Cat!
 echo ==========================================================
 pause
+
 
