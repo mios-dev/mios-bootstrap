@@ -61,6 +61,7 @@ set "bake_drivers=Enabled"
 set "uup_channel=Dev"
 set "gaming_optimize=Enabled"
 set "partition_label=MiOS-Cat"
+set "force_format=Enabled"
 
 :menu
 cls
@@ -68,7 +69,7 @@ echo ==========================================================
 echo       MiOS-Cat Dedicated USB Deployment Tool
 echo ==========================================================
 echo   1. USB Target Settings    : Drive [%drivepath%:], Label [%partition_label%]
-echo   2. Ventoy / FS Settings   : Format [%filesystem%], Scheme [%partition_scheme%]
+echo   2. Ventoy / FS Settings   : Format [%filesystem%], Scheme [%partition_scheme%], Re-Format [%force_format%]
 echo   3. Customize Theme Colors : Subtle [%subtle_color%], Accent [%accent_color%]
 echo   4. MiOS-Xbox Build Config : Drivers [%bake_drivers%], Channel [%uup_channel%]
 echo   5. Repository Tools       : Open C:\MiOS, C:\mios-bootstrap, edit TOML
@@ -114,17 +115,19 @@ echo   3. Secure Boot Support      : %secure_boot%
 echo   4. Core Download Cache      : %file%
 echo   5. Extraction Mode          : %extract_mode%
 echo   6. PortableApps Theme       : %pa_theme%
-echo   7. Back to Main Menu
+echo   7. Force Disk Re-Format     : %force_format%
+echo   8. Back to Main Menu
 echo ==========================================================
 set "sub_choice="
-set /p "sub_choice=Select an option (1-7): "
+set /p "sub_choice=Select an option (1-8): "
 if "%sub_choice%"=="1" goto set_scheme
 if "%sub_choice%"=="2" goto set_fs
 if "%sub_choice%"=="3" goto set_secure
 if "%sub_choice%"=="4" goto set_cache
 if "%sub_choice%"=="5" goto set_extract
 if "%sub_choice%"=="6" goto set_pa_theme
-if "%sub_choice%"=="7" goto menu
+if "%sub_choice%"=="7" goto set_force_format
+if "%sub_choice%"=="8" goto menu
 goto sub_ventoy
 
 :sub_colors
@@ -263,6 +266,14 @@ if "%pa_theme%"=="Dark" (
 )
 goto sub_ventoy
 
+:set_force_format
+if "%force_format%"=="Enabled" (
+    set "force_format=Disabled"
+) else (
+    set "force_format=Enabled"
+)
+goto sub_ventoy
+
 :set_xbox
 if "%build_xbox%"=="Enabled" (
     set "build_xbox=Disabled"
@@ -387,10 +398,12 @@ if not exist "%stage_dir%\Ventoy2Disk" (
 )
 
 set "skip_format_extract=0"
-if exist "%drivepath%:\CdUsb.Y" (
-    if exist "%drivepath%:\Start.exe" (
-        if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" set "skip_format_extract=1"
-        if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" set "skip_format_extract=1"
+if "%force_format%"=="Disabled" (
+    if exist "%drivepath%:\CdUsb.Y" (
+        if exist "%drivepath%:\Start.exe" (
+            if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" set "skip_format_extract=1"
+            if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" set "skip_format_extract=1"
+        )
     )
 )
 
