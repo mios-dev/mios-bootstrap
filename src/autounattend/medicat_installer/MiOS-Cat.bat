@@ -49,7 +49,7 @@ if not exist bin\7z.exe (
 
 set "partition_scheme=GPT"
 set "filesystem=NTFS"
-set "secure_boot=Disabled"
+set "secure_boot=Enabled"
 set "extract_mode=Surgical"
 set "pa_theme=Dark"
 set "build_xbox=Enabled"
@@ -464,7 +464,7 @@ copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 :: Stage offline copies of the repositories on the USB drive as fallback sources
 echo Staging offline repository fallback copies...
 mkdir "%drivepath%:\ventoy\repo\mios-bootstrap" >nul 2>&1
-robocopy "%maindir%" "%drivepath%:\ventoy\repo\mios-bootstrap" /E /XD .git /R:2 /W:2 >nul
+robocopy "C:\mios-bootstrap" "%drivepath%:\ventoy\repo\mios-bootstrap" /E /XD .git /R:2 /W:2 >nul
 mkdir "%drivepath%:\ventoy\repo\MiOS" >nul 2>&1
 robocopy "C:\MiOS" "%drivepath%:\ventoy\repo\MiOS" /E /XD .git /R:2 /W:2 >nul
 
