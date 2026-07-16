@@ -478,6 +478,7 @@ if "%extract_mode%"=="Surgical" (
 )
 
 :skip_extraction
+call :check_drive_ready
 
 :: 8. Apply custom MiOS templates and layouts
 echo.
@@ -659,6 +660,7 @@ echo This folder contains the live WinPE recovery image ^(MiOS_PE.wim^) and Syst
 
 :: 9. Rename WIM and perform Offline DISM wallpaper servicing
 echo.
+call :check_drive_ready
 set "wim_path=%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim"
 set "serviced_marker=%drivepath%:\Live_Operating_Systems\Mini_Windows\serviced.marker"
 
@@ -769,6 +771,7 @@ echo Done > "%serviced_marker%"
 
 :: 10. Compile the inline live build of MiOS-Xbox ISO directly to the USB drive
 if "%build_xbox%"=="Enabled" (
+    call :check_drive_ready
     echo.
     echo ==========================================================
     echo   Compiling Inline Live Build of MiOS-Xbox Installer ISO  
@@ -810,5 +813,21 @@ echo ==========================================================
 echo Drive %drivepath%: is now ready to boot into MiOS-Cat!
 echo ==========================================================
 pause
+goto :eof
+
+:check_drive_ready
+if not exist "%drivepath%:\CdUsb.Y" (
+    echo.
+    echo [WARNING] USB drive %drivepath%: is temporarily busy or disconnected.
+    echo Waiting 3 seconds for link remount...
+    ping localhost -n 4 >nul
+    if not exist "%drivepath%:\CdUsb.Y" (
+        echo [ERROR] USB drive %drivepath%: is missing.
+        echo Please ensure the USB drive is plugged in correctly.
+        pause
+    )
+    goto check_drive_ready
+)
+exit /b
 
 
