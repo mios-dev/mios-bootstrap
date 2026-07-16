@@ -233,13 +233,74 @@ load_profile_defaults() {
 # ============================================================================
 # Logging
 # ============================================================================
-_BOLD=$(tput bold 2>/dev/null || echo "")
-_RED=$(tput setaf 1 2>/dev/null || echo "")
-_GREEN=$(tput setaf 2 2>/dev/null || echo "")
-_YELLOW=$(tput setaf 3 2>/dev/null || echo "")
-_CYAN=$(tput setaf 6 2>/dev/null || echo "")
-_DIM=$(tput dim 2>/dev/null || echo "")
-_RESET=$(tput sgr0 2>/dev/null || echo "")
+# Convert hex color to 24-bit ANSI escape code (truecolor)
+hex_to_ansi() {
+    local hex="${1:-}"
+    [[ -n "$hex" ]] || { echo ""; return; }
+    hex="${hex#\#}"
+    if [[ ${#hex} -eq 3 ]]; then
+        hex="${hex:0:1}${hex:0:1}${hex:1:1}${hex:1:1}${hex:2:1}${hex:2:1}"
+    fi
+    if [[ ${#hex} -eq 6 ]]; then
+        local r=$((16#${hex:0:2}))
+        local g=$((16#${hex:2:2}))
+        local b=$((16#${hex:4:2}))
+        echo -ne "\e[38;2;${r};${g};${b}m"
+    else
+        echo ""
+    fi
+}
+
+# Initial standard fallbacks (will be updated dynamically once mios.toml layers resolve)
+_BOLD=$(tput bold 2>/dev/null || echo -ne "\e[1m")
+_RED=$(tput setaf 1 2>/dev/null || echo -ne "\e[31m")
+_GREEN=$(tput setaf 2 2>/dev/null || echo -ne "\e[32m")
+_YELLOW=$(tput setaf 3 2>/dev/null || echo -ne "\e[33m")
+_CYAN=$(tput setaf 6 2>/dev/null || echo -ne "\e[36m")
+_ACCENT=$(tput setaf 4 2>/dev/null || echo -ne "\e[34m")
+_DIM=$(tput dim 2>/dev/null || echo -ne "\e[2m")
+_RESET=$(tput sgr0 2>/dev/null || echo -ne "\e[0m")
+
+initialize_dynamic_branding() {
+    # Resolve color values from layered mios.toml
+    local c_accent; c_accent="$(toml_get_layered colors accent || toml_get_layered colors.accent || echo "")"
+    local c_subtle; c_subtle="$(toml_get_layered colors subtle || toml_get_layered colors.subtle || echo "")"
+    local c_success; c_success="$(toml_get_layered colors success || toml_get_layered colors.success || echo "")"
+    local c_warning; c_warning="$(toml_get_layered colors warning || toml_get_layered colors.warning || echo "")"
+    local c_error; c_error="$(toml_get_layered colors error || toml_get_layered colors.error || echo "")"
+
+    # Map ANSI colors dynamically from SSOT mios.toml (using truecolor)
+    local a_accent; a_accent="$(hex_to_ansi "$c_accent")"
+    local a_subtle; a_subtle="$(hex_to_ansi "$c_subtle")"
+    local a_success; a_success="$(hex_to_ansi "$c_success")"
+    local a_warning; a_warning="$(hex_to_ansi "$c_warning")"
+    local a_error; a_error="$(hex_to_ansi "$c_error")"
+
+    if [[ -n "$a_accent" ]]; then _ACCENT="$a_accent"; fi
+    if [[ -n "$a_subtle" ]]; then _CYAN="$a_subtle"; fi
+    if [[ -n "$a_success" ]]; then _GREEN="$a_success"; fi
+    if [[ -n "$a_warning" ]]; then _YELLOW="$a_warning"; fi
+    if [[ -n "$a_error" ]]; then _RED="$a_error"; fi
+
+    # Output dynamic colored logo banner
+    cat <<EOF
+
+\${_ACCENT}       .MMMMMMMMMMMMMMMMMMMMMM.
+    .MMMMMMMMMMMMMMMMMMMMMMMMMMMM.
+  .MMMMMMMM                  MMMMMMMM.
+ MMMMMMMM                      MMMMMMMM
+MMMMMMMM   \${_CYAN}__  ___   _   ____  _____   \${_ACCENT}MMMMMMMM
+MMMMMMMM  \${_CYAN}/  |/  /  (_) / __ \/ ___/   \${_ACCENT}MMMMMMMM
+MMMMMMMM \${_CYAN}/ /|_/ /  / / / / / /\\__ \\    \${_ACCENT}MMMMMMMM
+MMMMMMMM\${_CYAN}/ /  / /  / / / /_/ /___/ /    \${_ACCENT}MMMMMMMM
+ MMMMMMM\${_CYAN}/_/  /_/  /_/  \\____//____/    \${_ACCENT}MMMMMMM
+  .MMMMMMMM                  MMMMMMMM.
+    .MMMMMMMMMMMMMMMMMMMMMMMMMMMM.
+       .MMMMMMMMMMMMMMMMMMMMMM.
+\${_RESET}
+EOF
+}
+
 
 log_info()  { printf '%s[INFO]%s %s\n' "${_CYAN}" "${_RESET}" "$*"; }
 log_ok()    { printf '%s[ OK ]%s %s\n' "${_GREEN}" "${_RESET}" "$*"; }
@@ -1120,6 +1181,7 @@ reboot_prompt() {
 # Main
 # ============================================================================
 main() {
+    initialize_dynamic_branding
     require_root
     log_phase "Phase-0 -- mios-bootstrap (Total Root Merge Mode)"
 

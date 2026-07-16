@@ -1571,3 +1571,15 @@ autounattend.xbox.enable     = "true"
 colors.accent                = "#4B105C"
 branding.living_wallpaper    = "true"
 
+
+
+# ----------------------------------------------------------------------------
+# [medicat] -- Medicat-Installer configuration parameters (SSOT).
+# drivepath: Target USB drive letter (without colon).
+# medicatver: Version of the MediCat bootable image.
+# cache_path: Absolute path to the cached 23 GB 7z archive file.
+# ----------------------------------------------------------------------------
+[medicat]
+drivepath   = "D"
+medicatver  = "21.12"
+cache_path  = "M:\\MediCat.USB.v21.12.7z"
