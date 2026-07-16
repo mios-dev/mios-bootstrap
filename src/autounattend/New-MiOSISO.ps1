@@ -1055,7 +1055,9 @@ function Invoke-MiOSImageServicing {
     Write-Host "[*] Exporting and compressing to install.esd (Recovery/LZMS compression) ..." -ForegroundColor Cyan
     # Prevent race condition: wait for OS dismount handles to release completely
     Start-Sleep -Seconds 5
-    $dismArgs = @("/Export-Image", "/SourceImageFile:$wim", "/SourceIndex:$idx", "/DestinationImageFile:$esdFile", "/Compress:recovery")
+    $dismScratch = Join-Path (Split-Path $MediaRoot) 'dismscratch'
+    New-Item -ItemType Directory -Force -Path $dismScratch -ErrorAction SilentlyContinue | Out-Null
+    $dismArgs = @("/Export-Image", "/SourceImageFile:$wim", "/SourceIndex:$idx", "/DestinationImageFile:$esdFile", "/Compress:recovery", "/ScratchDir:$dismScratch")
     & dism.exe $dismArgs
     if ($LASTEXITCODE -ne 0) {
         throw "dism.exe /Export-Image failed with exit code $LASTEXITCODE. install.wim is intact."
