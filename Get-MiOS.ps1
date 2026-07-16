@@ -129,23 +129,36 @@ if ($Action -ne 'Default') {
     }
 
     if ($Action -eq 'FlashUSB') {
-        Write-Host "[*] Action: FlashUSB. Launching interactive MiOS-Cat installer..." -ForegroundColor Cyan
-        $catScript = Join-Path $RepoDir "src\autounattend\medicat_installer\MiOS-Cat.bat"
-        if (-not (Test-Path $catScript)) {
-            $catScript = "C:\MiOS\src\autounattend\medicat_installer\MiOS-Cat.bat"
+        Write-Host "[*] Action: FlashUSB. Staging and launching interactive MiOS-Cat installer..." -ForegroundColor Cyan
+        # 1. Locate source folder
+        $srcDir = Join-Path $RepoDir "src\autounattend\medicat_installer"
+        if (-not (Test-Path $srcDir)) {
+            $srcDir = "C:\MiOS\src\autounattend\medicat_installer"
         }
-        if (-not (Test-Path $catScript)) {
-            Write-Error "MiOS-Cat.bat not found in source checkouts!"
+        if (-not (Test-Path $srcDir)) {
+            Write-Error "medicat_installer folder not found in source checkouts!"
             exit 1
         }
+        # 2. Resolve staging directory
+        $v = Get-Volume | Where-Object { $_.DriveType -eq 'Fixed' -and $_.SizeRemaining -gt 25GB } | Sort-Object SizeRemaining -Descending | Select-Object -First 1
+        $stageDir = if ($v) { Join-Path "$($v.DriveLetter):\" "MiOS\medicat_stage" } else { Join-Path $env:TEMP "medicat_stage" }
+        $targetDir = Join-Path $stageDir "medicat_installer"
+        Write-Host "    Staging directory: $targetDir" -ForegroundColor Cyan
+        
+        # 3. Copy source files to staging directory
+        New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+        Copy-Item -Path "$srcDir\*" -Destination $targetDir -Recurse -Force
+        
+        # 4. Launch staged script in foreground
+        $catScript = Join-Path $targetDir "MiOS-Cat.bat"
         $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c start cmd.exe /k $catScript"
         $principal = New-ScheduledTaskPrincipal -UserId "MIOS\Administrator" -LogonType Interactive
-        $taskName = "Launch_MiOS_Cat_Web"
+        $taskName = "Launch_MiOS_Cat_Staged"
         Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
         Start-ScheduledTask -TaskName $taskName
         Start-Sleep -Seconds 2
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-        Write-Host "[+] Interactive MiOS-Cat launcher spawned on user desktop." -ForegroundColor Green
+        Write-Host "[+] Interactive MiOS-Cat launcher spawned from staged directory." -ForegroundColor Green
         exit 0
     }
 
