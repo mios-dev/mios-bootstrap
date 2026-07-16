@@ -1070,7 +1070,22 @@ function Invoke-MiOSImageServicing {
         # (the original bug: finally always -Save). The exception still propagates.
         if ($_serviced) {
             Write-Host "[*] Committing image (Dismount -Save) ..." -ForegroundColor Cyan
-            Dismount-WindowsImage -Path $mount -Save | Out-Null
+            $dismountSuccess = $false
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+                try {
+                    Dismount-WindowsImage -Path $mount -Save -ErrorAction Stop | Out-Null
+                    $dismountSuccess = $true
+                    break
+                } catch {
+                    Write-Host "    [!] Dismount save failed (attempt $attempt/3): $($_.Exception.Message.Split([Environment]::NewLine)[0]). Retrying in 4 seconds..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 4
+                }
+            }
+            if (-not $dismountSuccess) {
+                Write-Host "    [!] Force-discarding due to repeated dismount save failures..." -ForegroundColor Yellow
+                Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null
+                throw "Dismount commit save failed permanently."
+            }
         } else {
             Write-Host "[!] Servicing failed -- discarding the half-serviced image." -ForegroundColor Yellow
             Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null

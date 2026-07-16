@@ -61,7 +61,10 @@ if (-not $TomlPath) {
 }
 $toml   = if ($TomlPath) { Read-MiosToml -Path $TomlPath } else { @{ scalars=@{}; accounts=@(); prefs=@{} } }
 if (-not $OutIso)  { $OutIso  = Get-Toml $toml 'autounattend.iso_out' 'M:\MiOS\iso\MiOS-Xbox.iso' }
-if (-not $WorkDir) { $WorkDir = if (Test-Path 'M:\') { 'M:\MiOS\isobuild' } else { Join-Path $env:TEMP 'mios-isobuild' } }
+if (-not $WorkDir) {
+    $v = (Get-Volume | Where-Object { $_.DriveType -eq 'Fixed' -and $_.SizeRemaining -gt 20GB } | Sort-Object SizeRemaining -Descending | Select-Object -First 1)
+    $WorkDir = if ($v) { Join-Path "$($v.DriveLetter):\" 'MiOS\isobuild' } else { Join-Path $env:TEMP 'mios-isobuild' }
+}
 $logDir = Join-Path $WorkDir 'logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 # No Date.Now fabrication -- name the log by the process id + tick (monotonic).
