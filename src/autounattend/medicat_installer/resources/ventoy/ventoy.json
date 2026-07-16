@@ -9,30 +9,30 @@
         { "VTOY_SECONDARY_BOOT_MENU": "0" }
     ],
     "theme":{
-        "gfxmode": "1920x1080"
+        "gfxmode": "1024x768"
     },
     "theme_legacy":{
         "file": "/ventoy/theme/legacy/theme.txt",
-        "gfxmode": "1920x1080",
+        "gfxmode": "1024x768",
         "ventoy_left": "0%",
         "ventoy_top": "0",
         "ventoy_color": "#1A407F"
     },
     "theme_uefi":{
         "file": "/ventoy/theme/uefi/theme.txt",
-        "gfxmode": "1920x1080",
+        "gfxmode": "1024x768",
         "ventoy_left": "0%",
         "ventoy_top": "0%",
         "ventoy_color": "#1A407F"
     },
     "theme_ia32":{
-        "gfxmode": "1920x1080"
+        "gfxmode": "1024x768"
     },
     "theme_aa64":{
-        "gfxmode": "1920x1080"
+        "gfxmode": "1024x768"
     },
     "theme_mips":{
-        "gfxmode": "1920x1080"
+        "gfxmode": "1024x768"
     },
     "conf_replace_legacy":[
         {
@@ -55,3 +55,4 @@
         }
     ]
 }
+
