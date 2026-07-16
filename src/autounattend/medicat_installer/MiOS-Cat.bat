@@ -868,7 +868,7 @@ echo [PASS] Administrator privileges verified.
 powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { if ($d.BusType -eq 'SATA' -or $d.BusType -eq 'NVMe') { exit 2 } }; exit 0"
 set "disk_check=%errorlevel%"
 if %disk_check% equ 2 (
-    echo [FAIL] Target drive %drivepath%: is detected as an internal drive (SATA/NVMe).
+    echo [FAIL] Target drive %drivepath%: is detected as an internal drive - SATA or NVMe.
     echo        To prevent data loss, formatting internal drives is restricted.
     echo        Please specify a USB/Removable target drive letter.
     exit /b 1
@@ -879,7 +879,7 @@ echo [PASS] Target drive %drivepath%: safety check completed.
 if not exist "%file%" (
     powershell -NoProfile -Command "$cacheDrive = Split-Path -Path '%file%' -Qualifier; $v = Get-Volume -DriveLetter $cacheDrive.Trim(':') -ErrorAction SilentlyContinue; if ($v -and $v.SizeRemaining -lt 25GB) { exit 1 }; exit 0"
     if %errorlevel% equ 1 (
-        echo [FAIL] Insufficient disk space on cache drive to download Medicat (25GB required).
+        echo [FAIL] Insufficient disk space on cache drive to download Medicat - 25GB required.
         exit /b 1
     )
     echo [PASS] Cache drive storage space verified.
