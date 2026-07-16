@@ -512,6 +512,8 @@ copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\System\Antivi
 
 :: Write autorun.inf for USB drive branding and custom icon
 echo Injecting custom USB drive branding and icons...
+attrib -r -h -s "%drivepath%:\autorun.inf" >nul 2>&1
+attrib -r -h -s "%drivepath%:\icon.ico" >nul 2>&1
 (
 echo [Autorun]
 echo Icon=icon.ico
@@ -524,6 +526,8 @@ attrib +h +s "%drivepath%:\icon.ico" >nul 2>&1
 :: Configure custom folder icons using desktop.ini
 for %%F in (System ventoy Live_Operating_Systems PortableApps Documents autorun) do (
     if exist "%drivepath%:\%%F" (
+        attrib -r -h -s "%drivepath%:\%%F\desktop.ini" >nul 2>&1
+        attrib -r -h -s "%drivepath%:\%%F\icon.ico" >nul 2>&1
         copy "%maindir%\icon.ico" "%drivepath%:\%%F\icon.ico" /Y >nul
         (
         echo [.ShellClassInfo]
