@@ -405,8 +405,8 @@ if "%skip_format_extract%"=="1" (
 
 :: 5. Install Ventoy to USB drive
 echo.
-echo Cleaning up existing secure partitions to unlock the USB disk...
-powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { Get-Partition -DiskNumber $d.Number -PartitionNumber 3 -ErrorAction SilentlyContinue | Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue; Update-HostStorageCache }" >nul 2>&1
+echo Formatting and merging all USB partitions back to a single disk letter (%drivepath%:)...
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { Get-Partition -DiskNumber $d.Number | Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue; Initialize-Disk -Number $d.Number -PartitionStyle GPT -ErrorAction SilentlyContinue; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter %drivepath% -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Cat' -Confirm:$false | Out-Null }; Update-HostStorageCache }" >nul 2>&1
 
 echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
 cd /d "%stage_dir%\Ventoy2Disk"
@@ -770,41 +770,27 @@ echo Done > "%serviced_marker%"
 
 
 :: 10. Compile the inline live build of MiOS-Xbox ISO directly to the USB drive
-if "%build_xbox%"=="Enabled" (
-    call :check_drive_ready
-    echo.
-    echo ==========================================================
-    echo   Compiling Inline Live Build of MiOS-Xbox Installer ISO  
-    echo ==========================================================
-    echo This will pull the build prereqs, merge configurations,
-    echo and assemble the custom MiOS-Xbox installation media.
-    echo Output path: %drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso
-    echo ==========================================================
-    echo.
-    
-    echo Generating customized runtime configuration...
-    powershell -NoProfile -Command ^
-        "$orig = 'C:\MiOS\mios.toml';" ^
-        "if (-not (Test-Path $orig)) { $orig = '%toml_path%' };" ^
-        "if (Test-Path $orig) {" ^
-        "  $c = Get-Content $orig -Raw;" ^
-        "  $chan = '%uup_channel%'.ToLower();" ^
-        "  $c = $c -replace '(?s)(\[editions\.mios-xbox\].*?autounattend\.uup_channel\s*=\s*\")[^\"]*(\")', \"${1}${chan}${2}\";" ^
-        "  $bake = if ('%bake_drivers%' -eq 'Enabled') { 'true' } else { 'false' };" ^
-        "  if ($c -match 'autounattend\.bake_host_drivers\s*=') {" ^
-        "    $c = $c -replace 'autounattend\.bake_host_drivers\s*=\s*\w+', \"autounattend.bake_host_drivers = $bake\";" ^
-        "  } else {" ^
-        "    $c = $c -replace '(\[editions\.mios-xbox\])', \"`$1`r`nautounattend.bake_host_drivers = $bake\";" ^
-        "  }" ^
-        "  $game = if ('%gaming_optimize%' -eq 'Enabled') { 'gaming' } else { 'minimal' };" ^
-        "  $c = $c -replace '(?s)(\[editions\.mios-xbox\].*?autounattend\.debloat_profile\s*=\s*\")[^\"]*(\")', \"${1}${game}${2}\";" ^
-        "  $c | Set-Content \"$env:TEMP\mios_run.toml\" -Force;" ^
-        "}"
-    powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 15GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\isobuild_live' } else { 'C:\MiOS\isobuild_live' }; [System.IO.File]::WriteAllText(\"%~dp0work_path.txt\", $p)"
-    set /p workdir_path=<"%~dp0work_path.txt"
-    del "%~dp0work_path.txt" /Q >nul 2>&1
-    powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%workdir_path%" -SkipWsl -SkipPrereqs
-)
+if "%build_xbox%" neq "Enabled" goto skip_xbox_build
+
+call :check_drive_ready
+echo.
+echo ==========================================================
+echo   Compiling Inline Live Build of MiOS-Xbox Installer ISO  
+echo ==========================================================
+echo This will pull the build prereqs, merge configurations,
+echo and assemble the custom MiOS-Xbox installation media.
+echo Output path: %drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso
+echo ==========================================================
+echo.
+
+echo Generating customized runtime configuration...
+powershell -NoProfile -Command "$orig = 'C:\MiOS\mios.toml'; if (-not (Test-Path $orig)) { $orig = '%toml_path%' }; if (Test-Path $orig) { $c = Get-Content $orig -Raw; $chan = '%uup_channel%'.ToLower(); $c = $c -replace '(?s)(\[editions.mios-xbox\].*?autounattend.uup_channel\s*=\s*\")[^\"]*(\")', \"${1}${chan}${2}\"; $bake = if ('%bake_drivers%' -eq 'Enabled') { 'true' } else { 'false' }; if ($c -match 'autounattend.bake_host_drivers\s*=') { $c = $c -replace 'autounattend.bake_host_drivers\s*=\s*\w+', \"autounattend.bake_host_drivers = $bake\" } else { $c = $c -replace '(\[editions.mios-xbox\])', \"`${1}`r`nautounattend.bake_host_drivers = $bake\" }; $game = if ('%gaming_optimize%' -eq 'Enabled') { 'gaming' } else { 'minimal' }; $c = $c -replace '(?s)(\[editions.mios-xbox\].*?autounattend.debloat_profile\s*=\s*\")[^\"]*(\")', \"${1}${game}${2}\"; $c | Set-Content \"$env:TEMP\mios_run.toml\" -Force }"
+powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 15GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\isobuild_live' } else { 'C:\MiOS\isobuild_live' }; [System.IO.File]::WriteAllText(\"%~dp0work_path.txt\", $p)"
+set /p workdir_path=<"%~dp0work_path.txt"
+del "%~dp0work_path.txt" /Q >nul 2>&1
+powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%workdir_path%" -SkipWsl -SkipPrereqs
+
+:skip_xbox_build
 
 echo.
 echo ==========================================================
