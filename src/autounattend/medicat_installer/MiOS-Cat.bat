@@ -500,6 +500,8 @@ copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\System\Antivi
 
 :: Write autorun.inf for USB drive branding and custom icon
 echo Injecting custom USB drive branding and icons...
+attrib -r -h -s "%drivepath%:\autorun.inf" >nul 2>&1
+attrib -r -h -s "%drivepath%:\icon.ico" >nul 2>&1
 (
 echo [Autorun]
 echo Icon=icon.ico
