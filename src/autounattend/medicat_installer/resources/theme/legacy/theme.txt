@@ -1,8 +1,6 @@
 desktop-image: "background.png"
 title-text: " "
-title-font: "GeistMono NFM Regular 16"
 title-color: "#000000"
-message-font: "GeistMono NFM Regular 16"
 message-color: "#f2f2f2"
 terminal-box: "terminal_box_*.png"
 
@@ -57,12 +55,10 @@ terminal-box: "terminal_box_*.png"
   top = 20%
   height = 60%
   menu_pixmap_style = "menu_*.png"
-  item_font = "GeistMono NFM Regular 16"  
   item_color = "#ffffff"  
   item_height = 32
   item_spacing = 5
   item_padding = 7
-  selected_item_font = "GeistMono NFM Regular 16"
   selected_item_color= "#f2f2f2"
   selected_item_pixmap_style = "select_*.png"
   item_icon_space = 20
