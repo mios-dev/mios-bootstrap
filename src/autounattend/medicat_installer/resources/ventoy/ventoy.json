@@ -1,12 +1,10 @@
 {
     "control":[
-        { "VTOY_DEFAULT_MENU_MODE": "1" },
-        { "VTOY_TREE_VIEW_MENU_STYLE": "1" },
+        { "VTOY_DEFAULT_MENU_MODE": "0" },
+        { "VTOY_TREE_VIEW_MENU_STYLE": "0" },
         { "VTOY_WIN11_BYPASS_CHECK": "1" },
-        { "VTOY_DEFAULT_IMAGE": "/Live_Operating_Systems/MiOS-Xbox.iso" },
-        { "VTOY_MENU_TIMEOUT": "5" },
         { "VTOY_LINUX_REMOUNT": "1" },
-        { "VTOY_SECONDARY_BOOT_MENU": "0" }
+        { "VTOY_SECONDARY_BOOT_MENU": "1" }
     ],
     "theme":{
         "gfxmode": "1024x768"
@@ -55,5 +53,3 @@
         }
     ]
 }
-
-
