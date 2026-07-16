@@ -21,19 +21,19 @@ set "success_color=#3E7765"
 set "muted_color=#948E8E"
 set "subtle_color=#B7C9D7"
 
-if exist "%toml_path%" (
-    echo Loading installation settings from %toml_path%...
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*drivepath\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'D' }"`) do set "drivepath=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*medicatver\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '21.12' }"`) do set "medicatver=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cache_path\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'M:\MediCat.USB.v21.12.7z' }"`) do set "file=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*bg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#282262' }"`) do set "bg_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*fg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#E7DFD3' }"`) do set "fg_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*accent\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#1A407F' }"`) do set "accent_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cursor\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#F35C15' }"`) do set "cursor_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*success\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#3E7765' }"`) do set "success_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*muted\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#948E8E' }"`) do set "muted_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*subtle\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#B7C9D7' }"`) do set "subtle_color=%%i"
-)
+if not exist "%toml_path%" goto no_toml
+echo Loading installation settings from %toml_path%...
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*drivepath\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'D' }"`) do set "drivepath=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*medicatver\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '21.12' }"`) do set "medicatver=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cache_path\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'M:\MediCat.USB.v21.12.7z' }"`) do set "file=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*bg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#282262' }"`) do set "bg_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*fg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#E7DFD3' }"`) do set "fg_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*accent\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#1A407F' }"`) do set "accent_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cursor\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#F35C15' }"`) do set "cursor_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*success\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#3E7765' }"`) do set "success_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*muted\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#948E8E' }"`) do set "muted_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*subtle\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#B7C9D7' }"`) do set "subtle_color=%%i"
+:no_toml
 
 
 :: 1. Admin privilege check
@@ -53,7 +53,7 @@ if not exist bin\7z.exe (
 
 set "partition_scheme=GPT"
 set "filesystem=NTFS"
-set "secure_boot=Disabled"
+set "secure_boot=Enabled"
 set "extract_mode=Surgical"
 set "pa_theme=Dark"
 set "build_xbox=Enabled"
@@ -386,6 +386,23 @@ if not exist "%stage_dir%\Ventoy2Disk" (
     del "%stage_dir%\ventoy.zip" /Q
 )
 
+set "skip_format_extract=0"
+if exist "%drivepath%:\CdUsb.Y" (
+    if exist "%drivepath%:\Start.exe" (
+        if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" set "skip_format_extract=1"
+        if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" set "skip_format_extract=1"
+    )
+)
+
+if "%skip_format_extract%"=="1" (
+    echo.
+    echo ==========================================================
+    echo [INFO] Existing MiOS-Cat installation detected on %drivepath%:.
+    echo Skipping format, Ventoy bootloader install, and archive decompression.
+    echo ==========================================================
+    goto skip_extraction
+)
+
 :: 5. Install Ventoy to USB drive
 echo.
 echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
@@ -456,6 +473,8 @@ if "%extract_mode%"=="Surgical" (
     echo Extracting ALL files from %file% to %drivepath%:...
     "%stage_dir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -aoa -y
 )
+
+:skip_extraction
 
 :: 8. Apply custom MiOS templates and layouts
 echo.
@@ -637,14 +656,34 @@ echo This folder contains the live WinPE recovery image ^(MiOS_PE.wim^) and Syst
 
 :: 9. Rename WIM and perform Offline DISM wallpaper servicing
 echo.
-echo Renaming WIM image to MiOS_PE.wim...
-move "%drivepath%:\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" >nul
+set "wim_path=%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim"
+set "serviced_marker=%drivepath%:\Live_Operating_Systems\Mini_Windows\serviced.marker"
 
-echo.
+set "skip_wim_servicing=0"
+if exist "%wim_path%" (
+    if exist "%serviced_marker%" (
+        if "%bake_drivers%"=="Disabled" (
+            set "skip_wim_servicing=1"
+        )
+    )
+)
+
+if "%skip_wim_servicing%"=="1" (
+    echo [INFO] Serviced MiOS_PE.wim and marker detected. Skipping offline DISM servicing.
+    goto skip_wim_servicing
+)
+
+if not exist "%wim_path%" (
+    if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" (
+        echo Renaming WIM image to MiOS_PE.wim...
+        move "%drivepath%:\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" "%wim_path%" >nul
+    )
+)
+
 echo Performing offline servicing on MiOS_PE.wim to inject MiOS custom wallpaper...
 mkdir "%stage_dir%\mount" >nul 2>&1
 echo Mounting WIM image (Index 1)...
-dism /Mount-Image /ImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" /Index:1 /MountDir:"%stage_dir%\mount"
+dism /Mount-Image /ImageFile:"%wim_path%" /Index:1 /MountDir:"%stage_dir%\mount"
 
 if "%bake_drivers%"=="Enabled" (
     echo.
@@ -696,17 +735,31 @@ reg add "HKEY_USERS\pe-default\Console\%%SystemRoot%%_System32_cmd.exe" /v "Font
 reg unload HKEY_USERS\pe-default >nul
 reg unload HKEY_USERS\pe-software >nul
 
-
 echo Committing changes and unmounting WIM image...
+set "retry_count=0"
+:unmount_retry
 dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Commit
+if %errorlevel% neq 0 (
+    set /a retry_count+=1
+    if %retry_count% lss 4 (
+        echo [WARNING] Unmount failed (possibly locked). Retrying in 4 seconds (attempt %retry_count%/3)...
+        ping localhost -n 5 >nul
+        goto unmount_retry
+    )
+    echo [ERROR] Failed to unmount the image after 3 attempts. Force-cleaning mount points...
+    dism /Cleanup-Wim >nul 2>&1
+)
 rmdir "%stage_dir%\mount" /S /Q >nul 2>&1
 
 echo Exporting and compressing MiOS_PE.wim to reclaim space...
-dism /Export-Image /SourceImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" /SourceIndex:1 /DestinationImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim" /Compress:max >nul 2>&1
+dism /Export-Image /SourceImageFile:"%wim_path%" /SourceIndex:1 /DestinationImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim" /Compress:max >nul 2>&1
 if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim" (
-    del "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" /Q
-    move "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim" "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" >nul
+    del "%wim_path%" /Q
+    move "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim" "%wim_path%" >nul
 )
+echo Done > "%serviced_marker%"
+
+:skip_wim_servicing
 
 
 :: 10. Compile the inline live build of MiOS-Xbox ISO directly to the USB drive
