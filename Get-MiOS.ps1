@@ -6819,18 +6819,17 @@ if (Test-Path $RepoDir) {
         Write-Info "Updating existing bootstrap clone at $RepoDir (fetch + hard reset to origin/$Branch) ..."
         $fr = Invoke-GitProc -ArgList @('fetch','--depth=1','origin',$Branch) -Cwd $RepoDir
         if ($fr.ExitCode -ne 0) {
-            Write-Err "git fetch in $RepoDir failed (exit $($fr.ExitCode))."
-            Write-Err "Stderr: $($fr.Stderr.Trim())"
-            Write-Err "Re-run manually:  git -C `"$RepoDir`" fetch --depth=1 origin $Branch"
-            exit 1
+            Write-Warning "git fetch in $RepoDir failed (exit $($fr.ExitCode)). Network may be unreachable."
+            Write-Warning "Using existing staged offline clone at $RepoDir without updating."
+        } else {
+            $rr = Invoke-GitProc -ArgList @('reset','--hard','FETCH_HEAD') -Cwd $RepoDir
+            if ($rr.ExitCode -ne 0) {
+                Write-Err "git reset --hard in $RepoDir failed (exit $($rr.ExitCode))."
+                Write-Err "Stderr: $($rr.Stderr.Trim())"
+                exit 1
+            }
+            Write-Good "Bootstrap clone updated to origin/$Branch in place at $RepoDir"
         }
-        $rr = Invoke-GitProc -ArgList @('reset','--hard','FETCH_HEAD') -Cwd $RepoDir
-        if ($rr.ExitCode -ne 0) {
-            Write-Err "git reset --hard in $RepoDir failed (exit $($rr.ExitCode))."
-            Write-Err "Stderr: $($rr.Stderr.Trim())"
-            exit 1
-        }
-        Write-Good "Bootstrap clone updated to origin/$Branch in place at $RepoDir"
     } elseif (@(Get-ChildItem -LiteralPath $RepoDir -Force -ErrorAction SilentlyContinue).Count -eq 0) {
         # Exists but EMPTY: a prior uninstall emptied it, yet a lingering WSL2 /
         # minifilter handle can leave the now-empty dir undeletable (rmdir ->
