@@ -497,7 +497,7 @@ del "%~dp0repo_path.txt" /Q >nul 2>&1
 if "%repodrive%"=="" set "repodrive=%drivepath%"
 
 echo Staging offline repository fallback copies to secure partition %repodrive%:...
-ping -n 1 github.com >nul 2>&1
+powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }"
 if %errorlevel% equ 0 (
     echo [ONLINE] Pulling/cloning live repositories from GitHub...
     
