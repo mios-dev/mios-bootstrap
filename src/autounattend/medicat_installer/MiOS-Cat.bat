@@ -483,11 +483,16 @@ if "%extract_mode%"=="Surgical" (
     echo.
     echo Extracting minimal boot files and portable apps from %file% to %drivepath%:...
     echo (Extracting only PE, SystemRescue, and core startup structures...)
-    "%stage_dir%\bin\7z.exe" x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* -aoa -y
+    "%stage_dir%\bin\7z.exe" x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* "Programs/HW Monitor/*" Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/* -aoa -y
 ) else (
     echo.
     echo Extracting ALL files from %file% to %drivepath%:...
     "%stage_dir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -aoa -y
+)
+
+if "%extract_mode%"=="Surgical" (
+    echo [DEBLOAT] Purging bloated program folders from %drivepath%:\Programs...
+    powershell -NoProfile -Command "$keep = @('7-Zip_x64', 'Bootice', 'DiskGeniusLite', 'Everything_x64', 'WizTree', 'HW Monitor', 'HDSentinel', 'Sysinternals', 'ventoy'); if (Test-Path '%drivepath%:\Programs') { Get-ChildItem -Path '%drivepath%:\Programs' -Directory | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 )
 
 :skip_extraction
