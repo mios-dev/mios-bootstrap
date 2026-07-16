@@ -605,6 +605,13 @@ mkdir "%maindir%\mount" >nul 2>&1
 echo Mounting WIM image (Index 1)...
 dism /Mount-Image /ImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" /Index:1 /MountDir:"%maindir%\mount"
 
+echo Exporting build-host drivers for WinPE injection...
+mkdir "%maindir%\hostdrivers" >nul 2>&1
+dism /Online /Export-Driver /Destination:"%maindir%\hostdrivers" >nul 2>&1
+echo Injecting host drivers into MiOS_PE.wim...
+dism /Image:"%maindir%\mount" /Add-Driver /Driver:"%maindir%\hostdrivers" /Recurse /ForceUnsigned >nul 2>&1
+rmdir /s /q "%maindir%\hostdrivers" >nul 2>&1
+
 echo Replacing wallpapers inside WIM image...
 takeown /f "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /a >nul 2>&1
 icacls "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /grant administrators:F >nul 2>&1
