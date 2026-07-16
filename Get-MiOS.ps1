@@ -62,6 +62,9 @@
     via $env:MIOS_WORKFLOW for any consumer that reads it).
 #>
 param(
+    [Parameter(Mandatory=$false)]
+    [ValidateSet('Default', 'BuildXboxISO', 'FlashUSB', 'OfflineSync')]
+    [string]$Action = 'Default',
     [string]$RepoUrl   = "https://github.com/mios-dev/mios-bootstrap.git",
     [string]$Branch    = "main",
     # The canonical Windows-entry working tree per
@@ -104,6 +107,66 @@ function Disable-ConsoleQuickEdit {
     } catch {}
 }
 Disable-ConsoleQuickEdit
+
+# Consolidated Action Router
+if ($Action -ne 'Default') {
+    if ($Action -eq 'BuildXboxISO') {
+        Write-Host "[*] Action: BuildXboxISO. Invoking Build-MiOSXboxISO..." -ForegroundColor Cyan
+        $buildScript = Join-Path $RepoDir "src\autounattend\Build-MiOSXboxISO.ps1"
+        if (-not (Test-Path $buildScript)) {
+            $buildScript = "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1"
+        }
+        if (-not (Test-Path $buildScript)) {
+            Write-Error "Build-MiOSXboxISO.ps1 not found in $RepoDir or C:\mios-bootstrap!"
+            exit 1
+        }
+        # Run using a dynamic free-space work directory
+        $v = (Get-Volume | Where-Object { $_.DriveType -eq 'Fixed' -and $_.SizeRemaining -gt 15GB } | Sort-Object SizeRemaining -Descending | Select-Object -First 1)
+        $work = if ($v) { "$($v.DriveLetter):\MiOS\isobuild_live" } else { "C:\MiOS\isobuild_live" }
+        Write-Host "    Using WorkDir: $work" -ForegroundColor Cyan
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript -WorkDir $work -SkipWsl -SkipPrereqs
+        exit $LASTEXITCODE
+    }
+
+    if ($Action -eq 'FlashUSB') {
+        Write-Host "[*] Action: FlashUSB. Launching interactive MiOS-Cat installer..." -ForegroundColor Cyan
+        $catScript = Join-Path $RepoDir "src\autounattend\medicat_installer\MiOS-Cat.bat"
+        if (-not (Test-Path $catScript)) {
+            $catScript = "C:\MiOS\src\autounattend\medicat_installer\MiOS-Cat.bat"
+        }
+        if (-not (Test-Path $catScript)) {
+            Write-Error "MiOS-Cat.bat not found in source checkouts!"
+            exit 1
+        }
+        $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c start cmd.exe /k $catScript"
+        $principal = New-ScheduledTaskPrincipal -UserId "MIOS\Administrator" -LogonType Interactive
+        $taskName = "Launch_MiOS_Cat_Web"
+        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+        Start-ScheduledTask -TaskName $taskName
+        Start-Sleep -Seconds 2
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        Write-Host "[+] Interactive MiOS-Cat launcher spawned on user desktop." -ForegroundColor Green
+        exit 0
+    }
+
+    if ($Action -eq 'OfflineSync') {
+        Write-Host "[*] Action: OfflineSync. Staging repositories to USB..." -ForegroundColor Cyan
+        $drive = 'D'
+        $toml = 'C:\mios-bootstrap\mios.toml'
+        if (-not (Test-Path $toml)) { $toml = 'C:\MiOS\mios.toml' }
+        if (Test-Path $toml) {
+            $drive = (Get-Content $toml | Select-String -Pattern '^\s*drivepath\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value })
+            if (-not $drive) { $drive = 'D' }
+        }
+        Write-Host "[*] Target USB Drive: $($drive):" -ForegroundColor Cyan
+        New-Item -ItemType Directory -Force -Path "$($drive):\ventoy\repo\mios-bootstrap" | Out-Null
+        New-Item -ItemType Directory -Force -Path "$($drive):\ventoy\repo\MiOS" | Out-Null
+        robocopy "C:\mios-bootstrap" "$($drive):\ventoy\repo\mios-bootstrap" /E /XD .git .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 | Out-Null
+        robocopy "C:\MiOS" "$($drive):\ventoy\repo\MiOS" /E /XD .git .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 | Out-Null
+        Write-Host "[+] Sync completed successfully." -ForegroundColor Green
+        exit 0
+    }
+}
 
 # -- Self-cache-bust on entry ------------------------------------------------
 # raw.githubusercontent.com is fronted by Fastly with `Cache-Control: max-age=300`,
