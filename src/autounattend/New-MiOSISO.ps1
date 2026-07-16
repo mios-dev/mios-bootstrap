@@ -818,7 +818,7 @@ function Invoke-MiOSImageServicing {
             $present = @(Get-WindowsCapability -Path $mount | Where-Object State -eq 'Installed' | Select-Object -Expand Name)
             $todo = @($Removals.Capabilities | Where-Object { $present -contains $_ })
             Write-Host "[*] Removing $($todo.Count) capabilities (of $($Removals.Capabilities.Count) targeted, $($present.Count) installed) ..." -ForegroundColor Cyan
-            foreach ($cap in $todo) { try { Remove-WindowsCapability -Path $mount -Name $cap -ErrorAction Stop | Out-Null } catch {} }
+            foreach ($cap in $todo) { try { Remove-WindowsCapability -Path $mount -Name $cap -ErrorAction SilentlyContinue | Out-Null } catch {} }
         }
         # Disable the merged preset's optional features (offline). NOTE: -Remove does
         # NOT reclaim payload on CLIENT editions (Push-Button Reset retention) -- it
