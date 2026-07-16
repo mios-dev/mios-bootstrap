@@ -405,6 +405,9 @@ if "%skip_format_extract%"=="1" (
 
 :: 5. Install Ventoy to USB drive
 echo.
+echo Cleaning up existing secure partitions to unlock the USB disk...
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { Get-Partition -DiskNumber $d.Number -PartitionNumber 3 -ErrorAction SilentlyContinue | Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue; Update-HostStorageCache }" >nul 2>&1
+
 echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
 cd /d "%stage_dir%\Ventoy2Disk"
 set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme% /R:4096"
