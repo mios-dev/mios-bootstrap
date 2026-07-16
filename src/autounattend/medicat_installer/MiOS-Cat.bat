@@ -8,7 +8,9 @@ if not exist "%toml_path%" set "toml_path=%~dp0..\..\..\..\..\mios.toml"
 
 set "drivepath=D"
 set "medicatver=21.12"
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 25GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; if ($target) { $target.DriveLetter + ':\MiOS\medicat_stage' } else { $env:TEMP + '\medicat_stage' }"`) do set "stage_dir=%%i"
+powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 25GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\medicat_stage' } else { $env:TEMP + '\medicat_stage' }; [System.IO.File]::WriteAllText(\"$env:TEMP\stage_path.txt\", $p)"
+set /p stage_dir=<"%TEMP%\stage_path.txt"
+del "%TEMP%\stage_path.txt" /Q >nul 2>&1
 mkdir "%stage_dir%" >nul 2>&1
 set "file=M:\MediCat.USB.v21.12.7z"
 set "bg_color=#282262"
@@ -686,7 +688,9 @@ if "%build_xbox%"=="Enabled" (
         "  $c = $c -replace '(?s)(\[editions\.mios-xbox\].*?autounattend\.debloat_profile\s*=\s*\")[^\"]*(\")', \"${1}${game}${2}\";" ^
         "  $c | Set-Content \"$env:TEMP\mios_run.toml\" -Force;" ^
         "}"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 15GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; if ($target) { $target.DriveLetter + ':\MiOS\isobuild_live' } else { 'C:\MiOS\isobuild_live' }"`) do set "workdir_path=%%i"
+    powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 15GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\isobuild_live' } else { 'C:\MiOS\isobuild_live' }; [System.IO.File]::WriteAllText(\"$env:TEMP\work_path.txt\", $p)"
+    set /p workdir_path=<"%TEMP%\work_path.txt"
+    del "%TEMP%\work_path.txt" /Q >nul 2>&1
     powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%workdir_path%" -SkipWsl -SkipPrereqs
 )
 
