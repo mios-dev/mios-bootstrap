@@ -30,9 +30,13 @@ if (-not (Test-Path $tomlPath)) {
 $targetDrive = "D"
 $medicatVer = "21.12"
 $cachePath = "M:\MediCat.USB.v21.12.7z"
-$primaryColor = "#B7C9D7"
-$secondaryColor = "#948E8E"
-$accentColor = "#3E7765"
+$bgColor = "#282262"
+$fgColor = "#E7DFD3"
+$accentColor = "#1A407F"
+$cursorColor = "#F35C15"
+$successColor = "#3E7765"
+$mutedColor = "#948E8E"
+$subtleColor = "#B7C9D7"
 $extractMode = "Surgical"
 $buildXbox = $true
 $partitionLabel = "MiOS-Cat"
@@ -59,156 +63,233 @@ if (Test-Path $tomlPath) {
     $targetDrive = Get-TomlValue -pattern '^\s*drivepath\s*=\s*"(.*)"' -default "D"
     $medicatVer = Get-TomlValue -pattern '^\s*medicatver\s*=\s*"(.*)"' -default "21.12"
     $cachePath = Get-TomlValue -pattern '^\s*cache_path\s*=\s*"(.*)"' -default "M:\MediCat.USB.v21.12.7z"
-    $primaryColor = Get-TomlValue -pattern '^\s*subtle\s*=\s*"(.*)"' -default "#B7C9D7"
-    $secondaryColor = Get-TomlValue -pattern '^\s*muted\s*=\s*"(.*)"' -default "#948E8E"
-    $accentColor = Get-TomlValue -pattern '^\s*success\s*=\s*"(.*)"' -default "#3E7765"
+    $bgColor = Get-TomlValue -pattern '^\s*bg\s*=\s*"(.*)"' -default "#282262"
+    $fgColor = Get-TomlValue -pattern '^\s*fg\s*=\s*"(.*)"' -default "#E7DFD3"
+    $accentColor = Get-TomlValue -pattern '^\s*accent\s*=\s*"(.*)"' -default "#1A407F"
+    $cursorColor = Get-TomlValue -pattern '^\s*cursor\s*=\s*"(.*)"' -default "#F35C15"
+    $successColor = Get-TomlValue -pattern '^\s*success\s*=\s*"(.*)"' -default "#3E7765"
+    $mutedColor = Get-TomlValue -pattern '^\s*muted\s*=\s*"(.*)"' -default "#948E8E"
+    $subtleColor = Get-TomlValue -pattern '^\s*subtle\s*=\s*"(.*)"' -default "#B7C9D7"
 }
 
+function Reset-MiosColors {
+    if (Test-Path $tomlPath) {
+        $script:bgColor = Get-TomlValue -pattern '^\s*bg\s*=\s*"(.*)"' -default "#282262"
+        $script:fgColor = Get-TomlValue -pattern '^\s*fg\s*=\s*"(.*)"' -default "#E7DFD3"
+        $script:accentColor = Get-TomlValue -pattern '^\s*accent\s*=\s*"(.*)"' -default "#1A407F"
+        $script:cursorColor = Get-TomlValue -pattern '^\s*cursor\s*=\s*"(.*)"' -default "#F35C15"
+        $script:successColor = Get-TomlValue -pattern '^\s*success\s*=\s*"(.*)"' -default "#3E7765"
+        $script:mutedColor = Get-TomlValue -pattern '^\s*muted\s*=\s*"(.*)"' -default "#948E8E"
+        $script:subtleColor = Get-TomlValue -pattern '^\s*subtle\s*=\s*"(.*)"' -default "#B7C9D7"
+    }
+}
+
+$currentMenu = "main"
+
 while ($true) {
-    Clear-Host
-    Write-Host "==========================================================" -ForegroundColor Cyan
-    Write-Host "      MiOS Dedicated Recovery USB Deployment Tool         " -ForegroundColor Cyan
-    Write-Host "==========================================================" -ForegroundColor Cyan
-    Write-Host "[USB Target settings]"
-    Write-Host "  1) Target USB Drive Letter : [$targetDrive`:]"
-    Write-Host "  2) Format Partition Label  : [$partitionLabel]"
-    Write-Host ""
-    Write-Host "[Ventoy / FileSystem settings]"
-    Write-Host "  3) Partition Scheme        : [$partitionScheme]"
-    Write-Host "  4) Filesystem Format       : [$filesystem]"
-    Write-Host "  5) Secure Boot Support     : [$(if($secureBoot){'Enabled'}else{'Disabled'})]"
-    Write-Host ""
-    Write-Host "[MediCat / Extraction settings]"
-    Write-Host "  6) Core Download Cache     : [$cachePath]"
-    Write-Host "  7) Extraction Mode         : [$extractMode] (PE + SysRescue)"
-    Write-Host "  8) PortableApps Theme      : [$paTheme]"
-    Write-Host ""
-    Write-Host "[Inline MiOS-Xbox Build settings]"
-    Write-Host "  9) Compile MiOS-Xbox ISO   : [$(if($buildXbox){'Enabled'}else{'Disabled'})]"
-    Write-Host "  10) Bake Host Drivers      : [$(if($bakeDrivers){'Enabled'}else{'Disabled'})]"
-    Write-Host "  11) Microsoft UUP Channel  : [$uupChannel]"
-    Write-Host "  12) Gaming Optimizations   : [$(if($gamingOptimize){'Enabled'}else{'Disabled'})]"
-    Write-Host ""
-    Write-Host "[Action]"
-    Write-Host "  13) START INSTALLATION WITH ABOVE SETTINGS"
-    Write-Host "  14) EXIT"
-    Write-Host "==========================================================" -ForegroundColor Cyan
-    
-    $choice = Read-Host "Select an option (1-14)"
-    
-    switch ($choice) {
-        "1" {
-            Clear-Host
-            Write-Host "Connected USB drives:" -ForegroundColor Green
-            $removableDrives = Get-Volume | Where-Object {$_.DriveType -eq 'Removable'}
-            if ($removableDrives.Count -eq 0) {
-                Write-Host "No removable USB drives found!" -ForegroundColor Red
-                Start-Sleep -Seconds 2
-                continue
+    if ($currentMenu -eq "main") {
+        Clear-Host
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "      MiOS Dedicated Recovery USB Deployment Tool         " -ForegroundColor Cyan
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "  1) USB Target Settings    : Drive [$targetDrive`:], Label [$partitionLabel]"
+        Write-Host "  2) Ventoy / FS Settings   : Format [$filesystem], Scheme [$partitionScheme]"
+        Write-Host "  3) Customize Theme Colors : Subtle [$subtleColor], Accent [$accentColor]"
+        Write-Host "  4) MiOS-Xbox Build Config : Drivers [$(if($bakeDrivers){'Enabled'}else{'Disabled'})], Channel [$uupChannel]"
+        Write-Host "  5) Repository Tools       : Open C:\MiOS, C:\mios-bootstrap, edit TOML"
+        Write-Host "  6) START INSTALLATION WITH CURRENT CONFIG"
+        Write-Host "  7) EXIT"
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        
+        $choice = Read-Host "Select an option (1-7)"
+        switch ($choice) {
+            "1" { $currentMenu = "usb" }
+            "2" { $currentMenu = "ventoy" }
+            "3" { $currentMenu = "colors" }
+            "4" { $currentMenu = "xbox" }
+            "5" { $currentMenu = "repos" }
+            "6" {
+                Clear-Host
+                Write-Host "STARTING MiOS-Cat INSTALLATION" -ForegroundColor Cyan
+                Write-Host "=============================="
+                Write-Host "Target Drive      : $targetDrive`:"
+                Write-Host "Cache File        : $cachePath"
+                Write-Host "Extraction Mode   : $extractMode"
+                Write-Host "Build MiOS-Xbox   : $buildXbox"
+                Write-Host "Partition Label   : $partitionLabel"
+                Write-Host "Partition Scheme  : $partitionScheme"
+                Write-Host "Filesystem        : $filesystem"
+                Write-Host "Secure Boot       : $(if($secureBoot){'Enabled'}else{'Disabled'})"
+                Write-Host "PortableApps Theme: $paTheme"
+                Write-Host "Background Color  : $bgColor"
+                Write-Host "Foreground Color  : $fgColor"
+                Write-Host "Accent Color      : $accentColor"
+                Write-Host "Cursor Color      : $cursorColor"
+                Write-Host "Success Color     : $successColor"
+                Write-Host "Muted Color       : $mutedColor"
+                Write-Host "Subtle Color      : $subtleColor"
+                Write-Host "Xbox Bake Drivers : $bakeDrivers"
+                Write-Host "Xbox UUP Channel  : $uupChannel"
+                Write-Host "Xbox Gaming Opt   : $gamingOptimize"
+                Write-Host "=============================="
+                Write-Host "WARNING: ALL DATA ON DRIVE [$targetDrive`:] WILL BE PERMANENTLY ERASED!" -ForegroundColor Red
+                $confirm = Read-Host "Are you absolutely sure you want to proceed? (type YES to confirm)"
+                if ($confirm -eq "YES") {
+                    break
+                }
             }
-            $driveMap = @{}
-            $i = 1
-            foreach ($d in $removableDrives) {
-                Write-Host "$i) Drive [$($d.DriveLetter):] - $($d.FriendlyName) ($($d.FileSystemType)) - $([Math]::Round($d.Size / 1GB, 2)) GB"
-                $driveMap[$i] = $d.DriveLetter
-                $i++
+            "7" { exit }
+        }
+    }
+    elseif ($currentMenu -eq "usb") {
+        Clear-Host
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "               USB Target Settings" -ForegroundColor Cyan
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "  1) Target USB Drive Letter : [$targetDrive`:]"
+        Write-Host "  2) Format Partition Label  : [$partitionLabel]"
+        Write-Host "  3) Back to Main Menu"
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        $choice = Read-Host "Select an option (1-3)"
+        switch ($choice) {
+            "1" {
+                Clear-Host
+                Write-Host "Connected USB drives:" -ForegroundColor Green
+                $removableDrives = Get-Volume | Where-Object {$_.DriveType -eq 'Removable'}
+                if ($removableDrives.Count -eq 0) {
+                    Write-Host "No removable USB drives found!" -ForegroundColor Red
+                    Start-Sleep -Seconds 2
+                    continue
+                }
+                $driveMap = @{}
+                $i = 1
+                foreach ($d in $removableDrives) {
+                    Write-Host "$i) Drive [$($d.DriveLetter):] - $($d.FriendlyName) ($($d.FileSystemType)) - $([Math]::Round($d.Size / 1GB, 2)) GB"
+                    $driveMap[$i] = $d.DriveLetter
+                    $i++
+                }
+                Write-Host ""
+                $sel = Read-Host "Select the drive number"
+                if ($driveMap.ContainsKey([int]$sel)) {
+                    $targetDrive = $driveMap[[int]$sel]
+                }
             }
-            Write-Host ""
-            $sel = Read-Host "Select the drive number"
-            if ($driveMap.ContainsKey([int]$sel)) {
-                $targetDrive = $driveMap[[int]$sel]
+            "2" {
+                Clear-Host
+                Write-Host "Current partition label: $partitionLabel"
+                $newLabel = Read-Host "Enter partition label (or press Enter to keep)"
+                if (-not [string]::IsNullOrWhiteSpace($newLabel)) {
+                    $partitionLabel = $newLabel
+                }
             }
+            "3" { $currentMenu = "main" }
         }
-        "2" {
-            Clear-Host
-            Write-Host "Current partition label: $partitionLabel"
-            $newLabel = Read-Host "Enter partition label (or press Enter to keep)"
-            if (-not [string]::IsNullOrWhiteSpace($newLabel)) {
-                $partitionLabel = $newLabel
+    }
+    elseif ($currentMenu -eq "ventoy") {
+        Clear-Host
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "               Ventoy / FS / Extraction Settings" -ForegroundColor Cyan
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "  1) Partition Scheme        : [$partitionScheme]"
+        Write-Host "  2) Filesystem Format       : [$filesystem]"
+        Write-Host "  3) Secure Boot Support     : [$(if($secureBoot){'Enabled'}else{'Disabled'})]"
+        Write-Host "  4) Core Download Cache     : [$cachePath]"
+        Write-Host "  5) Extraction Mode         : [$extractMode]"
+        Write-Host "  6) PortableApps Theme      : [$paTheme]"
+        Write-Host "  7) Back to Main Menu"
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        $choice = Read-Host "Select an option (1-7)"
+        switch ($choice) {
+            "1" {
+                if ($partitionScheme -eq "GPT") { $partitionScheme = "MBR" } else { $partitionScheme = "GPT" }
             }
-        }
-        "3" {
-            if ($partitionScheme -eq "GPT") {
-                $partitionScheme = "MBR"
-            } else {
-                $partitionScheme = "GPT"
+            "2" {
+                if ($filesystem -eq "NTFS") { $filesystem = "exFAT" } else { $filesystem = "NTFS" }
             }
-        }
-        "4" {
-            if ($filesystem -eq "NTFS") {
-                $filesystem = "exFAT"
-            } else {
-                $filesystem = "NTFS"
+            "3" { $secureBoot = -not $secureBoot }
+            "4" {
+                Clear-Host
+                Write-Host "Current cache path: $cachePath"
+                $newCache = Read-Host "Enter full path to MediCat core 7z (or press Enter to keep)"
+                if (-not [string]::IsNullOrWhiteSpace($newCache)) { $cachePath = $newCache }
             }
-        }
-        "5" {
-            $secureBoot = -not $secureBoot
-        }
-        "6" {
-            Clear-Host
-            Write-Host "Current cache path: $cachePath"
-            $newCache = Read-Host "Enter full path to MediCat core 7z (or press Enter to keep)"
-            if (-not [string]::IsNullOrWhiteSpace($newCache)) {
-                $cachePath = $newCache
+            "5" {
+                if ($extractMode -eq "Surgical") { $extractMode = "Full" } else { $extractMode = "Surgical" }
             }
-        }
-        "7" {
-            if ($extractMode -eq "Surgical") {
-                $extractMode = "Full"
-            } else {
-                $extractMode = "Surgical"
+            "6" {
+                if ($paTheme -eq "Dark") { $paTheme = "Classic" } else { $paTheme = "Dark" }
             }
+            "7" { $currentMenu = "main" }
         }
-        "8" {
-            if ($paTheme -eq "Dark") {
-                $paTheme = "Classic"
-            } else {
-                $paTheme = "Dark"
+    }
+    elseif ($currentMenu -eq "colors") {
+        Clear-Host
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "               Customize Theme Colors" -ForegroundColor Cyan
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "  1) Background Color (bg)   : [$bgColor]"
+        Write-Host "  2) Foreground Color (fg)   : [$fgColor]"
+        Write-Host "  3) Accent Color (accent)   : [$accentColor]"
+        Write-Host "  4) Cursor Color (cursor)   : [$cursorColor]"
+        Write-Host "  5) Success Color (success) : [$successColor]"
+        Write-Host "  6) Muted Color (muted)     : [$mutedColor]"
+        Write-Host "  7) Subtle Color (subtle)   : [$subtleColor]"
+        Write-Host "  8) Reset to base TOML colors"
+        Write-Host "  9) Back to Main Menu"
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        $choice = Read-Host "Select an option (1-9)"
+        switch ($choice) {
+            "1" { $val = Read-Host "Enter BG hex color"; if($val){$bgColor = $val} }
+            "2" { $val = Read-Host "Enter FG hex color"; if($val){$fgColor = $val} }
+            "3" { $val = Read-Host "Enter Accent hex color"; if($val){$accentColor = $val} }
+            "4" { $val = Read-Host "Enter Cursor hex color"; if($val){$cursorColor = $val} }
+            "5" { $val = Read-Host "Enter Success hex color"; if($val){$successColor = $val} }
+            "6" { $val = Read-Host "Enter Muted hex color"; if($val){$mutedColor = $val} }
+            "7" { $val = Read-Host "Enter Subtle hex color"; if($val){$subtleColor = $val} }
+            "8" { Reset-MiosColors }
+            "9" { $currentMenu = "main" }
+        }
+    }
+    elseif ($currentMenu -eq "xbox") {
+        Clear-Host
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "               MiOS-Xbox Build Config" -ForegroundColor Cyan
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "  1) Compile MiOS-Xbox ISO   : [$(if($buildXbox){'Enabled'}else{'Disabled'})]"
+        Write-Host "  2) Bake Host Drivers       : [$(if($bakeDrivers){'Enabled'}else{'Disabled'})]"
+        Write-Host "  3) Microsoft UUP Channel   : [$uupChannel]"
+        Write-Host "  4) Gaming Optimizations    : [$(if($gamingOptimize){'Enabled'}else{'Disabled'})]"
+        Write-Host "  5) Back to Main Menu"
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        $choice = Read-Host "Select an option (1-5)"
+        switch ($choice) {
+            "1" { $buildXbox = -not $buildXbox }
+            "2" { $bakeDrivers = -not $bakeDrivers }
+            "3" {
+                if ($uupChannel -eq "Dev") { $uupChannel = "Beta" }
+                elseif ($uupChannel -eq "Beta") { $uupChannel = "Release" }
+                else { $uupChannel = "Dev" }
             }
+            "4" { $gamingOptimize = -not $gamingOptimize }
+            "5" { $currentMenu = "main" }
         }
-        "9" {
-            $buildXbox = -not $buildXbox
-        }
-        "10" {
-            $bakeDrivers = -not $bakeDrivers
-        }
-        "11" {
-            if ($uupChannel -eq "Dev") {
-                $uupChannel = "Beta"
-            } elseif ($uupChannel -eq "Beta") {
-                $uupChannel = "Release"
-            } else {
-                $uupChannel = "Dev"
-            }
-        }
-        "12" {
-            $gamingOptimize = -not $gamingOptimize
-        }
-        "13" {
-            Clear-Host
-            Write-Host "STARTING MiOS-Cat INSTALLATION" -ForegroundColor Cyan
-            Write-Host "=============================="
-            Write-Host "Target Drive      : $targetDrive`:"
-            Write-Host "Cache File        : $cachePath"
-            Write-Host "Extraction Mode   : $extractMode"
-            Write-Host "Build MiOS-Xbox   : $buildXbox"
-            Write-Host "Partition Label   : $partitionLabel"
-            Write-Host "Partition Scheme  : $partitionScheme"
-            Write-Host "Filesystem        : $filesystem"
-            Write-Host "Secure Boot       : $(if($secureBoot){'Enabled'}else{'Disabled'})"
-            Write-Host "PortableApps Theme: $paTheme"
-            Write-Host "Xbox Bake Drivers : $bakeDrivers"
-            Write-Host "Xbox UUP Channel  : $uupChannel"
-            Write-Host "Xbox Gaming Opt.  : $gamingOptimize"
-            Write-Host "=============================="
-            Write-Host "WARNING: ALL DATA ON DRIVE [$targetDrive`:] WILL BE PERMANENTLY ERASED!" -ForegroundColor Red
-            $confirm = Read-Host "Are you absolutely sure you want to proceed? (type YES to confirm)"
-            if ($confirm -eq "YES") {
-                break # Exit menu loop and start installation
-            }
-        }
-        "14" {
-            exit
+    }
+    elseif ($currentMenu -eq "repos") {
+        Clear-Host
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "               Repository Tools" -ForegroundColor Cyan
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host "  1) Open MiOS Repository (C:\MiOS)"
+        Write-Host "  2) Open mios-bootstrap Repository (C:\mios-bootstrap)"
+        Write-Host "  3) Edit base mios.toml configuration"
+        Write-Host "  4) Back to Main Menu"
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        $choice = Read-Host "Select an option (1-4)"
+        switch ($choice) {
+            "1" { Start-Process explorer.exe "C:\MiOS" }
+            "2" { Start-Process explorer.exe "C:\mios-bootstrap" }
+            "3" { Start-Process notepad.exe "`"$tomlPath`"" }
+            "4" { $currentMenu = "main" }
         }
     }
 }
@@ -359,6 +440,29 @@ if (Test-Path $resourceDir) {
     Copy-Item -Path "$resourceDir\autorun.sh" -Destination "$($targetDrive):\autorun\autorun.sh" -Force
     Copy-Item -Path "$resourceDir\autorun.sh" -Destination "$($targetDrive):\autorun\autorun" -Force
     Copy-Item -Path "$resourceDir\CdUsb.Y" -Destination "$($targetDrive):\CdUsb.Y" -Force
+}
+
+# Custom theme configuration for PortableApps Menu
+if ($paTheme -eq "Dark") {
+    $paMenuDir = Join-Path "$($targetDrive):" "PortableApps\PortableApps.com\Data"
+    New-Item -ItemType Directory -Force -Path $paMenuDir | Out-Null
+    $paMenuIni = Join-Path $paMenuDir "PortableAppsMenu.ini"
+    $iniContent = @"
+[Theme]
+Color=Custom
+PrimaryColor=$subtleColor
+SecondaryColor=$mutedColor
+AccentColor=$accentColor
+SetTheme=Custom
+Logo=logo.png
+
+[Files]
+CommonDocumentsDirectory=..\..\Documents
+CommonPicturesDirectory=..\..\Documents
+CommonMusicDirectory=..\..\Documents
+CommonVideoDirectory=..\..\Documents
+"@
+    $iniContent | Set-Content $paMenuIni -Force
 }
 
 # 10. Compile MiOS-Xbox ISO if enabled

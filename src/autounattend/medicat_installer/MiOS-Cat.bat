@@ -9,18 +9,26 @@ if not exist "%toml_path%" set "toml_path=%~dp0..\..\..\..\..\mios.toml"
 set "drivepath=D"
 set "medicatver=21.12"
 set "file=M:\MediCat.USB.v21.12.7z"
-set "primary_color=#B7C9D7"
-set "secondary_color=#948E8E"
-set "accent_color=#3E7765"
+set "bg_color=#282262"
+set "fg_color=#E7DFD3"
+set "accent_color=#1A407F"
+set "cursor_color=#F35C15"
+set "success_color=#3E7765"
+set "muted_color=#948E8E"
+set "subtle_color=#B7C9D7"
 
 if exist "%toml_path%" (
     echo Loading installation settings from %toml_path%...
     for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*drivepath\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'D' }"`) do set "drivepath=%%i"
     for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*medicatver\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '21.12' }"`) do set "medicatver=%%i"
     for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cache_path\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'M:\MediCat.USB.v21.12.7z' }"`) do set "file=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*subtle\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#B7C9D7' }"`) do set "primary_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*muted\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#948E8E' }"`) do set "secondary_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*success\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#3E7765' }"`) do set "accent_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*bg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#282262' }"`) do set "bg_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*fg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#E7DFD3' }"`) do set "fg_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*accent\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#1A407F' }"`) do set "accent_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cursor\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#F35C15' }"`) do set "cursor_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*success\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#3E7765' }"`) do set "success_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*muted\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#948E8E' }"`) do set "muted_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*subtle\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#B7C9D7' }"`) do set "subtle_color=%%i"
 )
 
 
@@ -39,8 +47,15 @@ if not exist bin\7z.exe (
     curl -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll" -o ./bin/7z.dll
 )
 
+set "partition_scheme=GPT"
+set "filesystem=NTFS"
+set "secure_boot=Disabled"
 set "extract_mode=Surgical"
+set "pa_theme=Dark"
 set "build_xbox=Enabled"
+set "bake_drivers=Enabled"
+set "uup_channel=Dev"
+set "gaming_optimize=Enabled"
 set "partition_label=MiOS-Cat"
 
 :menu
@@ -48,25 +63,131 @@ cls
 echo ==========================================================
 echo       MiOS-Cat Dedicated USB Deployment Tool
 echo ==========================================================
-echo [1] Target USB Drive letter  : %drivepath%:
-echo [2] Core Download Cache      : %file%
-echo [3] Extraction Mode          : %extract_mode% (PE + SysRescue)
-echo [4] Compile MiOS-Xbox ISO    : %build_xbox%
-echo [5] Format Partition Label   : %partition_label%
-echo [6] START INSTALLATION
-echo [7] EXIT
+echo   1. USB Target Settings    : Drive [%drivepath%:], Label [%partition_label%]
+echo   2. Ventoy / FS Settings   : Format [%filesystem%], Scheme [%partition_scheme%]
+echo   3. Customize Theme Colors : Subtle [%subtle_color%], Accent [%accent_color%]
+echo   4. MiOS-Xbox Build Config : Drivers [%bake_drivers%], Channel [%uup_channel%]
+echo   5. Repository Tools       : Open C:\MiOS, C:\mios-bootstrap, edit TOML
+echo   6. START INSTALLATION WITH CURRENT CONFIG
+echo   7. EXIT
 echo ==========================================================
 set "choice="
 set /p "choice=Select an option (1-7): "
 
-if "%choice%"=="1" goto set_drive
-if "%choice%"=="2" goto set_cache
-if "%choice%"=="3" goto set_extract
-if "%choice%"=="4" goto set_xbox
-if "%choice%"=="5" goto set_label
+if "%choice%"=="1" goto sub_usb
+if "%choice%"=="2" goto sub_ventoy
+if "%choice%"=="3" goto sub_colors
+if "%choice%"=="4" goto sub_xbox
+if "%choice%"=="5" goto sub_repos
 if "%choice%"=="6" goto start_install
 if "%choice%"=="7" exit /b 0
 goto menu
+
+:sub_usb
+cls
+echo ==========================================================
+echo               USB Target Settings
+echo ==========================================================
+echo   1. Target USB Drive letter  : %drivepath%:
+echo   2. Format Partition Label   : %partition_label%
+echo   3. Back to Main Menu
+echo ==========================================================
+set "sub_choice="
+set /p "sub_choice=Select an option (1-3): "
+if "%sub_choice%"=="1" goto set_drive
+if "%sub_choice%"=="2" goto set_label
+if "%sub_choice%"=="3" goto menu
+goto sub_usb
+
+:sub_ventoy
+cls
+echo ==========================================================
+echo               Ventoy / FS / Extraction Settings
+echo ==========================================================
+echo   1. Partition Scheme         : %partition_scheme%
+echo   2. Filesystem Format        : %filesystem%
+echo   3. Secure Boot Support      : %secure_boot%
+echo   4. Core Download Cache      : %file%
+echo   5. Extraction Mode          : %extract_mode%
+echo   6. PortableApps Theme       : %pa_theme%
+echo   7. Back to Main Menu
+echo ==========================================================
+set "sub_choice="
+set /p "sub_choice=Select an option (1-7): "
+if "%sub_choice%"=="1" goto set_scheme
+if "%sub_choice%"=="2" goto set_fs
+if "%sub_choice%"=="3" goto set_secure
+if "%sub_choice%"=="4" goto set_cache
+if "%sub_choice%"=="5" goto set_extract
+if "%sub_choice%"=="6" goto set_pa_theme
+if "%sub_choice%"=="7" goto menu
+goto sub_ventoy
+
+:sub_colors
+cls
+echo ==========================================================
+echo               Customize Theme Colors
+echo ==========================================================
+echo   1. Background Color (bg)    : %bg_color%
+echo   2. Foreground Color (fg)    : %fg_color%
+echo   3. Accent Color (accent)    : %accent_color%
+echo   4. Cursor Color (cursor)    : %cursor_color%
+echo   5. Success Color (success)  : %success_color%
+echo   6. Muted Color (muted)      : %muted_color%
+echo   7. Subtle Color (subtle)    : %subtle_color%
+echo   8. Reset to default base colors
+echo   9. Back to Main Menu
+echo ==========================================================
+set "sub_choice="
+set /p "sub_choice=Select an option (1-9): "
+if "%sub_choice%"=="1" goto set_color_bg
+if "%sub_choice%"=="2" goto set_color_fg
+if "%sub_choice%"=="3" goto set_color_accent
+if "%sub_choice%"=="4" goto set_color_cursor
+if "%sub_choice%"=="5" goto set_color_success
+if "%sub_choice%"=="6" goto set_color_muted
+if "%sub_choice%"=="7" goto set_color_subtle
+if "%sub_choice%"=="8" goto reset_colors
+if "%sub_choice%"=="9" goto menu
+goto sub_colors
+
+:sub_xbox
+cls
+echo ==========================================================
+echo               MiOS-Xbox Build Config
+echo ==========================================================
+echo   1. Compile MiOS-Xbox ISO    : %build_xbox%
+echo   2. Bake Host Drivers       : %bake_drivers%
+echo   3. Microsoft UUP Channel   : %uup_channel%
+echo   4. Gaming Optimizations    : %gaming_optimize%
+echo   5. Back to Main Menu
+echo ==========================================================
+set "sub_choice="
+set /p "sub_choice=Select an option (1-5): "
+if "%sub_choice%"=="1" goto set_xbox
+if "%sub_choice%"=="2" goto set_bake_drivers
+if "%sub_choice%"=="3" goto set_uup_channel
+if "%sub_choice%"=="4" goto set_gaming_optimize
+if "%sub_choice%"=="5" goto menu
+goto sub_xbox
+
+:sub_repos
+cls
+echo ==========================================================
+echo               Repository Tools
+echo ==========================================================
+echo   1. Open MiOS Repository (C:\MiOS)
+echo   2. Open mios-bootstrap Repository (C:\mios-bootstrap)
+echo   3. Edit base mios.toml configuration
+echo   4. Back to Main Menu
+echo ==========================================================
+set "sub_choice="
+set /p "sub_choice=Select an option (1-4): "
+if "%sub_choice%"=="1" start explorer.exe C:\MiOS && goto sub_repos
+if "%sub_choice%"=="2" start explorer.exe C:\mios-bootstrap && goto sub_repos
+if "%sub_choice%"=="3" start notepad.exe "%toml_path%" && goto sub_repos
+if "%sub_choice%"=="4" goto menu
+goto sub_repos
 
 :set_drive
 cls
@@ -78,32 +199,7 @@ set /p "new_drive=Enter USB drive letter (e.g. E, F, G) or press Enter to keep: 
 if not "%new_drive%"=="" (
     set "drivepath=%new_drive:~0,1%"
 )
-goto menu
-
-:set_cache
-cls
-echo Current cache file path: %file%
-set /p "new_cache=Enter full path to MediCat core 7z or press Enter to keep: "
-if not "%new_cache%"=="" (
-    set "file=%new_cache%"
-)
-goto menu
-
-:set_extract
-if "%extract_mode%"=="Surgical" (
-    set "extract_mode=Full"
-) else (
-    set "extract_mode=Surgical"
-)
-goto menu
-
-:set_xbox
-if "%build_xbox%"=="Enabled" (
-    set "build_xbox=Disabled"
-) else (
-    set "build_xbox=Enabled"
-)
-goto menu
+goto sub_usb
 
 :set_label
 cls
@@ -112,7 +208,131 @@ set /p "new_label=Enter partition volume label or press Enter to keep: "
 if not "%new_label%"=="" (
     set "partition_label=%new_label%"
 )
-goto menu
+goto sub_usb
+
+:set_scheme
+if "%partition_scheme%"=="GPT" (
+    set "partition_scheme=MBR"
+) else (
+    set "partition_scheme=GPT"
+)
+goto sub_ventoy
+
+:set_fs
+if "%filesystem%"=="NTFS" (
+    set "filesystem=exFAT"
+) else (
+    set "filesystem=NTFS"
+)
+goto sub_ventoy
+
+:set_secure
+if "%secure_boot%"=="Enabled" (
+    set "secure_boot=Disabled"
+) else (
+    set "secure_boot=Enabled"
+)
+goto sub_ventoy
+
+:set_cache
+cls
+echo Current cache file path: %file%
+set /p "new_cache=Enter full path to MediCat core 7z or press Enter to keep: "
+if not "%new_cache%"=="" (
+    set "file=%new_cache%"
+)
+goto sub_ventoy
+
+:set_extract
+if "%extract_mode%"=="Surgical" (
+    set "extract_mode=Full"
+) else (
+    set "extract_mode=Surgical"
+)
+goto sub_ventoy
+
+:set_pa_theme
+if "%pa_theme%"=="Dark" (
+    set "pa_theme=Classic"
+) else (
+    set "pa_theme=Dark"
+)
+goto sub_ventoy
+
+:set_xbox
+if "%build_xbox%"=="Enabled" (
+    set "build_xbox=Disabled"
+) else (
+    set "build_xbox=Enabled"
+)
+goto sub_xbox
+
+:set_bake_drivers
+if "%bake_drivers%"=="Enabled" (
+    set "bake_drivers=Disabled"
+) else (
+    set "bake_drivers=Enabled"
+)
+goto sub_xbox
+
+:set_uup_channel
+if "%uup_channel%"=="Dev" (
+    set "uup_channel=Beta"
+) else if "%uup_channel%"=="Beta" (
+    set "uup_channel=Release"
+) else (
+    set "uup_channel=Dev"
+)
+goto sub_xbox
+
+:set_gaming_optimize
+if "%gaming_optimize%"=="Enabled" (
+    set "gaming_optimize=Disabled"
+) else (
+    set "gaming_optimize=Enabled"
+)
+goto sub_xbox
+
+:set_color_bg
+set /p "bg_color=Enter background hex color (e.g. #282262): "
+goto sub_colors
+
+:set_color_fg
+set /p "fg_color=Enter foreground hex color (e.g. #E7DFD3): "
+goto sub_colors
+
+:set_color_accent
+set /p "accent_color=Enter accent hex color (e.g. #1A407F): "
+goto sub_colors
+
+:set_color_cursor
+set /p "cursor_color=Enter cursor hex color (e.g. #F35C15): "
+goto sub_colors
+
+:set_color_success
+set /p "success_color=Enter success hex color (e.g. #3E7765): "
+goto sub_colors
+
+:set_color_muted
+set /p "muted_color=Enter muted hex color (e.g. #948E8E): "
+goto sub_colors
+
+:set_color_subtle
+set /p "subtle_color=Enter subtle hex color (e.g. #B7C9D7): "
+goto sub_colors
+
+:reset_colors
+echo Resetting to base TOML colors...
+if exist "%toml_path%" (
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*bg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#282262' }"`) do set "bg_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*fg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#E7DFD3' }"`) do set "fg_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*accent\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#1A407F' }"`) do set "accent_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cursor\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#F35C15' }"`) do set "cursor_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*success\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#3E7765' }"`) do set "success_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*muted\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#948E8E' }"`) do set "muted_color=%%i"
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*subtle\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#B7C9D7' }"`) do set "subtle_color=%%i"
+)
+goto sub_colors
 
 :start_install
 cls
@@ -125,6 +345,20 @@ echo Cache File        : %file%
 echo Extraction Mode   : %extract_mode%
 echo Build MiOS-Xbox   : %build_xbox%
 echo Partition Label   : %partition_label%
+echo Partition Scheme  : %partition_scheme%
+echo Filesystem        : %filesystem%
+echo Secure Boot       : %secure_boot%
+echo PortableApps Theme: %pa_theme%
+echo Background Color  : %bg_color%
+echo Foreground Color  : %fg_color%
+echo Accent Color      : %accent_color%
+echo Cursor Color      : %cursor_color%
+echo Success Color     : %success_color%
+echo Muted Color       : %muted_color%
+echo Subtle Color      : %subtle_color%
+echo Xbox Bake Drivers : %bake_drivers%
+echo Xbox UUP Channel  : %uup_channel%
+echo Xbox Gaming Opt.  : %gaming_optimize%
 echo ==========================================================
 echo.
 set /p "confirm=Are you sure you want to format %drivepath%: and install? (Y/N): "
@@ -304,8 +538,8 @@ mkdir "%drivepath%:\PortableApps\PortableApps.com\Data" >nul 2>&1
 (
 echo [Theme]
 echo Color=Custom
-echo PrimaryColor=%primary_color%
-echo SecondaryColor=%secondary_color%
+echo PrimaryColor=%subtle_color%
+echo SecondaryColor=%muted_color%
 echo AccentColor=%accent_color%
 echo SetTheme=Custom
 echo Logo=logo.png
