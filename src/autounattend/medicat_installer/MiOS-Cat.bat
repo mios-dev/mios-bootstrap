@@ -701,7 +701,7 @@ if "%bake_drivers%"=="Enabled" (
     dism /Image:"%stage_dir%\mount" /Add-Driver /Driver:"%stage_dir%\hostdrivers" /Recurse /ForceUnsigned
     rmdir /s /q "%stage_dir%\hostdrivers" >nul 2>&1
 ) else (
-    echo [DRIVER BAKE] Skipped driver bake (disabled in config).
+    echo [DRIVER BAKE] Skipped driver bake - disabled in config.
 )
 
 echo Replacing wallpapers inside WIM image...
