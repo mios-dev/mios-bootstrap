@@ -1,4 +1,4 @@
-desktop-image: "background.png"
+desktop-image: "background.jpg"
 title-text: " "
 title-color: "#000000"
 message-color: "#f2f2f2"
