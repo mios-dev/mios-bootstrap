@@ -646,6 +646,20 @@ mkdir "%stage_dir%\mount" >nul 2>&1
 echo Mounting WIM image (Index 1)...
 dism /Mount-Image /ImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" /Index:1 /MountDir:"%stage_dir%\mount"
 
+if "%bake_drivers%"=="Enabled" (
+    echo.
+    echo [DRIVER BAKE] Exporting build-host drivers for WinPE injection...
+    echo (This may take several minutes depending on the number of host drivers...)
+    mkdir "%stage_dir%\hostdrivers" >nul 2>&1
+    dism /Online /Export-Driver /Destination:"%stage_dir%\hostdrivers"
+    echo.
+    echo [DRIVER BAKE] Injecting host drivers into MiOS_PE.wim...
+    dism /Image:"%stage_dir%\mount" /Add-Driver /Driver:"%stage_dir%\hostdrivers" /Recurse /ForceUnsigned
+    rmdir /s /q "%stage_dir%\hostdrivers" >nul 2>&1
+) else (
+    echo [DRIVER BAKE] Skipped driver bake (disabled in config).
+)
+
 echo Replacing wallpapers inside WIM image...
 takeown /f "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /a >nul 2>&1
 icacls "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /grant administrators:F >nul 2>&1
