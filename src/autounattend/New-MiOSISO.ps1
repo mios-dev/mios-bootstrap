@@ -870,6 +870,27 @@ function Invoke-MiOSImageServicing {
                 $inf = @(Get-ChildItem -Path $drv -Recurse -Filter *.inf -ErrorAction SilentlyContinue)
                 Write-Host "[*] Injecting $($inf.Count) host driver package(s) offline (Add-WindowsDriver) ..." -ForegroundColor Cyan
                 Add-WindowsDriver -Path $mount -Driver $drv -Recurse -ForceUnsigned -ErrorAction SilentlyContinue | Out-Null
+
+                # Also inject same host drivers into all indexes of boot.wim to fix USB keyboards/controllers during setup
+                $bootWim = Join-Path $MediaRoot 'sources\boot.wim'
+                if (Test-Path $bootWim) {
+                    Write-Host "[*] Injecting host drivers into early-boot image boot.wim (USB device fix) ..." -ForegroundColor Cyan
+                    Get-ChildItem $bootWim | ForEach-Object { $_.IsReadOnly = $false }
+                    $bootImages = Get-WindowsImage -ImagePath $bootWim
+                    $bootMount = Join-Path (Split-Path $MediaRoot) 'bootmount'
+                    foreach ($img in $bootImages) {
+                        $bIdx = $img.ImageIndex
+                        Write-Host "    Mounting boot.wim index $bIdx ($($img.ImageName)) ..." -ForegroundColor Cyan
+                        New-Item -ItemType Directory -Force -Path $bootMount -ErrorAction SilentlyContinue | Out-Null
+                        Mount-WindowsImage -Path $bootMount -ImagePath $bootWim -Index $bIdx | Out-Null
+                        try {
+                            Add-WindowsDriver -Path $bootMount -Driver $drv -Recurse -ForceUnsigned -ErrorAction SilentlyContinue | Out-Null
+                        } finally {
+                            Dismount-WindowsImage -Path $bootMount -Save | Out-Null
+                            Remove-Item $bootMount -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                }
             } catch { Write-Host "[!] Host-driver bake skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
         } else { Write-Host "[*] Host-driver bake disabled (SSOT bake_host_drivers=false)." -ForegroundColor DarkGray }
         # Xbox FSE override into the image.
