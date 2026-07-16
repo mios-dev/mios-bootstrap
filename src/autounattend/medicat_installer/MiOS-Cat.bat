@@ -24,14 +24,6 @@ if exist "%toml_path%" (
 )
 
 
-echo ==========================================================
-echo       MiOS-Cat USB BOOTSTRAP DEPLOYMENT INSTALLER         
-echo ==========================================================
-echo Target USB Drive: %drivepath%:
-echo Core Download Cache: %file%
-echo ==========================================================
-echo.
-
 :: 1. Admin privilege check
 net session >nul 2>&1 || (
     echo [ERROR] Please run this installer as Administrator!
@@ -39,20 +31,111 @@ net session >nul 2>&1 || (
     exit /b 1
 )
 
-:: 2. Ensure target drive D: exists
-if not exist "%drivepath%:\" (
-    echo [ERROR] Target drive %drivepath%: was not found!
-    echo Please insert your USB drive and ensure it is mounted as %drivepath%:\
-    pause
-    exit /b 1
-)
-
-:: 3. Initial tool checks
+:: 2. Initial tool checks
 if not exist bin md bin
 if not exist bin\7z.exe (
     echo Downloading 7z helper...
     curl -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.exe" -o ./bin/7z.exe
     curl -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll" -o ./bin/7z.dll
+)
+
+set "extract_mode=Surgical"
+set "build_xbox=Enabled"
+set "partition_label=MiOS-Cat"
+
+:menu
+cls
+echo ==========================================================
+echo       MiOS-Cat Dedicated USB Deployment Tool
+echo ==========================================================
+echo [1] Target USB Drive letter  : %drivepath%:
+echo [2] Core Download Cache      : %file%
+echo [3] Extraction Mode          : %extract_mode% (PE + SysRescue)
+echo [4] Compile MiOS-Xbox ISO    : %build_xbox%
+echo [5] Format Partition Label   : %partition_label%
+echo [6] START INSTALLATION
+echo [7] EXIT
+echo ==========================================================
+set "choice="
+set /p "choice=Select an option (1-7): "
+
+if "%choice%"=="1" goto set_drive
+if "%choice%"=="2" goto set_cache
+if "%choice%"=="3" goto set_extract
+if "%choice%"=="4" goto set_xbox
+if "%choice%"=="5" goto set_label
+if "%choice%"=="6" goto start_install
+if "%choice%"=="7" exit /b 0
+goto menu
+
+:set_drive
+cls
+echo Current target drive: %drivepath%:
+echo Available drives:
+wmic logicaldisk get deviceid, volumename, description
+echo.
+set /p "new_drive=Enter USB drive letter (e.g. E, F, G) or press Enter to keep: "
+if not "%new_drive%"=="" (
+    set "drivepath=%new_drive:~0,1%"
+)
+goto menu
+
+:set_cache
+cls
+echo Current cache file path: %file%
+set /p "new_cache=Enter full path to MediCat core 7z or press Enter to keep: "
+if not "%new_cache%"=="" (
+    set "file=%new_cache%"
+)
+goto menu
+
+:set_extract
+if "%extract_mode%"=="Surgical" (
+    set "extract_mode=Full"
+) else (
+    set "extract_mode=Surgical"
+)
+goto menu
+
+:set_xbox
+if "%build_xbox%"=="Enabled" (
+    set "build_xbox=Disabled"
+) else (
+    set "build_xbox=Enabled"
+)
+goto menu
+
+:set_label
+cls
+echo Current partition label: %partition_label%
+set /p "new_label=Enter partition volume label or press Enter to keep: "
+if not "%new_label%"=="" (
+    set "partition_label=%new_label%"
+)
+goto menu
+
+:start_install
+cls
+echo.
+echo ==========================================================
+echo             STARTING MiOS-Cat INSTALLATION
+echo ==========================================================
+echo Target Drive      : %drivepath%:
+echo Cache File        : %file%
+echo Extraction Mode   : %extract_mode%
+echo Build MiOS-Xbox   : %build_xbox%
+echo Partition Label   : %partition_label%
+echo ==========================================================
+echo.
+set /p "confirm=Are you sure you want to format %drivepath%: and install? (Y/N): "
+if /i not "%confirm%"=="Y" goto menu
+
+:: Ensure target drive exists
+if not exist "%drivepath%:\" (
+    echo [ERROR] Target drive %drivepath%: was not found!
+    echo Please insert your USB drive and ensure it is mounted as %drivepath%:\
+    pause
+    goto menu
 )
 
 :: 4. Download Ventoy bootloader
@@ -65,19 +148,25 @@ if not exist Ventoy2Disk (
     del ventoy.zip /Q
 )
 
-:: 5. Install Ventoy to USB drive D:
+:: 5. Install Ventoy to USB drive
 echo.
-echo Installing Ventoy to %drivepath%: (GPT partition scheme)...
+echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
 cd Ventoy2Disk
-Ventoy2Disk.exe VTOYCLI /I /Drive:%drivepath%: /NOUSBCheck /GPT
+set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme%"
+if "%secure_boot%"=="Enabled" (
+    set "vtoy_args=%vtoy_args% /S"
+) else (
+    set "vtoy_args=%vtoy_args% /NOUSBCheck"
+)
+Ventoy2Disk.exe VTOYCLI %vtoy_args%
 cd %maindir%
 
 echo Waiting 5s for partition remount...
 ping localhost -n 6 >nul
 
-:: Format partition NTFS / MiOS-Cat
-echo Formatting primary partition as NTFS (MiOS-Cat)...
-format %drivepath%: /FS:NTFS /X /Q /V:MiOS-Cat /Y >nul
+:: Format partition
+echo Formatting primary partition as %filesystem% (%partition_label%)...
+format %drivepath%: /FS:%filesystem% /X /Q /V:%partition_label% /Y >nul
 
 :: 6. Pull/Download Medicat core archive to M:\ (large storage)
 set "download_needed=0"
@@ -104,7 +193,6 @@ if "%download_needed%"=="1" (
     echo [OK] Core Medicat archive found and complete at %file%
 )
 
-
 :: 6b. Pull/Download Fedora Server Netinstall ISO
 set "fedora_file=M:\Fedora-Server-netinst-x86_64-40.iso"
 if not exist "%fedora_file%" (
@@ -117,10 +205,16 @@ if not exist "%fedora_file%" (
 )
 
 :: 7. Minimal/Surgical extraction to D:\ to fit the drive
-echo.
-echo Extracting minimal boot files and portable apps from %file% to %drivepath%:...
-echo (Extracting only PE, SystemRescue, and core startup structures...)
-bin\7z.exe x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* -aoa -y
+if "%extract_mode%"=="Surgical" (
+    echo.
+    echo Extracting minimal boot files and portable apps from %file% to %drivepath%:...
+    echo (Extracting only PE, SystemRescue, and core startup structures...)
+    bin\7z.exe x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* -aoa -y
+) else (
+    echo.
+    echo Extracting ALL files from %file% to %drivepath%:...
+    bin\7z.exe x "%file%" -o%drivepath%:\ -aoa -y
+)
 
 :: 8. Apply custom MiOS templates and layouts
 echo.
@@ -327,16 +421,38 @@ if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim" (
 
 
 :: 10. Compile the inline live build of MiOS-Xbox ISO directly to the USB drive
-echo.
-echo ==========================================================
-echo   Compiling Inline Live Build of MiOS-Xbox Installer ISO  
-echo ==========================================================
-echo This will pull the build prereqs, merge configurations,
-echo and assemble the custom MiOS-Xbox installation media.
-echo Output path: %drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso
-echo ==========================================================
-echo.
-powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -SkipWsl
+if "%build_xbox%"=="Enabled" (
+    echo.
+    echo ==========================================================
+    echo   Compiling Inline Live Build of MiOS-Xbox Installer ISO  
+    echo ==========================================================
+    echo This will pull the build prereqs, merge configurations,
+    echo and assemble the custom MiOS-Xbox installation media.
+    echo Output path: %drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso
+    echo ==========================================================
+    echo.
+    
+    echo Generating customized runtime configuration...
+    powershell -NoProfile -Command ^
+        "$orig = 'C:\MiOS\mios.toml';" ^
+        "if (-not (Test-Path $orig)) { $orig = '%toml_path%' };" ^
+        "if (Test-Path $orig) {" ^
+        "  $c = Get-Content $orig -Raw;" ^
+        "  $chan = '%uup_channel%'.ToLower();" ^
+        "  $c = $c -replace '(?s)(\[editions\.mios-xbox\].*?autounattend\.uup_channel\s*=\s*\")[^\"]*(\")', \"${1}${chan}${2}\";" ^
+        "  $bake = if ('%bake_drivers%' -eq 'Enabled') { 'true' } else { 'false' };" ^
+        "  if ($c -match 'autounattend\.bake_host_drivers\s*=') {" ^
+        "    $c = $c -replace 'autounattend\.bake_host_drivers\s*=\s*\w+', \"autounattend.bake_host_drivers = $bake\";" ^
+        "  } else {" ^
+        "    $c = $c -replace '(\[editions\.mios-xbox\])', \"`$1`r`nautounattend.bake_host_drivers = $bake\";" ^
+        "  }" ^
+        "  $game = if ('%gaming_optimize%' -eq 'Enabled') { 'gaming' } else { 'minimal' };" ^
+        "  $c = $c -replace '(?s)(\[editions\.mios-xbox\].*?autounattend\.debloat_profile\s*=\s*\")[^\"]*(\")', \"${1}${game}${2}\";" ^
+        "  $c | Set-Content \"$env:TEMP\mios_run.toml\" -Force;" ^
+        "}"
+        
+    powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -SkipWsl
+)
 
 echo.
 echo ==========================================================
