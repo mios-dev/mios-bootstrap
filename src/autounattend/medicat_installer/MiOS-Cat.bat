@@ -35,15 +35,46 @@ for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-
 for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*subtle\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#B7C9D7' }"`) do set "subtle_color=%%i"
 :no_toml
 
+:: Self-Update Check
+echo Checking for script updates...
+powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }"
+if %errorlevel% equ 0 (
+    cd /d "C:\MiOS" >nul 2>&1
+    if %errorlevel% equ 0 (
+        git fetch >nul 2>&1
+        for /f "usebackq tokens=*" %%a in (`git status -uno ^| findstr /C:"behind"`) do (
+            echo Updates detected in MiOS repository. Pulling latest version...
+            git pull >nul 2>&1
+            echo Restarting script from updated checkout...
+            start "" cmd.exe /c "%~f0"
+            exit /b 0
+        )
+    )
+    cd /d "C:\mios-bootstrap" >nul 2>&1
+    if %errorlevel% equ 0 (
+        git fetch >nul 2>&1
+        for /f "usebackq tokens=*" %%a in (`git status -uno ^| findstr /C:"behind"`) do (
+            echo Updates detected in mios-bootstrap repository. Pulling latest version...
+            git pull >nul 2>&1
+            echo Restarting script from updated checkout...
+            start "" cmd.exe /c "%~f0"
+            exit /b 0
+        )
+    )
+    cd /d "%maindir%"
+) else (
+    echo [OFFLINE] Skipping self-update check.
+)
 
-:: 1. Admin privilege check
-net session >nul 2>&1 || (
-    echo [ERROR] Please run this installer as Administrator!
+:: Call Preflight Checks
+call :run_preflight_checks
+if %errorlevel% neq 0 (
+    echo [FAIL] Preflight checks failed! Exiting...
     pause
     exit /b 1
 )
 
-:: 2. Initial tool checks
+:: Download 7z helper if missing
 if not exist bin md bin
 if not exist bin\7z.exe (
     echo Downloading 7z helper...
@@ -818,6 +849,57 @@ echo Drive %drivepath%: is now ready to boot into MiOS-Cat!
 echo ==========================================================
 pause
 goto :eof
+
+:run_preflight_checks
+echo.
+echo ==========================================================
+echo               RUNNING PREFLIGHT CHECKS
+echo ==========================================================
+
+:: 1. Admin privilege check
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [FAIL] Administrator privileges required. Please run this script as Admin.
+    exit /b 1
+)
+echo [PASS] Administrator privileges verified.
+
+:: 2. Target Disk Safety Check (Ensure D: is not an internal drive)
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { if ($d.BusType -eq 'SATA' -or $d.BusType -eq 'NVMe') { exit 2 } }; exit 0"
+set "disk_check=%errorlevel%"
+if %disk_check% equ 2 (
+    echo [FAIL] Target drive %drivepath%: is detected as an internal drive (SATA/NVMe).
+    echo        To prevent data loss, formatting internal drives is restricted.
+    echo        Please specify a USB/Removable target drive letter.
+    exit /b 1
+)
+echo [PASS] Target drive %drivepath%: safety check completed.
+
+:: 3. Storage Space Check on Cache drive (Ensure at least 25GB free)
+if not exist "%file%" (
+    powershell -NoProfile -Command "$cacheDrive = Split-Path -Path '%file%' -Qualifier; $v = Get-Volume -DriveLetter $cacheDrive.Trim(':') -ErrorAction SilentlyContinue; if ($v -and $v.SizeRemaining -lt 25GB) { exit 1 }; exit 0"
+    if %errorlevel% equ 1 (
+        echo [FAIL] Insufficient disk space on cache drive to download Medicat (25GB required).
+        exit /b 1
+    )
+    echo [PASS] Cache drive storage space verified.
+)
+
+:: 4. Dependency checks (git, curl)
+where git >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [FAIL] Git is missing from system PATH.
+    exit /b 1
+)
+where curl >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [FAIL] Curl is missing from system PATH.
+    exit /b 1
+)
+echo [PASS] System dependencies (git, curl) verified.
+echo ==========================================================
+echo.
+exit /b 0
 
 :check_drive_ready
 if not exist "%drivepath%:\CdUsb.Y" (
