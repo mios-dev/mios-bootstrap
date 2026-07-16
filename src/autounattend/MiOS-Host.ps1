@@ -74,12 +74,32 @@ if (-not (Test-Path $marker)) {
             $blog = 'C:\ProgramData\MiOS\logs\bootstrap.log'
             New-Item -ItemType Directory -Force -Path (Split-Path $blog) -EA SilentlyContinue | Out-Null
             $localGetMios = 'C:\ProgramData\MiOS\repo\mios-bootstrap\Get-MiOS.ps1'
-            if (Test-Path $localGetMios) {
-                Log "using EMBEDDED installer (offline): $localGetMios"
-                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $localGetMios -Unattended *>> $blog
+            $hasInternet = $false
+            try {
+                [void][System.Net.Dns]::GetHostAddresses("raw.githubusercontent.com")
+                $hasInternet = $true
+            } catch {}
+
+            $bootSuccess = $false
+            if ($hasInternet) {
+                Log "network available -> attempting online bootstrap update: $BootstrapUrl"
+                try {
+                    & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm $BootstrapUrl | iex" -ErrorAction Stop *>> $blog
+                    $bootSuccess = $true
+                } catch {
+                    Log "online bootstrap failed: $_. Fallback to local image..."
+                }
             } else {
-                Log "embedded installer absent -> irm|iex fallback: $BootstrapUrl"
-                & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm $BootstrapUrl | iex" *>> $blog
+                Log "offline environment detected"
+            }
+
+            if (-not $bootSuccess) {
+                if (Test-Path $localGetMios) {
+                    Log "using EMBEDDED installer (offline fallback): $localGetMios"
+                    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $localGetMios -Unattended *>> $blog
+                } else {
+                    Log "Error: No internet and no embedded installer found!"
+                }
             }
             Log "bootstrap finished (exit=$LASTEXITCODE); output -> $blog"
             # Native exe does NOT throw on non-zero exit -> check $LASTEXITCODE + that a

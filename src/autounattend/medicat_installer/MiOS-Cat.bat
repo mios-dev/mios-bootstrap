@@ -133,6 +133,13 @@ copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun.sh" /Y >nul
 copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
 copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 
+:: Stage offline copies of the repositories on the USB drive as fallback sources
+echo Staging offline repository fallback copies...
+mkdir "%drivepath%:\ventoy\repo\mios-bootstrap" >nul 2>&1
+robocopy "%maindir%" "%drivepath%:\ventoy\repo\mios-bootstrap" /E /XD .git /R:2 /W:2 >nul
+mkdir "%drivepath%:\ventoy\repo\MiOS" >nul 2>&1
+robocopy "C:\MiOS" "%drivepath%:\ventoy\repo\MiOS" /E /XD .git /R:2 /W:2 >nul
+
 :: Overwrite stock System images
 echo Customizing System folder thumbnails...
 copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\System\background.jpg" /Y >nul
