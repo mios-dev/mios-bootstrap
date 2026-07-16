@@ -17,19 +17,19 @@ set "success_color=#3E7765"
 set "muted_color=#948E8E"
 set "subtle_color=#B7C9D7"
 
-if exist "%toml_path%" (
-    echo Loading installation settings from %toml_path%...
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*drivepath\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'D' }"`) do set "drivepath=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*medicatver\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '21.12' }"`) do set "medicatver=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cache_path\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'M:\MediCat.USB.v21.12.7z' }"`) do set "file=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*bg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#282262' }"`) do set "bg_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*fg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#E7DFD3' }"`) do set "fg_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*accent\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#1A407F' }"`) do set "accent_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cursor\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#F35C15' }"`) do set "cursor_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*success\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#3E7765' }"`) do set "success_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*muted\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#948E8E' }"`) do set "muted_color=%%i"
-    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*subtle\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#B7C9D7' }"`) do set "subtle_color=%%i"
-)
+if not exist "%toml_path%" goto no_toml
+echo Loading installation settings from %toml_path%...
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*drivepath\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'D' }"`) do set "drivepath=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*medicatver\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '21.12' }"`) do set "medicatver=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cache_path\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'M:\MediCat.USB.v21.12.7z' }"`) do set "file=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*bg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#282262' }"`) do set "bg_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*fg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#E7DFD3' }"`) do set "fg_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*accent\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#1A407F' }"`) do set "accent_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cursor\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#F35C15' }"`) do set "cursor_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*success\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#3E7765' }"`) do set "success_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*muted\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#948E8E' }"`) do set "muted_color=%%i"
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*subtle\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#B7C9D7' }"`) do set "subtle_color=%%i"
+:no_toml
 
 
 :: 1. Admin privilege check
@@ -49,7 +49,7 @@ if not exist bin\7z.exe (
 
 set "partition_scheme=GPT"
 set "filesystem=NTFS"
-set "secure_boot=Disabled"
+set "secure_boot=Enabled"
 set "extract_mode=Surgical"
 set "pa_theme=Dark"
 set "build_xbox=Enabled"
@@ -463,10 +463,35 @@ copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 
 :: Stage offline copies of the repositories on the USB drive as fallback sources
 echo Staging offline repository fallback copies...
-mkdir "%drivepath%:\ventoy\repo\mios-bootstrap" >nul 2>&1
-robocopy "%maindir%" "%drivepath%:\ventoy\repo\mios-bootstrap" /E /XD .git /R:2 /W:2 >nul
-mkdir "%drivepath%:\ventoy\repo\MiOS" >nul 2>&1
-robocopy "C:\MiOS" "%drivepath%:\ventoy\repo\MiOS" /E /XD .git /R:2 /W:2 >nul
+ping -n 1 github.com >nul 2>&1
+if %errorlevel% equ 0 (
+    echo [ONLINE] Pulling/cloning live repositories from GitHub...
+    
+    if exist "%drivepath%:\ventoy\repo\mios-bootstrap\.git" (
+        echo Updating mios-bootstrap repository...
+        cd /d "%drivepath%:\ventoy\repo\mios-bootstrap"
+        git pull >nul 2>&1
+    ) else (
+        echo Cloning mios-bootstrap repository...
+        git clone https://github.com/mios-dev/mios-bootstrap.git "%drivepath%:\ventoy\repo\mios-bootstrap" >nul 2>&1
+    )
+    
+    if exist "%drivepath%:\ventoy\repo\MiOS\.git" (
+        echo Updating MiOS repository...
+        cd /d "%drivepath%:\ventoy\repo\MiOS"
+        git pull >nul 2>&1
+    ) else (
+        echo Cloning MiOS repository...
+        git clone https://github.com/mios-dev/MiOS.git "%drivepath%:\ventoy\repo\MiOS" >nul 2>&1
+    )
+    cd /d "%maindir%"
+) else (
+    echo [OFFLINE] Internet unreachable. Falling back to local developer repository copies...
+    mkdir "%drivepath%:\ventoy\repo\mios-bootstrap" >nul 2>&1
+    robocopy "C:\mios-bootstrap" "%drivepath%:\ventoy\repo\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+    mkdir "%drivepath%:\ventoy\repo\MiOS" >nul 2>&1
+    robocopy "C:\MiOS" "%drivepath%:\ventoy\repo\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+)
 
 :: Overwrite stock System images
 echo Customizing System folder thumbnails...
@@ -475,6 +500,8 @@ copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\System\Antivi
 
 :: Write autorun.inf for USB drive branding and custom icon
 echo Injecting custom USB drive branding and icons...
+attrib -r -h -s "%drivepath%:\autorun.inf" >nul 2>&1
+attrib -r -h -s "%drivepath%:\icon.ico" >nul 2>&1
 (
 echo [Autorun]
 echo Icon=icon.ico
@@ -605,6 +632,13 @@ mkdir "%maindir%\mount" >nul 2>&1
 echo Mounting WIM image (Index 1)...
 dism /Mount-Image /ImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" /Index:1 /MountDir:"%maindir%\mount"
 
+echo Exporting build-host drivers for WinPE injection...
+mkdir "%maindir%\hostdrivers" >nul 2>&1
+dism /Online /Export-Driver /Destination:"%maindir%\hostdrivers" >nul 2>&1
+echo Injecting host drivers into MiOS_PE.wim...
+dism /Image:"%maindir%\mount" /Add-Driver /Driver:"%maindir%\hostdrivers" /Recurse /ForceUnsigned >nul 2>&1
+rmdir /s /q "%maindir%\hostdrivers" >nul 2>&1
+
 echo Replacing wallpapers inside WIM image...
 takeown /f "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /a >nul 2>&1
 icacls "%maindir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /grant administrators:F >nul 2>&1
@@ -643,7 +677,19 @@ reg unload HKEY_USERS\pe-software >nul
 
 
 echo Committing changes and unmounting WIM image...
+set "retry_count=0"
+:unmount_retry
 dism /Unmount-Image /MountDir:"%maindir%\mount" /Commit
+if %errorlevel% neq 0 (
+    set /a retry_count+=1
+    if %retry_count% lss 4 (
+        echo [WARNING] Unmount failed (possibly locked). Retrying in 4 seconds (attempt %retry_count%/3)...
+        ping localhost -n 5 >nul
+        goto unmount_retry
+    )
+    echo [ERROR] Failed to unmount the image after 3 attempts. Force-cleaning mount points...
+    dism /Cleanup-Wim >nul 2>&1
+)
 rmdir "%maindir%\mount" /S /Q >nul 2>&1
 
 echo Exporting and compressing MiOS_PE.wim to reclaim space...
@@ -684,8 +730,8 @@ if "%build_xbox%"=="Enabled" (
         "  $c = $c -replace '(?s)(\[editions\.mios-xbox\].*?autounattend\.debloat_profile\s*=\s*\")[^\"]*(\")', \"${1}${game}${2}\";" ^
         "  $c | Set-Content \"$env:TEMP\mios_run.toml\" -Force;" ^
         "}"
-        
-    powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -SkipWsl
+    for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$v = (Get-Volume | Where-Object { $_.DriveType -eq 'Fixed' -and $_.SizeRemaining -gt 15GB } | Sort-Object SizeRemaining -Descending | Select-Object -First 1); if ($v) { $v.DriveLetter + ':\MiOS\isobuild_live' } else { 'C:\MiOS\isobuild_live' }"`) do set "workdir_path=%%i"
+    powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%workdir_path%" -SkipWsl -SkipPrereqs
 )
 
 echo.
