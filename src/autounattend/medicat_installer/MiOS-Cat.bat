@@ -749,7 +749,7 @@ dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Commit
 if %errorlevel% neq 0 (
     set /a retry_count+=1
     if %retry_count% lss 4 (
-        echo [WARNING] Unmount failed (possibly locked). Retrying in 4 seconds (attempt %retry_count%/3)...
+        echo [WARNING] Unmount failed - possibly locked. Retrying in 4 seconds - attempt %retry_count%/3...
         ping localhost -n 5 >nul
         goto unmount_retry
     )
