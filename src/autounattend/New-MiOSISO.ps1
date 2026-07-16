@@ -1051,10 +1051,15 @@ function Invoke-MiOSImageServicing {
             Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null
         }
     }
-    # Trim servicing bloat and convert to compressed ESD (Recovery) layout to fit small USB drives (14 GB).
     $esdFile = Join-Path (Split-Path $wim) 'install.esd'
     Write-Host "[*] Exporting and compressing to install.esd (Recovery/LZMS compression) ..." -ForegroundColor Cyan
-    & dism.exe /Export-Image /SourceImageFile:"$wim" /SourceIndex:"$idx" /DestinationImageFile:"$esdFile" /Compress:recovery | Out-Null
+    # Prevent race condition: wait for OS dismount handles to release completely
+    Start-Sleep -Seconds 5
+    $dismArgs = @("/Export-Image", "/SourceImageFile:$wim", "/SourceIndex:$idx", "/DestinationImageFile:$esdFile", "/Compress:recovery")
+    & dism.exe $dismArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "dism.exe /Export-Image failed with exit code $LASTEXITCODE. install.wim is intact."
+    }
     Remove-Item $wim -Force -ErrorAction SilentlyContinue
 }
 
