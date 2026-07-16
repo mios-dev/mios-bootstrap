@@ -321,9 +321,21 @@ function Invoke-MiOSUupConvert {
     # [converter log lines..., iso path] and the caller's $SourceIso is garbage. Scope
     # EAP=Continue so the FIRST stderr line under `2>&1` doesn't throw NativeCommandError
     # in Windows PowerShell 5.1 (the build interpreter) BEFORE the exit-code check.
-    try { & { $ErrorActionPreference = 'Continue'; & cmd.exe /c "`"$cmd`"" 2>&1 | Out-Host } }
+    $exitCode = 0
+    try {
+        $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+        $pinfo.FileName = "cmd.exe"
+        $pinfo.Arguments = "/c `"$cmd`""
+        $pinfo.UseShellExecute = $false
+        $pinfo.RedirectStandardOutput = $false
+        $pinfo.RedirectStandardError = $false
+        $p = [System.Diagnostics.Process]::Start($pinfo)
+        $p.WaitForExit()
+        $exitCode = $p.ExitCode
+        $global:LASTEXITCODE = $exitCode
+    }
     finally { $env:PSModulePath = $savedPSMP; Pop-Location }
-    if ($LASTEXITCODE -ne 0) { throw "uup_download_windows.cmd failed (exit $LASTEXITCODE)" }
+    if ($exitCode -ne 0) { throw "uup_download_windows.cmd failed (exit $exitCode)" }
     $iso = Get-ChildItem -Path $PackageDir -Filter '*.ISO' -File -ErrorAction SilentlyContinue |
            Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $iso) { throw "Converter produced no .ISO under $PackageDir" }
