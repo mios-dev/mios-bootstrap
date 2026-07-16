@@ -650,7 +650,19 @@ reg unload HKEY_USERS\pe-software >nul
 
 
 echo Committing changes and unmounting WIM image...
+set "retry_count=0"
+:unmount_retry
 dism /Unmount-Image /MountDir:"%maindir%\mount" /Commit
+if %errorlevel% neq 0 (
+    set /a retry_count+=1
+    if %retry_count% lss 4 (
+        echo [WARNING] Unmount failed (possibly locked). Retrying in 4 seconds (attempt %retry_count%/3)...
+        ping localhost -n 5 >nul
+        goto unmount_retry
+    )
+    echo [ERROR] Failed to unmount the image after 3 attempts. Force-cleaning mount points...
+    dism /Cleanup-Wim >nul 2>&1
+)
 rmdir "%maindir%\mount" /S /Q >nul 2>&1
 
 echo Exporting and compressing MiOS_PE.wim to reclaim space...
