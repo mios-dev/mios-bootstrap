@@ -390,7 +390,7 @@ if not exist "%stage_dir%\Ventoy2Disk" (
 echo.
 echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
 cd /d "%stage_dir%\Ventoy2Disk"
-set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme%"
+set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme% /R:4096"
 if "%secure_boot%"=="Enabled" (
     set "vtoy_args=%vtoy_args% /S"
 ) else (
@@ -405,6 +405,9 @@ ping localhost -n 6 >nul
 :: Format partition
 echo Formatting primary partition as %filesystem% (%partition_label%)...
 format %drivepath%: /FS:%filesystem% /X /Q /V:%partition_label% /Y >nul
+
+echo Creating secure offline repository partition (MiOS-Repo)...
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null }" >nul 2>&1
 
 :: 6. Pull/Download Medicat core archive to M:\ (large storage)
 set "download_needed=0"
@@ -465,12 +468,41 @@ copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun.sh" /Y >nul
 copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
 copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 
-:: Stage offline copies of the repositories on the USB drive as fallback sources
-echo Staging offline repository fallback copies...
-mkdir "%drivepath%:\ventoy\repo\mios-bootstrap" >nul 2>&1
-robocopy "%maindir%" "%drivepath%:\ventoy\repo\mios-bootstrap" /E /XD .git /R:2 /W:2 >nul
-mkdir "%drivepath%:\ventoy\repo\MiOS" >nul 2>&1
-robocopy "C:\MiOS" "%drivepath%:\ventoy\repo\MiOS" /E /XD .git /R:2 /W:2 >nul
+:: Stage offline copies of the repositories on the secure USB partition as fallback sources
+set "repodrive="
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; $p = Get-Partition -DiskNumber $d.Number | Where-Object { $_.PartitionNumber -eq 3 }; if ($p) { $p.DriveLetter } else { '%drivepath%' }"`) do set "repodrive=%%i"
+if "%repodrive%"=="" set "repodrive=%drivepath%"
+
+echo Staging offline repository fallback copies to secure partition %repodrive%:...
+ping -n 1 github.com >nul 2>&1
+if %errorlevel% equ 0 (
+    echo [ONLINE] Pulling/cloning live repositories from GitHub...
+    
+    if exist "%repodrive%:\mios-bootstrap\.git" (
+        echo Updating mios-bootstrap repository...
+        cd /d "%repodrive%:\mios-bootstrap"
+        git pull >nul 2>&1
+    ) else (
+        echo Cloning mios-bootstrap repository...
+        git clone https://github.com/mios-dev/mios-bootstrap.git "%repodrive%:\mios-bootstrap" >nul 2>&1
+    )
+    
+    if exist "%repodrive%:\MiOS\.git" (
+        echo Updating MiOS repository...
+        cd /d "%repodrive%:\MiOS"
+        git pull >nul 2>&1
+    ) else (
+        echo Cloning MiOS repository...
+        git clone https://github.com/mios-dev/MiOS.git "%repodrive%:\MiOS" >nul 2>&1
+    )
+    cd /d "%maindir%"
+) else (
+    echo [OFFLINE] Internet unreachable. Falling back to local developer repository copies...
+    mkdir "%repodrive%:\mios-bootstrap" >nul 2>&1
+    robocopy "C:\mios-bootstrap" "%repodrive%:\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+    mkdir "%repodrive%:\MiOS" >nul 2>&1
+    robocopy "C:\MiOS" "%repodrive%:\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+)
 
 :: Overwrite stock System images
 echo Customizing System folder thumbnails...
