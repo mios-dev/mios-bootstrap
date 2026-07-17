@@ -911,15 +911,15 @@ if "%download_needed%"=="1" (
     echo [OK] Core Medicat archive found and complete at %file%
 )
 
-:: 6b. Pull/Download Fedora Server Netinstall ISO
-set "fedora_file=M:\Fedora-Server-netinst-x86_64-40.iso"
+:: 6b. Pull/Download the FULL Fedora Server DVD (offline-capable install source)
+set "fedora_file=M:\Fedora-Server-dvd-x86_64-40.iso"
 if not exist "%fedora_file%" (
     echo.
-    echo Fedora Server Netinstall ISO not found in M:\
-    echo Pulling Fedora Server minimal ISO 850 MB from mirror...
-    curl.exe -L "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Server/x86_64/iso/Fedora-Server-netinst-x86_64-40.iso" -o "%fedora_file%" -#
+    echo Fedora Server DVD ISO not found in M:\
+    echo Pulling the FULL Fedora Server DVD ~2.5 GB (carries packages for OFFLINE install)...
+    curl.exe -C - -L "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Server/x86_64/iso/Fedora-Server-dvd-x86_64-40.iso" -o "%fedora_file%" -#
 ) else (
-    echo [OK] Fedora Server ISO found at %fedora_file%
+    echo [OK] Fedora Server DVD found at %fedora_file%
 )
 
 :: 7. Minimal/Surgical extraction to D:\ to fit the drive
