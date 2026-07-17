@@ -25,11 +25,11 @@ while ($true) {
             continue
         }
 
-        # Query account table from pgvector
+        # Query account table and aliases from pgvector
         $envelope = @{
             statements = @(
                 @{
-                    sql = "SELECT name, display, groups, is_admin, enabled FROM account WHERE os_targets IN ('both', 'windows')"
+                    sql = "SELECT name AS username, display, groups, is_admin, enabled FROM account WHERE enabled = true AND (os_targets = 'both' OR os_targets = 'windows') UNION SELECT a.alias_username AS username, c.display_name AS display, '' AS groups, false AS is_admin, a.is_active AS enabled FROM mios_identity.aliases a JOIN mios_identity.canonical_users c ON a.canonical_id = c.id WHERE a.is_active = true"
                     params = @()
                 }
             )
