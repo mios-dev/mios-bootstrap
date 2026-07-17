@@ -2,6 +2,20 @@
 title MiOS-Cat Dedicated USB Installer
 cd /d %~dp0
 set "maindir=%CD%"
+
+:: Self-elevate so a plain double-click on factory-fresh Windows just works (UAC
+:: prompt) instead of failing the Administrator preflight. Get-MiOS / the
+:: scheduled task launch already-elevated and pass straight through this gate.
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    echo Requesting administrator privileges...
+    if "%~1"=="" (
+        powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    ) else (
+        powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs"
+    )
+    exit /b
+)
 :: Resolve dynamic configuration from mios.toml (SSOT).
 :: The launcher lives at <repo>\cat\, so the repo-local SSOT (which also travels
 :: with the MiOS-Repo USB) is one level up; fall back to the canonical MiOS SSOT
