@@ -6321,7 +6321,25 @@ try {
 
 Write-Host ''
 Write-Host "  $_msgStep0" -ForegroundColor Cyan
-try { Initialize-DataDisk } catch { Write-Host ('  ' + ($_msgStep0Failed -f $_.Exception.Message)) -ForegroundColor Yellow }
+$_dataOk = $true
+try { Initialize-DataDisk } catch { $_dataOk = $false; Write-Host ('  ' + ($_msgStep0Failed -f $_.Exception.Message)) -ForegroundColor Yellow }
+# Factory-fresh guard: everything below (podman/winget storage, the mios.toml
+# promotion, the repo clone) targets M:\. Initialize-DataDisk already clamps the
+# carve down to what C: can spare (64 GB floor), so if we STILL have no M: volume
+# the disk genuinely cannot provide it -- STOP with an actionable reason instead
+# of silently cascading a broken install onto a drive that does not exist.
+$_dataDrive = [string](Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'M')
+if ($_dataOk -and -not (Get-Volume -DriveLetter $_dataDrive -ErrorAction SilentlyContinue)) { $_dataOk = $false }
+if (-not $_dataOk) {
+    Write-Err "Could not provision the ${_dataDrive}:\ data partition -- MiOS stores its containers,"
+    Write-Err "  packages, config and repos there, so the install cannot continue without it."
+    Write-Err "  Most common causes on a factory laptop:"
+    Write-Err "    - Under ~64 GB free on C:  (free some space / empty the Recycle Bin, then re-run)."
+    Write-Err "    - C: is BitLocker-locked or non-shrinkable  (suspend it, then re-run the one-liner:"
+    Write-Err "        manage-bde -protectors -disable C: -RebootCount 1)."
+    try { Invoke-MiOSFullReap } catch {}
+    exit 1
+}
 try {
     Write-Info $_msgPodmanRedirect
     Set-PodmanMachineStorageOnM
