@@ -6411,12 +6411,34 @@ try {
     $_featOut = @(Enable-MiOSWindowsFeatures)
     $_featResult = $_featOut | Where-Object { $_ -is [pscustomobject] -and $_.PSObject.Properties['HaltRequested'] } | Select-Object -Last 1
     if ($_featResult -and $_featResult.HaltRequested) {
-        # Halt Pass-2 cleanly so downstream WSL/podman/build steps don't
-        # cascade-fail. Operator-friendly exit per mios.toml
-        # [bootstrap.prereqs.features].require_reboot_to_continue=true.
-        Write-Host '  [*] Halting Pass-2 to await reboot (TOML-driven). Re-run the' -ForegroundColor Cyan
-        Write-Host '      irm|iex one-liner after reboot to resume from clean state.' -ForegroundColor Cyan
+        # WSL/VirtualMachinePlatform were just enabled and need a reboot. Rather
+        # than making the operator re-paste the one-liner (the factory-fresh
+        # friction point), arm a run-once ELEVATED scheduled task that re-runs
+        # the one-liner AUTOMATICALLY at the next logon, then halt cleanly so the
+        # WSL/podman/build steps don't cascade-fail on a not-yet-rebooted host.
+        try {
+            $_resumeUrl = [string](Get-MiosTomlValue -Section 'bootstrap' -Key 'oneliner_url' -Default 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1')
+            $_ps        = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            $_resumeArg = "-NoProfile -ExecutionPolicy Bypass -Command `"irm '$_resumeUrl' | iex`""
+            $_act  = New-ScheduledTaskAction -Execute $_ps -Argument $_resumeArg
+            $_trg  = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+            $_prin = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
+            $_set  = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+            Register-ScheduledTask -TaskName 'MiOS-Resume-Bootstrap' -Action $_act -Trigger $_trg -Principal $_prin -Settings $_set -Force | Out-Null
+            Write-Host '  [+] Auto-resume armed: MiOS continues automatically after you reboot and' -ForegroundColor Green
+            Write-Host '      sign back in -- no need to re-paste the one-liner.' -ForegroundColor Green
+        } catch {
+            Write-Host "  [!] Could not arm auto-resume ($($_.Exception.Message)); after reboot re-run" -ForegroundColor Yellow
+            Write-Host '      the irm|iex one-liner manually to continue.' -ForegroundColor Yellow
+        }
+        Write-Host '  [*] Halting to await reboot (WSL/VirtualMachinePlatform just enabled).' -ForegroundColor Cyan
         exit 0
+    } else {
+        # Features already present (first run had them, OR this IS the post-reboot
+        # resume) -- clear any leftover auto-resume task so it fires exactly once.
+        if (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName 'MiOS-Resume-Bootstrap' -Confirm:$false -ErrorAction SilentlyContinue
+        }
     }
 } catch { Write-Host "  [!] Enable-MiOSWindowsFeatures failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 
