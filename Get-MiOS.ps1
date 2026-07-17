@@ -149,15 +149,15 @@ if ($Action -ne 'Default') {
         New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
         Copy-Item -Path "$srcDir\*" -Destination $targetDir -Recurse -Force
         
-        # 4. Launch staged script in foreground
+        # 4. Launch the canonical MiOS-Cat launcher. It self-elevates via UAC, so
+        # it ends up running as the machine Administrator -- which on a provisioned
+        # MiOS host is the SSOT-named MiOS AI admin account (the renamed built-in
+        # Administrator; [autounattend.service].svc_user, default 'mios-sudo').
+        # We no longer hardcode a 'MIOS\Administrator' scheduled-task principal:
+        # the hostname AND the admin-account name are operator-defined via SSOT, so
+        # a fixed 'MIOS\Administrator' was wrong on every box but this dev machine.
         $catScript = Join-Path $targetDir "MiOS-Cat.bat"
-        $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c start cmd.exe /k $catScript"
-        $principal = New-ScheduledTaskPrincipal -UserId "MIOS\Administrator" -LogonType Interactive
-        $taskName = "Launch_MiOS_Cat_Staged"
-        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
-        Start-ScheduledTask -TaskName $taskName
-        Start-Sleep -Seconds 2
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Cat`" cmd.exe /k `"$catScript`""
         Write-Host "[+] Interactive MiOS-Cat launcher spawned from staged directory." -ForegroundColor Green
         exit 0
     }
