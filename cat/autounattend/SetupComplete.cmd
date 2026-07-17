@@ -63,22 +63,25 @@ if exist "%~dp0mios-remote.cmd" (
     call "%~dp0mios-remote.cmd">>"%LOG%" 2>&1
 ) else ( echo [MiOS] WARN mios-remote.cmd missing beside SetupComplete>>"%LOG%" )
 
-rem --- Ensure mios-sudo account + MiOS-Host task exist (guard: specialize pass may have
-rem     missed these if the autounattend RunSynchronous block was not fully rendered).
-rem     These are IDEMPOTENT: re-running on a correctly-provisioned image is harmless.
-rem     Account: rename/enable built-in RID-500 Administrator so it runs tasks with a
-rem     FULL unfiltered token (no UAC filter) and inherits SeBatchLogonRight. ----------
-echo [MiOS] ensuring mios-sudo account + MiOS-Host task (pre-logon bootstrap guard) %DATE% %TIME%>>"%LOG%"
-net user Administrator "mios" /active:yes>>"%LOG%" 2>&1
-powershell.exe -NoProfile -Command "try { Rename-LocalUser -Name 'Administrator' -NewName 'mios-sudo' -EA Stop } catch { }" >>"%LOG%" 2>&1
-powershell.exe -NoProfile -Command "try { Set-LocalUser -Name 'mios-sudo' -PasswordNeverExpires $true -EA Stop } catch { }" >>"%LOG%" 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList" /v "mios-sudo" /t REG_DWORD /d 0 /f >>"%LOG%" 2>&1
+rem --- Ensure the MiOS AI svc account (svc_user) + MiOS-Host task exist (guard: the
+rem     specialize pass may have missed these if the autounattend RunSynchronous block
+rem     was not fully rendered). IDEMPOTENT: re-running on a provisioned image is harmless.
+rem     Account: rename/enable the built-in RID-500 Administrator so it runs tasks with a
+rem     FULL unfiltered token (no UAC filter) and inherits SeBatchLogonRight.
+rem     SSOT: __SVCUSER__ (autounattend.service.svc_user) and __SVCPW__ (svc_password,
+rem     else identity.default_password) are substituted from mios.toml at bake time
+rem     (New-MiOSISO SetupComplete.cmd render) -- NOT hardcoded. ----------
+echo [MiOS] ensuring __SVCUSER__ account + MiOS-Host task (pre-logon bootstrap guard) %DATE% %TIME%>>"%LOG%"
+net user Administrator "__SVCPW__" /active:yes>>"%LOG%" 2>&1
+powershell.exe -NoProfile -Command "try { Rename-LocalUser -Name 'Administrator' -NewName '__SVCUSER__' -EA Stop } catch { }" >>"%LOG%" 2>&1
+powershell.exe -NoProfile -Command "try { Set-LocalUser -Name '__SVCUSER__' -PasswordNeverExpires $true -EA Stop } catch { }" >>"%LOG%" 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList" /v "__SVCUSER__" /t REG_DWORD /d 0 /f >>"%LOG%" 2>&1
 rem     Register MiOS-Host ONSTART task (idempotent /f overwrites if it already exists).
 rem     Run level HIGHEST so the first-run install auto-elevates. WSL cannot run as
 rem     LocalSystem (microsoft/WSL#11280) -- mios-sudo (RID-500, full token) is the runner.
-schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "mios-sudo" /rp "mios" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Host.ps1" /f >>"%LOG%" 2>&1
+schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Host.ps1" /f >>"%LOG%" 2>&1
 rem     Also register the MINUTE supervisor daemon (keeps the brain alive across reboots).
-schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "mios-sudo" /rp "mios" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Daemon.ps1" /f >>"%LOG%" 2>&1
+schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Daemon.ps1" /f >>"%LOG%" 2>&1
 rem --- STAGE-1: MiOS-Xbox provisioning DRIVER + FULL-SCREEN PROGRESS BAR. When the
 rem     rendered mios-provision.cmd is present (New-MiOSISO Set-MiOSProvisionWiring), it
 rem     OWNS the first-boot deploy: it registers the reboot-surviving MiOS-Setup-Driver
@@ -93,7 +96,7 @@ rem     LIVE RID-500 creds set just above (net user / rename), so the driver tas
 rem     Fallback (no Stage-1 driver baked): today's fire-and-forget pre-logon MiOS-Host. --
 if exist "%~dp0mios-provision.cmd" (
     echo [MiOS] Stage-1 provisioning: arming driver + full-screen bar via mios-provision.cmd %DATE% %TIME%>>"%LOG%"
-    call "%~dp0mios-provision.cmd" "mios-sudo" "mios">>"%LOG%" 2>&1
+    call "%~dp0mios-provision.cmd" "__SVCUSER__" "__SVCPW__">>"%LOG%" 2>&1
 ) else (
     echo [MiOS] starting pre-logon MiOS-Host (Session 0, hidden; no Stage-1 driver) %DATE% %TIME%>>"%LOG%"
     schtasks /run /tn "MiOS-Host">>"%LOG%"

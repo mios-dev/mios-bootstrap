@@ -1388,12 +1388,18 @@ build_machine  = false                          # also export a podman-machine i
 # The MiOS WSL2/podman service plane is registered in the SPECIALIZE pass (SYSTEM,
 # pre-OOBE, pre-logon) and kept alive by the MiOS-Host ONSTART task -- NOT
 # FirstLogonCommands (per-user, post-logon). HARD CONSTRAINT: wsl.exe cannot run
-# as LocalSystem (WSL is tied to a user profile), so the task runs under a
-# dedicated NON-admin account (svc_user); the DESKTOP/Xbox user must be a DIFFERENT
-# account. See docs/pre-logon-system-services.md.
+# as LocalSystem (WSL is tied to a user profile), so the task runs under svc_user --
+# which IS the built-in Administrator (RID 500), RENAMED. svc_user is NOT a separate
+# non-admin account: it is the MiOS AI itself -- an autonomous ADMIN principal that
+# runs with the full, UNFILTERED RID-500 token (no UAC filter) + SeBatchLogonRight,
+# owns the WSL distro, and drives the whole box. The DESKTOP/Xbox user is a DIFFERENT
+# account. Both svc_user (the RID-500 name) and svc_description (its account
+# description) are stamped onto RID-500 in the specialize pass, fully SSOT-derived.
+# See docs/pre-logon-system-services.md.
 [autounattend.service]
 enable       = true
-svc_user     = "mios-sudo"    # dedicated admin service account that owns the WSL distro (operator: name it mios-sudo)
+svc_user     = "mios-sudo"    # the renamed built-in Administrator (RID 500) = the MiOS AI admin that owns the WSL distro (operator: name it)
+svc_description = "MiOS AI -- autonomous system administrator (the renamed built-in Administrator, RID 500)"  # stamped onto the RID-500 account in specialize (operator-editable)
 svc_password = ""             # empty -> inherits [identity].default_password (first-boot temp cred)
 wsl_distro   = "MiOS"
 host_script  = "C:\\ProgramData\\MiOS\\MiOS-Host.ps1"

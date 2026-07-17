@@ -994,8 +994,16 @@ function Invoke-MiOSImageServicing {
         New-Item -ItemType Directory -Force -Path $scriptsDst | Out-Null
         $scSrc = Join-Path $PSScriptRoot 'SetupComplete.cmd'
         if (Test-Path $scSrc) {
-            Copy-Item $scSrc (Join-Path $scriptsDst 'SetupComplete.cmd') -Force
-            Write-Host "    baked SetupComplete.cmd -> image \Windows\Setup\Scripts (SYSTEM first-boot trigger)" -ForegroundColor Green
+            # RENDER (not copy) from SSOT: SetupComplete's pre-logon account-guard names the
+            # MiOS AI svc account + its password. Substitute the __SVCUSER__/__SVCPW__ tokens
+            # so the baked guard matches the specialize pass + mios-provision.cmd -- NO
+            # hardcoded identity. svc_user = the renamed built-in Administrator (RID 500);
+            # svc_password = the service cred, else [identity].default_password.
+            $scSvcUser = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-sudo'
+            $scSvcPass = Get-Toml $Toml 'autounattend.service.svc_password' (Get-Toml $Toml 'identity.default_password' 'user')
+            $scText = [IO.File]::ReadAllText($scSrc).Replace('__SVCUSER__', $scSvcUser).Replace('__SVCPW__', $scSvcPass)
+            [IO.File]::WriteAllText((Join-Path $scriptsDst 'SetupComplete.cmd'), $scText, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host "    baked SetupComplete.cmd (svc=$scSvcUser, SSOT-derived) -> image \Windows\Setup\Scripts (SYSTEM first-boot trigger)" -ForegroundColor Green
         } else { Write-Host "[!] SetupComplete.cmd NOT found next to New-MiOSISO -- first-boot MiOS trigger MISSING!" -ForegroundColor Red }
 
         # STAGE-1: render mios-provision.cmd beside SetupComplete (driver task + full-screen

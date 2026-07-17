@@ -188,6 +188,9 @@ function New-MiOSAutounattendXml {
 
     # Expire passwords of all local interactive/non-service accounts to force rotation on next logon
     $svcUser = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-sudo'
+    # svc_user IS the renamed built-in Administrator (RID 500) = the MiOS AI admin; its
+    # account description is SSOT-driven too and stamped onto RID-500 in the specialize pass.
+    $svcDesc = Get-Toml $Toml 'autounattend.service.svc_description' 'MiOS AI -- autonomous system administrator (the renamed built-in Administrator, RID 500)'
     $expireCmd = 'powershell.exe -NoProfile -Command "Get-LocalUser | Where-Object { $_.Name -ne ''Administrator'' -and $_.Name -ne ''' + $svcUser + ''' -and $_.Name -ne ''Guest'' -and $_.Name -ne ''DefaultAccount'' -and $_.Name -ne ''WDAGUtilityAccount'' } | Set-LocalUser -PasswordExpired $true"'
     [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>{1}</CommandLine><Description>Expire first-boot temporary passwords</Description></SynchronousCommand>' -f $_flOrd, [Security.SecurityElement]::Escape($expireCmd)))
     $_flOrd++
@@ -268,9 +271,10 @@ function New-MiOSAutounattendXml {
     }
 
     # --- specialize (SYSTEM) provisioner: boot-time services ---------------------
-    # MiOS as boot-time SYSTEM services (up BEFORE logon): enable WSL2, create the
-    # dedicated non-admin svc account, enable RDP, register the MiOS-Host ONSTART
-    # task. Runs in the Microsoft-Windows-Deployment RunSynchronous below.
+    # MiOS as boot-time SYSTEM services (up BEFORE logon): enable WSL2, make svc_user
+    # BE the MiOS AI admin (the renamed built-in Administrator / RID 500), enable RDP,
+    # register the MiOS-Host ONSTART task. Runs in the Microsoft-Windows-Deployment
+    # RunSynchronous below.
     # NB: the per-USER Linux-like layout is DELIBERATELY NOT here -- specialize runs
     # as SYSTEM, where HKCU=HKU\S-1-5-18 and %USERPROFILE%=systemprofile, so the
     # layout would land on the wrong profile. It is emitted in FirstLogonCommands
@@ -281,6 +285,18 @@ function New-MiOSAutounattendXml {
         [void]$_preOobe.AppendLine(('        <RunSynchronousCommand wcm:action="add"><Order>{0}</Order><Path>cmd /c {1}</Path><Description>MiOS boot-time service plane (pre-logon)</Description></RunSynchronousCommand>' -f $_ord, [Security.SecurityElement]::Escape($sc)))
         $_ord++
     }
+    # --- MiOS AI identity: the built-in Administrator (RID 500) IS svc_user --------
+    # Rename the RID-500 account -- matched BY SID ('S-1-5-*-500', so it is robust to
+    # any prior name and to a localized built-in admin) -- to the SSOT svc_user, then
+    # stamp its SSOT svc_description. Idempotent: skips the rename when RID-500 already
+    # carries that name (e.g. the service-plane rename above already ran) and always
+    # (re)asserts the description. Both values are SSOT-derived (no hardcoded literals).
+    $_svcUserLit = ($svcUser -replace "'", "''")
+    $_svcDescLit = ($svcDesc -replace "'", "''")
+    $_idPs  = "`$a = Get-LocalUser | Where-Object { `$_.SID.Value -like 'S-1-5-*-500' }; if (`$a) { if (`$a.Name -ne '$_svcUserLit') { Rename-LocalUser -Name `$a.Name -NewName '$_svcUserLit' }; Set-LocalUser -Name '$_svcUserLit' -Description '$_svcDescLit' }"
+    $_idCmd = 'powershell.exe -NoProfile -Command "' + $_idPs + '"'
+    [void]$_preOobe.AppendLine(('        <RunSynchronousCommand wcm:action="add"><Order>{0}</Order><Path>{1}</Path><Description>MiOS AI identity: rename RID-500 built-in Administrator to svc_user + set description (SSOT)</Description></RunSynchronousCommand>' -f $_ord, [Security.SecurityElement]::Escape($_idCmd)))
+    $_ord++
     $preOobeXml = $_preOobe.ToString().TrimEnd()
 
     # Boot-into-Xbox FSE: the Microsoft-Windows-Gaming-Configuration component
