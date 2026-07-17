@@ -2,9 +2,12 @@
 title MiOS-Cat Dedicated USB Installer
 cd /d %~dp0
 set "maindir=%CD%"
-:: Resolve dynamic configuration from mios.toml (SSOT)
-set "toml_path=%~dp0..\..\..\..\mios.toml"
-if not exist "%toml_path%" set "toml_path=%~dp0..\..\..\..\..\mios.toml"
+:: Resolve dynamic configuration from mios.toml (SSOT).
+:: The launcher lives at <repo>\cat\, so the repo-local SSOT (which also travels
+:: with the MiOS-Repo USB) is one level up; fall back to the canonical MiOS SSOT
+:: on a MiOS-equipped host. (Future [cat] SSOT block -> T-258.)
+set "toml_path=%~dp0..\mios.toml"
+if not exist "%toml_path%" set "toml_path=C:\MiOS\usr\share\mios\mios.toml"
 
 set "drivepath=D"
 set "medicatver=21.12"
@@ -94,29 +97,60 @@ set "gaming_optimize=Enabled"
 set "partition_label=MiOS-Cat"
 set "force_format=Enabled"
 
+:: ------------------------------------------------------------------
+:: First-run default + verb routing.  With no argument (or an unknown
+:: one) MiOS-Cat opens the guided Quick Start on-boarding; the full
+:: menu stays one keypress away.  Verbs map to the WS-CAT surfaces
+:: (stage / build / install / update / provision / manual) so the
+:: launcher and scripts can deep-link straight to an action.
+:: ------------------------------------------------------------------
+if /i "%~1"=="menu"      goto menu
+if /i "%~1"=="build"     goto sub_build
+if /i "%~1"=="stage"     goto start_install
+if /i "%~1"=="install"   goto sub_deploy
+if /i "%~1"=="deploy"    goto sub_deploy
+if /i "%~1"=="provision" goto sub_deploy
+if /i "%~1"=="update"    goto sub_update
+if /i "%~1"=="config"    goto sub_config
+if /i "%~1"=="manual"    goto sub_manual
+if /i "%~1"=="help"      goto sub_manual
+goto quickstart
+
 :menu
 cls
 echo ==========================================================
-echo       MiOS-Cat Dedicated USB Deployment Tool
+echo        M i O S - C a t     Control Center
+echo        Deploy . Build . Stage . Configure
 echo ==========================================================
-echo   1. USB Target Settings    : Drive [%drivepath%:], Label [%partition_label%]
-echo   2. Ventoy / FS Settings   : Format [%filesystem%], Scheme [%partition_scheme%], Re-Format [%force_format%]
-echo   3. Customize Theme Colors : Subtle [%subtle_color%], Accent [%accent_color%]
-echo   4. MiOS-Xbox Build Config : Drivers [%bake_drivers%], Channel [%uup_channel%]
-echo   5. Repository Tools       : Open C:\MiOS, C:\mios-bootstrap, edit TOML
-echo   6. START INSTALLATION WITH CURRENT CONFIG
-echo   7. EXIT
+echo   Palette  bg [%bg_color%]  accent [%accent_color%]  ok [%success_color%]
+echo ----------------------------------------------------------
+echo   Quick Start
+echo     1. On-boarding / Quick Start    (guided)
+echo   Build
+echo     2. Build MiOS Images            (OCI . Xbox ISO . all)
+echo   Deploy
+echo     3. Stage USB                    (MiOS-Repo bootable)
+echo     4. Install / Deploy             (provision a target)
+echo   Maintain
+echo     5. Update                       (pull latest MiOS)
+echo     6. Configuration                (USB . FS . theme . Xbox)
+echo     7. Repository Tools             (open repos . edit TOML)
+echo   Help
+echo     8. Manual / Help
+echo     9. Exit
 echo ==========================================================
 set "choice="
-set /p "choice=Select an option (1-7): "
+set /p "choice=Select an option (1-9): "
 
-if "%choice%"=="1" goto sub_usb
-if "%choice%"=="2" goto sub_ventoy
-if "%choice%"=="3" goto sub_colors
-if "%choice%"=="4" goto sub_xbox
-if "%choice%"=="5" goto sub_repos
-if "%choice%"=="6" goto start_install
-if "%choice%"=="7" exit /b 0
+if "%choice%"=="1" goto quickstart
+if "%choice%"=="2" goto sub_build
+if "%choice%"=="3" goto start_install
+if "%choice%"=="4" goto sub_deploy
+if "%choice%"=="5" goto sub_update
+if "%choice%"=="6" goto sub_config
+if "%choice%"=="7" goto sub_repos
+if "%choice%"=="8" goto sub_manual
+if "%choice%"=="9" exit /b 0
 goto menu
 
 :sub_usb
@@ -126,13 +160,13 @@ echo               USB Target Settings
 echo ==========================================================
 echo   1. Target USB Drive letter  : %drivepath%:
 echo   2. Format Partition Label   : %partition_label%
-echo   3. Back to Main Menu
+echo   3. Back to Configuration
 echo ==========================================================
 set "sub_choice="
 set /p "sub_choice=Select an option (1-3): "
 if "%sub_choice%"=="1" goto set_drive
 if "%sub_choice%"=="2" goto set_label
-if "%sub_choice%"=="3" goto menu
+if "%sub_choice%"=="3" goto sub_config
 goto sub_usb
 
 :sub_ventoy
@@ -147,7 +181,7 @@ echo   4. Core Download Cache      : %file%
 echo   5. Extraction Mode          : %extract_mode%
 echo   6. PortableApps Theme       : %pa_theme%
 echo   7. Force Disk Re-Format     : %force_format%
-echo   8. Back to Main Menu
+echo   8. Back to Configuration
 echo ==========================================================
 set "sub_choice="
 set /p "sub_choice=Select an option (1-8): "
@@ -158,7 +192,7 @@ if "%sub_choice%"=="4" goto set_cache
 if "%sub_choice%"=="5" goto set_extract
 if "%sub_choice%"=="6" goto set_pa_theme
 if "%sub_choice%"=="7" goto set_force_format
-if "%sub_choice%"=="8" goto menu
+if "%sub_choice%"=="8" goto sub_config
 goto sub_ventoy
 
 :sub_colors
@@ -174,7 +208,7 @@ echo   5. Success Color (success)  : %success_color%
 echo   6. Muted Color (muted)      : %muted_color%
 echo   7. Subtle Color (subtle)    : %subtle_color%
 echo   8. Reset to default base colors
-echo   9. Back to Main Menu
+echo   9. Back to Configuration
 echo ==========================================================
 set "sub_choice="
 set /p "sub_choice=Select an option (1-9): "
@@ -186,7 +220,7 @@ if "%sub_choice%"=="5" goto set_color_success
 if "%sub_choice%"=="6" goto set_color_muted
 if "%sub_choice%"=="7" goto set_color_subtle
 if "%sub_choice%"=="8" goto reset_colors
-if "%sub_choice%"=="9" goto menu
+if "%sub_choice%"=="9" goto sub_config
 goto sub_colors
 
 :sub_xbox
@@ -198,7 +232,7 @@ echo   1. Compile MiOS-Xbox ISO    : %build_xbox%
 echo   2. Bake Host Drivers       : %bake_drivers%
 echo   3. Microsoft UUP Channel   : %uup_channel%
 echo   4. Gaming Optimizations    : %gaming_optimize%
-echo   5. Back to Main Menu
+echo   5. Back to Configuration
 echo ==========================================================
 set "sub_choice="
 set /p "sub_choice=Select an option (1-5): "
@@ -206,7 +240,7 @@ if "%sub_choice%"=="1" goto set_xbox
 if "%sub_choice%"=="2" goto set_bake_drivers
 if "%sub_choice%"=="3" goto set_uup_channel
 if "%sub_choice%"=="4" goto set_gaming_optimize
-if "%sub_choice%"=="5" goto menu
+if "%sub_choice%"=="5" goto sub_config
 goto sub_xbox
 
 :sub_repos
@@ -226,6 +260,385 @@ if "%sub_choice%"=="2" start explorer.exe C:\mios-bootstrap && goto sub_repos
 if "%sub_choice%"=="3" start notepad.exe "%toml_path%" && goto sub_repos
 if "%sub_choice%"=="4" goto menu
 goto sub_repos
+
+:: ==================================================================
+:: On-boarding / Quick Start  (guided first-run flow, Step 4)
+:: ==================================================================
+:quickstart
+cls
+echo ==========================================================
+echo        M i O S - C a t     Quick Start  (guided)
+echo ==========================================================
+echo   MiOS-Cat turns a shareable link + this USB + any PC into
+echo   a complete MiOS workshop. Four things it can do:
+echo.
+echo     [STAGE ]  build a bootable MiOS-Cat USB (recovery + repo)
+echo     [BUILD ]  build a MiOS image (OCI / Xbox ISO / all)
+echo     [DEPLOY]  install / provision MiOS onto a machine
+echo     [CONFIG]  drive, filesystem, theme and build options
+echo ----------------------------------------------------------
+echo   Environment:
+call :detect_env
+echo     Host        : %env_host%
+echo     Network     : %env_net%
+echo     Privileges  : Administrator (verified at preflight)
+echo     Build host  : %env_builder%
+echo     Target disk : %env_disk%
+echo ==========================================================
+echo   Where would you like to start?
+echo     1. Stage a bootable USB        (recommended first run)
+echo     2. Build a MiOS image
+echo     3. Install / Deploy MiOS
+echo     4. Configuration
+echo     5. Open the full menu
+echo     6. Exit
+echo ==========================================================
+set "qs_choice="
+set /p "qs_choice=Select an option (1-6): "
+if "%qs_choice%"=="1" goto start_install
+if "%qs_choice%"=="2" goto sub_build
+if "%qs_choice%"=="3" goto sub_deploy
+if "%qs_choice%"=="4" goto sub_config
+if "%qs_choice%"=="5" goto menu
+if "%qs_choice%"=="6" exit /b 0
+goto quickstart
+
+:: ==================================================================
+:: Build  (native WS-CAT build surface, Step 2)
+:: ==================================================================
+:sub_build
+cls
+echo ==========================================================
+echo               Build MiOS Images
+echo ==========================================================
+echo   Builds MiOS from THIS machine. A missing build toolchain
+echo   (WSL2 + podman + the MiOS-DEV builder) is auto-provisioned
+echo   offline-first from the MiOS-Repo payload, else online.
+echo   DISM (used by the Xbox ISO) already ships in Windows.
+echo ----------------------------------------------------------
+echo   1. Build MiOS OCI image     : localhost/mios:latest
+echo   2. Build MiOS-Xbox ISO      : Windows 11 gaming edition
+echo   3. Build ALL artifacts      : OCI + raw/iso/qcow2/vhd/wsl2
+echo   4. Back to Main Menu
+echo ==========================================================
+set "sub_choice="
+set /p "sub_choice=Select an option (1-4): "
+if "%sub_choice%"=="1" goto build_oci
+if "%sub_choice%"=="2" goto build_xbox_iso
+if "%sub_choice%"=="3" goto build_all
+if "%sub_choice%"=="4" goto menu
+goto sub_build
+
+:build_oci
+cls
+echo ==========================================================
+echo               Build MiOS OCI Image
+echo ==========================================================
+echo   Produces : localhost/mios:latest  (bootc OS image)
+echo   Where    : MiOS-DEV podman storage on this host
+echo   Toolchain: WSL2 + podman + MiOS-DEV builder auto-provisioned
+echo              if missing (offline-first from MiOS-Repo, else online)
+echo   Time     : 20-60 min on first run (image pulls + build)
+echo ==========================================================
+set "confirm="
+set /p "confirm=Start the OCI image build now? (Y/N): "
+if /i not "%confirm%"=="Y" goto sub_build
+call :resolve_bootstrap_root
+if "%bootstrap_root%"=="" goto build_need_online
+if not exist "%bootstrap_root%\build-mios.ps1" goto build_need_online
+echo.
+echo [BUILD] Driver : %bootstrap_root%\build-mios.ps1
+echo [BUILD] Mode   : OCI only (MIOS_SKIP_BIB=1)
+echo [BUILD] Progress streams below and/or in the MiOS-DEV window.
+echo.
+set "MIOS_SKIP_BIB=1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%bootstrap_root%\build-mios.ps1" -Unattended
+set "build_rc=%errorlevel%"
+set "MIOS_SKIP_BIB="
+echo.
+if "%build_rc%"=="0" echo [OK] OCI build step finished. Image target: localhost/mios:latest
+if not "%build_rc%"=="0" echo [WARN] Build driver exit code %build_rc% - review the log above; you can re-run this item.
+echo.
+pause
+goto sub_build
+
+:build_xbox_iso
+cls
+echo ==========================================================
+echo               Build MiOS-Xbox ISO
+echo ==========================================================
+echo   Produces : MiOS-Xbox.iso  (custom Windows 11 gaming edition)
+echo   Pipeline : UUP fetch - DISM offline servicing - oscdimg
+echo   Toolchain: DISM ships in Windows; UUP media fetched
+echo              offline-first from MiOS-Repo, else online
+echo   Config   : Channel [%uup_channel%]  Drivers [%bake_drivers%]  Gaming [%gaming_optimize%]
+echo ==========================================================
+set "confirm="
+set /p "confirm=Start the MiOS-Xbox ISO build now? (Y/N): "
+if /i not "%confirm%"=="Y" goto sub_build
+call :resolve_xbox_builder
+if "%xbox_builder%"=="" goto build_xbox_missing
+echo.
+echo [BUILD] Builder: %xbox_builder%
+echo [BUILD] Progress streams below. This can take a while.
+echo.
+if exist "%toml_path%" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%xbox_builder%" -TomlPath "%toml_path%"
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%xbox_builder%"
+)
+set "build_rc=%errorlevel%"
+echo.
+if "%build_rc%"=="0" echo [OK] MiOS-Xbox ISO build finished.
+if not "%build_rc%"=="0" echo [WARN] Xbox builder exit code %build_rc% - review the log above; you can re-run this item.
+echo.
+pause
+goto sub_build
+
+:build_all
+cls
+echo ==========================================================
+echo               Build ALL MiOS Artifacts
+echo ==========================================================
+echo   Produces : localhost/mios:latest PLUS deployment artifacts
+echo              raw - iso - qcow2 - vhd - wsl2 tarball
+echo   Where    : /var/lib/mios/build/output inside MiOS-DEV
+echo   Requires : a Linux/podman build host - auto-provisioned
+echo              (WSL2 + podman + MiOS-DEV) if missing, offline-first
+echo   Size/Time: ~30-40 GB, 45-90 min for the full matrix
+echo ==========================================================
+set "confirm="
+set /p "confirm=Build the FULL artifact matrix now? (Y/N): "
+if /i not "%confirm%"=="Y" goto sub_build
+call :resolve_bootstrap_root
+if "%bootstrap_root%"=="" goto build_need_online
+if not exist "%bootstrap_root%\build-mios.ps1" goto build_need_online
+echo.
+echo [BUILD] Driver : %bootstrap_root%\build-mios.ps1
+echo [BUILD] Mode   : full matrix (OCI + all [deployment] targets)
+echo [BUILD] Progress streams below and/or in the MiOS-DEV window.
+echo.
+set "MIOS_SKIP_BIB="
+powershell -NoProfile -ExecutionPolicy Bypass -File "%bootstrap_root%\build-mios.ps1" -Unattended
+set "build_rc=%errorlevel%"
+echo.
+if "%build_rc%"=="0" echo [OK] Full artifact build finished. Output: /var/lib/mios/build/output in MiOS-DEV.
+if not "%build_rc%"=="0" echo [WARN] Build driver exit code %build_rc% - review the log above; you can re-run this item.
+echo.
+pause
+goto sub_build
+
+:build_need_online
+echo.
+echo [INFO] No local MiOS build driver (build-mios.ps1) was found on
+echo        this host or on the MiOS-Repo payload of this drive.
+echo        On a factory Windows it can be bootstrapped online from the
+echo        canonical MiOS entry point (this also provisions WSL2 + podman).
+echo.
+set "confirm="
+set /p "confirm=Fetch and run the online MiOS bootstrap now? (Y/N): "
+if /i not "%confirm%"=="Y" goto sub_build
+powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }"
+if not "%errorlevel%"=="0" (
+    echo [OFFLINE] Internet is unreachable and no offline payload is present.
+    echo           Stage this USB on a connected PC first, then retry offline.
+    pause
+    goto sub_build
+)
+echo Launching online MiOS bootstrap...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"
+echo.
+echo [INFO] After bootstrap completes, re-open this Build menu to build.
+pause
+goto sub_build
+
+:build_xbox_missing
+echo.
+echo [INFO] MiOS-Xbox builder was not found under:
+echo        %~dp0autounattend\  or  C:\mios-bootstrap\cat\autounattend\
+echo        Stage this USB (Stage USB) to place the payload, or pull
+echo        mios-bootstrap, then retry this item.
+echo.
+pause
+goto sub_build
+
+:: ==================================================================
+:: Install / Deploy  (provision surface)
+:: ==================================================================
+:sub_deploy
+cls
+echo ==========================================================
+echo               Install / Deploy MiOS
+echo ==========================================================
+echo   1. Stage a bootable MiOS-Cat USB   (full pipeline)
+echo   2. Provision MiOS-Xbox on a target (autounattend)
+echo   3. Deploy / test MiOS-Xbox VM      (Hyper-V)
+echo   4. Back to Main Menu
+echo ==========================================================
+set "sub_choice="
+set /p "sub_choice=Select an option (1-4): "
+if "%sub_choice%"=="1" goto start_install
+if "%sub_choice%"=="2" goto deploy_provision
+if "%sub_choice%"=="3" goto deploy_xbox
+if "%sub_choice%"=="4" goto menu
+goto sub_deploy
+
+:deploy_provision
+cls
+echo ==========================================================
+echo          Provision MiOS-Xbox (autounattend)
+echo ==========================================================
+echo   Runs the MiOS provisioning entry (Invoke-MiOSProvision.ps1)
+echo   using the SSOT configuration. Confirm before running.
+echo ==========================================================
+set "confirm="
+set /p "confirm=Run MiOS provisioning now? (Y/N): "
+if /i not "%confirm%"=="Y" goto sub_deploy
+set "prov_ps="
+if exist "%~dp0autounattend\Invoke-MiOSProvision.ps1" set "prov_ps=%~dp0autounattend\Invoke-MiOSProvision.ps1"
+if "%prov_ps%"=="" if exist "C:\mios-bootstrap\cat\autounattend\Invoke-MiOSProvision.ps1" set "prov_ps=C:\mios-bootstrap\cat\autounattend\Invoke-MiOSProvision.ps1"
+if "%prov_ps%"=="" (
+    echo [INFO] Invoke-MiOSProvision.ps1 not found - stage the USB payload first.
+    pause
+    goto sub_deploy
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%prov_ps%"
+echo.
+pause
+goto sub_deploy
+
+:deploy_xbox
+cls
+echo ==========================================================
+echo          Deploy / Test MiOS-Xbox VM
+echo ==========================================================
+echo   Runs Deploy-MiOSXbox.ps1 to (re)create and boot a Hyper-V
+echo   test VM from the built MiOS-Xbox media. Confirm to run.
+echo ==========================================================
+set "confirm="
+set /p "confirm=Deploy the MiOS-Xbox test VM now? (Y/N): "
+if /i not "%confirm%"=="Y" goto sub_deploy
+set "dep_ps="
+if exist "%~dp0autounattend\Deploy-MiOSXbox.ps1" set "dep_ps=%~dp0autounattend\Deploy-MiOSXbox.ps1"
+if "%dep_ps%"=="" if exist "C:\mios-bootstrap\cat\autounattend\Deploy-MiOSXbox.ps1" set "dep_ps=C:\mios-bootstrap\cat\autounattend\Deploy-MiOSXbox.ps1"
+if "%dep_ps%"=="" (
+    echo [INFO] Deploy-MiOSXbox.ps1 not found - stage the USB payload first.
+    pause
+    goto sub_deploy
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%dep_ps%"
+echo.
+pause
+goto sub_deploy
+
+:: ==================================================================
+:: Update  (pull latest MiOS + mios-bootstrap)
+:: ==================================================================
+:sub_update
+cls
+echo ==========================================================
+echo               Update MiOS
+echo ==========================================================
+echo   Pulls the latest MiOS and mios-bootstrap from their remotes
+echo   (git fetch + pull). Requires internet.
+echo ==========================================================
+set "confirm="
+set /p "confirm=Check for and pull updates now? (Y/N): "
+if /i not "%confirm%"=="Y" goto menu
+powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }"
+if not "%errorlevel%"=="0" (
+    echo [OFFLINE] Internet unreachable - cannot pull updates right now.
+    pause
+    goto menu
+)
+call :update_repo "C:\MiOS" "MiOS"
+call :update_repo "C:\mios-bootstrap" "mios-bootstrap"
+cd /d "%maindir%"
+echo.
+echo [OK] Update check complete.
+pause
+goto menu
+
+:: ==================================================================
+:: Configuration  (hub grouping the existing setting sub-menus)
+:: ==================================================================
+:sub_config
+cls
+echo ==========================================================
+echo               Configuration
+echo ==========================================================
+echo   1. USB Target Settings    : Drive [%drivepath%:], Label [%partition_label%]
+echo   2. Ventoy / FS Settings   : Format [%filesystem%], Scheme [%partition_scheme%]
+echo   3. MiOS-Xbox Build Config : Drivers [%bake_drivers%], Channel [%uup_channel%]
+echo   4. Theme Colors           : Accent [%accent_color%], Subtle [%subtle_color%]
+echo   5. Back to Main Menu
+echo ==========================================================
+set "sub_choice="
+set /p "sub_choice=Select an option (1-5): "
+if "%sub_choice%"=="1" goto sub_usb
+if "%sub_choice%"=="2" goto sub_ventoy
+if "%sub_choice%"=="3" goto sub_xbox
+if "%sub_choice%"=="4" goto sub_colors
+if "%sub_choice%"=="5" goto menu
+goto sub_config
+
+:: ==================================================================
+:: Manual / Help
+:: ==================================================================
+:sub_manual
+cls
+echo ==========================================================
+echo               Manual / Help
+echo ==========================================================
+echo   1. About MiOS-Cat (what each menu does)
+echo   2. Open MiOS-Xbox build + pipeline docs
+echo   3. Open the mios-bootstrap folder
+echo   4. Back to Main Menu
+echo ==========================================================
+set "sub_choice="
+set /p "sub_choice=Select an option (1-4): "
+if "%sub_choice%"=="1" goto manual_about
+if "%sub_choice%"=="2" goto manual_docs
+if "%sub_choice%"=="3" goto manual_open
+if "%sub_choice%"=="4" goto menu
+goto sub_manual
+
+:manual_about
+cls
+echo ==========================================================
+echo               About MiOS-Cat
+echo ==========================================================
+echo   Quick Start : guided on-boarding - detects your environment
+echo                 and routes you to the right action.
+echo   Build       : builds MiOS images from this machine -
+echo                 OCI (localhost/mios:latest), MiOS-Xbox ISO,
+echo                 or the full artifact matrix. The toolchain is
+echo                 self-provisioned (WSL2 + podman) if missing.
+echo   Stage USB   : formats a USB with Ventoy + MiOS-Cat recovery
+echo                 payload and a secure MiOS-Repo partition.
+echo   Deploy      : provision / deploy MiOS onto a target machine.
+echo   Update      : pull the latest MiOS + mios-bootstrap.
+echo   Config      : drive, filesystem, theme colors, Xbox build.
+echo   Repo Tools  : open the repos and edit the mios.toml SSOT.
+echo ==========================================================
+pause
+goto sub_manual
+
+:manual_docs
+set "docs_dir="
+if exist "%~dp0autounattend\docs" set "docs_dir=%~dp0autounattend\docs"
+if "%docs_dir%"=="" if exist "C:\mios-bootstrap\cat\autounattend\docs" set "docs_dir=C:\mios-bootstrap\cat\autounattend\docs"
+if "%docs_dir%"=="" (
+    echo [INFO] Local docs not found; opening the online project instead...
+    start "" "https://github.com/mios-dev/mios-bootstrap"
+    goto sub_manual
+)
+start "" explorer.exe "%docs_dir%"
+goto sub_manual
+
+:manual_open
+if exist "%~dp0.." start "" explorer.exe "%~dp0.."
+goto sub_manual
 
 :set_drive
 cls
@@ -837,7 +1250,7 @@ powershell -NoProfile -Command "$orig = 'C:\MiOS\mios.toml'; if (-not (Test-Path
 powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 15GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\isobuild_live' } else { 'C:\MiOS\isobuild_live' }; [System.IO.File]::WriteAllText(\"%~dp0work_path.txt\", $p)"
 set /p workdir_path=<"%~dp0work_path.txt"
 del "%~dp0work_path.txt" /Q >nul 2>&1
-powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%workdir_path%" -SkipWsl -SkipPrereqs
+powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\cat\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%workdir_path%" -SkipWsl -SkipPrereqs
 
 :skip_xbox_build
 
@@ -915,5 +1328,88 @@ if not exist "%drivepath%:\CdUsb.Y" (
     goto check_drive_ready
 )
 exit /b
+
+:: ==================================================================
+:: Helper subroutines for the on-boarding / build surfaces.
+:: NOTE: the build-driver + Xbox-builder paths below have no SSOT home
+:: yet -- sibling task T-258 adds a [cat] table to mios.toml. Until it
+:: lands these are clearly-marked defaults; wire them to
+:: [cat].build_driver / [cat].xbox_builder when that table exists.
+:: ==================================================================
+
+:detect_env
+:: Populate env_host / env_net / env_builder / env_disk for Quick Start.
+set "env_host=Windows host"
+reg query "HKLM\System\CurrentControlSet\Control\MiniNT" >nul 2>&1
+if "%errorlevel%"=="0" set "env_host=WinPE (offline servicing)"
+set "env_net=Offline"
+powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }"
+if "%errorlevel%"=="0" set "env_net=Online"
+set "env_builder=not provisioned (Build will self-bootstrap)"
+where wsl >nul 2>&1
+if "%errorlevel%"=="0" set "env_builder=WSL2 present"
+set "env_disk=no removable USB detected"
+for /f "usebackq tokens=*" %%d in (`powershell -NoProfile -Command "if (Get-Volume ^| Where-Object { $_.DriveType -eq 'Removable' -and $_.DriveLetter }) { 'removable USB present' } else { 'no removable USB detected' }"`) do set "env_disk=%%d"
+goto :eof
+
+:resolve_bootstrap_root
+:: Offline-first: prefer the mios-bootstrap tree THIS launcher runs
+:: under (USB MiOS-Repo or C:), then the standard dev checkout, then
+:: any staged MiOS-Repo partition holding the payload.
+set "bootstrap_root="
+if exist "%~dp0..\build-mios.ps1" (
+    set "bootstrap_root=%~dp0.."
+    goto :eof
+)
+if exist "C:\mios-bootstrap\build-mios.ps1" (
+    set "bootstrap_root=C:\mios-bootstrap"
+    goto :eof
+)
+for %%D in (E F G H I J K L N O P Q R S T U V W X Y Z) do (
+    if exist "%%D:\mios-bootstrap\build-mios.ps1" (
+        set "bootstrap_root=%%D:\mios-bootstrap"
+        goto :eof
+    )
+)
+goto :eof
+
+:resolve_xbox_builder
+:: Offline-first MiOS-Xbox builder resolution. Canonical relocated
+:: path is cat\autounattend\. Prefer the one-shot self-provisioning
+:: wrapper (Build-MiOSXbox.ps1), else the DISM orchestrator
+:: (New-MiOSISO.ps1).
+set "xbox_builder="
+:: [cat].xbox_builder SSOT override (an absolute path) wins if set + present.
+if exist "%toml_path%" for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$v=(Get-Content '%toml_path%' | Select-String -Pattern '^\s*xbox_builder\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value } | Select-Object -First 1); if ($v -and (Test-Path $v)) { $v }"`) do set "xbox_builder=%%i"
+if defined xbox_builder if not "%xbox_builder%"=="" goto :eof
+if exist "%~dp0autounattend\Build-MiOSXbox.ps1" (
+    set "xbox_builder=%~dp0autounattend\Build-MiOSXbox.ps1"
+    goto :eof
+)
+if exist "%~dp0autounattend\New-MiOSISO.ps1" (
+    set "xbox_builder=%~dp0autounattend\New-MiOSISO.ps1"
+    goto :eof
+)
+if exist "C:\mios-bootstrap\cat\autounattend\Build-MiOSXbox.ps1" (
+    set "xbox_builder=C:\mios-bootstrap\cat\autounattend\Build-MiOSXbox.ps1"
+    goto :eof
+)
+if exist "C:\mios-bootstrap\cat\autounattend\New-MiOSISO.ps1" (
+    set "xbox_builder=C:\mios-bootstrap\cat\autounattend\New-MiOSISO.ps1"
+    goto :eof
+)
+goto :eof
+
+:update_repo
+:: %1 = repo path, %2 = display name
+if not exist "%~1\.git" (
+    echo [SKIP] %~2 is not a git checkout at %~1
+    goto :eof
+)
+echo Updating %~2 at %~1 ...
+cd /d "%~1"
+git fetch >nul 2>&1
+git pull
+goto :eof
 
 

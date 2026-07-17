@@ -103,11 +103,11 @@
 **/.DS_Store
 **/Thumbs.db
 
-# Medicat Installer Binaries (Do not track compiled utilities)
-src/autounattend/medicat_installer/bin/
-src/autounattend/medicat_installer/Ventoy2Disk/
-src/autounattend/medicat_installer/download/
-src/autounattend/medicat_installer/*.7z
-src/autounattend/medicat_installer/*.iso
+# MiOS-Cat runtime binaries / downloaded artifacts (fetch-on-demand; do not track)
+cat/bin/
+cat/Ventoy2Disk/
+cat/download/
+cat/*.7z
+cat/*.iso
 
 

@@ -34,7 +34,7 @@ param(
     [int]$DeployTimeoutMin  = 50
 )
 $ErrorActionPreference = 'Continue'
-$dir = 'C:\mios-bootstrap\src\autounattend'
+$dir = 'C:\mios-bootstrap\cat\autounattend'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $logFile = Join-Path $LogDir 'deploy.log'
 $statusF = Join-Path $LogDir 'status.json'

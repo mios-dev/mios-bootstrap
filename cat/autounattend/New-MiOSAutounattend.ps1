@@ -1,5 +1,5 @@
 # AI-hint: SSOT-driven generator that renders a MiOS autounattend.xml (with a nested MiOS irm|iex bootstrap + all local offline accounts from mios.toml) and optionally injects it into a UUP-Dump / winutil source ISO via oscdimg to produce a custom "MiOS Windows 11" install image.
-# AI-related: mios-bootstrap, Get-MiOS.ps1, src/autounattend/autounattend.xml, Invoke-MiOSProvision.ps1
+# AI-related: mios-bootstrap, Get-MiOS.ps1, cat/autounattend/autounattend.xml, Invoke-MiOSProvision.ps1
 # AI-functions: Read-MiosToml, ConvertTo-UnattendPassword, New-MiOSAutounattendXml, Build-MiOSIso
 #Requires -Version 5.1
 <#
@@ -422,16 +422,16 @@ if (-not $TomlPath) {
 # A caller-supplied -TomlPath may be relative. Read-MiosToml reads via .NET file
 # APIs ([IO.File]::ReadAllLines), whose working directory is the PROCESS start dir,
 # NOT PowerShell's $PWD -- so a relative path after `cd` resolves against the wrong
-# root (CI runs `cd src/autounattend; -TomlPath ../../mios.toml`, which .NET
+# root (CI runs `cd cat/autounattend; -TomlPath ../../mios.toml`, which .NET
 # resolved to D:\a\mios.toml and failed). Resolve against $PWD to an absolute path.
 if ($TomlPath -and -not [System.IO.Path]::IsPathRooted($TomlPath)) {
     $resolved = Resolve-Path -LiteralPath $TomlPath -ErrorAction SilentlyContinue
     if ($resolved) { $TomlPath = $resolved.Path }
 }
 # Same $PWD-vs-.NET-cwd hazard for the OUTPUT: [IO.File]::WriteAllText resolves a
-# relative -OutXml against the process cwd, not $PWD -- so `cd src/autounattend;
+# relative -OutXml against the process cwd, not $PWD -- so `cd cat/autounattend;
 # -OutXml ./autounattend.xml` would write to the wrong dir and the CI verify step
-# (cd src/autounattend; Test-Path ./autounattend.xml) would not find it. Anchor a
+# (cd cat/autounattend; Test-Path ./autounattend.xml) would not find it. Anchor a
 # relative -OutXml to $PWD.
 if (-not [System.IO.Path]::IsPathRooted($OutXml)) {
     $OutXml = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $OutXml))
@@ -459,4 +459,4 @@ if ($SourceIso -and $OutIso) {
 Write-Host ''
 Write-Host "Post-install path for EXISTING Windows users (same bootstrap):" -ForegroundColor Cyan
 Write-Host '  powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"' -ForegroundColor DarkGray
-Write-Host "  (or src\autounattend\Invoke-MiOSProvision.ps1 to also create the SSOT local accounts first)" -ForegroundColor DarkGray
+Write-Host "  (or cat\autounattend\Invoke-MiOSProvision.ps1 to also create the SSOT local accounts first)" -ForegroundColor DarkGray

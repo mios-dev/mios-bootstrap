@@ -1,6 +1,6 @@
 # Linux UUP → MiOS-XBOX ISO build path
 
-`src/autounattend/mios-build-iso.sh` builds a bootable **MiOS-XBOX** Windows 11
+`cat/autounattend/mios-build-iso.sh` builds a bootable **MiOS-XBOX** Windows 11
 install ISO entirely inside Linux (the `podman-MiOS-DEV` distro, which has
 passwordless sudo). It exists because the Windows DISM path
 (`New-MiOSISO.ps1` + `oscdimg`) needs an elevated token, and on this host `mios`

@@ -1273,7 +1273,7 @@ iso_label      = "MiOS-Xbox"
 # wrapper auto-detects a local base, else downloads fresh from UUP Dump.
 source_iso     = ""
 # Neutralize the debloat DISM can't component-remove (telemetry/AI/Copilot/consumer
-# features/OneDrive) via offline registry + service policy (src/autounattend/
+# features/OneDrive) via offline registry + service policy (cat/autounattend/
 # mios-debloat.json). The deep NTLite CBS component files can't be DISM-deleted, but
 # their behaviour is killed. Applies on every build (native + -SourceIso).
 debloat        = true
@@ -1583,3 +1583,17 @@ branding.living_wallpaper    = "true"
 drivepath   = "D"
 medicatver  = "21.12"
 cache_path  = "M:\\MediCat.USB.v21.12.7z"
+
+# ----------------------------------------------------------------------------
+# [cat] -- MiOS-Cat launcher/build configuration (SSOT for the cat/ entry point).
+# Consumed by cat/MiOS-Cat.{bat,ps1,sh}. Empty ("") values mean "use the
+# launcher's built-in portable %~dp0-relative resolution" so a MiOS-Repo USB
+# stays self-contained; set an ABSOLUTE path only to OVERRIDE that default. (T-258)
+#   xbox_builder : PowerShell script that builds the MiOS-Xbox ISO ('' -> cat/autounattend/Build-MiOSXbox.ps1)
+#   build_driver : OCI/disk-image build entry ('' -> build-mios.ps1, self-provisions the podman machine)
+#   log_path     : directory for the launcher's build/stage logs ('' -> beside the launcher)
+# ----------------------------------------------------------------------------
+[cat]
+xbox_builder = ""
+build_driver = ""
+log_path     = ""

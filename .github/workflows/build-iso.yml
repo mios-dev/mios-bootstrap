@@ -38,13 +38,13 @@ jobs:
       - name: Run New-MiOSAutounattend XML Generation
         shell: pwsh
         run: |
-          cd src/autounattend
+          cd cat/autounattend
           ./New-MiOSAutounattend.ps1 -TomlPath ../../mios.toml -OutXml ./autounattend.xml
 
       - name: Verify Generated autounattend.xml
         shell: pwsh
         run: |
-          cd src/autounattend
+          cd cat/autounattend
           if (-not (Test-Path ./autounattend.xml)) {
               throw "autounattend.xml was not generated!"
           }

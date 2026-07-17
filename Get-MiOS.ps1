@@ -112,9 +112,9 @@ Disable-ConsoleQuickEdit
 if ($Action -ne 'Default') {
     if ($Action -eq 'BuildXboxISO') {
         Write-Host "[*] Action: BuildXboxISO. Invoking Build-MiOSXboxISO..." -ForegroundColor Cyan
-        $buildScript = Join-Path $RepoDir "src\autounattend\Build-MiOSXboxISO.ps1"
+        $buildScript = Join-Path $RepoDir "cat\autounattend\Build-MiOSXboxISO.ps1"
         if (-not (Test-Path $buildScript)) {
-            $buildScript = "C:\mios-bootstrap\src\autounattend\Build-MiOSXboxISO.ps1"
+            $buildScript = "C:\mios-bootstrap\cat\autounattend\Build-MiOSXboxISO.ps1"
         }
         if (-not (Test-Path $buildScript)) {
             Write-Error "Build-MiOSXboxISO.ps1 not found in $RepoDir or C:\mios-bootstrap!"
@@ -131,18 +131,18 @@ if ($Action -ne 'Default') {
     if ($Action -eq 'FlashUSB') {
         Write-Host "[*] Action: FlashUSB. Staging and launching interactive MiOS-Cat installer..." -ForegroundColor Cyan
         # 1. Locate source folder
-        $srcDir = Join-Path $RepoDir "src\autounattend\medicat_installer"
+        $srcDir = Join-Path $RepoDir "cat"
         if (-not (Test-Path $srcDir)) {
-            $srcDir = "C:\MiOS\src\autounattend\medicat_installer"
+            $srcDir = "C:\mios-bootstrap\cat"
         }
         if (-not (Test-Path $srcDir)) {
-            Write-Error "medicat_installer folder not found in source checkouts!"
+            Write-Error "MiOS-Cat (cat) folder not found in source checkouts!"
             exit 1
         }
         # 2. Resolve staging directory
         $v = Get-Volume | Where-Object { $_.DriveType -eq 'Fixed' -and $_.SizeRemaining -gt 25GB } | Sort-Object SizeRemaining -Descending | Select-Object -First 1
         $stageDir = if ($v) { Join-Path "$($v.DriveLetter):\" "MiOS\medicat_stage" } else { Join-Path $env:TEMP "medicat_stage" }
-        $targetDir = Join-Path $stageDir "medicat_installer"
+        $targetDir = Join-Path $stageDir "cat"
         Write-Host "    Staging directory: $targetDir" -ForegroundColor Cyan
         
         # 3. Copy source files to staging directory

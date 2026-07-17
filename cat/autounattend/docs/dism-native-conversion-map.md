@@ -3,7 +3,7 @@
 
 # NTLite -> DISM-native conversion map (merged MiOS-Xbox preset)
 
-Source of truth: `src/autounattend/MiOS-Xbox-Merged.xml` (produced by `Merge-MiOSPresets.ps1`,
+Source of truth: `cat/autounattend/MiOS-Xbox-Merged.xml` (produced by `Merge-MiOSPresets.ps1`,
 then identity-sanitized by `ConvertTo-MiOSPreset.ps1`). This document classifies each NTLite
 op-type into what a **pure DISM + Windows Setup** pipeline can reproduce vs. what remains
 exclusive to NTLite's component servicing engine.
