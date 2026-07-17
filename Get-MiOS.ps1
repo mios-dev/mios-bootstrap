@@ -7105,4 +7105,35 @@ if ($_bootstrapExit -eq 0) {
     }
 }
 
+# -- MiOS-Cat handoff: offer to flash a bootable MiOS-Cat USB -----------------
+# The bare `irm|iex` one-liner runs the Default action and (until now) never
+# routed to MiOS-Cat -- the -Action FlashUSB path is unreachable from a pipe (no
+# params). Offer it here as a param-less prompt so a factory-fresh install can go
+# straight from provisioning to building a deploy USB. Skipped under -Unattended
+# (never surprise-format a drive) or if bootstrap did not succeed.
+if ($_bootstrapExit -eq 0 -and -not $Unattended) {
+    try {
+        $_catSrc = Join-Path $RepoDir 'cat'
+        if (-not (Test-Path $_catSrc)) { $_catSrc = 'C:\mios-bootstrap\cat' }
+        $_catBat = Join-Path $_catSrc 'MiOS-Cat.bat'
+        if (Test-Path $_catBat) {
+            Write-Host ''
+            Write-Host '  MiOS is provisioned. MiOS-Cat can now build a bootable USB that deploys' -ForegroundColor Cyan
+            Write-Host '  MiOS (and MiOS-Xbox) onto any machine -- recovery tools, the offline Fedora' -ForegroundColor Cyan
+            Write-Host '  installer, and the repo, all on one stick.' -ForegroundColor Cyan
+            $_ans = Read-Host '  Launch MiOS-Cat to build a deploy USB now? [y/N]'
+            if ($_ans -match '^(y|yes)$') {
+                Write-Host '  [*] Launching MiOS-Cat (canonical .bat)...' -ForegroundColor Cyan
+                # Already elevated -- launch the canonical .bat directly in a new
+                # interactive console (no hardcoded-principal scheduled task).
+                Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Cat`" cmd.exe /k `"$_catBat`""
+            } else {
+                Write-Host "  You can run it any time:  `"$_catBat`"" -ForegroundColor DarkGray
+            }
+        }
+    } catch {
+        Write-Host "  [!] MiOS-Cat handoff prompt skipped (non-fatal): $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 exit $_bootstrapExit
