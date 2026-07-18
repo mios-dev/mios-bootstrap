@@ -2,7 +2,7 @@
 # AI-related: mios-dev, mios-bootstrap, Get-MiOS.ps1, build-mios.sh, install.sh, install.ps1, etc/mios/profile.toml, usr/share/mios/ai/system.md, MIOS_AI_ENDPOINT
 # mios-dev/mios-bootstrap
 
-> Machine-readable index for `mios-bootstrap` v0.2.0 — the **interactive
+> Machine-readable index for `mios-bootstrap` v0.3.0 — the **interactive
 > installer and user-editable layer** of MiOS. User-facing entry point.
 > The system layer (Containerfile, FHS overlay, build automation, systemd
 > units, Quadlets, kernel args) lives in https://github.com/mios-dev/mios.git
@@ -167,7 +167,7 @@ least-privileged so the agent stack stays portable and sandboxed.
 
 ## Status
 
-MiOS is in active development at `v0.2.x`. The migration off the early
+MiOS is in active development at `v0.3.0`. The migration off the early
 Ollama / SurrealDB / Qdrant stack is complete: inference + embeddings now
 run on the `mios-llm-light` lane (`:11450`) with gated heavy GPU lanes
 (`mios-llm-heavy` / `mios-llm-heavy-alt`), and the unified agent datastore is
