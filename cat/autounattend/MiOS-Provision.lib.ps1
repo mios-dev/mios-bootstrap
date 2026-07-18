@@ -280,31 +280,19 @@ function New-MiOSHostServiceCommands {
     # 1) WSL2 platform feature (the only OC strictly required for the MiOS brain).
     $cmds.Add('dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart || exit 0')
     $cmds.Add('dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart || exit 0')
-    # 2) SERVICE ACCOUNT = the built-in Administrator (RID 500), renamed to svcUser + hidden.
-    #    * RID-500 runs with a FULL, UNFILTERED token by default (FilterAdministratorToken=0,
-    #    keyed to the RID not the name) and holds SeBatchLogonRight -- so its scheduled tasks
-    #    (MiOS-Host WSL brain, MiOS-XBOX-Hydrate Gaming Services) actually RUN. A freshly
-    #    created service account instead hit a stored-password batch-logon failure -> EVERY
-    #    task registered but never executed (brain never deployed, Gaming Services never
-    #    installed). Set the password + activate, rename Administrator -> svcUser, hide it.
-    #    (MS-doc-verified: docs/oem-dism-techniques-2026-07-06.md S3.)
-    #    HARDENED (2026-07-18): one SID-matched (S-1-5-*-500 -> robust to a localized or
-    #    already-renamed built-in admin; the old literal `-Name Administrator` silently
-    #    no-op'd there, leaving mios-sudo DISABLED so every schtasks /ru mios-sudo below
-    #    failed its stored-credential check) atomic block: enable + set password + never-
-    #    expire + rename, all in one RunSynchronousCommand. `& exit /b 0` (cmd-level,
-    #    unconditional) GUARANTEES the specialize pass sees 0 even if a step faults --
-    #    minimizing the identity-mutation surface in the boot-critical pass. Stays in
-    #    specialize so mios-sudo exists + is enabled BEFORE the schtasks register on it.
-    # Built with a double-quoted here-value (NOT -f: the literal { } in Where-Object{}/if(){}
-    # would be parsed as format placeholders and throw at generation). `"=literal ", `$=literal $;
-    # '$svcPass'/'$svcUser' interpolate the SSOT values single-quoted into the emitted command.
-    $svcId = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"`$ErrorActionPreference='SilentlyContinue';`$a=Get-LocalUser|Where-Object{`$_.SID.Value -like 'S-1-5-*-500'};if(`$a){Enable-LocalUser -Name `$a.Name;Set-LocalUser -Name `$a.Name -Password (ConvertTo-SecureString '$svcPass' -AsPlainText -Force) -PasswordNeverExpires `$true;if(`$a.Name -ne '$svcUser'){Rename-LocalUser -Name `$a.Name -NewName '$svcUser'}}`" & exit /b 0"
-    $cmds.Add($svcId)
-    # Hide the renamed admin from LogonUI (matches by CURRENT name -> AFTER the rename).
-    # Only suppresses enumeration; the account still runs tasks, and autologon (the DESKTOP
-    # user, a different account) is unaffected.
-    $cmds.Add(('reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList" /v "{0}" /t REG_DWORD /d 0 /f || exit 0' -f $svcUser))
+    # 2) SERVICE ACCOUNT (RID-500) identity is DONE LATER, NOT here. RID-500 runs tasks with
+    #    a FULL unfiltered token + SeBatchLogonRight (why it, not a fresh account); but the
+    #    net-user/Rename-LocalUser/Set-LocalUser/UserList mutation must NOT run in the
+    #    boot-critical `specialize` pass -- identity mutation there can strand the pass with
+    #    "The computer restarted unexpectedly..." (OOBE-restart research; the || masking is a
+    #    no-op because the failure is state-machine, not exit-code). It is ALSO redundant:
+    #    SetupComplete.cmd already performs the IDENTICAL account setup post-OOBE, where
+    #    Windows Setup ignores exit codes and a failure CANNOT abort the install (see
+    #    SetupComplete.cmd L66-84 + its header). So specialize now does ZERO identity
+    #    mutation; SetupComplete.cmd is the single authoritative place for the RID-500 rename
+    #    + all mios-sudo tasks. (The mios-sudo schtasks below are harmless in specialize --
+    #    they fail-and-mask before the rename and are re-registered authoritatively by
+    #    SetupComplete.cmd.)
     # 3) RDP: allow connections + firewall group + NLA (all three are required).
     if ((Get-Toml $Toml 'autounattend.service.enable_rdp' 'true') -match '^(?i:true|1|yes)$') {
         $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f || exit 0')

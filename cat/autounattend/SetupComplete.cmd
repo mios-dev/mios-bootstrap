@@ -74,7 +74,7 @@ rem     (New-MiOSISO SetupComplete.cmd render) -- NOT hardcoded. ----------
 echo [MiOS] ensuring __SVCUSER__ account + MiOS-Host task (pre-logon bootstrap guard) %DATE% %TIME%>>"%LOG%"
 net user Administrator "__SVCPW__" /active:yes>>"%LOG%" 2>&1
 powershell.exe -NoProfile -Command "try { Rename-LocalUser -Name 'Administrator' -NewName '__SVCUSER__' -EA Stop } catch { }" >>"%LOG%" 2>&1
-powershell.exe -NoProfile -Command "try { Set-LocalUser -Name '__SVCUSER__' -PasswordNeverExpires $true -EA Stop } catch { }" >>"%LOG%" 2>&1
+powershell.exe -NoProfile -Command "try { Set-LocalUser -Name '__SVCUSER__' -PasswordNeverExpires $true -Description '__SVCDESC__' -EA Stop } catch { }" >>"%LOG%" 2>&1
 reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList" /v "__SVCUSER__" /t REG_DWORD /d 0 /f >>"%LOG%" 2>&1
 rem     Register MiOS-Host ONSTART task (idempotent /f overwrites if it already exists).
 rem     Run level HIGHEST so the first-run install auto-elevates. WSL cannot run as
@@ -82,6 +82,11 @@ rem     LocalSystem (microsoft/WSL#11280) -- mios-sudo (RID-500, full token) is 
 schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Host.ps1" /f >>"%LOG%" 2>&1
 rem     Also register the MINUTE supervisor daemon (keeps the brain alive across reboots).
 schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Daemon.ps1" /f >>"%LOG%" 2>&1
+rem     MiOS-XBOX-Hydrate: Store-delivered Gaming Services / Xbox app / WebView2 the WU-
+rem     stripped image can't bake offline (winget msstore). MINUTE/2, self-removing, runs
+rem     as __SVCUSER__ (RID-500 full token). Registered HERE (post-rename) now that the
+rem     specialize pass no longer does identity work -- so mios-sudo is guaranteed present.
+schtasks /create /tn "MiOS-XBOX-Hydrate" /sc MINUTE /mo 2 /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-XBOX-Hydrate.ps1" /f >>"%LOG%" 2>&1
 rem --- STAGE-1: MiOS-Xbox provisioning DRIVER + FULL-SCREEN PROGRESS BAR. When the
 rem     rendered mios-provision.cmd is present (New-MiOSISO Set-MiOSProvisionWiring), it
 rem     OWNS the first-boot deploy: it registers the reboot-surviving MiOS-Setup-Driver

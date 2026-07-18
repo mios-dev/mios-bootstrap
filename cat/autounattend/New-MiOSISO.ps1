@@ -285,7 +285,20 @@ function Set-MiOSCustomDefaults {
     Set-Content -Path (Join-Path $scriptsDst 'TaskbarLayoutModification.xml') -Value $taskbarXml -Encoding Utf8
 
     $unlockVbs = @'
-HKU = &H80000003 Set reg = GetObject("winmgmts://./root/default:StdRegProv") Set fso = CreateObject("Scripting.FileSystemObject") If reg.EnumKey(HKU, "", sids) = 0 Then If Not IsNull(sids) Then For Each sid In sids key = sid + "\Software\Policies\Microsoft\Windows\Explorer" name = "LockedStartLayout" If reg.GetDWORDValue(HKU, key, name, existing) = 0 Then reg.SetDWORDValue HKU, key, name, 0 End If Next End If End If
+Const HKU = &H80000003
+Set reg = GetObject("winmgmts://./root/default:StdRegProv")
+Set fso = CreateObject("Scripting.FileSystemObject")
+If reg.EnumKey(HKU, "", sids) = 0 Then
+  If Not IsNull(sids) Then
+    For Each sid In sids
+      key = sid + "\Software\Policies\Microsoft\Windows\Explorer"
+      name = "LockedStartLayout"
+      If reg.GetDWORDValue(HKU, key, name, existing) = 0 Then
+        reg.SetDWORDValue HKU, key, name, 0
+      End If
+    Next
+  End If
+End If
 '@
     Set-Content -Path (Join-Path $scriptsDst 'UnlockStartLayout.vbs') -Value $unlockVbs -Encoding Utf8
 
@@ -1001,7 +1014,8 @@ function Invoke-MiOSImageServicing {
             # svc_password = the service cred, else [identity].default_password.
             $scSvcUser = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-sudo'
             $scSvcPass = Get-Toml $Toml 'autounattend.service.svc_password' (Get-Toml $Toml 'identity.default_password' 'user')
-            $scText = [IO.File]::ReadAllText($scSrc).Replace('__SVCUSER__', $scSvcUser).Replace('__SVCPW__', $scSvcPass)
+            $scSvcDesc = Get-Toml $Toml 'autounattend.service.svc_description' 'MiOS AI -- the renamed built-in Administrator (RID 500)'
+            $scText = [IO.File]::ReadAllText($scSrc).Replace('__SVCUSER__', $scSvcUser).Replace('__SVCPW__', $scSvcPass).Replace('__SVCDESC__', $scSvcDesc)
             [IO.File]::WriteAllText((Join-Path $scriptsDst 'SetupComplete.cmd'), $scText, (New-Object System.Text.UTF8Encoding($false)))
             Write-Host "    baked SetupComplete.cmd (svc=$scSvcUser, SSOT-derived) -> image \Windows\Setup\Scripts (SYSTEM first-boot trigger)" -ForegroundColor Green
         } else { Write-Host "[!] SetupComplete.cmd NOT found next to New-MiOSISO -- first-boot MiOS trigger MISSING!" -ForegroundColor Red }

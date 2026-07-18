@@ -285,18 +285,13 @@ function New-MiOSAutounattendXml {
         [void]$_preOobe.AppendLine(('        <RunSynchronousCommand wcm:action="add"><Order>{0}</Order><Path>cmd /c {1}</Path><Description>MiOS boot-time service plane (pre-logon)</Description></RunSynchronousCommand>' -f $_ord, [Security.SecurityElement]::Escape($sc)))
         $_ord++
     }
-    # --- MiOS AI identity: the built-in Administrator (RID 500) IS svc_user --------
-    # Rename the RID-500 account -- matched BY SID ('S-1-5-*-500', so it is robust to
-    # any prior name and to a localized built-in admin) -- to the SSOT svc_user, then
-    # stamp its SSOT svc_description. Idempotent: skips the rename when RID-500 already
-    # carries that name (e.g. the service-plane rename above already ran) and always
-    # (re)asserts the description. Both values are SSOT-derived (no hardcoded literals).
-    $_svcUserLit = ($svcUser -replace "'", "''")
-    $_svcDescLit = ($svcDesc -replace "'", "''")
-    $_idPs  = "`$a = Get-LocalUser | Where-Object { `$_.SID.Value -like 'S-1-5-*-500' }; if (`$a) { if (`$a.Name -ne '$_svcUserLit') { Rename-LocalUser -Name `$a.Name -NewName '$_svcUserLit' }; Set-LocalUser -Name '$_svcUserLit' -Description '$_svcDescLit' }"
-    $_idCmd = 'powershell.exe -NoProfile -Command "' + $_idPs + '"'
-    [void]$_preOobe.AppendLine(('        <RunSynchronousCommand wcm:action="add"><Order>{0}</Order><Path>{1}</Path><Description>MiOS AI identity: rename RID-500 built-in Administrator to svc_user + set description (SSOT)</Description></RunSynchronousCommand>' -f $_ord, [Security.SecurityElement]::Escape($_idCmd)))
-    $_ord++
+    # --- MiOS AI identity: the built-in Administrator (RID 500) IS svc_user ---------
+    # RID-500 rename + svc_description are DELIBERATELY NOT stamped in `specialize`.
+    # Identity mutation in the boot-critical pass can strand it ("The computer restarted
+    # unexpectedly...") and is redundant: SetupComplete.cmd renames RID-500 + sets the SSOT
+    # description POST-OOBE, where Windows Setup ignores exit codes and a failure cannot
+    # abort the install (SetupComplete.cmd L66-84; New-MiOSISO substitutes __SVCUSER__ /
+    # __SVCPW__ / __SVCDESC__ from mios.toml). `specialize` stays identity-mutation-free.
     $preOobeXml = $_preOobe.ToString().TrimEnd()
 
     # Boot-into-Xbox FSE: the Microsoft-Windows-Gaming-Configuration component
@@ -354,7 +349,7 @@ $diskXml
     </component>
     <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <RunSynchronous>
-        <RunSynchronousCommand wcm:action="add"><Order>1</Order><Path>reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f</Path><Description>Enable NTFS long paths for MiOS</Description></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>1</Order><Path>cmd /c reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f || exit 0</Path><Description>Enable NTFS long paths for MiOS</Description></RunSynchronousCommand>
 $preOobeXml
       </RunSynchronous>
     </component>
