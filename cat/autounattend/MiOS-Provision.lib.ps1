@@ -278,8 +278,8 @@ function New-MiOSHostServiceCommands {
     $script   = Get-Toml $Toml 'autounattend.service.host_script' 'C:\ProgramData\MiOS\MiOS-Host.ps1'
 
     # 1) WSL2 platform feature (the only OC strictly required for the MiOS brain).
-    $cmds.Add('dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart')
-    $cmds.Add('dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart')
+    $cmds.Add('dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart || exit 0')
+    $cmds.Add('dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart || exit 0')
     # 2) SERVICE ACCOUNT = the built-in Administrator (RID 500), renamed to svcUser + hidden.
     #    * RID-500 runs with a FULL, UNFILTERED token by default (FilterAdministratorToken=0,
     #    keyed to the RID not the name) and holds SeBatchLogonRight -- so its scheduled tasks
@@ -288,18 +288,28 @@ function New-MiOSHostServiceCommands {
     #    task registered but never executed (brain never deployed, Gaming Services never
     #    installed). Set the password + activate, rename Administrator -> svcUser, hide it.
     #    (MS-doc-verified: docs/oem-dism-techniques-2026-07-06.md S3.)
-    $cmds.Add(('net user Administrator "{0}" /active:yes' -f $svcPass))
-    $cmds.Add(('powershell.exe -NoProfile -Command "Rename-LocalUser -Name Administrator -NewName ''{0}''"' -f $svcUser))
-    $cmds.Add(('powershell.exe -NoProfile -Command "Set-LocalUser -Name ''{0}'' -PasswordNeverExpires $true"' -f $svcUser))
+    #    HARDENED (2026-07-18): one SID-matched (S-1-5-*-500 -> robust to a localized or
+    #    already-renamed built-in admin; the old literal `-Name Administrator` silently
+    #    no-op'd there, leaving mios-sudo DISABLED so every schtasks /ru mios-sudo below
+    #    failed its stored-credential check) atomic block: enable + set password + never-
+    #    expire + rename, all in one RunSynchronousCommand. `& exit /b 0` (cmd-level,
+    #    unconditional) GUARANTEES the specialize pass sees 0 even if a step faults --
+    #    minimizing the identity-mutation surface in the boot-critical pass. Stays in
+    #    specialize so mios-sudo exists + is enabled BEFORE the schtasks register on it.
+    # Built with a double-quoted here-value (NOT -f: the literal { } in Where-Object{}/if(){}
+    # would be parsed as format placeholders and throw at generation). `"=literal ", `$=literal $;
+    # '$svcPass'/'$svcUser' interpolate the SSOT values single-quoted into the emitted command.
+    $svcId = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"`$ErrorActionPreference='SilentlyContinue';`$a=Get-LocalUser|Where-Object{`$_.SID.Value -like 'S-1-5-*-500'};if(`$a){Enable-LocalUser -Name `$a.Name;Set-LocalUser -Name `$a.Name -Password (ConvertTo-SecureString '$svcPass' -AsPlainText -Force) -PasswordNeverExpires `$true;if(`$a.Name -ne '$svcUser'){Rename-LocalUser -Name `$a.Name -NewName '$svcUser'}}`" & exit /b 0"
+    $cmds.Add($svcId)
     # Hide the renamed admin from LogonUI (matches by CURRENT name -> AFTER the rename).
     # Only suppresses enumeration; the account still runs tasks, and autologon (the DESKTOP
     # user, a different account) is unaffected.
-    $cmds.Add(('reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList" /v "{0}" /t REG_DWORD /d 0 /f' -f $svcUser))
+    $cmds.Add(('reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList" /v "{0}" /t REG_DWORD /d 0 /f || exit 0' -f $svcUser))
     # 3) RDP: allow connections + firewall group + NLA (all three are required).
     if ((Get-Toml $Toml 'autounattend.service.enable_rdp' 'true') -match '^(?i:true|1|yes)$') {
-        $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
-        $cmds.Add('netsh advfirewall firewall set rule group="remote desktop" new enable=Yes')
-        $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f')
+        $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f || exit 0')
+        $cmds.Add('netsh advfirewall firewall set rule group="remote desktop" new enable=Yes || exit 0')
+        $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f || exit 0')
     }
     # 4) Register MiOS-Host as an ONSTART task under mios-sudo (ONSTART fires in
     #    Session 0 at boot, before any logon; schtasks grants the batch-logon right).
@@ -311,7 +321,7 @@ function New-MiOSHostServiceCommands {
     #    quoting; MiOS-Host.ps1 self-resolves the distro and defaults the bootstrap
     #    URL, so -Distro/-BootstrapUrl are omitted here (keeps the value short + valid).
     $tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $script
-    $cmds.Add(('schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $tr))
+    $cmds.Add(('schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f || exit 0' -f $svcUser, $svcPass, $tr))
 
     # 4b) Register the MiOS-Daemon -- the always-on supervisor that circumvents the
     #     fragile one-shot triggers: a MINUTE/1 task (Task Scheduler IS the service)
@@ -322,14 +332,14 @@ function New-MiOSHostServiceCommands {
     if ((Get-Toml $Toml 'autounattend.daemon.enable' 'true') -match '^(?i:true|1|yes)$') {
         $daemon = Get-Toml $Toml 'autounattend.daemon.script' 'C:\ProgramData\MiOS\MiOS-Daemon.ps1'
         $dtr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $daemon
-        $cmds.Add(('schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $dtr))
+        $cmds.Add(('schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f || exit 0' -f $svcUser, $svcPass, $dtr))
     }
 
     # 4c) Register the MiOS-AccountSync scheduled task if accounts.db_backed is enabled.
     if ((Get-Toml $Toml 'accounts.db_backed' 'false') -match '^(?i:true|1|yes)$') {
         $syncScript = 'C:\ProgramData\MiOS\MiOS-AccountSync.ps1'
         $strCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $syncScript
-        $cmds.Add(('schtasks /create /tn "MiOS-AccountSync" /sc MINUTE /mo 1 /rl HIGHEST /ru "SYSTEM" /tr "{0}" /f' -f $strCmd))
+        $cmds.Add(('schtasks /create /tn "MiOS-AccountSync" /sc MINUTE /mo 1 /rl HIGHEST /ru "SYSTEM" /tr "{0}" /f || exit 0' -f $strCmd))
     }
 
     # 5) MiOS-XBOX HYDRATION: install the Store-delivered gaming runtime the WU-stripped
@@ -343,7 +353,7 @@ function New-MiOSHostServiceCommands {
         $hydrate = Get-Toml $Toml 'autounattend.xbox.hydrate_script' 'C:\ProgramData\MiOS\MiOS-XBOX-Hydrate.ps1'
         # no nested quotes (see MiOS-Host /tr note above); space-free SSOT path
         $htr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0}' -f $hydrate
-        $cmds.Add(('schtasks /create /tn "MiOS-XBOX-Hydrate" /sc MINUTE /mo 2 /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f' -f $svcUser, $svcPass, $htr))
+        $cmds.Add(('schtasks /create /tn "MiOS-XBOX-Hydrate" /sc MINUTE /mo 2 /rl HIGHEST /ru "{0}" /rp "{1}" /tr "{2}" /f || exit 0' -f $svcUser, $svcPass, $htr))
     }
 
     # 6) ACCOUNT-DEPENDENT provisioning (KEYSTONE). SetupComplete.cmd runs BEFORE the
@@ -366,7 +376,7 @@ function New-MiOSHostServiceCommands {
         # MOST RELIABLE execution context: it has no stored-password / batch-logon
         # dependency (the exact failure that stopped every mios-sudo task from running).
         # This GUARANTEES the MiOS theme + RDU right actually apply post-account.
-        $cmds.Add(('schtasks /create /tn "MiOS-Provision" /sc MINUTE /mo 1 /rl HIGHEST /ru "SYSTEM" /tr "{0}" /f' -f $pvr))
+        $cmds.Add(('schtasks /create /tn "MiOS-Provision" /sc MINUTE /mo 1 /rl HIGHEST /ru "SYSTEM" /tr "{0}" /f || exit 0' -f $pvr))
     }
     return $cmds
 }
