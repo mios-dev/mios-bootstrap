@@ -1077,28 +1077,39 @@ trigger_mios_install() {
             spin_stop
             log_ok "MiOS core (mios.git) merged to /"
 
-            # 2. Apply MiOS-bootstrap repo overlays
+            # 2. Apply MiOS-bootstrap repo overlays. Prefer a LOCALLY-STAGED source
+            # (offline install): if BOOTSTRAP_REPO resolves to a filesystem dir that
+            # already carries the etc/usr overlays, use it directly -- no git repo and
+            # no network required. Only git-clone for a real remote URL.
             local bootstrap_tmp="/tmp/mios-bootstrap-src"
-            log_info "Fetching MiOS-bootstrap overlays from ${BOOTSTRAP_REPO}"
-            spin_start "Cloning mios-bootstrap.git (user layer)"
-            rm -rf "${bootstrap_tmp}"
-            local clone_err
-            clone_err=$(git clone --depth=1 "${BOOTSTRAP_REPO}" "${bootstrap_tmp}" 2>&1)
-            local clone_rc=$?
-            if [[ $clone_rc -ne 0 ]]; then
+            local bootstrap_src="" _bs_local="${BOOTSTRAP_REPO#file://}"
+            if [[ -d "${_bs_local}/etc" || -d "${_bs_local}/usr" ]]; then
+                log_info "Using locally-staged MiOS-bootstrap overlays at ${_bs_local} (offline)"
+                bootstrap_src="${_bs_local}"
+            else
+                log_info "Fetching MiOS-bootstrap overlays from ${BOOTSTRAP_REPO}"
+                spin_start "Cloning mios-bootstrap.git (user layer)"
+                rm -rf "${bootstrap_tmp}"
+                local clone_err
+                clone_err=$(git clone --depth=1 "${BOOTSTRAP_REPO}" "${bootstrap_tmp}" 2>&1)
+                local clone_rc=$?
+                if [[ $clone_rc -ne 0 ]]; then
+                    spin_stop
+                    log_err "Failed to clone mios-bootstrap from ${BOOTSTRAP_REPO}: ${clone_err}"
+                    log_err "For an OFFLINE install, stage the mios-bootstrap tree and set BOOTSTRAP_REPO to its path."
+                    return 1
+                fi
                 spin_stop
-                log_err "Failed to clone mios-bootstrap: ${clone_err}"
-                return 1
+                bootstrap_src="${bootstrap_tmp}"
             fi
-            spin_stop
 
             log_info "Merging bootstrap system folders (etc, usr) to /"
             for d in etc usr; do
-                if [[ -d "${bootstrap_tmp}/${d}" ]]; then
-                    cp -a "${bootstrap_tmp}/${d}/." "/${d}/" 2>/dev/null || true
+                if [[ -d "${bootstrap_src}/${d}" ]]; then
+                    cp -a "${bootstrap_src}/${d}/." "/${d}/" 2>/dev/null || true
                 fi
             done
-            rm -rf "${bootstrap_tmp}"
+            [[ "${bootstrap_src}" == "${bootstrap_tmp}" ]] && rm -rf "${bootstrap_tmp}"
             log_ok "MiOS-bootstrap overlays applied"
 
             # 3. Phase-2: RPM package install from mios.toml SSOT.
