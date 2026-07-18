@@ -38,23 +38,19 @@ set "success_color=#3E7765"
 set "muted_color=#948E8E"
 set "subtle_color=#B7C9D7"
 
-:: NOTE: the SSOT `for /f` loops below break cmd parsing (escaped-quote regex in a
-:: for-backtick); their loaded values already match the hardcoded defaults set above
-:: (drivepath=D, medicatver=21.12, cache_path=M:\..., palette), so skip to :no_toml.
-:: TODO: robust SSOT-load rewrite (single powershell -> temp env, no fragile for /f).
-goto no_toml
+:: Load the SSOT palette + settings from mios.toml in ONE powershell pass, writing a temp
+:: `set` script we then `call`. Replaces a stack of fragile per-key `for /f`-backtick loops
+:: whose escaped-quote regex broke cmd parsing -- so the whole block had been `goto`-skipped
+:: and NOTHING was actually SSOT-driven. [char]34 supplies the double-quotes so there are no
+:: nested \" to trip cmd. The hardcoded defaults above stand as fallbacks for any key
+:: mios.toml omits (degrade-open on a missing/partial SSOT). TOML values are quoted.
 if not exist "%toml_path%" goto no_toml
-echo Loading installation settings from %toml_path%...
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*drivepath\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'D' }"`) do set "drivepath=%%i"
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*medicatver\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '21.12' }"`) do set "medicatver=%%i"
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cache_path\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'M:\MediCat.USB.v21.12.7z' }"`) do set "file=%%i"
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*bg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#282262' }"`) do set "bg_color=%%i"
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*fg\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#E7DFD3' }"`) do set "fg_color=%%i"
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*accent\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#1A407F' }"`) do set "accent_color=%%i"
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*cursor\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#F35C15' }"`) do set "cursor_color=%%i"
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*success\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#3E7765' }"`) do set "success_color=%%i"
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*muted\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#948E8E' }"`) do set "muted_color=%%i"
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*subtle\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { '#B7C9D7' }"`) do set "subtle_color=%%i"
+echo Loading installation settings from mios.toml SSOT...
+set "ssot_env=%TEMP%\mios-cat-ssot.cmd"
+del "%ssot_env%" /q >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content -Raw -LiteralPath '%toml_path%'; $q=[char]34; function G([string]$k){ $m=[regex]::Match($t, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*'+$q+'([^'+$q+'\r\n]*)'+$q)); if($m.Success){ $m.Groups[1].Value -replace '\\\\','\' } }; $map=[ordered]@{ drivepath='drivepath'; medicatver='medicatver'; file='cache_path'; bg_color='bg'; fg_color='fg'; accent_color='accent'; cursor_color='cursor'; success_color='success'; muted_color='muted'; subtle_color='subtle' }; $o=New-Object System.Collections.Generic.List[string]; foreach($e in $map.GetEnumerator()){ $v=G $e.Value; if($v){ $o.Add('set '+$q+$e.Key+'='+$v+$q) } }; if($o.Count){ Set-Content -LiteralPath '%ssot_env%' -Value $o -Encoding ascii }" 2>nul
+if exist "%ssot_env%" call "%ssot_env%"
+if exist "%ssot_env%" del "%ssot_env%" /q >nul 2>&1
 :no_toml
 
 :: Self-Update Check
@@ -92,7 +88,7 @@ if %errorlevel% equ 0 (
 call :run_preflight_checks
 if %errorlevel% neq 0 (
     echo [FAIL] Preflight checks failed! Exiting...
-    pause
+    if not "%NONINTERACTIVE%"=="1" pause
     exit /b 1
 )
 
@@ -839,14 +835,16 @@ echo Xbox UUP Channel  : %uup_channel%
 echo Xbox Gaming Opt.  : %gaming_optimize%
 echo ==========================================================
 echo.
-set /p "confirm=Are you sure you want to format %drivepath%: and install? (Y/N): "
+set "confirm="
+if "%NONINTERACTIVE%"=="1" set "confirm=Y"
+if not "%NONINTERACTIVE%"=="1" set /p "confirm=Are you sure you want to format %drivepath%: and install? (Y/N): "
 if /i not "%confirm%"=="Y" goto menu
 
 :: Ensure target drive exists
 if not exist "%drivepath%:\" (
     echo [ERROR] Target drive %drivepath%: was not found!
     echo Please insert your USB drive and ensure it is mounted as %drivepath%:\
-    pause
+    if not "%NONINTERACTIVE%"=="1" pause
     goto menu
 )
 
@@ -934,13 +932,14 @@ if "%download_needed%"=="1" (
 :: Fedora 40 is EOL (moved to archive.fedoraproject.org) -- pin a CURRENT release and
 :: size-validate the download so a 404/redirect stub can never masquerade as the ISO.
 set "fedora_ver=44"
-set "fedora_file=M:\Fedora-Server-dvd-x86_64-%fedora_ver%.iso"
+set "fedora_build=-1.7"
+set "fedora_file=M:\Fedora-Server-dvd-x86_64-%fedora_ver%%fedora_build%.iso"
 if exist "%fedora_file%" echo [OK] Fedora Server DVD found at %fedora_file%
 if exist "%fedora_file%" goto fedora_dvd_ok
 echo.
 echo Fedora Server DVD ISO not found in M:\
 echo Pulling the FULL Fedora %fedora_ver% Server DVD ~2.5 GB -- carries packages for OFFLINE install...
-curl.exe -C - -L "https://download.fedoraproject.org/pub/fedora/linux/releases/%fedora_ver%/Server/x86_64/iso/Fedora-Server-dvd-x86_64-%fedora_ver%.iso" -o "%fedora_file%" -#
+curl.exe -C - -L "https://download.fedoraproject.org/pub/fedora/linux/releases/%fedora_ver%/Server/x86_64/iso/Fedora-Server-dvd-x86_64-%fedora_ver%%fedora_build%.iso" -o "%fedora_file%" -#
 set "fedora_sz=0"
 if exist "%fedora_file%" for %%A in ("%fedora_file%") do set "fedora_sz=%%~zA"
 if not "%fedora_sz:~9,1%"=="" goto fedora_dvd_ok
@@ -988,35 +987,11 @@ del "%~dp0repo_path.txt" /Q >nul 2>&1
 if "%repodrive%"=="" set "repodrive=%drivepath%"
 
 echo Staging offline repository fallback copies to secure partition %repodrive%:...
-powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }"
-if %errorlevel% equ 0 (
-    echo [ONLINE] Pulling/cloning live repositories from GitHub...
-    
-    if exist "%repodrive%:\mios-bootstrap\.git" (
-        echo Updating mios-bootstrap repository...
-        cd /d "%repodrive%:\mios-bootstrap"
-        git pull >nul 2>&1
-    ) else (
-        echo Cloning mios-bootstrap repository...
-        git clone https://github.com/mios-dev/mios-bootstrap.git "%repodrive%:\mios-bootstrap" >nul 2>&1
-    )
-    
-    if exist "%repodrive%:\MiOS\.git" (
-        echo Updating MiOS repository...
-        cd /d "%repodrive%:\MiOS"
-        git pull >nul 2>&1
-    ) else (
-        echo Cloning MiOS repository...
-        git clone https://github.com/mios-dev/MiOS.git "%repodrive%:\MiOS" >nul 2>&1
-    )
-    cd /d "%maindir%"
-) else (
-    echo [OFFLINE] Internet unreachable. Falling back to local developer repository copies...
-    mkdir "%repodrive%:\mios-bootstrap" >nul 2>&1
-    robocopy "C:\mios-bootstrap" "%repodrive%:\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
-    mkdir "%repodrive%:\MiOS" >nul 2>&1
-    robocopy "C:\MiOS" "%repodrive%:\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
-)
+echo Using local developer repository copies to preserve active changes...
+mkdir "%repodrive%:\mios-bootstrap" >nul 2>&1
+robocopy "C:\mios-bootstrap" "%repodrive%:\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+mkdir "%repodrive%:\MiOS" >nul 2>&1
+robocopy "C:\MiOS" "%repodrive%:\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
 
 :: Overwrite stock System images
 echo Customizing System folder thumbnails...
@@ -1274,7 +1249,7 @@ echo ==========================================================
 echo.
 
 echo Generating customized runtime configuration...
-powershell -NoProfile -Command "$orig = 'C:\MiOS\mios.toml'; if (-not (Test-Path $orig)) { $orig = '%toml_path%' }; if (Test-Path $orig) { $c = Get-Content $orig -Raw; $chan = '%uup_channel%'.ToLower(); $c = $c -replace '(?s)(\[editions.mios-xbox\].*?autounattend.uup_channel\s*=\s*\")[^\"]*(\")', \"${1}${chan}${2}\"; $bake = if ('%bake_drivers%' -eq 'Enabled') { 'true' } else { 'false' }; if ($c -match 'autounattend.bake_host_drivers\s*=') { $c = $c -replace 'autounattend.bake_host_drivers\s*=\s*\w+', \"autounattend.bake_host_drivers = $bake\" } else { $c = $c -replace '(\[editions.mios-xbox\])', \"`${1}`r`nautounattend.bake_host_drivers = $bake\" }; $game = if ('%gaming_optimize%' -eq 'Enabled') { 'gaming' } else { 'minimal' }; $c = $c -replace '(?s)(\[editions.mios-xbox\].*?autounattend.debloat_profile\s*=\s*\")[^\"]*(\")', \"${1}${game}${2}\"; $c | Set-Content \"$env:TEMP\mios_run.toml\" -Force }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autounattend\Render-MiosRunToml.ps1" -TomlPath "%toml_path%" -UupChannel "%uup_channel%" -BakeDrivers "%bake_drivers%" -GamingOptimize "%gaming_optimize%"
 powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 15GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\isobuild_live' } else { 'C:\MiOS\isobuild_live' }; [System.IO.File]::WriteAllText(\"%~dp0work_path.txt\", $p)"
 set /p workdir_path=<"%~dp0work_path.txt"
 del "%~dp0work_path.txt" /Q >nul 2>&1
@@ -1288,7 +1263,7 @@ echo     MiOS-Cat DEDICATED USB INSTALLATION COMPLETED
 echo ==========================================================
 echo Drive %drivepath%: is now ready to boot into MiOS-Cat!
 echo ==========================================================
-pause
+if not "%NONINTERACTIVE%"=="1" pause
 goto :eof
 
 :run_preflight_checks
@@ -1351,7 +1326,7 @@ if not exist "%drivepath%:\CdUsb.Y" (
     if not exist "%drivepath%:\CdUsb.Y" (
         echo [ERROR] USB drive %drivepath%: is missing.
         echo Please ensure the USB drive is plugged in correctly.
-        pause
+        if not "%NONINTERACTIVE%"=="1" pause
     )
     goto check_drive_ready
 )
