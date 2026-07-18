@@ -117,7 +117,11 @@ if (-not (Test-Path $OutIso)) {
     Stop-Transcript | Out-Null; exit 50
 }
 $size = [math]::Round((Get-Item $OutIso).Length / 1GB, 2)
-$sha  = (Get-FileHash $OutIso -Algorithm SHA256).Hash
+$stream = [System.IO.File]::OpenRead($OutIso)
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$hashBytes = $sha256.ComputeHash($stream)
+$stream.Close()
+$sha = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToUpper()
 $manifest.out_size_gb = $size
 $manifest.sha256      = $sha
 $manifest.success     = $true
