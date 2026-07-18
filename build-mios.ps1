@@ -2644,7 +2644,10 @@ function Get-PodmanMachineOsImage {
 
     # ── Step 4: cache-hit short-circuit ───────────────────────────────
     if (Test-Path $localPath) {
-        $existingHash = (Get-FileHash -Path $localPath -Algorithm SHA256).Hash.ToLower()
+        $stream = [System.IO.File]::OpenRead($localPath)
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        $existingHash = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "").ToLower()
+        $stream.Close()
         if ($existingHash -eq $expectedDigest) {
             Log-Ok "Reusing cached machine-os layer: $localPath"
             return $localPath
@@ -2697,7 +2700,10 @@ function Get-PodmanMachineOsImage {
 
     # ── Step 6: SHA256 verify ─────────────────────────────────────────
     Set-Step "Verifying machine-os layer SHA256"
-    $actualHash = (Get-FileHash -Path $tmpPath -Algorithm SHA256).Hash.ToLower()
+    $stream = [System.IO.File]::OpenRead($tmpPath)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $actualHash = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "").ToLower()
+    $stream.Close()
     if ($actualHash -ne $expectedDigest) {
         Remove-Item $tmpPath -Force -ErrorAction SilentlyContinue
         throw "machine-os layer SHA256 mismatch: expected $expectedDigest, got $actualHash"

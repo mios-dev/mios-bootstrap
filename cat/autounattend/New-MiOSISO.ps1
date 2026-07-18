@@ -657,36 +657,57 @@ function Set-MiOSRemoteAccessOffline {
         $viso = $null
         try {
             $vurl = Get-Toml $Toml 'autounattend.remote.virtio_url' ''
-            if (-not $vurl) { $vurl = 'https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso' }
+            # LATEST/BETA build (NOT stable-virtio): it carries the ivshmem device driver +
+            # newer components that Looking Glass needs on the Windows guest for the low-
+            # latency KVMFR framebuffer relay. SSOT-overridable via [autounattend.remote].virtio_url.
+            if (-not $vurl) { $vurl = 'https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso' }
             $variant = Get-Toml $Toml 'autounattend.remote.virtio_variant' 'w11'
             $cache = Join-Path $WorkRoot 'virtio'; New-Item -ItemType Directory -Force -Path $cache | Out-Null
             $viso = Join-Path $cache 'virtio-win.iso'
-            # Fetch + mount with a corrupt-cache retry: a partial/aborted prior download
-            # passes a naive size check but fails Mount-DiskImage ("corrupted and
-            # unreadable"). On a mount failure, DELETE the bad cache and re-fetch ONCE
-            # before giving up -- so a single network hiccup doesn't permanently poison
-            # the cache. virtio-win.iso is ~700 MB, so a <200 MB file is definitely partial.
+            # Fetch + VERIFY + mount, with a corrupt-cache retry loop. A partial/aborted
+            # download or an HTML error page passes a naive size check but fails Mount-
+            # DiskImage ("corrupted and unreadable") -- so verify the ISO9660 'CD001'
+            # signature (offset 0x8001) after each download and re-fetch a bad file BEFORE
+            # mounting, up to 4 attempts (the flash saw TWO corrupt downloads in a row --
+            # the old loop only re-fetched on MOUNT failure, never integrity-checking the
+            # download itself). virtio-win.iso is ~700 MB, so <200 MB is definitely partial.
+            function Test-MiOSIsoValid([string]$p) {
+                if (-not (Test-Path $p) -or (Get-Item $p).Length -lt 200MB) { return $false }
+                try { $fs = [IO.File]::OpenRead($p); try { [void]$fs.Seek(0x8001, 'Begin'); $b = New-Object byte[] 5; [void]$fs.Read($b, 0, 5); return ([Text.Encoding]::ASCII.GetString($b) -eq 'CD001') } finally { $fs.Close() } } catch { return $false }
+            }
             $vm = $null
-            for ($try = 0; $try -lt 2 -and -not $vm; $try++) {
-                if (-not (Test-Path $viso) -or (Get-Item $viso).Length -lt 200MB) {
-                    Write-Host "    fetching virtio-win.iso (one-time, cached under $cache) ..." -ForegroundColor DarkGray
+            for ($try = 0; $try -lt 4 -and -not $vm; $try++) {
+                if (-not (Test-MiOSIsoValid $viso)) {
+                    Write-Host "    fetching virtio-win.iso (attempt $($try + 1)/4, cached under $cache) ..." -ForegroundColor DarkGray
+                    Remove-Item $viso -Force -ErrorAction SilentlyContinue
                     $op = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
-                    Invoke-WebRequest -Uri $vurl -OutFile $viso -UseBasicParsing -ErrorAction Stop
+                    try { Invoke-WebRequest -Uri $vurl -OutFile $viso -UseBasicParsing -ErrorAction Stop } catch {}
                     $ProgressPreference = $op
+                    if (-not (Test-MiOSIsoValid $viso)) { Write-Host "    download failed the ISO9660 integrity check (partial/HTML) -- retrying" -ForegroundColor Yellow; continue }
                 }
                 try { $vm = Mount-DiskImage -ImagePath $viso -PassThru -ErrorAction Stop }
                 catch {
-                    Write-Host "    cached virtio-win.iso unmountable ($($_.Exception.Message.Split([Environment]::NewLine)[0].Trim())) -- deleting + re-fetching" -ForegroundColor Yellow
+                    Write-Host "    verified ISO still unmountable ($($_.Exception.Message.Split([Environment]::NewLine)[0].Trim())) -- deleting + re-fetching" -ForegroundColor Yellow
                     Remove-Item $viso -Force -ErrorAction SilentlyContinue
                 }
             }
-            if (-not $vm) { throw "virtio-win.iso could not be mounted after re-fetch" }
+            if (-not $vm) { throw "virtio-win.iso could not be obtained (valid + mountable) after 4 attempts" }
             $vl = ($vm | Get-Volume).DriveLetter + ':\'
             $inf = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "\\$variant\\amd64\\" })
             if (-not $inf.Count) { $inf = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '\\amd64\\' }) }
             Write-Host "    injecting $($inf.Count) virtio driver package(s) offline ($variant/amd64) ..." -ForegroundColor DarkGray
             foreach ($d in $inf) { try { Add-WindowsDriver -Path $Mount -Driver $d.FullName -ForceUnsigned -ErrorAction Stop | Out-Null } catch {} }
-        } catch { Write-Host "    virtio bake skipped ($($_.Exception.Message.Split([Environment]::NewLine)[0])) -- non-fatal" -ForegroundColor Yellow }
+            # DON'T SKIP: also EMBED the full virtio-win.iso into the installed image so the
+            # guest can (re)install the ivshmem + Looking Glass host drivers on demand -- the
+            # LG-drivers ISO ships INSIDE MiOS-Xbox (at C:\MiOS\drivers) regardless of the
+            # offline injection above. MiOS-XBOX-Hydrate can mount it to install LG host.
+            $vembed = Join-Path $Mount 'MiOS\drivers'; New-Item -ItemType Directory -Force -Path $vembed | Out-Null
+            Copy-Item -LiteralPath $viso -Destination (Join-Path $vembed 'virtio-win.iso') -Force
+            Write-Host "    embedded virtio-win.iso -> image \MiOS\drivers (guest-side ivshmem / Looking-Glass install source)" -ForegroundColor Green
+        } catch {
+            Write-Host "    [!] virtio bake FAILED ($($_.Exception.Message.Split([Environment]::NewLine)[0])) -- ivshmem/Looking-Glass drivers NOT baked; fix the source before shipping (do NOT ship a MiOS-Xbox without them)" -ForegroundColor Red
+            throw $_
+        }
         finally { if ($viso) { try { Dismount-DiskImage -ImagePath $viso -ErrorAction SilentlyContinue | Out-Null } catch {} } }
     }
 

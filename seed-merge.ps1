@@ -1,4 +1,4 @@
-﻿# AI-hint: PowerShell script that overlays mios-bootstrap files (excluding obsolete documentation) onto a mios.git checkout to merge the user/AI layer into the build context, ensuring a consistent OCI image regardless of the host platform.
+# AI-hint: PowerShell script that overlays mios-bootstrap files (excluding obsolete documentation) onto a mios.git checkout to merge the user/AI layer into the build context, ensuring a consistent OCI image regardless of the host platform.
 # AI-related: mios-bootstrap
 # AI-functions: Write-Seed
 <#
@@ -87,13 +87,9 @@ foreach ($file in $rootFiles) {
 # copy from /etc/skel/.config/mios/mios.toml (also bootstrap-supplied).
 $miosToml = Join-Path $BootstrapDir "mios.toml"
 if (Test-Path $miosToml) {
-    foreach ($staged in @(
-        (Join-Path $MiosDir "usr\share\mios\mios.toml"),
-        (Join-Path $MiosDir "etc\mios\mios.toml")
-    )) {
-        $null = New-Item -ItemType Directory -Path (Split-Path $staged -Parent) -Force -ErrorAction SilentlyContinue
-        Copy-Item -Path $miosToml -Destination $staged -Force
-    }
+    $staged = Join-Path $MiosDir "etc\mios\mios.toml"
+    $null = New-Item -ItemType Directory -Path (Split-Path $staged -Parent) -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path $miosToml -Destination $staged -Force
 }
 
 Write-Seed "Universal MiOS-SEED merge complete: $BootstrapDir -> $MiosDir"

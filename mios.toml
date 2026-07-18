@@ -45,7 +45,7 @@
 # (dashboard banner, install help, configurator chrome, fastfetch).
 # ----------------------------------------------------------------------------
 [meta]
-mios_version  = "0.2.4"
+mios_version  = "0.3.0"
 
 # ----------------------------------------------------------------------------
 # [branding] -- taglines + frame chars. Per feedback_mios_messages_section_ssot.md
@@ -1423,7 +1423,7 @@ rdp_nla           = true    # RDP-Tcp UserAuthentication (NLA). true = secure de
 openssh_server    = true    # bake OpenSSH.Server (offline FoD, online fallback) + sshd/ssh-agent autostart + fw
 enable_psremoting = true    # WinRM / PowerShell remoting (Enable-PSRemoting) for host mgmt
 bake_virtio       = true    # inject virtio-win guest drivers offline (KVM/QEMU/libvirt portability); non-fatal
-virtio_url        = ""      # empty -> canonical fedorapeople stable virtio-win.iso
+virtio_url        = ""      # empty -> canonical fedorapeople latest/beta virtio-win.iso
 virtio_variant    = "w11"   # driver subtree to inject (w11 | w10); amd64 arch under it
 loopback_adapter  = false   # install a Microsoft KM-TEST loopback NIC (niche; opt-in)
 onlogon_fallback  = true    # register a proven-specialize-pass ONLOGON task that re-applies identity+remote if Setup skips SetupComplete on 26xxx

@@ -84,8 +84,6 @@ done
 # baking them into the OCI image gives Windows/WSL deploys the same
 # defaults out of the box.
 if [[ -f "${BOOT_DIR}/mios.toml" ]]; then
-    install -d "${MIOS_DIR}/usr/share/mios"
-    install -m 0644 "${BOOT_DIR}/mios.toml" "${MIOS_DIR}/usr/share/mios/mios.toml"
     install -d "${MIOS_DIR}/etc/mios"
     install -m 0644 "${BOOT_DIR}/mios.toml" "${MIOS_DIR}/etc/mios/mios.toml"
 fi

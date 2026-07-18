@@ -33,6 +33,17 @@ $attemptDir = Join-Path $StateDir 'attempts'
 New-Item -ItemType Directory -Force -Path $attemptDir | Out-Null
 function Log { param([string]$m) try { "$([DateTime]::UtcNow.ToString('o')) $m" | Out-File -Append -Encoding utf8 $log } catch {} }
 
+# --- setup safety check: prevent premature reboots during Windows Setup/OOBE ---
+$setupInProgress = (Get-ItemProperty -Path "HKLM:\SYSTEM\Setup" -Name "SystemSetupInProgress" -ErrorAction SilentlyContinue).SystemSetupInProgress
+$oobeInProgress = (Get-ItemProperty -Path "HKLM:\SYSTEM\Setup" -Name "OOBEInProgress" -ErrorAction SilentlyContinue).OOBEInProgress
+if ($setupInProgress -eq 1 -or $oobeInProgress -eq 1) {
+    Log "Windows Setup or OOBE is in progress (SetupState=$setupInProgress, OOBEState=$oobeInProgress). Deferring execution."
+    try { $mutex.ReleaseMutex() } catch {}
+    try { $mutex.Dispose() } catch {}
+    return
+}
+
+
 Import-Module (Join-Path $PSScriptRoot 'MiOS-Progress.psm1') -Force -ErrorAction SilentlyContinue
 if (-not (Get-Command Write-MiOSProgress -ErrorAction SilentlyContinue)) {
     # If the module could not be staged (should never happen), a no-op keeps the
