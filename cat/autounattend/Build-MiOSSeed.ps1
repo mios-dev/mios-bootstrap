@@ -81,8 +81,18 @@ if ((Test-Path $oci) -and -not $Force) {
     & skopeo copy "docker://$ImageRef" "oci-archive:${oci}:$ImageRef"
     if ($LASTEXITCODE -ne 0) { Write-Host "[!] skopeo copy returned $LASTEXITCODE." -ForegroundColor Yellow }
 } elseif (Have 'podman') {
-    Write-Host "[*] podman save (oci-archive) -> $oci ..." -ForegroundColor Cyan
-    & podman save --format oci-archive -o $oci $ImageRef
+    # A local `mios build` tags the image localhost/mios:latest, NOT the ghcr ref.
+    # Save whichever tag actually exists in local storage so this doesn't fail with
+    # "image not known" on a builder that only did a local build.
+    $localTag = Get-Toml $toml 'image.local_tag' 'localhost/mios:latest'
+    $saveRef  = $ImageRef
+    & podman image exists $ImageRef *> $null
+    if ($LASTEXITCODE -ne 0) {
+        & podman image exists $localTag *> $null
+        if ($LASTEXITCODE -eq 0) { $saveRef = $localTag }
+    }
+    Write-Host "[*] podman save (oci-archive) -> $oci  (ref=$saveRef) ..." -ForegroundColor Cyan
+    & podman save --format oci-archive -o $oci $saveRef
     if ($LASTEXITCODE -ne 0) { Write-Host "[!] podman save returned $LASTEXITCODE." -ForegroundColor Yellow }
 } else {
     Emit-Manual 'oci-archive' "skopeo copy docker://$ImageRef oci-archive:`"$oci`":$ImageRef   # or: podman save --format oci-archive -o `"$oci`" $ImageRef"

@@ -1011,7 +1011,19 @@ trigger_mios_install() {
     case "${INSTALL_MODE}" in
         bootc)
             log_info "Switching bootc deployment to ${IMAGE_TAG}"
-            bootc switch "${IMAGE_TAG}"
+            # A fresh no-cred host pulls IMAGE_TAG. If ghcr.io/mios-dev/mios is a
+            # PRIVATE package the pull fails; log in first when a token is present,
+            # otherwise assume the package is public. (The GH PAT prompt earlier
+            # feeds git creds, not this bootc pull.)
+            _tok="${GHCR_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-${MIOS_GITHUB_TOKEN:-}}}}"
+            if [[ "${IMAGE_TAG}" == ghcr.io/* && -n "${_tok}" ]]; then
+                printf '%s' "${_tok}" | podman login ghcr.io -u "${GITHUB_USER:-mios-dev}" --password-stdin \
+                    || log_info "ghcr login failed; continuing (image may be public)"
+            fi
+            if ! bootc switch "${IMAGE_TAG}"; then
+                log_info "ERROR: bootc switch ${IMAGE_TAG} failed -- is ${IMAGE_TAG%%:*} a public ghcr package, or are creds set?"
+                exit 1
+            fi
             log_ok "bootc deployment staged"
             ;;
         fhs)
