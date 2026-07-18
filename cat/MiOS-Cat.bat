@@ -38,6 +38,11 @@ set "success_color=#3E7765"
 set "muted_color=#948E8E"
 set "subtle_color=#B7C9D7"
 
+:: NOTE: the SSOT `for /f` loops below break cmd parsing (escaped-quote regex in a
+:: for-backtick); their loaded values already match the hardcoded defaults set above
+:: (drivepath=D, medicatver=21.12, cache_path=M:\..., palette), so skip to :no_toml.
+:: TODO: robust SSOT-load rewrite (single powershell -> temp env, no fragile for /f).
+goto no_toml
 if not exist "%toml_path%" goto no_toml
 echo Loading installation settings from %toml_path%...
 for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$val = (Get-Content '%toml_path%' | Select-String -Pattern '^\s*drivepath\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value }); if ($val) { $val } else { 'D' }"`) do set "drivepath=%%i"
@@ -926,15 +931,24 @@ if "%download_needed%"=="1" (
 )
 
 :: 6b. Pull/Download the FULL Fedora Server DVD (offline-capable install source)
-set "fedora_file=M:\Fedora-Server-dvd-x86_64-40.iso"
-if not exist "%fedora_file%" (
-    echo.
-    echo Fedora Server DVD ISO not found in M:\
-    echo Pulling the FULL Fedora Server DVD ~2.5 GB (carries packages for OFFLINE install)...
-    curl.exe -C - -L "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Server/x86_64/iso/Fedora-Server-dvd-x86_64-40.iso" -o "%fedora_file%" -#
-) else (
-    echo [OK] Fedora Server DVD found at %fedora_file%
-)
+:: Fedora 40 is EOL (moved to archive.fedoraproject.org) -- pin a CURRENT release and
+:: size-validate the download so a 404/redirect stub can never masquerade as the ISO.
+set "fedora_ver=44"
+set "fedora_file=M:\Fedora-Server-dvd-x86_64-%fedora_ver%.iso"
+if exist "%fedora_file%" echo [OK] Fedora Server DVD found at %fedora_file%
+if exist "%fedora_file%" goto fedora_dvd_ok
+echo.
+echo Fedora Server DVD ISO not found in M:\
+echo Pulling the FULL Fedora %fedora_ver% Server DVD ~2.5 GB -- carries packages for OFFLINE install...
+curl.exe -C - -L "https://download.fedoraproject.org/pub/fedora/linux/releases/%fedora_ver%/Server/x86_64/iso/Fedora-Server-dvd-x86_64-%fedora_ver%.iso" -o "%fedora_file%" -#
+set "fedora_sz=0"
+if exist "%fedora_file%" for %%A in ("%fedora_file%") do set "fedora_sz=%%~zA"
+if not "%fedora_sz:~9,1%"=="" goto fedora_dvd_ok
+echo [FAIL] Fedora DVD download failed or looks like a 404/redirect stub (%fedora_sz% bytes; a valid DVD is ~2.5 GB). >&2
+echo        Confirm Fedora %fedora_ver% is current (bump fedora_ver / use archive.fedoraproject.org), or pre-stage the ISO at %fedora_file%. >&2
+del "%fedora_file%" 2>nul
+exit /b 1
+:fedora_dvd_ok
 
 :: 7. Minimal/Surgical extraction to D:\ to fit the drive
 if "%extract_mode%"=="Surgical" (
