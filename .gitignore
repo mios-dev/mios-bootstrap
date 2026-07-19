@@ -97,6 +97,13 @@
 !tests/
 !tests/**
 
+# installation/ -- the unified guided installer surface (mios-install.{ps1,sh,bat}),
+# the shared mios-common.{ps1,sh} contract, the flash monitor, and UNIFY.md.
+# (cat/ files are added explicitly per-file, not by a broad allow, since AGY also
+# writes work-in-progress scripts there that bootstrap should not track.)
+!installation/
+!installation/**
+
 # Re-ignore noise
 **/__pycache__/
 **/*.pyc

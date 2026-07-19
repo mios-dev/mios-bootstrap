@@ -6,13 +6,15 @@
 # reimplements those entrypoints (MiOS-Cat.bat, build-mios.ps1, cat\autounattend\*.ps1) or moves them.
 # Runs on a factory Windows install: missing bits are explained, and the wrapped entrypoints self-
 # provision (WSL2/podman for image builds; the repo self-fetches for the web one-liner in Get-MiOS.ps1).
-# AI-related: mios-install.sh, mios-install.bat, README.md, Monitor-MiosFlash.ps1, cat\MiOS-Cat.bat,
-# build-mios.ps1, Get-MiOS.ps1, cat\autounattend\Build-MiOSXboxISO.ps1, Deploy-MiOSXbox.ps1,
-# Invoke-MiOSProvision.ps1, Build-MiOSSeed.ps1, mios.toml
-# AI-functions: Resolve-MiosTomlPath, Get-MiosTomlValueSimple, Get-MiosPalette, Enable-MiosVt, C, B,
-#   Show-MiosLogo, Rule, Write-MiosLine, Write-MiosKV, Get-MiosCatalog, Show-MiosWelcome,
-#   Invoke-MiosGuidedMenu, Show-MiosTargetBrief, Confirm-MiosProceed, Test-MiosAdmin,
-#   Invoke-MiosSelfElevate, Resolve-Target, Invoke-MiosMonitored
+# The theme, layered SSOT resolver, elevation, and repo-fetch are the ONE shared contract in
+# installation\mios-common.ps1 (dot-sourced below); this file adds only the guided surface on top.
+# AI-related: mios-common.ps1, mios-install.sh, mios-install.bat, README.md, Monitor-MiosFlash.ps1,
+# cat\MiOS-Cat.bat, build-mios.ps1, Get-MiOS.ps1, cat\autounattend\Build-MiOSXboxISO.ps1,
+# Deploy-MiOSXbox.ps1, Invoke-MiOSProvision.ps1, Build-MiOSSeed.ps1, mios.toml
+# AI-functions: Show-MiosLogo, Get-MiosCatalog, Show-MiosWelcome, Invoke-MiosGuidedMenu,
+#   Show-MiosTargetBrief, Confirm-MiosProceed, Resolve-Target, Invoke-MiosConfigure, Invoke-MiosMonitored
+#   (shared from mios-common: Enable-MiosVt, Get-MiosPalette, C, B, Rule, Write-MiosLine, Write-MiosKV,
+#    Get-MiosSsotValue, Test-MiosAdmin, Invoke-MiosSelfElevate, Ensure-MiosRepo)
 #
 #   mios-install [<target>] [--type <name>] [--stage <name>] [--dry-run] [--unattended] [-- <native args>]
 #   No target (or `help`/`menu`) -> the guided menu, which explains every option.
@@ -24,64 +26,12 @@ $script:BuildPs = Join-Path $script:Root 'build-mios.ps1'
 $script:AutoDir = Join-Path $script:Root 'cat\autounattend'
 
 # ============================================================================
-#  SSOT theme -- read [colors] from mios.toml at RUNTIME; force ANSI/VT so the
-#  branding renders on a bare Windows PowerShell 5.1 host (VT is off there by default)
+#  Shared library -- ONE elevation, ONE layered SSOT resolver (vendor<host<user),
+#  ONE repo-fetch, and the SSOT [colors] themed console (Enable-MiosVt, Get-MiosPalette,
+#  C, B, Rule, Write-MiosLine, Write-MiosKV, Test-MiosAdmin, Invoke-MiosSelfElevate,
+#  Get-MiosSsotValue, Ensure-MiosRepo). Single source: installation\mios-common.ps1.
 # ============================================================================
-function Resolve-MiosTomlPath {
-    foreach ($c in @((Join-Path $script:Root 'mios.toml'), 'C:\MiOS\usr\share\mios\mios.toml', 'C:\MiOS\mios.toml')) {
-        if (Test-Path -LiteralPath $c) { return $c }
-    }
-    return $null
-}
-function Get-MiosTomlValueSimple {
-    param([string]$TomlText, [string]$Section, [string]$Key)
-    if (-not $TomlText) { return $null }
-    $m = [regex]::Match($TomlText, "(?ms)^\s*\[" + [regex]::Escape($Section) + "\]\s*(.*?)(?=^\s*\[|\z)")
-    if (-not $m.Success) { return $null }
-    $km = [regex]::Match($m.Groups[1].Value, "(?m)^\s*" + [regex]::Escape($Key) + "\s*=\s*`"([^`"]*)`"")
-    if ($km.Success) { return $km.Groups[1].Value }
-    return $null
-}
-function ConvertTo-Rgb {
-    param([string]$Hex, [int[]]$Fallback)
-    if ($Hex -and $Hex -match '^#?([0-9A-Fa-f]{6})$') {
-        $h = $matches[1]
-        return @([Convert]::ToInt32($h.Substring(0,2),16), [Convert]::ToInt32($h.Substring(2,2),16), [Convert]::ToInt32($h.Substring(4,2),16))
-    }
-    return $Fallback
-}
-function Enable-MiosVt {
-    $script:NoColor = $false
-    if ($env:MIOS_NO_COLOR -or $env:NO_COLOR) { $script:NoColor = $true; return }
-    try {
-        $sig = '[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);' +
-               '[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out int m);' +
-               '[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, int m);'
-        $k = Add-Type -MemberDefinition $sig -Name 'MiosVt' -Namespace 'MiosInstall' -PassThru -ErrorAction Stop
-        $h = $k::GetStdHandle(-11); $m = 0
-        if ($k::GetConsoleMode($h, [ref]$m)) { [void]$k::SetConsoleMode($h, ($m -bor 0x0004)) }
-    } catch {}
-    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
-}
-function Get-MiosPalette {
-    $toml = Resolve-MiosTomlPath
-    $text = if ($toml) { Get-Content -Raw -LiteralPath $toml } else { $null }
-    $script:TomlPath = $toml
-    $defs = @{ bg='#282262'; fg='#E7DFD3'; accent='#1A407F'; cursor='#F35C15'; success='#3E7765';
-               warning='#F35C15'; error='#DC271B'; info='#1A407F'; muted='#948E8E'; subtle='#B7C9D7'; silver='#E0E0E0' }
-    $pal = @{}
-    foreach ($key in $defs.Keys) {
-        $val = Get-MiosTomlValueSimple -TomlText $text -Section 'colors' -Key $key
-        if (-not $val) { $val = $defs[$key] }
-        $pal[$key] = ConvertTo-Rgb -Hex $val -Fallback (ConvertTo-Rgb -Hex $defs[$key] -Fallback @(200,200,200))
-    }
-    $script:Pal = $pal
-}
-$script:ESC = [char]27
-# C: colored text (SSOT palette); B: bold. Text is a param, so no bare-var/backtick pitfalls.
-function C { param([int[]]$rgb, [string]$t) if ($script:NoColor) { return $t }; "$script:ESC[38;2;$($rgb[0]);$($rgb[1]);$($rgb[2])m$t$script:ESC[0m" }
-function B { param([string]$t) if ($script:NoColor) { return $t }; "$script:ESC[1m$t$script:ESC[0m" }
-function Rule { param([int]$w=64) C $script:Pal.accent ([string]([char]0x2550) * $w) }
+. (Join-Path $PSScriptRoot 'mios-common.ps1')
 
 function Show-MiosLogo {
     param([string]$Subtitle = 'the MiOS installer')
@@ -94,20 +44,6 @@ function Show-MiosLogo {
     Write-Host ("  " + (C $ac (B '██║ ╚═╝ ██║██║╚██████╔╝███████║')) + "   " + (C $su 'SecureBoot · UEFI · GPT'))
     Write-Host ("  " + (C $ac (B '╚═╝     ╚═╝╚═╝ ╚═════╝ ╚══════╝')))
     Write-Host ("  " + (Rule))
-}
-function Write-MiosLine {
-    param([string]$Kind, [string]$Text)
-    switch ($Kind) {
-        'ok'   { Write-Host ("  " + (C $script:Pal.success '[ OK ]') + " $Text") }
-        'info' { Write-Host ("  " + (C $script:Pal.info    '[INFO]') + " $Text") }
-        'warn' { Write-Host ("  " + (C $script:Pal.warning '[WARN]') + " $Text") }
-        'err'  { Write-Host ("  " + (C $script:Pal.error   '[ERR ]') + " $Text") }
-        default{ Write-Host "  $Text" }
-    }
-}
-function Write-MiosKV {
-    param([string]$Key, [string]$Value)
-    Write-Host ("    " + (C $script:Pal.subtle ("{0,-9}" -f $Key)) + " " + (C $script:Pal.fg $Value))
 }
 
 # ============================================================================
@@ -230,24 +166,8 @@ function Confirm-MiosProceed {
 }
 
 # ============================================================================
-#  Elevation
-# ============================================================================
-function Test-MiosAdmin {
-    try { (New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator) } catch { $false }
-}
-function Invoke-MiosSelfElevate {
-    param([string[]]$OrigArgs)
-    if (Test-MiosAdmin) { return }
-    Write-MiosLine 'info' 'This step needs Administrator -- relaunching with a UAC prompt (click Yes)...'
-    $psExe = (Get-Process -Id $PID).Path
-    try {
-        $p = Start-Process -FilePath $psExe -ArgumentList (@('-NoProfile','-ExecutionPolicy','Bypass','-File', $PSCommandPath) + $OrigArgs) -Verb RunAs -PassThru -Wait
-        exit $p.ExitCode
-    } catch { Write-MiosLine 'err' "Elevation was declined -- re-run from an Administrator terminal. ($($_.Exception.Message))"; exit 1 }
-}
-
-# ============================================================================
 #  Target -> entrypoint resolution + themed monitored execution (unchanged logic)
+#  (Elevation lives in mios-common: Test-MiosAdmin / Invoke-MiosSelfElevate.)
 # ============================================================================
 function Resolve-Target {
     param([string]$Target, [string]$Type, [string]$Stage, [bool]$Unattended, [string[]]$Passthrough)
@@ -258,8 +178,7 @@ function Resolve-Target {
             if ($Type -and $Type -notin 'usb','live') { throw "target '$Target' only supports --type usb (got '$Type')" }
             $r.Kind='bat'; $r.Exe=$script:CatBat; $r.Args=@('stage') + $Passthrough; $r.NeedsAdmin=$true
             if ($Unattended) { $r.Env['NONINTERACTIVE']='1' }
-            $ssotText = if (Test-Path $ssot) { Get-Content -Raw $ssot } else { '' }
-            $d = Get-MiosTomlValueSimple -TomlText $ssotText -Section 'cat' -Key 'drivepath'
+            $d = Get-MiosSsotValue -Section 'cat' -Key 'drivepath'
             if ($d) { $r.Drive = "$($d):" }
         }
         'xbox' {
@@ -426,7 +345,7 @@ try {
 if (-not $DryRun -and -not (Confirm-MiosProceed -Entry $entry -Unattended $Unattended -Drive $plan.Drive)) { exit 0 }
 
 if ($plan.NeedsAdmin -and -not $DryRun -and $plan.Platform -eq 'windows') {
-    Invoke-MiosSelfElevate -OrigArgs $argv
+    Invoke-MiosSelfElevate -OrigArgs $argv -ScriptPath $PSCommandPath
 }
 
 exit (Invoke-MiosMonitored -Plan $plan -DryRun $DryRun -Target $Target)
