@@ -844,7 +844,7 @@ function Invoke-MiOSImageServicing {
             }
         }
         if (Test-Path $mount) { try { Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null } catch {} }
-        try { & dism.exe /Cleanup-Wim 2>&1 | Out-Null } catch {}
+        try { & dism.exe /Cleanup-Mountpoints 2>&1 | Out-Null } catch {}
         try { Clear-WindowsCorruptMountPoint -ErrorAction SilentlyContinue | Out-Null } catch {}
         if (Test-Path $mount) { try { Remove-Item $mount -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
         $staleLeft = @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.ImagePath -eq $wim -or $_.MountPath -eq $mount })
@@ -1213,8 +1213,13 @@ if (-not $SourceIso) {
 }
 if (-not (Test-Path $SourceIso)) { throw "Source ISO not found: $SourceIso" }
 
-# Stage 1 -- extract to a writable media tree.
-$media = Expand-MiOSIso -Iso $SourceIso -Dest (Join-Path $WorkDir 'media')
+# Stage 1 -- extract to a writable media tree. Use a PER-RUN subdir (run_<pid>) so the wim +
+# mount paths are unique to THIS build: an orphaned/Invalid WIM mount left by a prior interrupted
+# build (Status=Invalid, held by dead kernel handles -- only a REBOOT fully reclaims it) can then
+# never block this build with "already mounted for read/write". Best-effort reap old run_* dirs
+# (a still-wedged one just gets skipped).
+Get-ChildItem $WorkDir -Directory -Filter 'run_*' -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne "run_$PID" } | ForEach-Object { try { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
+$media = Expand-MiOSIso -Iso $SourceIso -Dest (Join-Path $WorkDir "run_$PID\media")
 
 # Stage 2 -- DISM offline servicing (features + appx + Xbox FSE into the image).
 if (-not $SkipServicing) {
