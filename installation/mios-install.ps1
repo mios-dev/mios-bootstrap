@@ -232,6 +232,7 @@ function Invoke-MiosMonitored {
     }
     $exe = $Plan.Exe
     if (-not (Test-Path -LiteralPath $exe)) { Write-MiosLine 'err' "entrypoint not found (repo incomplete?): $exe"; return 1 }
+    if (-not $DryRun -and $Plan.Platform -ne 'linux') { try { [void](Install-MiosRust) } catch {} }   # Law 14: provide Rust (native tier) during staging
     $argStr = if ($Plan.Args.Count) { ' ' + ($Plan.Args -join ' ') } else { '' }
     Write-Host ""; Write-MiosLine 'info' ("Launching " + (Split-Path -Leaf $exe) + $argStr)
     foreach ($k in $Plan.Env.Keys) { Write-MiosKV 'env' ("{0}={1}" -f $k, $Plan.Env[$k]) }

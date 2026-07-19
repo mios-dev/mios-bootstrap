@@ -111,3 +111,28 @@ mios_ensure_repo() {
     fi
     printf '%s\n' "$root"
 }
+
+# Law 14 / ADR-0011: Rust is MiOS's native tier. MiOS PROVIDES it as a dependency so every native
+# component is buildable on ANY Fedora machine. Idempotent. Prefers the packaged rust+cargo
+# (offline-friendly, no rustup); falls back to rustup. Returns 0 when cargo is available.
+mios_ensure_rust() {
+    if command -v cargo >/dev/null 2>&1; then
+        log_ok "Rust already present: $(cargo --version 2>/dev/null)"
+        return 0
+    fi
+    if command -v dnf5 >/dev/null 2>&1; then
+        dnf5 install -y rust cargo >/dev/null 2>&1 || true
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y rust cargo >/dev/null 2>&1 || true
+    fi
+    if ! command -v cargo >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal >/dev/null 2>&1 || true
+        [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+    fi
+    if command -v cargo >/dev/null 2>&1; then
+        log_ok "Rust installed: $(cargo --version 2>/dev/null)"
+        return 0
+    fi
+    log_warn "Rust could not be installed (no repo/network?) -- native components deferred"
+    return 1
+}

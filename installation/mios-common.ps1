@@ -159,3 +159,35 @@ function Start-MiosMonitor {
         }
     } catch {}
 }
+
+function Install-MiosRust {
+    # Law 14 / ADR-0011: Rust is MiOS's native tier. MiOS PROVIDES it as a dependency and installs
+    # it on the base Windows system DURING STAGING, so every native component is buildable on ANY
+    # Windows machine. Idempotent. Prefers winget (Rustlang.Rustup); falls back to the official
+    # rustup-init.exe with the GNU host triple -> no Visual Studio / MSVC required (fully portable).
+    [CmdletBinding()] param([string]$Toolchain = 'stable')
+    $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+    if ((Get-Command cargo -ErrorAction SilentlyContinue) -or (Test-Path (Join-Path $cargoBin 'cargo.exe'))) {
+        if (Test-Path (Join-Path $cargoBin 'cargo.exe')) { $env:PATH = "$cargoBin;$env:PATH" }
+        Write-MiosLine 'ok' ("Rust already present: " + ((cargo --version 2>$null) -join ''))
+        return $true
+    }
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        try { winget install --id Rustlang.Rustup -e --silent --accept-source-agreements --accept-package-agreements 2>$null | Out-Null } catch {}
+    }
+    if (-not (Test-Path (Join-Path $cargoBin 'cargo.exe'))) {
+        try {
+            $init = Join-Path $env:TEMP 'rustup-init.exe'
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri 'https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-gnu/rustup-init.exe' -OutFile $init -UseBasicParsing -ErrorAction Stop
+            & $init -y --default-host x86_64-pc-windows-gnu --default-toolchain $Toolchain --profile minimal 2>$null | Out-Null
+        } catch {}
+    }
+    if (Test-Path (Join-Path $cargoBin 'cargo.exe')) { $env:PATH = "$cargoBin;$env:PATH" }
+    if (Get-Command cargo -ErrorAction SilentlyContinue) {
+        Write-MiosLine 'ok' ("Rust installed: " + ((cargo --version 2>$null) -join ''))
+        return $true
+    }
+    Write-MiosLine 'warn' 'Rust could not be installed now (offline?) -- native components build on next staging with connectivity.'
+    return $false
+}
