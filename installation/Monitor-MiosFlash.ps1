@@ -266,22 +266,39 @@ function Draw {
 # ---- Run ---------------------------------------------------------------------------------------
 try { [Console]::Title = 'MiOS-Cat · USB Forge Monitor' } catch {}
 if ($Once) { (Draw -Frame 0).text | Write-Host; return }
-try {
-    $wantW = [Math]::Min([Math]::Max([Console]::WindowWidth, 100), [Console]::LargestWindowWidth)
-    $wantH = [Math]::Min(48, [Console]::LargestWindowHeight)
-    [Console]::SetWindowSize([Math]::Min([Console]::WindowWidth,$wantW), [Math]::Min([Console]::WindowHeight,$wantH))
-    [Console]::BufferWidth = $wantW
-    [Console]::SetWindowSize($wantW, $wantH)
-    [Console]::BufferHeight = $wantH
-} catch {}
+# Best-effort widen so the 100-col dashboard does not wrap (Windows Terminal ignores buffer caps).
+try { if ([Console]::WindowWidth -lt 100) { [Console]::WindowWidth = [Math]::Min(100,[Console]::LargestWindowWidth) } } catch {}
+# ALTERNATE SCREEN BUFFER (what vim/htop use): no scrollback, exactly window-sized, so redraws stay
+# in place and never accumulate -- the fix for the scroll-garble in BOTH classic conhost AND Windows
+# Terminal (which ignores the old BufferHeight cap). Home + clear-to-EOL per line; restore on exit.
+$ALT_ON = "$ESC[?1049h"; $ALT_OFF = "$ESC[?1049l"
 try { [Console]::CursorVisible = $false } catch {}
-$frame = 0
-while ($true) {
-    $r = Draw -Frame $frame
-    try { [Console]::SetCursorPosition(0,0) } catch { try { [Console]::Clear() } catch { Clear-Host } }
-    [Console]::Out.Write($r.text + ($ESC + "[J"))
-    if ($r.done) { break }
-    $frame++
-    Start-Sleep -Milliseconds $IntervalMs
+[Console]::Out.Write($ALT_ON)
+$finalText = $null
+try {
+    $frame = 0
+    while ($true) {
+        $r = Draw -Frame $frame
+        $rows = ($r.text -replace "`r","").TrimEnd("`n") -split "`n"
+        # Clip to the visible height so nothing ever scrolls the alt buffer (the log tail -- last --
+        # clips first if the window is short; the logo/stats/bars/pipeline always stay on screen).
+        $h = 40; try { $h = [Console]::WindowHeight } catch {}
+        if ($rows.Count -gt $h) { $rows = $rows[0..($h-1)] }
+        $ob = New-Object System.Text.StringBuilder
+        [void]$ob.Append("$ESC[H")
+        for ($li = 0; $li -lt $rows.Count; $li++) {
+            [void]$ob.Append($rows[$li]); [void]$ob.Append("$ESC[K")
+            if ($li -lt $rows.Count - 1) { [void]$ob.Append("`n") }
+        }
+        [void]$ob.Append("$ESC[J")
+        [Console]::Out.Write($ob.ToString())
+        if ($r.done) { $finalText = $r.text; break }
+        $frame++
+        Start-Sleep -Milliseconds $IntervalMs
+    }
+} finally {
+    [Console]::Out.Write($ALT_OFF)
+    try { [Console]::CursorVisible = $true } catch {}
 }
-try { [Console]::CursorVisible = $true } catch {}
+# Persist the final dashboard on the normal screen so the completion/failure result stays visible.
+if ($finalText) { Write-Host $finalText }
