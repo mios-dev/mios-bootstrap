@@ -95,6 +95,21 @@ function Resolve-MiOSBuildRoot {
     param($Toml)
     $root = Get-Toml $Toml 'autounattend.work_root' ''
     if ($root) { return $root.TrimEnd('\') }
+    # Reuse an EXISTING UUP cache first, wherever it landed. Drive letters shift during a flash --
+    # the freshly-wiped USB partition briefly wins 'most-free' and grabs a transient letter (e.g. G:)
+    # that then disappears, so the build looked for the 20 GB cache on a drive that no longer existed
+    # and died with "Cannot find path 'G:\MiOS\uup\package'". Anchoring to the drive that actually
+    # holds MiOS\uup\package makes the cache re-usable and the build resumable regardless of letters.
+    try {
+        $cached = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction Stop |
+                  Sort-Object FreeSpace -Descending |
+                  Where-Object { Test-Path (Join-Path "$($_.DeviceID)\" 'MiOS\uup\package') } |
+                  Select-Object -First 1
+        if ($cached) {
+            Write-Host ("[*] Build volume: {0} -- reusing existing UUP cache" -f $cached.DeviceID) -ForegroundColor DarkGray
+            return (Join-Path "$($cached.DeviceID)\" 'MiOS')
+        }
+    } catch {}
     try {
         $best = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction Stop |
                 Sort-Object FreeSpace -Descending | Select-Object -First 1
