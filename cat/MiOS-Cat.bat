@@ -54,7 +54,7 @@ if not exist "%toml_path%" goto no_toml
 echo Loading installation settings from mios.toml SSOT...
 set "ssot_env=%TEMP%\mios-cat-ssot.cmd"
 del "%ssot_env%" /q >nul 2>&1
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content -Raw -LiteralPath '%toml_path%'; $q=[char]34; function G([string]$k){ $m=[regex]::Match($t, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*'+$q+'([^'+$q+'\r\n]*)'+$q)); if($m.Success){ $m.Groups[1].Value -replace '\\\\','\' } }; $map=[ordered]@{ drivepath='drivepath'; medicatver='medicatver'; ventoy_ver='ventoy_version'; file='cache_path'; bg_color='bg'; fg_color='fg'; accent_color='accent'; cursor_color='cursor'; success_color='success'; muted_color='muted'; subtle_color='subtle' }; $o=New-Object System.Collections.Generic.List[string]; foreach($e in $map.GetEnumerator()){ $v=G $e.Value; if($v){ $o.Add('set '+$q+$e.Key+'='+$v+$q) } }; if($o.Count){ Set-Content -LiteralPath '%ssot_env%' -Value $o -Encoding ascii }" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content -Raw -LiteralPath '%toml_path%'; $q=[char]34; function G([string]$k){ $m=[regex]::Match($t, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*'+$q+'([^'+$q+'\r\n]*)'+$q)); if($m.Success){ $m.Groups[1].Value -replace '\\\\','\' } }; $map=[ordered]@{ drivepath='drivepath'; medicatver='medicatver'; ventoy_ver='ventoy_version'; file='cache_path'; bg_color='bg'; fg_color='fg'; accent_color='accent'; cursor_color='cursor'; success_color='success'; muted_color='muted'; subtle_color='subtle'; live_chat_enabled='live_chat_enabled'; live_chat_iso_name='live_chat_iso_name'; live_chat_iso_src='live_chat_iso_src' }; $o=New-Object System.Collections.Generic.List[string]; foreach($e in $map.GetEnumerator()){ $v=G $e.Value; if($v){ $o.Add('set '+$q+$e.Key+'='+$v+$q) } }; if($o.Count){ Set-Content -LiteralPath '%ssot_env%' -Value $o -Encoding ascii }" 2>nul
 if exist "%ssot_env%" call "%ssot_env%"
 if exist "%ssot_env%" del "%ssot_env%" /q >nul 2>&1
 :no_toml
@@ -1288,6 +1288,23 @@ echo Done > "%serviced_marker%"
 
 :skip_wim_servicing
 
+:: 9b. Stage the W10 live-chat ISO (built off-host via 'just live-chat-iso' on a Linux/podman
+:: builder). MiOS-Cat.bat only COPIES the finished artifact -- same "M:\ pre-staged input" idiom
+:: as fedora_file -- and degrades open (warn + continue) so a missing live-chat ISO never fails
+:: the whole USB build. The grub "Chat with MiOS AI" row is media-guarded, so an absent ISO
+:: simply hides the row rather than leaving a dead menu entry. Defaults are resolved BEFORE the
+:: enabled-check block so the in-block %live_chat_iso_src% is never a stale/empty parse-time value.
+if "%live_chat_iso_src%"==""  set "live_chat_iso_src=M:\MiOS-Live-Chat.iso"
+if "%live_chat_iso_name%"=="" set "live_chat_iso_name=MiOS-Live-Chat.iso"
+if not "%live_chat_enabled%"=="False" (
+    if exist "%live_chat_iso_src%" (
+        echo Staging W10 live-chat ISO: %live_chat_iso_src% -^> %drivepath%:\Live_Operating_Systems\%live_chat_iso_name%
+        copy "%live_chat_iso_src%" "%drivepath%:\Live_Operating_Systems\%live_chat_iso_name%" /Y >nul
+        if errorlevel 1 (echo [WARN] Failed to copy the live-chat ISO -- "Chat with MiOS AI" entry stays hidden.) else (echo [OK] Live-chat ISO staged.)
+    ) else (
+        echo [INFO] No pre-built live-chat ISO at %live_chat_iso_src% -- build it once via 'just live-chat-iso' on a Linux builder ^(automation/build/live-iso.sh^). Skipping; the "Chat with MiOS AI" row stays hidden ^(media-guarded, no dead menu row^).
+    )
+)
 
 :: 10. Compile the inline live build of MiOS-Xbox ISO directly to the USB drive
 if "%build_xbox%" neq "Enabled" goto skip_xbox_build

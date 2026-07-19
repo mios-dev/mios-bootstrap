@@ -1602,3 +1602,24 @@ ventoy_version = "latest"
 xbox_builder   = ""
 build_driver   = ""
 log_path       = ""
+
+# ----------------------------------------------------------------------------
+# [cat.live_chat] -- W10: MiOS-Cat zero-install live-USB-to-AI-chat. The OS-side
+# build (automation/build/live-iso.sh, Linux) reads the canonical nested keys via
+# the section-aware mios_toml.py; MiOS-Cat.bat's regex loader is section-AGNOSTIC
+# (first top-level `key = "..."` wins), so the flat live_chat_* aliases give it
+# globally-unique, QUOTED names to grep without colliding with other tables'
+# enabled/iso_name. model/model_fallback are short keys into [ai].bake_models --
+# NOT a third model pin. port mirrors MIOS_AI_ENDPOINT (:8642).
+# ----------------------------------------------------------------------------
+[cat.live_chat]
+enabled            = true
+model              = "lfm2-700m"
+model_fallback     = "granite-4.1-8b"
+port               = 8642
+ctx_size           = 8192
+threads            = 0
+iso_name           = "MiOS-Live-Chat.iso"
+live_chat_enabled  = "true"                     # .bat-loader alias of `enabled`
+live_chat_iso_name = "MiOS-Live-Chat.iso"       # .bat-loader alias of `iso_name`
+live_chat_iso_src  = "M:\\MiOS-Live-Chat.iso"   # where MiOS-Cat.bat looks for a pre-built ISO
