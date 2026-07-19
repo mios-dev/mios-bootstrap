@@ -87,9 +87,30 @@ Both fetch the repo (git, else GitHub zip) exactly once, then hand into
    Embedded PS parse-checked (0 errors). *Deliberately kept:* the startup self-update (only acts on a
    dev checkout — `cd C:\MiOS` / `C:\mios-bootstrap` fail on the USB, so it is a no-op there) and the
    explicit user-invoked "Update repos" menu item (not an auto-loop).
-4. **Collapse redirectors** — `bootstrap.ps1`/`install.ps1`/`bootstrap.sh`/`install.sh` become thin
-   aliases of the one web door (or are removed once the door hands into `mios-install`).
-5. **One canonical checkout path** — pick one (`C:\mios-bootstrap`), retire `M:\MiOS\repo\...`.
-6. **SSOT consolidation** — keep vendor canonical; generate the two repo copies from it at build
-   (they are projections, not hand-edited), so the ~7× drift can't recur. Portal keeps writing the
-   user layer. Nothing hand-maintains three copies.
+4. **[DONE — already satisfied] Redirectors are thin aliases.** Audited all four:
+   `install.ps1` (46L) → `bootstrap.ps1`; `bootstrap.ps1` (103L) → `build-mios.ps1 -BootstrapOnly`
+   (else fetches `Get-MiOS.ps1`); `install.sh` (17L) → `build-mios.sh`; `bootstrap.sh` (51L) →
+   `build-mios.sh` (else fetches it). All are pure arg-forwarders with retry/validation — no
+   duplicated business logic. They exist **specifically** to keep the documented legacy one-liners
+   (`irm .../install.ps1|iex`, `curl .../install.sh|bash`) working, so deleting them would be a
+   regression, not a flatten. Left as-is. (The one asymmetry — Windows has the extra `bootstrap.ps1`
+   hop — is load-bearing: it sets the `-BootstrapOnly` default and carries the `Get-MiOS.ps1`
+   WT-staging/elevation/M:\ fallback that the Linux side folds into `build-mios.sh`.)
+5. **One canonical checkout path** — the shared contract already standardizes on `C:\mios-bootstrap`
+   (`Ensure-MiosRepo` / `mios_ensure_repo` and MiOS-Cat's fetch-once all target it). `Get-MiOS.ps1`'s
+   `$RepoDir = M:\MiOS\repo\mios-bootstrap` default (its heavy Pass-1/Pass-2 build tree) is a
+   *separate* build-workspace concern from the installer checkout — retiring/aligning it is a
+   `build-mios.ps1` change, tracked separately so it doesn't destabilize the working build path.
+
+6. **SSOT consolidation (the ~7× drift) — belongs in `C:\MiOS`, do it as a dedicated change.**
+   Current state (audited 2026-07-19): NO active gated drift — all three copies are
+   `mios_version = 0.3.0` and `[ports]` values match (gate 22 green); gate 48's key-subset holds.
+   The residual drift is hand-maintained *comments* going stale (e.g. bootstrap's `pgvector` line
+   still named the removed `surrealdb` — realigned to canonical in this pass). The permanent fix is a
+   `mios-sync-toml` projector (sibling of `mios-sync-theme`): keep `usr/share/mios/mios.toml` as the
+   one canonical VENDOR SSOT, and **generate** `C:\MiOS\mios.toml` (curated key-subset) and
+   `C:\mios-bootstrap\mios.toml` (the `[cat]`/`[autounattend]`/`[ports]` projection) from it at build,
+   gated by the existing drift-checks. Because that touches `C:\MiOS`'s build + CI drift-gates (a tree
+   AGY also writes), it must land as its own reviewed change with a green drift-gate run — NOT folded
+   into this installer-unification pass. Portal keeps writing only the user layer; nothing stays
+   hand-maintained across three copies.
