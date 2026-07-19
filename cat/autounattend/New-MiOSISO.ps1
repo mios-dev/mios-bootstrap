@@ -675,15 +675,29 @@ function Set-MiOSRemoteAccessOffline {
                 if (-not (Test-Path $p) -or (Get-Item $p).Length -lt 200MB) { return $false }
                 try { $fs = [IO.File]::OpenRead($p); try { [void]$fs.Seek(0x8001, 'Begin'); $b = New-Object byte[] 5; [void]$fs.Read($b, 0, 5); return ([Text.Encoding]::ASCII.GetString($b) -eq 'CD001') } finally { $fs.Close() } } catch { return $false }
             }
+            # Robust fetch. The old Invoke-WebRequest path was saving an HTML redirect/error page
+            # (or a partial of the ~700 MB file) as 'virtio-win.iso' -> ISO9660 check failed every
+            # attempt. curl.exe -f NEVER writes an HTTP-error body to the file, -L follows the
+            # latest-virtio symlink redirect, and --retry rides transient mid-download drops. First
+            # two attempts use the requested (latest) URL; the rest fall back to the stable-virtio
+            # mirror, which is a real file (no symlink) -- so a flaky 'latest' can't fail the build.
+            $vfallback = 'https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso'
+            $vurls = @($vurl); if ($vurl -notlike '*stable-virtio*') { $vurls += $vfallback }
+            $curlExe = Join-Path $env:SystemRoot 'System32\curl.exe'
             $vm = $null
-            for ($try = 0; $try -lt 4 -and -not $vm; $try++) {
+            for ($try = 0; $try -lt 5 -and -not $vm; $try++) {
                 if (-not (Test-MiOSIsoValid $viso)) {
-                    Write-Host "    fetching virtio-win.iso (attempt $($try + 1)/4, cached under $cache) ..." -ForegroundColor DarkGray
+                    $u = if ($try -lt 2 -or $vurls.Count -lt 2) { $vurls[0] } else { $vurls[1] }
+                    Write-Host "    fetching virtio-win.iso (attempt $($try + 1)/5) from $u ..." -ForegroundColor DarkGray
                     Remove-Item $viso -Force -ErrorAction SilentlyContinue
-                    $op = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
-                    try { Invoke-WebRequest -Uri $vurl -OutFile $viso -UseBasicParsing -ErrorAction Stop } catch {}
-                    $ProgressPreference = $op
-                    if (-not (Test-MiOSIsoValid $viso)) { Write-Host "    download failed the ISO9660 integrity check (partial/HTML) -- retrying" -ForegroundColor Yellow; continue }
+                    if (Test-Path $curlExe) {
+                        & $curlExe -fL --retry 4 --retry-delay 5 --connect-timeout 30 -A 'Mozilla/5.0 (MiOS-Cat)' -o $viso $u 2>$null
+                    } else {
+                        $op = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+                        try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri $u -OutFile $viso -UseBasicParsing -Headers @{ 'User-Agent' = 'Mozilla/5.0 (MiOS-Cat)' } -MaximumRedirection 6 -ErrorAction Stop } catch {}
+                        $ProgressPreference = $op
+                    }
+                    if (-not (Test-MiOSIsoValid $viso)) { Write-Host "    download failed the ISO9660 integrity check (partial/HTML) -- retrying$(if ($try + 1 -eq 2 -and $vurls.Count -gt 1) { ' (next: stable-virtio mirror)' } else { '' })" -ForegroundColor Yellow; continue }
                 }
                 try { $vm = Mount-DiskImage -ImagePath $viso -PassThru -ErrorAction Stop }
                 catch {
@@ -691,7 +705,7 @@ function Set-MiOSRemoteAccessOffline {
                     Remove-Item $viso -Force -ErrorAction SilentlyContinue
                 }
             }
-            if (-not $vm) { throw "virtio-win.iso could not be obtained (valid + mountable) after 4 attempts" }
+            if (-not $vm) { throw "virtio-win.iso could not be obtained (valid + mountable) after 5 attempts (latest + stable-virtio)" }
             $vl = ($vm | Get-Volume).DriveLetter + ':\'
             $inf = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "\\$variant\\amd64\\" })
             if (-not $inf.Count) { $inf = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '\\amd64\\' }) }
@@ -705,8 +719,20 @@ function Set-MiOSRemoteAccessOffline {
             Copy-Item -LiteralPath $viso -Destination (Join-Path $vembed 'virtio-win.iso') -Force
             Write-Host "    embedded virtio-win.iso -> image \MiOS\drivers (guest-side ivshmem / Looking-Glass install source)" -ForegroundColor Green
         } catch {
-            Write-Host "    [!] virtio bake FAILED ($($_.Exception.Message.Split([Environment]::NewLine)[0])) -- ivshmem/Looking-Glass drivers NOT baked; fix the source before shipping (do NOT ship a MiOS-Xbox without them)" -ForegroundColor Red
-            throw $_
+            # NON-FATAL (changed 2026-07-19): a failed OPTIONAL virtio download must NOT discard the
+            # whole hard-built MiOS-Xbox image. The canonical source (fedorapeople.org) is now behind
+            # an Anubis proof-of-work bot-wall that curl/Invoke-WebRequest cannot pass, so the ISO
+            # would never build. virtio drivers only matter for KVM/QEMU guests + Looking-Glass
+            # ivshmem; a bare-metal / Ventoy / Hyper-V MiOS-Xbox works without them. Warn loudly and
+            # keep going. To bake virtio: browser-download virtio-win.iso (a browser passes Anubis)
+            # and drop it at the path below, or point [autounattend.remote].virtio_url at a reachable
+            # ISO, then rebuild -- the cached-file check reuses it and skips the download.
+            Write-Host "    [!] virtio bake SKIPPED ($($_.Exception.Message.Split([Environment]::NewLine)[0]))" -ForegroundColor Yellow
+            Write-Host "        fedorapeople.org is now behind an Anubis bot-wall -- no download tool can fetch virtio-win.iso automatically." -ForegroundColor Yellow
+            Write-Host "        The MiOS-Xbox ISO WILL still build (virtio only matters for KVM/QEMU guests + Looking-Glass ivshmem)." -ForegroundColor Yellow
+            Write-Host "        To include virtio: download virtio-win.iso in a browser and place it at:" -ForegroundColor Yellow
+            Write-Host "          $viso" -ForegroundColor Cyan
+            Write-Host "        (or set [autounattend.remote].virtio_url to a reachable ISO / local path), then rebuild." -ForegroundColor Yellow
         }
         finally { if ($viso) { try { Dismount-DiskImage -ImagePath $viso -ErrorAction SilentlyContinue | Out-Null } catch {} } }
     }
