@@ -152,6 +152,10 @@ function Get-MiosCatalog {
             what = 'Runs mios-update on an already-installed MiOS host to pull + apply the latest image.'
             produces = 'An up-to-date MiOS host.'
             cost = 'runs on the target'; needs = 'An installed MiOS host; $env:MIOS_REMOTE_HOST or the printed command.' }
+        'configure' = @{ title = 'Open the MiOS Portal / configurator (edit the SSOT)'; platform='windows'; needsAdmin=$false; destructive=$false; special='configure'
+            what = 'Opens the MiOS Portal at http://localhost:8640/configure -- the ONE web surface where you edit mios.toml (the SSOT). Changes save to your user layer and project to every MiOS surface. Falls back to the MiOS-DEV launcher, then the offline configurator HTML, if the Portal is not up.'
+            produces = 'The live SSOT configurator (or the offline mios.html).'
+            cost = 'instant'; needs = 'The MiOS Portal (agent-pipe) on :8640, the MiOS-DEV builder, or an offline configurator.' }
     }
 }
 
@@ -332,6 +336,40 @@ function Invoke-MiosMonitored {
 }
 
 # ============================================================================
+#  Configure -- open the unified Portal / configurator (the one SSOT editor)
+# ============================================================================
+function Invoke-MiosConfigure {
+    $url = 'http://localhost:8640/configure'
+    $up = $false
+    foreach ($probe in 'http://localhost:8640/portal/config/status', $url) {
+        try { $resp = Invoke-WebRequest -Uri $probe -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop; if ($resp) { $up = $true; break } } catch {}
+    }
+    if ($up) {
+        Write-MiosLine 'ok' "MiOS Portal is up -- opening the SSOT configurator: $url"
+        try { Start-Process $url } catch { Write-MiosLine 'info' "Open it in a browser: $url" }
+        return 0
+    }
+    Write-MiosLine 'warn' 'The MiOS Portal (:8640) is not answering yet.'
+    if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
+        $distros = & wsl.exe -l -q 2>$null
+        if ($distros -match 'MiOS-DEV') {
+            Write-MiosLine 'info' 'Launching the configurator via the MiOS-DEV builder (brings the Portal up if needed)...'
+            try { Start-Process 'wsl.exe' -ArgumentList '-d','MiOS-DEV','--','/usr/libexec/mios/mios-configurator-launch'; return 0 } catch {}
+        }
+    }
+    foreach ($off in (Join-Path $env:USERPROFILE 'Downloads\mios-configurator.html'), (Join-Path $env:USERPROFILE 'Downloads\mios.html')) {
+        if (Test-Path $off) {
+            Write-MiosLine 'info' "Portal offline -- opening the offline configurator: $off"
+            try { Start-Process $off } catch { Write-MiosLine 'info' "Open it in a browser: $off" }
+            return 0
+        }
+    }
+    Write-MiosLine 'err' 'No Portal on :8640, no MiOS-DEV builder, and no offline configurator found.'
+    Write-MiosLine 'info' 'Build the MiOS image first ("oci" or "seed"); the Portal then serves the configurator at http://localhost:8640/configure.'
+    return 1
+}
+
+# ============================================================================
 #  Main
 # ============================================================================
 Enable-MiosVt
@@ -377,6 +415,9 @@ if ($Stage -and $Stage -notin 'prereqs','fetch','service','iso','flash') {
 $entry = $catalog[$Target]
 if (-not $script:FromMenu) { Show-MiosLogo }
 Show-MiosTargetBrief -Target $Target -Entry $entry -Type $Type -Stage $Stage
+
+# 'configure' opens the unified Portal/configurator instead of running a build pipeline.
+if ($entry.special -eq 'configure') { exit (Invoke-MiosConfigure) }
 
 try {
     $plan = Resolve-Target -Target $Target -Type $Type -Stage $Stage -Unattended $Unattended -Passthrough $Passthrough
