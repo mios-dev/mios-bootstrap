@@ -675,6 +675,20 @@ function Set-MiOSRemoteAccessOffline {
                 if (-not (Test-Path $p) -or (Get-Item $p).Length -lt 200MB) { return $false }
                 try { $fs = [IO.File]::OpenRead($p); try { [void]$fs.Seek(0x8001, 'Begin'); $b = New-Object byte[] 5; [void]$fs.Read($b, 0, 5); return ([Text.Encoding]::ASCII.GetString($b) -eq 'CD001') } finally { $fs.Close() } } catch { return $false }
             }
+            # BROWSER-ASSISTED fetch (Anubis-safe). fedorapeople.org is behind an Anubis proof-of-work
+            # bot-wall that curl/IWR cannot pass, but a real browser solves it. If the cache is empty
+            # and we're allowed, open the download in the browser and PAUSE here until the full signed
+            # ISO lands + is transported to $viso -- then the loop below finds it cached and skips the
+            # (doomed) CLI download. Gate: [autounattend.remote].virtio_browser_fetch = auto|true|false
+            # ('auto' = do it when a user session is present). Set to 'false' for a truly headless CI.
+            $vbf = Get-Toml $Toml 'autounattend.remote.virtio_browser_fetch' 'auto'
+            if ((-not (Test-MiOSIsoValid $viso)) -and (($vbf -match '^(?i:true|1|yes|on)$') -or (($vbf -match '^(?i:auto)$') -and [Environment]::UserInteractive))) {
+                $vHelper = Join-Path $PSScriptRoot 'Get-MiOSVirtio.ps1'
+                if (Test-Path $vHelper) {
+                    Write-Host "    virtio-win.iso not cached -- launching browser-assisted download (Anubis-safe); the build PAUSES until it lands ..." -ForegroundColor Cyan
+                    try { & $vHelper -Dest $viso -Url $vurl -TimeoutMin 25 } catch { Write-Host "    browser-fetch helper error: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
+                }
+            }
             # Robust fetch. The old Invoke-WebRequest path was saving an HTML redirect/error page
             # (or a partial of the ~700 MB file) as 'virtio-win.iso' -> ISO9660 check failed every
             # attempt. curl.exe -f NEVER writes an HTTP-error body to the file, -L follows the

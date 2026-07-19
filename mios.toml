@@ -1428,6 +1428,7 @@ openssh_server    = true    # bake OpenSSH.Server (offline FoD, online fallback)
 enable_psremoting = true    # WinRM / PowerShell remoting (Enable-PSRemoting) for host mgmt
 bake_virtio       = true    # inject virtio-win guest drivers offline (KVM/QEMU/libvirt portability); non-fatal
 virtio_url        = ""      # empty -> canonical fedorapeople latest/beta virtio-win.iso
+virtio_browser_fetch = "auto" # auto|true|false: browser-download virtio-win.iso (fedorapeople is Anubis-walled; a browser solves it). 'auto' = do it when a user session is present; the build PAUSES until the ISO lands + is auto-transported to the cache. Set 'false' for headless CI.
 virtio_variant    = "w11"   # driver subtree to inject (w11 | w10); amd64 arch under it
 loopback_adapter  = false   # install a Microsoft KM-TEST loopback NIC (niche; opt-in)
 onlogon_fallback  = true    # register a proven-specialize-pass ONLOGON task that re-applies identity+remote if Setup skips SetupComplete on 26xxx
