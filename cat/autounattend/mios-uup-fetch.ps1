@@ -95,7 +95,7 @@ function Resolve-MiOSUupBuild {
             Write-Host "    fetchupd -> build=$build uuid=$uuid ($title)" -ForegroundColor DarkGray
         }
     } catch {
-        Write-Host "[!] fetchupd live-scan unavailable ($($_.Exception.Message.Split([Environment]::NewLine)[0]))." -ForegroundColor Yellow
+        Write-Host "[*] fetchupd live-scan unavailable ($($_.Exception.Message.Split([Environment]::NewLine)[0])) -- using the listid catalog fallback (expected: the WU live-scan is intentionally best-effort, never the only source)." -ForegroundColor DarkGray
     }
     # (2) catalog fallback (listid.php) -- the cataloged UUP DB. Pick the newest amd64
     #     full "Feature Update" (a buildable base, NOT a Quality/CU delta), preferring

@@ -946,8 +946,13 @@ if errorlevel 1 (
     exit /b 1
 )
 cd /d "%maindir%"
-if not exist "%drivepath%:\ventoy\ventoy.json" if not exist "%drivepath%:\grub\ventoy.cfg" (
-    echo [WARN] Ventoy layout not detected on %drivepath%: after VTOYCLI -- boot may be broken. >&2
+:: Verify Ventoy actually installed by checking for its VTOYEFI boot partition (VTOYCLI /I creates
+:: a ~32MB EFI partition labeled VTOYEFI). The old check looked for %drivepath%:\ventoy\ventoy.json
+:: and \grub\ventoy.cfg -- files STAGED LATER, so it false-alarmed on every fresh install.
+set "vtoy_ok="
+for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "if (Get-Volume -FileSystemLabel 'VTOYEFI' -ErrorAction SilentlyContinue) { 'ok' }"`) do set "vtoy_ok=%%v"
+if not "%vtoy_ok%"=="ok" (
+    echo [WARN] VTOYEFI boot partition not detected after VTOYCLI -- Ventoy may not have installed; boot may be broken. >&2
 )
 
 echo Waiting 5s for partition remount...

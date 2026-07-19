@@ -830,18 +830,27 @@ function Invoke-MiOSImageServicing {
     $idx = (Get-WindowsImage -ImagePath $wim | Where-Object { $_.ImageName -match 'Pro' } | Select-Object -First 1).ImageIndex
     if (-not $idx) { $idx = (Get-WindowsImage -ImagePath $wim | Select-Object -First 1).ImageIndex }
     $mount = Join-Path (Split-Path $MediaRoot) 'mount'
-    # Robustly clear any stale/corrupt WIM mount from a prior interrupted run. A broken
-    # mount makes Dismount-WindowsImage throw "The request is not supported" -- a native
-    # DISM exception that -ErrorAction can't suppress -- which would otherwise wedge
-    # EVERY future build. Discard the specific mount, force-clear corrupt mount points,
-    # then recreate the dir. All non-fatal.
-    if (Test-Path $mount) {
-        try { Dismount-WindowsImage -Path $mount -Discard -ErrorAction Stop | Out-Null }
-        catch { Write-Host "    stale mount at $mount ($($_.Exception.Message.Split([Environment]::NewLine)[0])) -- clearing" -ForegroundColor Yellow }
+    # Robustly clear ANY stale WIM mount that could block a fresh mount. A prior interrupted or
+    # KILLED build can leave THIS wim mounted (with open file handles, or at our dir) -- so a plain
+    # path-discard fails "already mounted for read/write" / "could not be completely unmounted".
+    # Dismount EVERY mount whose ImagePath is this wim (or MountPath is our dir), run native
+    # `dism /cleanup-wim`, clear corrupt mount points, and retry until nothing of this wim remains.
+    # All non-fatal.
+    for ($mAttempt = 1; $mAttempt -le 4; $mAttempt++) {
+        foreach ($m in @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue)) {
+            if ($m.ImagePath -eq $wim -or $m.MountPath -eq $mount) {
+                try { Dismount-WindowsImage -Path $m.MountPath -Discard -ErrorAction Stop | Out-Null }
+                catch { Write-Host "    stale mount at $($m.MountPath) ($($_.Exception.Message.Split([Environment]::NewLine)[0])) -- forcing" -ForegroundColor Yellow }
+            }
+        }
+        if (Test-Path $mount) { try { Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null } catch {} }
+        try { & dism.exe /Cleanup-Wim 2>&1 | Out-Null } catch {}
+        try { Clear-WindowsCorruptMountPoint -ErrorAction SilentlyContinue | Out-Null } catch {}
+        if (Test-Path $mount) { try { Remove-Item $mount -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
+        $staleLeft = @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.ImagePath -eq $wim -or $_.MountPath -eq $mount })
+        if ($staleLeft.Count -eq 0 -and -not (Test-Path $mount)) { break }
+        Start-Sleep -Seconds 2
     }
-    try { Clear-WindowsCorruptMountPoint -ErrorAction SilentlyContinue | Out-Null } catch {}
-    try { & dism.exe /Cleanup-Wim 2>&1 | Out-Null } catch {}
-    if (Test-Path $mount) { try { Remove-Item $mount -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
     New-Item -ItemType Directory -Force -Path $mount | Out-Null
     Write-Host "[*] Mounting install image index $idx ..." -ForegroundColor Cyan
     Mount-WindowsImage -Path $mount -ImagePath $wim -Index $idx | Out-Null
