@@ -66,8 +66,14 @@ irm .../mios | iex   (Windows)   /   curl .../mios | bash   (Linux)
    shed ~40 lines of duplicated theme/elevation/resolver code). Verified: parse + all-target
    dry-runs green in pwsh7 + WPS5.1 + Git-Bash. **Next:** migrate `Get-MiOS.ps1`, `build-mios.{ps1,sh}`,
    and `MiOS-Cat.bat` to source the same contract (one at a time, each re-tested).
-3. **Break the loops in `MiOS-Cat.bat`** — drop the self-update `git pull` + the `irm Get-MiOS|iex`
-   re-entry (line ~476); it calls the local `build-mios` directly. It becomes the flash executor.
+3. **[DONE] Break the web-door loop in `MiOS-Cat.bat`** — `:build_need_online` no longer runs
+   `irm Get-MiOS|iex` (a re-entry back through the web door, which redoes agreement/elevation/prereqs
+   and, since Get-MiOS often launches MiOS-Cat, was circular). It now fetches the mios-bootstrap repo
+   ONCE (git, else GitHub zip — the same logic as `Ensure-MiosRepo`, inlined because the repo is
+   exactly what's missing) into `C:\mios-bootstrap`, then hands into the LOCAL `build-mios.ps1`.
+   Embedded PS parse-checked (0 errors). *Deliberately kept:* the startup self-update (only acts on a
+   dev checkout — `cd C:\MiOS` / `C:\mios-bootstrap` fail on the USB, so it is a no-op there) and the
+   explicit user-invoked "Update repos" menu item (not an auto-loop).
 4. **Collapse redirectors** — `bootstrap.ps1`/`install.ps1`/`bootstrap.sh`/`install.sh` become thin
    aliases of the one web door (or are removed once the door hands into `mios-install`).
 5. **One canonical checkout path** — pick one (`C:\mios-bootstrap`), retire `M:\MiOS\repo\...`.

@@ -459,11 +459,13 @@ goto sub_build
 echo.
 echo [INFO] No local MiOS build driver (build-mios.ps1) was found on
 echo        this host or on the MiOS-Repo payload of this drive.
-echo        On a factory Windows it can be bootstrapped online from the
-echo        canonical MiOS entry point (this also provisions WSL2 + podman).
+echo        MiOS-Cat can fetch the mios-bootstrap repo ONCE (git, else a
+echo        GitHub zip) into C:\mios-bootstrap and then build LOCALLY --
+echo        it no longer re-enters the online one-liner (that was a loop
+echo        back through the web door; MiOS-Cat is the flash/build executor).
 echo.
 set "confirm="
-set /p "confirm=Fetch and run the online MiOS bootstrap now? (Y/N): "
+set /p "confirm=Fetch the mios-bootstrap repo now and build locally? (Y/N): "
 if /i not "%confirm%"=="Y" goto sub_build
 powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }"
 if not "%errorlevel%"=="0" (
@@ -472,10 +474,18 @@ if not "%errorlevel%"=="0" (
     pause
     goto sub_build
 )
-echo Launching online MiOS bootstrap...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"
-echo.
-echo [INFO] After bootstrap completes, re-open this Build menu to build.
+echo Fetching mios-bootstrap into C:\mios-bootstrap ...
+:: Self-contained fetch (mirrors mios-common's Ensure-MiosRepo -- can't source
+:: it here since the repo is exactly what's missing). git first, else GitHub zip.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $root='C:\mios-bootstrap'; $drv=Join-Path $root 'build-mios.ps1'; if (-not (Test-Path $drv)) { if (Get-Command git -ErrorAction SilentlyContinue) { git clone --depth 1 'https://github.com/mios-dev/mios-bootstrap.git' $root | Out-Null }; if (-not (Test-Path $drv)) { [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $zip=Join-Path $env:TEMP 'mios-bootstrap.zip'; $tmp=Join-Path $env:TEMP ('mios-bs-'+[guid]::NewGuid().ToString('N').Substring(0,8)); Invoke-WebRequest -Uri 'https://codeload.github.com/mios-dev/mios-bootstrap/zip/refs/heads/main' -OutFile $zip -UseBasicParsing; Expand-Archive -Path $zip -DestinationPath $tmp -Force; $inner=Get-ChildItem $tmp -Directory | Select-Object -First 1; if ($inner) { New-Item -ItemType Directory -Force -Path $root | Out-Null; Copy-Item (Join-Path $inner.FullName '*') $root -Recurse -Force }; Remove-Item $zip,$tmp -Recurse -Force -ErrorAction SilentlyContinue } }; if (Test-Path $drv) { exit 0 } else { exit 3 }"
+if not "%errorlevel%"=="0" (
+    echo [ERR ] Could not fetch mios-bootstrap. Check connectivity / proxy and retry.
+    pause
+    goto sub_build
+)
+set "bootstrap_root=C:\mios-bootstrap"
+echo [OK] Fetched. Local build driver ready at %bootstrap_root%\build-mios.ps1
+echo      Re-open the Build menu and pick your build again -- it now runs LOCALLY.
 pause
 goto sub_build
 
