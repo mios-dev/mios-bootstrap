@@ -914,9 +914,24 @@ echo.
 echo Formatting and merging all USB partitions back to a single disk letter (%drivepath%:)...
 powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { Get-Partition -DiskNumber $d.Number | Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue; Initialize-Disk -Number $d.Number -PartitionStyle GPT -ErrorAction SilentlyContinue; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter %drivepath% -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Cat' -Confirm:$false | Out-Null }; Update-HostStorageCache }" >nul 2>&1
 
+:: Disk-size-aware partition plan (SSOT default: [cat.data_partition].min_disk_gb=512). Ventoy's
+:: /R reserves space at the DISK END for OUR partitions -- a hardcoded 4GB starves MiOS-Repo and
+:: any MiOS-Data vault, so scale the reservation to the disk: on >=512GB reserve everything past a
+:: bounded 64GB Ventoy/ISO partition (-> MiOS-Repo + a big MiOS-Data vault); on >=128GB reserve
+:: 64GB for MiOS-Repo; on small disks keep the 4GB floor (degrade-open, no MiOS-Data vault).
+set "vtoy_reserve_mb=4096"
+set "mios_repo_gb=0"
+set "mios_make_data=0"
+set "plan_env=%TEMP%\mios-cat-plan.cmd"
+del "%plan_env%" /q >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$q=[char]34; $p = Get-Partition -DriveLetter '%drivepath%' -ErrorAction SilentlyContinue; $disk = if ($p) { Get-Disk -Number $p.DiskNumber } else { Get-Disk | Where-Object { $_.BusType -in 'USB','SD' } | Sort-Object Size -Descending | Select-Object -First 1 }; if ($disk) { $g=[math]::Floor($disk.Size/1GB); $ventoy=64; $repo=64; if ($g -ge 512) { $rsv=($g-$ventoy)*1024; $mk=1 } elseif ($g -ge 128) { $rsv=$repo*1024; $mk=0 } else { $rsv=4096; $repo=0; $mk=0 }; $o=@('set '+$q+'vtoy_reserve_mb='+$rsv+$q,'set '+$q+'mios_repo_gb='+$repo+$q,'set '+$q+'mios_make_data='+$mk+$q); Set-Content -LiteralPath '%plan_env%' -Value $o -Encoding ascii }" 2>nul
+if exist "%plan_env%" call "%plan_env%"
+if exist "%plan_env%" del "%plan_env%" /q >nul 2>&1
+echo   Disk partition plan: reserve %vtoy_reserve_mb% MB at disk end ^(MiOS-Repo %mios_repo_gb% GB; MiOS-Data=%mios_make_data%^)
+
 echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
 cd /d "%stage_dir%\Ventoy2Disk"
-set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme% /R:4096"
+set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme% /R:%vtoy_reserve_mb%"
 if "%secure_boot%"=="Enabled" (
     set "vtoy_args=%vtoy_args% /S"
 ) else (
@@ -942,9 +957,9 @@ format %drivepath%: /FS:%filesystem% /X /Q /V:%partition_label% /Y >nul
 if errorlevel 1 echo [WARN] format of %drivepath%: returned non-zero -- the data partition may be unusable. >&2
 
 echo Creating secure offline repository partition (MiOS-Repo)...
-echo   (disks 512GB+ also get a persistent MiOS-Data vault partition; smaller disks skip
-echo    it and give all remaining space to MiOS-Repo -- degrade-open, never abort)
-powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ($d.Size -ge 512GB) { $rp = New-Partition -DiskNumber $d.Number -Size 96GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Data' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null } }" >nul 2>&1
+echo   (>=512GB disks: MiOS-Repo %mios_repo_gb% GB + a large MiOS-Data vault in the reserved tail;
+echo    smaller disks give the whole reserved tail to MiOS-Repo -- degrade-open, never abort)
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ('%mios_make_data%' -eq '1') { $rp = New-Partition -DiskNumber $d.Number -Size %mios_repo_gb%GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Data' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null } }" >nul 2>&1
 
 :: 6. Pull/Download Medicat core archive to M:\ (large storage)
 set "download_needed=0"
