@@ -25,6 +25,12 @@ if not exist "%toml_path%" set "toml_path=C:\MiOS\usr\share\mios\mios.toml"
 
 set "drivepath=D"
 set "medicatver=21.12"
+:: Ventoy version is NEVER hand-pinned. MiOS targets the NEWEST upstream GLOBALLY and
+:: GENERATES the pin at runtime (resolved live from GitHub) or at build (recorded into the
+:: SSOT SBOM as [cat].ventoy_version). Empty here on purpose -- no hardcoded fallback. If
+:: it cannot be resolved (offline + no build-recorded pin + no Ventoy already staged) the
+:: flash fails loud rather than silently pinning a stale version.
+set "ventoy_ver="
 powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 25GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\medicat_stage' } else { $env:TEMP + '\medicat_stage' }; [System.IO.File]::WriteAllText(\"%~dp0stage_path.txt\", $p)"
 set /p stage_dir=<"%~dp0stage_path.txt"
 del "%~dp0stage_path.txt" /Q >nul 2>&1
@@ -48,7 +54,7 @@ if not exist "%toml_path%" goto no_toml
 echo Loading installation settings from mios.toml SSOT...
 set "ssot_env=%TEMP%\mios-cat-ssot.cmd"
 del "%ssot_env%" /q >nul 2>&1
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content -Raw -LiteralPath '%toml_path%'; $q=[char]34; function G([string]$k){ $m=[regex]::Match($t, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*'+$q+'([^'+$q+'\r\n]*)'+$q)); if($m.Success){ $m.Groups[1].Value -replace '\\\\','\' } }; $map=[ordered]@{ drivepath='drivepath'; medicatver='medicatver'; file='cache_path'; bg_color='bg'; fg_color='fg'; accent_color='accent'; cursor_color='cursor'; success_color='success'; muted_color='muted'; subtle_color='subtle' }; $o=New-Object System.Collections.Generic.List[string]; foreach($e in $map.GetEnumerator()){ $v=G $e.Value; if($v){ $o.Add('set '+$q+$e.Key+'='+$v+$q) } }; if($o.Count){ Set-Content -LiteralPath '%ssot_env%' -Value $o -Encoding ascii }" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content -Raw -LiteralPath '%toml_path%'; $q=[char]34; function G([string]$k){ $m=[regex]::Match($t, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*'+$q+'([^'+$q+'\r\n]*)'+$q)); if($m.Success){ $m.Groups[1].Value -replace '\\\\','\' } }; $map=[ordered]@{ drivepath='drivepath'; medicatver='medicatver'; ventoy_ver='ventoy_version'; file='cache_path'; bg_color='bg'; fg_color='fg'; accent_color='accent'; cursor_color='cursor'; success_color='success'; muted_color='muted'; subtle_color='subtle' }; $o=New-Object System.Collections.Generic.List[string]; foreach($e in $map.GetEnumerator()){ $v=G $e.Value; if($v){ $o.Add('set '+$q+$e.Key+'='+$v+$q) } }; if($o.Count){ Set-Content -LiteralPath '%ssot_env%' -Value $o -Encoding ascii }" 2>nul
 if exist "%ssot_env%" call "%ssot_env%"
 if exist "%ssot_env%" del "%ssot_env%" /q >nul 2>&1
 :no_toml
@@ -106,7 +112,13 @@ set "secure_boot=Enabled"
 set "extract_mode=Surgical"
 set "pa_theme=Dark"
 set "build_xbox=Enabled"
-set "bake_drivers=Enabled"
+:: Default OFF: bake NO host-specific drivers. The MiOS-Xbox image ships with PURE Windows
+:: inbox/base drivers for GLOBAL all-platform support -- baking the build host's own drivers
+:: (dism /Online /Export-Driver, below) would tie the universal image to that one machine's
+:: hardware, the opposite of what we want. The universal VM drivers (virtio + ivshmem for
+:: Looking-Glass) are injected separately by New-MiOSISO and always ship. Operator can still
+:: toggle this on for a hardware-specific build via the Xbox config menu.
+set "bake_drivers=Disabled"
 set "uup_channel=Dev"
 set "gaming_optimize=Enabled"
 set "partition_label=MiOS-Cat"
@@ -848,14 +860,34 @@ if not exist "%drivepath%:\" (
     goto menu
 )
 
-:: 4. Download Ventoy bootloader
+:: 4. Download Ventoy bootloader -- newest upstream GLOBALLY (resolved live from GitHub),
+::    else a BUILD-recorded pin (SSOT [cat].ventoy_version). No hand-pin, no stale offline
+::    fallback: if nothing resolves we fail loud below. The extracted dir is normalized to
+::    a version-agnostic "Ventoy2Disk", so everything downstream is version-independent.
 echo Checking Ventoy files...
+if not exist "%stage_dir%\Ventoy2Disk" call :resolve_ventoy_latest
+if not exist "%stage_dir%\Ventoy2Disk" if not defined ventoy_ver (
+    echo.
+    echo [FAIL] Could not resolve a Ventoy version: no network to reach GitHub, no
+    echo        build-recorded pin in [cat].ventoy_version, and no Ventoy staged on
+    echo        this USB. MiOS pins nothing by hand -- connect once to fetch the
+    echo        newest release, or stage Ventoy at build. Refusing to flash blind.
+    exit /b 1
+)
 if not exist "%stage_dir%\Ventoy2Disk" (
-    echo Downloading latest Ventoy windows release...
-    curl -s -L "https://github.com/ventoy/Ventoy/releases/download/v1.0.99/ventoy-1.0.99-windows.zip" -o "%stage_dir%\ventoy.zip"
+    echo Downloading Ventoy %ventoy_ver% ^(newest upstream^) windows release...
+    curl -s -L "https://github.com/ventoy/Ventoy/releases/download/v%ventoy_ver%/ventoy-%ventoy_ver%-windows.zip" -o "%stage_dir%\ventoy.zip"
     "%maindir%\bin\7z.exe" x "%stage_dir%\ventoy.zip" -o"%stage_dir%" -aoa >nul
-    ren "%stage_dir%\ventoy-1.0.99" Ventoy2Disk
-    del "%stage_dir%\ventoy.zip" /Q
+    for /d %%V in ("%stage_dir%\ventoy-*") do ren "%%V" Ventoy2Disk
+    del "%stage_dir%\ventoy.zip" /Q >nul 2>&1
+    if not exist "%stage_dir%\Ventoy2Disk\Ventoy2Disk.exe" (
+        echo.
+        echo [FAIL] Ventoy %ventoy_ver% download/extract failed -- no Ventoy2Disk.exe present.
+        echo        The resolved version must be a REAL Ventoy release tag
+        echo        ^(https://github.com/ventoy/Ventoy/releases^); refusing to flash a
+        echo        USB with no bootloader.
+        exit /b 1
+    )
 )
 
 set "skip_format_extract=0"
@@ -910,7 +942,9 @@ format %drivepath%: /FS:%filesystem% /X /Q /V:%partition_label% /Y >nul
 if errorlevel 1 echo [WARN] format of %drivepath%: returned non-zero -- the data partition may be unusable. >&2
 
 echo Creating secure offline repository partition (MiOS-Repo)...
-powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null }" >nul 2>&1
+echo   (disks 512GB+ also get a persistent MiOS-Data vault partition; smaller disks skip
+echo    it and give all remaining space to MiOS-Repo -- degrade-open, never abort)
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ($d.Size -ge 512GB) { $rp = New-Partition -DiskNumber $d.Number -Size 96GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Data' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null } }" >nul 2>&1
 
 :: 6. Pull/Download Medicat core archive to M:\ (large storage)
 set "download_needed=0"
@@ -997,10 +1031,22 @@ if "%repodrive%"=="" set "repodrive=%drivepath%"
 
 echo Staging offline repository fallback copies to secure partition %repodrive%:...
 echo Using local developer repository copies to preserve active changes...
-mkdir "%repodrive%:\mios-bootstrap" >nul 2>&1
-robocopy "C:\mios-bootstrap" "%repodrive%:\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
-mkdir "%repodrive%:\MiOS" >nul 2>&1
-robocopy "C:\MiOS" "%repodrive%:\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+:: ADR-0008 layout: repos live under a 'repos\' subdir on the MiOS-Repo partition. The
+:: Linux kickstart AND the Windows bootstrap_root resolver both tolerate this + the older
+:: partition-root layout, so neither location can strand an offline install.
+mkdir "%repodrive%:\repos\mios-bootstrap" >nul 2>&1
+robocopy "C:\mios-bootstrap" "%repodrive%:\repos\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+mkdir "%repodrive%:\repos\MiOS" >nul 2>&1
+robocopy "C:\MiOS" "%repodrive%:\repos\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+
+:: Shadow-config "brain": the live SSOT, the architecture diagram, and a self-copy of this
+:: launcher at the MiOS-Repo root -- so a booted/target system can re-read config, re-open
+:: the topology, or re-run the flasher fully offline (ADR-0008 / T-260b).
+echo Staging shadow-config brain (SSOT + architecture + launcher self-copy)...
+if exist "%~dp0..\mios.toml" copy "%~dp0..\mios.toml" "%repodrive%:\mios.toml" /Y >nul 2>&1
+copy "%~f0" "%repodrive%:\MiOS-Cat.bat" /Y >nul 2>&1
+if exist "%USERPROFILE%\Downloads\mios_visual_architecture_idealistic.html" copy "%USERPROFILE%\Downloads\mios_visual_architecture_idealistic.html" "%repodrive%:\mios.html" /Y >nul 2>&1
+if not exist "%repodrive%:\mios.html" if exist "%USERPROFILE%\Downloads\mios_visual_architecture.html" copy "%USERPROFILE%\Downloads\mios_visual_architecture.html" "%repodrive%:\mios.html" /Y >nul 2>&1
 
 :: Overwrite stock System images
 echo Customizing System folder thumbnails...
@@ -1382,7 +1428,22 @@ for %%D in (E F G H I J K L N O P Q R S T U V W X Y Z) do (
         set "bootstrap_root=%%D:\mios-bootstrap"
         goto :eof
     )
+    if exist "%%D:\repos\mios-bootstrap\build-mios.ps1" (
+        set "bootstrap_root=%%D:\repos\mios-bootstrap"
+        goto :eof
+    )
 )
+goto :eof
+
+:resolve_ventoy_latest
+:: MiOS targets newest upstream GLOBALLY + never hand-pins. A "latest"/empty SSOT value is
+:: an INTENT sentinel, not a pin -- neutralize it, then resolve the newest release live from
+:: GitHub. On success the runtime pin wins (newest). On failure keep whatever the build
+:: recorded in [cat].ventoy_version (a real version) or stay empty -> caller fails loud.
+if /i "%ventoy_ver%"=="latest" set "ventoy_ver="
+set "ventoy_latest="
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "try { $h=@{'User-Agent'='MiOS-Cat'}; $r=Invoke-RestMethod -UseBasicParsing -TimeoutSec 8 -Headers $h 'https://api.github.com/repos/ventoy/Ventoy/releases/latest'; ($r.tag_name -replace '^v','') } catch { '' }"`) do set "ventoy_latest=%%i"
+if defined ventoy_latest if not "%ventoy_latest%"=="" set "ventoy_ver=%ventoy_latest%"
 goto :eof
 
 :resolve_xbox_builder

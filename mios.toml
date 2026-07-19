@@ -1580,26 +1580,25 @@ branding.living_wallpaper    = "true"
 
 
 # ----------------------------------------------------------------------------
-# [medicat] -- Medicat-Installer configuration parameters (SSOT).
-# drivepath: Target USB drive letter (without colon).
-# medicatver: Version of the MediCat bootable image.
-# cache_path: Absolute path to the cached 23 GB 7z archive file.
-# ----------------------------------------------------------------------------
-[medicat]
-drivepath   = "D"
-medicatver  = "21.12"
-cache_path  = "M:\\MediCat.USB.v21.12.7z"
-
-# ----------------------------------------------------------------------------
-# [cat] -- MiOS-Cat launcher/build configuration (SSOT for the cat/ entry point).
-# Consumed by cat/MiOS-Cat.{bat,ps1,sh}. Empty ("") values mean "use the
-# launcher's built-in portable %~dp0-relative resolution" so a MiOS-Repo USB
-# stays self-contained; set an ABSOLUTE path only to OVERRIDE that default. (T-258)
-#   xbox_builder : PowerShell script that builds the MiOS-Xbox ISO ('' -> cat/autounattend/Build-MiOSXbox.ps1)
-#   build_driver : OCI/disk-image build entry ('' -> build-mios.ps1, self-provisions the podman machine)
-#   log_path     : directory for the launcher's build/stage logs ('' -> beside the launcher)
+# [cat] -- MiOS-Cat unified USB installer + launcher/build configuration (SSOT for the
+# cat/ entry point). Consumed by cat/MiOS-Cat.{bat,ps1,sh}. Consolidates the former
+# [medicat] block (T-258b). Empty ("") launcher paths mean "use the built-in portable
+# %~dp0-relative resolution" so a MiOS-Repo USB stays self-contained; set an ABSOLUTE
+# path only to OVERRIDE. (ADR-0008)
+#   drivepath      : target USB drive letter, no colon
+#   medicatver     : MediCat recovery-payload version (filename + cache path)
+#   cache_path     : absolute path to the cached MediCat 7z archive
+#   ventoy_version : "latest" -> resolve newest Ventoy upstream at build/runtime; MiOS
+#                    never hand-pins a fallback (SBOM records the resolved version). ADR-0003
+#   xbox_builder   : PowerShell script that builds the MiOS-Xbox ISO ('' -> cat/autounattend/Build-MiOSXbox.ps1)
+#   build_driver   : OCI/disk-image build entry ('' -> build-mios.ps1, self-provisions the podman machine)
+#   log_path       : directory for the launcher's build/stage logs ('' -> beside the launcher)
 # ----------------------------------------------------------------------------
 [cat]
-xbox_builder = ""
-build_driver = ""
-log_path     = ""
+drivepath      = "D"
+medicatver     = "21.12"
+cache_path     = "M:\\MediCat.USB.v21.12.7z"
+ventoy_version = "latest"
+xbox_builder   = ""
+build_driver   = ""
+log_path       = ""
