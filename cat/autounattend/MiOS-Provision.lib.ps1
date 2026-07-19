@@ -169,7 +169,7 @@ function New-MiOSGlobalPrefCommands {
     $d = [ordered]@{
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|HideFileExt|REG_DWORD'  = (Get-Toml $Toml 'autounattend.preferences.hide_file_ext' '0')
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|Hidden|REG_DWORD'       = (Get-Toml $Toml 'autounattend.preferences.show_hidden' '1')
-        'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarAl|REG_DWORD'    = (Get-Toml $Toml 'autounattend.preferences.taskbar_align' '0')
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarAl|REG_DWORD'    = (Get-Toml $Toml 'autounattend.preferences.taskbar_align' '1')
         'Software\Microsoft\Windows\CurrentVersion\Search|SearchboxTaskbarMode|REG_DWORD'    = (Get-Toml $Toml 'autounattend.preferences.taskbar_search' '0')
     }
     $cmds = New-Object System.Collections.Generic.List[string]
