@@ -4,7 +4,8 @@
      build / update) by calling the EXISTING mios-bootstrap entrypoints with
      the right args -- it never moves, renames, or reimplements them.
      AI-related: installation/mios-install.ps1, installation/mios-install.sh,
-     installation/mios-install.bat, cat/MiOS-Cat.bat, cat/MiOS-Cat.ps1,
+     installation/mios-install.bat, installation/mios-common.ps1,
+     installation/mios-common.sh, installation/UNIFY.md, cat/MiOS-Cat.bat, cat/MiOS-Cat.ps1,
      cat/MiOS-Cat.sh, build-mios.ps1, build-mios.sh, Get-MiOS.ps1,
      cat/autounattend/Build-MiOSXboxISO.ps1, cat/autounattend/New-MiOSISO.ps1,
      cat/autounattend/Deploy-MiOSXbox.ps1, cat/autounattend/Invoke-MiOSProvision.ps1,
@@ -19,10 +20,20 @@ the right argv/env for the existing script and runs it.
 
 **It does not replace anything.** Every file under `cat\`, `build-mios.ps1`,
 `build-mios.sh`, and `Get-MiOS.ps1` stays exactly where it is, untouched.
-`mios-install` only adds three new files (`mios-install.ps1`,
-`mios-install.sh`, `mios-install.bat`) plus this README. If you already know
-the entrypoint you want, calling it directly still works — `mios-install` is
-a convenience funnel on top, not a required layer.
+`mios-install` adds the dispatcher (`mios-install.ps1`, `mios-install.sh`,
+`mios-install.bat`), the shared `mios-common.{ps1,sh}` contract they source,
+and this README. If you already know the entrypoint you want, calling it
+directly still works — `mios-install` is a convenience funnel on top, not a
+required layer.
+
+**Run it with no target for the guided menu.** `mios-install` (no arguments)
+opens an SSOT-themed, self-explaining menu: every target with what it does,
+what it produces, what it costs, and what it needs — with a typed confirmation
+before anything destructive. `mios-install configure` opens the MiOS Portal /
+configurator (the one SSOT editor). And the web door reaches this same surface:
+`… Get-MiOS.ps1 … -Action Install` (guided menu) / `-Action Configure` (Portal)
+fetch the repo, then hand straight into `mios-install`. See
+[UNIFY.md](UNIFY.md) for the full unification map.
 
 ## Contents
 
@@ -41,6 +52,13 @@ a convenience funnel on top, not a required layer.
   `cat\MiOS-Cat.bat`/`cat\MiOS-Cat.ps1`'s own convention — see
   "Why the .bat/.ps1 relationship looks backwards" below. Don't "fix" it to
   match MiOS-Cat.
+- `mios-common.ps1` / `mios-common.sh` — the **one shared contract** both
+  dispatchers source: the layered SSOT resolver (`Get-MiosSsotValue` /
+  `mios_ssot_value`, `user > host > vendor`, mirroring
+  `usr/lib/mios/mios_toml.py`), the SSOT-`[colors]` themed console/logger, one
+  self-elevate, and one repo-fetch (`Ensure-MiosRepo` / `mios_ensure_repo`).
+  This is what replaced the per-entrypoint copies of elevation / toml-resolve /
+  theme. Other entrypoints migrate onto it incrementally (see UNIFY.md).
 - `README.md` — this file. Human-readable target table + examples. The
   mapping data itself should not be hand-maintained twice — see
   "SSOT alignment" below.
@@ -53,7 +71,7 @@ mios-install <target> [--type <name>] [--stage <name>] [--dry-run] [--unattended
 
 | Piece | Meaning |
 |---|---|
-| `<target>` | Required, positional. One of: `live`, `xbox`, `fedora`, `bootc`, `oci`, `seed`, `flash`, `build`, `update`. |
+| `<target>` | Required, positional. One of: `live`, `xbox`, `fedora`, `bootc`, `oci`, `seed`, `flash`, `build`, `update`, `configure`. Omit it entirely for the guided menu. |
 | `--type <name>` | Narrows the target to a concrete flavor. Values are per-target — see the mapping table. Omit for the documented default. |
 | `--stage <name>` | `prereqs \| fetch \| service \| iso \| flash` — jump into (or isolate) one point in the pipeline. See "The 5-stage funnel" below for what's real vs. best-effort per target. Omit to run the whole pipeline (every entrypoint's normal default behavior). |
 | `--dry-run` | **Dispatcher-level only.** Prints the exact command line(s) and env vars `mios-install` *would* run, then exits 0. Nothing underneath is invoked. None of the 9 wrapped entrypoints has a native dry-run mode, so this is new behavior layered on top by the dispatcher, not a passed-through flag. |
