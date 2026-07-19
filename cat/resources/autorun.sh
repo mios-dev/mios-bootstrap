@@ -10,9 +10,9 @@ echo "==============================================="
 echo "Started at: $(date)"
 
 # 1. Identify the USB boot disk
-usb_partition=$(readlink -f /dev/disk/by-label/Medicat)
+usb_partition=$(readlink -f /dev/disk/by-label/MiOS-Cat)
 if [ -z "$usb_partition" ] || [ ! -b "$usb_partition" ]; then
-    echo "ERROR: Could not find USB partition labeled 'Medicat'!"
+    echo "ERROR: Could not find USB partition labeled 'MiOS-Cat'!"
     # Fallback: scan mountpoints or sysfs
     usb_partition=$(mount | grep -E '/run/archiso/img_dev|/run/archiso/bootmnt' | awk '{print $1}' | head -n 1)
 fi
@@ -29,8 +29,11 @@ if [ -b "$usb_partition" ]; then
     echo "Identified USB boot partition: $usb_partition"
     echo "Identified USB boot disk: $usb_disk"
 else
-    echo "WARNING: USB partition not found. Extreme caution: will skip dev/loop only."
-    usb_disk=""
+    echo "FATAL: could not identify the boot USB disk -- REFUSING to wipe ANY disk."
+    echo "A mislabelled/renamed boot medium must NEVER fall through to wiping every disk"
+    echo "(that would destroy the host machine AND this USB). Aborting the wipe."
+    sleep 10
+    exit 1
 fi
 
 # 2. Iterate and wipe all other disks

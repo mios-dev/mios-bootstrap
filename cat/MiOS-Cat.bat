@@ -853,7 +853,7 @@ echo Checking Ventoy files...
 if not exist "%stage_dir%\Ventoy2Disk" (
     echo Downloading latest Ventoy windows release...
     curl -s -L "https://github.com/ventoy/Ventoy/releases/download/v1.0.99/ventoy-1.0.99-windows.zip" -o "%stage_dir%\ventoy.zip"
-    "%stage_dir%\bin\7z.exe" x "%stage_dir%\ventoy.zip" -o"%stage_dir%" -aoa >nul
+    "%maindir%\bin\7z.exe" x "%stage_dir%\ventoy.zip" -o"%stage_dir%" -aoa >nul
     ren "%stage_dir%\ventoy-1.0.99" Ventoy2Disk
     del "%stage_dir%\ventoy.zip" /Q
 )
@@ -891,7 +891,15 @@ if "%secure_boot%"=="Enabled" (
     set "vtoy_args=%vtoy_args% /NOUSBCheck"
 )
 Ventoy2Disk.exe VTOYCLI %vtoy_args%
+if errorlevel 1 (
+    echo [FAIL] Ventoy install to %drivepath%: FAILED -- the USB will NOT boot. Aborting instead of shipping a dead stick. >&2
+    cd /d "%maindir%"
+    exit /b 1
+)
 cd /d "%maindir%"
+if not exist "%drivepath%:\ventoy\ventoy.json" if not exist "%drivepath%:\grub\ventoy.cfg" (
+    echo [WARN] Ventoy layout not detected on %drivepath%: after VTOYCLI -- boot may be broken. >&2
+)
 
 echo Waiting 5s for partition remount...
 ping localhost -n 6 >nul
@@ -899,6 +907,7 @@ ping localhost -n 6 >nul
 :: Format partition
 echo Formatting primary partition as %filesystem% (%partition_label%)...
 format %drivepath%: /FS:%filesystem% /X /Q /V:%partition_label% /Y >nul
+if errorlevel 1 echo [WARN] format of %drivepath%: returned non-zero -- the data partition may be unusable. >&2
 
 echo Creating secure offline repository partition (MiOS-Repo)...
 powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null }" >nul 2>&1
@@ -954,11 +963,11 @@ if "%extract_mode%"=="Surgical" (
     echo.
     echo Extracting minimal boot files and portable apps from %file% to %drivepath%:...
     echo Extracting only PE, SystemRescue, and core startup structures...
-    "%stage_dir%\bin\7z.exe" x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* "Programs/HW Monitor/*" Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/* -aoa -y
+    "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* "Programs/HW Monitor/*" Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/* -aoa -y
 ) else (
     echo.
     echo Extracting ALL files from %file% to %drivepath%:...
-    "%stage_dir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -aoa -y
+    "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -aoa -y
 )
 
 if "%extract_mode%"=="Surgical" (
@@ -1294,7 +1303,7 @@ echo [PASS] Target drive %drivepath%: safety check completed.
 :: 3. Storage Space Check on Cache drive (Ensure at least 25GB free)
 if not exist "%file%" (
     powershell -NoProfile -Command "$cacheDrive = Split-Path -Path '%file%' -Qualifier; $v = Get-Volume -DriveLetter $cacheDrive.Trim(':') -ErrorAction SilentlyContinue; if ($v -and $v.SizeRemaining -lt 25GB) { exit 1 }; exit 0"
-    if %errorlevel% equ 1 (
+    if errorlevel 1 (
         echo [FAIL] Insufficient disk space on cache drive to download Medicat - 25GB required.
         exit /b 1
     )
