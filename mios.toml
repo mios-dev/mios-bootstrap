@@ -1112,35 +1112,39 @@ pkgs = [
 # is the bootstrap-overlay default for first install.
 # ----------------------------------------------------------------------------
 [colors]
-bg          = "#282262"
-fg          = "#E7DFD3"
-accent      = "#1A407F"
-cursor      = "#F35C15"
-success     = "#3E7765"
-warning     = "#F35C15"
-error       = "#DC271B"
-info        = "#1A407F"
-muted       = "#948E8E"
-subtle      = "#B7C9D7"
-earth       = "#734F39"
-silver      = "#E0E0E0"
+# ── Named tokens (the configurator HTML, OSC-aware apps, theming) ─────────
+bg          = "#282262"   # deep indigo  (Hokusai sky)            [main bg]
+fg          = "#E7DFD3"   # cream         (Hokusai foam)           [main fg]
+accent      = "#1A407F"   # operator blue (interactive / link)
+cursor      = "#F35C15"   # sunset orange (visible cursor)
+success     = "#3E7765"   # wave green
+warning     = "#F35C15"   # sunset orange
+error       = "#DC271B"   # coral red
+info        = "#1A407F"   # operator blue
+muted       = "#948E8E"   # warm grey
+subtle      = "#B7C9D7"   # pale blue-grey
+earth       = "#734F39"   # brown
+silver      = "#E0E0E0"   # operator silver
 
-ansi_0_black            = "#282262"
-ansi_1_red              = "#DC271B"
-ansi_2_green            = "#3E7765"
-ansi_3_yellow           = "#F35C15"
-ansi_4_blue             = "#1A407F"
-ansi_5_magenta          = "#734F39"
-ansi_6_cyan             = "#B7C9D7"
-ansi_7_white            = "#E7DFD3"
-ansi_8_bright_black     = "#948E8E"
-ansi_9_bright_red       = "#FF6B5C"
-ansi_10_bright_green    = "#5FAA8E"
-ansi_11_bright_yellow   = "#FF8540"
-ansi_12_bright_blue     = "#3D6BA8"
-ansi_13_bright_magenta  = "#9D7660"
-ansi_14_bright_cyan     = "#E0E0E0"
-ansi_15_bright_white    = "#FFFFFF"
+# ── ANSI 16-color slot mapping (terminal palette via OSC-4) ───────────────
+# Slot 0..7 are the canonical low colors; 8..15 are the bright variants.
+# Programs that emit `\e[31m` etc. resolve through these slots.
+ansi_0_black            = "#282262"   # deep indigo
+ansi_1_red              = "#DC271B"   # coral red
+ansi_2_green            = "#3E7765"   # wave green
+ansi_3_yellow           = "#F35C15"   # sunset orange
+ansi_4_blue             = "#1A407F"   # operator blue
+ansi_5_magenta          = "#734F39"   # brown
+ansi_6_cyan             = "#B7C9D7"   # pale blue-grey
+ansi_7_white            = "#E7DFD3"   # cream
+ansi_8_bright_black     = "#948E8E"   # warm grey
+ansi_9_bright_red       = "#FF6B5C"   # lighter coral
+ansi_10_bright_green    = "#5FAA8E"   # lighter wave-green
+ansi_11_bright_yellow   = "#FF8540"   # lighter sunset
+ansi_12_bright_blue     = "#3D6BA8"   # lighter operator blue
+ansi_13_bright_magenta  = "#9D7660"   # lighter brown
+ansi_14_bright_cyan     = "#E0E0E0"   # operator silver
+ansi_15_bright_white    = "#FFFFFF"   # pure white
 
 # ----------------------------------------------------------------------------
 # [bootstrap] -- behavior of mios-bootstrap.git/install.sh during Phase-0.
