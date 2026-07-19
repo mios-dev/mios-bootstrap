@@ -38,8 +38,8 @@ function Show-MiosLogo {
     $ac = $script:Pal.accent; $cu = $script:Pal.cursor; $mu = $script:Pal.muted; $su = $script:Pal.subtle
     Write-Host ""
     Write-Host ("  " + (C $ac (B '███╗   ███╗██╗ ██████╗ ███████╗')))
-    Write-Host ("  " + (C $ac (B '████╗ ████║██║██╔═══██╗██╔════╝')) + "   " + (C $cu (B 'C A T')))
-    Write-Host ("  " + (C $ac (B '██╔████╔██║██║██║   ██║███████╗')) + "   " + (C $mu $Subtitle))
+    Write-Host ("  " + (C $ac (B '████╗ ████║╚═╝██╔═══██╗██╔════╝')) + "   " + (C $cu (B 'C A T')))
+    Write-Host ("  " + (C $ac (B '██╔████╔██║██╗██║   ██║███████╗')) + "   " + (C $mu $Subtitle))
     Write-Host ("  " + (C $ac (B '██║╚██╔╝██║██║██║   ██║╚════██║')))
     Write-Host ("  " + (C $ac (B '██║ ╚═╝ ██║██║╚██████╔╝███████║')) + "   " + (C $su 'SecureBoot · UEFI · GPT'))
     Write-Host ("  " + (C $ac (B '╚═╝     ╚═╝╚═╝ ╚═════╝ ╚══════╝')))
@@ -235,18 +235,31 @@ function Invoke-MiosMonitored {
     $argStr = if ($Plan.Args.Count) { ' ' + ($Plan.Args -join ' ') } else { '' }
     Write-Host ""; Write-MiosLine 'info' ("Launching " + (Split-Path -Leaf $exe) + $argStr)
     foreach ($k in $Plan.Env.Keys) { Write-MiosKV 'env' ("{0}={1}" -f $k, $Plan.Env[$k]) }
-    if ($DryRun) { Write-Host ""; Write-MiosLine 'info' 'DRY-RUN -- nothing was executed.'; return 0 }
-    Write-Host ("  " + (Rule)); Write-Host ("  " + (C $script:Pal.subtle 'live output (elapsed | line):')); Write-Host ""
+    if ($DryRun) {
+        Write-Host ""; Write-MiosLine 'info' 'DRY-RUN -- nothing was executed.'
+        if ($script:ForceMonitor) { $mp = Get-MiosMonitorPaths; Write-MiosLine 'info' 'DRY-RUN --monitor: spawning the branded monitor window against a demo log.'; Start-MiosMonitor -LogPath $mp.Log -MarkerPath $mp.Marker -Title "MiOS-$Target" }
+        return 0
+    }
+    # Branded live monitor: a foreground Windows Terminal dashboard pops up EVERY run and follows
+    # this run's log (opt out with $env:MIOS_NO_MONITOR=1 or --no-monitor). We tee the entrypoint's
+    # output to that log so the dashboard has data, and drop a marker at the end to end its watch.
+    $mp = Get-MiosMonitorPaths
+    Remove-Item $mp.Log, $mp.Marker -Force -ErrorAction SilentlyContinue
+    ("[mios-install] starting $Target at " + (Get-Date -Format 'ddd MM/dd/yyyy HH:mm:ss')) | Set-Content -LiteralPath $mp.Log -Encoding utf8
+    Start-MiosMonitor -LogPath $mp.Log -MarkerPath $mp.Marker -Title "MiOS-$Target"
+    Write-Host ("  " + (Rule)); Write-Host ("  " + (C $script:Pal.subtle 'live output (elapsed | line) -- full graphical dashboard in the MiOS-Cat monitor window:')); Write-Host ""
     $gut = C $script:Pal.accent ([string][char]0x2502)
     if ($Plan.Kind -eq 'bat') {
-        & cmd.exe /c "`"$exe`"" @($Plan.Args) 2>&1 | ForEach-Object { Write-Host ("   $gut " + (C $script:Pal.muted ("{0:mm}:{0:ss}" -f ((Get-Date)-$start))) + " $_") }
+        & cmd.exe /c "`"$exe`"" @($Plan.Args) 2>&1 | Tee-Object -FilePath $mp.Log -Append | ForEach-Object { Write-Host ("   $gut " + (C $script:Pal.muted ("{0:mm}:{0:ss}" -f ((Get-Date)-$start))) + " $_") }
         $rc = $LASTEXITCODE
     } else {
         $psHost = (Get-Process -Id $PID).Path
-        & $psHost -NoProfile -ExecutionPolicy Bypass -File $exe @($Plan.Args) 2>&1 | ForEach-Object { Write-Host ("   $gut " + (C $script:Pal.muted ("{0:mm}:{0:ss}" -f ((Get-Date)-$start))) + " $_") }
+        & $psHost -NoProfile -ExecutionPolicy Bypass -File $exe @($Plan.Args) 2>&1 | Tee-Object -FilePath $mp.Log -Append | ForEach-Object { Write-Host ("   $gut " + (C $script:Pal.muted ("{0:mm}:{0:ss}" -f ((Get-Date)-$start))) + " $_") }
         $rc = $LASTEXITCODE
     }
     if ($null -eq $rc) { $rc = 0 }
+    ("FLASH_EXIT={0}" -f $rc) | Add-Content -LiteralPath $mp.Log -Encoding utf8
+    "$rc" | Set-Content -LiteralPath $mp.Marker -Encoding ascii
     Write-Host ("  " + (Rule))
     $dur = "{0:mm}m{0:ss}s" -f ((Get-Date)-$start)
     if ($rc -eq 0) { Write-Host ("  " + (C $script:Pal.success (B "  DONE  '$Target' completed in $dur."))) }
@@ -309,6 +322,8 @@ while ($i -lt $argv.Count) {
         '^--stage=(.+)$'          { $Stage = $matches[1]; $i++; continue }
         '^--dry-run$'             { $DryRun = $true; $i++; continue }
         '^--unattended$'          { $Unattended = $true; $i++; continue }
+        '^--monitor$'             { $env:MIOS_MONITOR = '1'; $env:MIOS_NO_MONITOR = $null; $script:ForceMonitor = $true; $i++; continue }
+        '^--no-monitor$'          { $env:MIOS_NO_MONITOR = '1'; $i++; continue }
         '^--$'                    { if ($i+1 -lt $argv.Count) { $Passthrough += @($argv[($i+1)..($argv.Count-1)]) }; $i = $argv.Count; continue }
         '^-'                      { $Passthrough += $a; $i++; continue }
         default                   { if (-not $Target) { $Target = $a.ToLower() } else { $Passthrough += $a }; $i++; continue }

@@ -126,3 +126,36 @@ function Ensure-MiosRepo {
     }
     return $Root
 }
+
+# ---- Live monitor: the ONE spawn every install entry uses so a foreground, fully-branded ----------
+# Windows Terminal dashboard pops up EVERY run and follows the install log. Opt out with
+# $env:MIOS_NO_MONITOR=1; force even on dry-runs / for debugging with $env:MIOS_MONITOR=1 (or the
+# installer's --monitor flag). Remote monitoring: point Monitor-MiosFlash.ps1 -LogPath at a shared
+# log path (e.g. a UNC / synced folder) and run it on another machine against the same file.
+function Get-MiosMonitorPaths {
+    $dir = Join-Path $env:TEMP 'mios'
+    try { if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null } } catch { $dir = $env:TEMP }
+    @{ Log = (Join-Path $dir 'mios-cat-flash.log'); Marker = (Join-Path $dir 'mios-cat-flash.marker'); Dir = $dir }
+}
+function Resolve-MiosMonitorScript {
+    @((Join-Path $PSScriptRoot 'Monitor-MiosFlash.ps1'), 'C:\mios-bootstrap\installation\Monitor-MiosFlash.ps1') |
+        Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+}
+function Start-MiosMonitor {
+    param([string]$LogPath, [string]$MarkerPath, [string]$Title = 'MiOS-Cat')
+    if ("$($env:MIOS_NO_MONITOR)".ToLower() -in @('1','true','yes','on')) { return $null }
+    $mon = Resolve-MiosMonitorScript
+    if (-not $mon) { return $null }
+    $a = @('-NoProfile','-ExecutionPolicy','Bypass','-File', $mon)
+    if ($LogPath)    { $a += @('-LogPath', $LogPath) }
+    if ($MarkerPath) { $a += @('-MarkerPath', $MarkerPath) }
+    try {
+        if (Get-Command wt.exe -ErrorAction SilentlyContinue) {
+            # foreground Windows Terminal tab (single-token title -- a spaced title mis-parses in wt)
+            Start-Process wt.exe -ArgumentList (@('new-tab','--title', ($Title -replace '\s','-'), 'pwsh') + $a) -ErrorAction Stop
+        } else {
+            $exe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
+            Start-Process $exe -ArgumentList $a -ErrorAction Stop
+        }
+    } catch {}
+}
