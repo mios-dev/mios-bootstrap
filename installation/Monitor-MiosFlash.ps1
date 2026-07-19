@@ -156,22 +156,23 @@ function Draw {
     [void]$sb.AppendLine("  " + (C $su 'Elapsed') + ' ' + (C $fg ("{0:hh\:mm\:ss}" -f $elapsed)) + "    " + (C $su 'Stage') + ' ' + (C $cu (B ("{0,2}/{1}" -f ($reached+1),$phases.Count))) + "    " + (C $su 'Phase') + ' ' + (C $suc (B $cur)))
     [void]$sb.AppendLine("")
     [void]$sb.AppendLine("  " + (C $su 'OVERALL ') + (Bar -pct $pct -col $pal.cursor -width 44))
-    if ($dlPct -ne $null -and -not $done -and $reached -ge 6 -and $reached -le 8) {
+    if ($null -ne $dlPct -and -not $done -and $reached -ge 6 -and $reached -le 8) {
         [void]$sb.AppendLine("  " + (C $su 'DOWNLOAD') + ' ' + (Bar -pct $dlPct -col $pal.success -width 44))
     }
     [void]$sb.AppendLine("  $rule")
 
-    # phase checklist
-    [void]$sb.AppendLine("  " + (C $su 'PIPELINE'))
+    # compact pipeline: ONE marker row + the current stage name. Keeps the whole dashboard short
+    # enough to fit any console window, so the logo/banner never scroll off the top.
+    $marks = ''
     for ($i=0; $i -lt $phases.Count; $i++) {
-        if ($i -lt $reached -or ($done -and $ok)) { $mk = C $suc ([string][char]0x2714); $nm = C $fg $phases[$i].n }
-        elseif ($i -eq $reached -and -not $done)  { $mk = C $cu  ([string]$sp);          $nm = C $cu (B $phases[$i].n) }
-        elseif ($done -and -not $ok -and $i -eq $reached) { $mk = C $pal.error ([string][char]0x2716); $nm = C $pal.error $phases[$i].n }
-        else { $mk = C $mu ([string][char]0x00B7); $nm = C $mu $phases[$i].n }
-        $col2 = ''
-        if (($i -eq 6 -or $i -eq 7 -or $i -eq 8) -and $i -eq $reached -and $dlPct -ne $null -and -not $done) { $col2 = "  " + (C $mu ("$dlPct%")) }
-        [void]$sb.AppendLine("    $mk $nm$col2")
+        if ($i -lt $reached -or ($done -and $ok)) { $marks += (C $suc ([string][char]0x2714)) }
+        elseif ($i -eq $reached -and -not $done) { $marks += (C $cu ([string]$sp)) }
+        elseif ($done -and -not $ok -and $i -eq $reached) { $marks += (C $pal.error ([string][char]0x2716)) }
+        else { $marks += (C $mu ([string][char]0x00B7)) }
     }
+    $dl = ''
+    if ($null -ne $dlPct -and -not $done -and $reached -ge 6 -and $reached -le 8) { $dl = "  " + (C $mu "$dlPct%") }
+    [void]$sb.AppendLine("  " + (C $su 'PIPELINE ') + $marks + '   ' + (C $cu (B $cur)) + $dl)
     [void]$sb.AppendLine("  $rule")
 
     # live log tail

@@ -1044,9 +1044,12 @@ copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 ::   MiOS-Repo = tiny shadow-config "brain" (SSOT + launcher, mere MB, always present)
 ::   MiOS-Data = the bulk vault (offline repos + CDN/CI + package/dependency/model/OCI-layer
 ::               caches), present only on >=128GB disks. Repos -> MiOS-Data; brain -> MiOS-Repo.
-powershell -NoProfile -Command "$q=[char]34; $rp=(Get-Volume -FileSystemLabel 'MiOS-Repo' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; $dp=(Get-Volume -FileSystemLabel 'MiOS-Data' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; $o=@('set '+$q+'repodrive='+$rp+$q,'set '+$q+'datadrive='+$dp+$q); Set-Content -LiteralPath '%~dp0pdrv.cmd' -Value $o -Encoding ascii"
-if exist "%~dp0pdrv.cmd" call "%~dp0pdrv.cmd"
-if exist "%~dp0pdrv.cmd" del "%~dp0pdrv.cmd" /Q >nul 2>&1
+for /f "usebackq tokens=1,2 delims=," %%a in (`powershell -NoProfile -Command "$rp=(Get-Volume -FileSystemLabel 'MiOS-Repo' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; $dp=(Get-Volume -FileSystemLabel 'MiOS-Data' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; if (-not $rp) { $rp='_' }; if (-not $dp) { $dp='_' }; Write-Output ($rp + ',' + $dp)"`) do (
+    set "repodrive=%%a"
+    set "datadrive=%%b"
+)
+if "%repodrive%"=="_" set "repodrive=%drivepath%"
+if "%datadrive%"=="_" set "datadrive=%repodrive%"
 if "%repodrive%"=="" set "repodrive=%drivepath%"
 if "%datadrive%"=="" set "datadrive=%repodrive%"
 
