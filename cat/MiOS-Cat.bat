@@ -922,11 +922,13 @@ powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -Err
 set "vtoy_reserve_mb=4096"
 set "mios_repo_gb=0"
 set "mios_make_data=0"
-set "plan_env=%TEMP%\mios-cat-plan.cmd"
-del "%plan_env%" /q >nul 2>&1
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$q=[char]34; $p = Get-Partition -DriveLetter '%drivepath%' -ErrorAction SilentlyContinue; $disk = if ($p) { Get-Disk -Number $p.DiskNumber } else { Get-Disk | Where-Object { $_.BusType -in 'USB','SD' } | Sort-Object Size -Descending | Select-Object -First 1 }; if ($disk) { $g=[math]::Floor($disk.Size/1GB); $ventoy=64; $repo=1; if ($g -ge 128) { $rsv=($g-$ventoy)*1024; $mk=1 } else { $rsv=4096; $repo=0; $mk=0 }; $o=@('set '+$q+'vtoy_reserve_mb='+$rsv+$q,'set '+$q+'mios_repo_gb='+$repo+$q,'set '+$q+'mios_make_data='+$mk+$q); Set-Content -LiteralPath '%plan_env%' -Value $o -Encoding ascii }" 2>nul
-if exist "%plan_env%" call "%plan_env%"
-if exist "%plan_env%" del "%plan_env%" /q >nul 2>&1
+:: Capture the plan as a single CSV line (reserve_mb,repo_gb,make_data) via for/f -- robust,
+:: no temp .cmd whose multi-line set-commands could collapse onto one line and cross-contaminate.
+for /f "usebackq tokens=1,2,3 delims=," %%a in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Partition -DriveLetter '%drivepath%' -ErrorAction SilentlyContinue; $disk = if ($p) { Get-Disk -Number $p.DiskNumber } else { Get-Disk | Where-Object { $_.BusType -in 'USB','SD' } | Sort-Object Size -Descending | Select-Object -First 1 }; if ($disk) { $g=[math]::Floor($disk.Size/1GB); $ventoy=64; $repo=1; if ($g -ge 128) { $rsv=($g-$ventoy)*1024; $mk=1 } else { $rsv=4096; $repo=0; $mk=0 }; Write-Output ('' + $rsv + ',' + $repo + ',' + $mk) }"`) do (
+    set "vtoy_reserve_mb=%%a"
+    set "mios_repo_gb=%%b"
+    set "mios_make_data=%%c"
+)
 echo   Disk partition plan: reserve %vtoy_reserve_mb% MB at disk end ^(MiOS-Repo %mios_repo_gb% GB; MiOS-Data=%mios_make_data%^)
 
 echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
