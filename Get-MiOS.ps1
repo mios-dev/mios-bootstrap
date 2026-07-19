@@ -108,16 +108,43 @@ function Disable-ConsoleQuickEdit {
 }
 Disable-ConsoleQuickEdit
 
+# For non-Default (build/flash/sync) actions invoked via `irm|iex` on a BARE Windows, the
+# mios-bootstrap repo isn't cloned yet -- the Default bootstrap clones it, but these actions run
+# FIRST (this router precedes the bootstrap). Fetch it here (git if present, else a GitHub zip)
+# so a factory Windows can go straight from the web one-liner to a build/flash with no manual clone.
+function Ensure-MiosBootstrapRepo {
+    $root = 'C:\mios-bootstrap'
+    if (Test-Path (Join-Path $root 'cat\autounattend\Build-MiOSXboxISO.ps1')) { return $root }
+    Write-Host "  [*] mios-bootstrap not present -- fetching it for this action (bare-Windows path)..." -ForegroundColor Cyan
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        try { & git clone --depth 1 'https://github.com/mios-dev/mios-bootstrap.git' $root 2>&1 | Out-Null } catch {}
+    }
+    if (-not (Test-Path (Join-Path $root 'cat\autounattend\Build-MiOSXboxISO.ps1'))) {
+        $zip = Join-Path $env:TEMP 'mios-bootstrap.zip'
+        $tmp = Join-Path $env:TEMP ('mios-bs-' + [System.Guid]::NewGuid().ToString('N').Substring(0,8))
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri 'https://codeload.github.com/mios-dev/mios-bootstrap/zip/refs/heads/main' -OutFile $zip -UseBasicParsing -ErrorAction Stop
+            Expand-Archive -Path $zip -DestinationPath $tmp -Force
+            $inner = Get-ChildItem $tmp -Directory | Select-Object -First 1
+            if ($inner) { New-Item -ItemType Directory -Force -Path $root | Out-Null; Copy-Item -Path (Join-Path $inner.FullName '*') -Destination $root -Recurse -Force }
+        } catch {
+            Write-Host "  [!] Could not fetch mios-bootstrap: $($_.Exception.Message)" -ForegroundColor Yellow
+        } finally {
+            Remove-Item $zip,$tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return $root
+}
+
 # Consolidated Action Router
 if ($Action -ne 'Default') {
     if ($Action -eq 'BuildXboxISO') {
         Write-Host "[*] Action: BuildXboxISO. Invoking Build-MiOSXboxISO..." -ForegroundColor Cyan
-        $buildScript = Join-Path $RepoDir "cat\autounattend\Build-MiOSXboxISO.ps1"
+        $repoRoot = Ensure-MiosBootstrapRepo
+        $buildScript = Join-Path $repoRoot "cat\autounattend\Build-MiOSXboxISO.ps1"
         if (-not (Test-Path $buildScript)) {
-            $buildScript = "C:\mios-bootstrap\cat\autounattend\Build-MiOSXboxISO.ps1"
-        }
-        if (-not (Test-Path $buildScript)) {
-            Write-Error "Build-MiOSXboxISO.ps1 not found in $RepoDir or C:\mios-bootstrap!"
+            Write-Error "Build-MiOSXboxISO.ps1 not found after fetch -- check network / GitHub access."
             exit 1
         }
         # Run using a dynamic free-space work directory
@@ -131,12 +158,9 @@ if ($Action -ne 'Default') {
     if ($Action -eq 'FlashUSB') {
         Write-Host "[*] Action: FlashUSB. Staging and launching interactive MiOS-Cat installer..." -ForegroundColor Cyan
         # 1. Locate source folder
-        $srcDir = Join-Path $RepoDir "cat"
+        $srcDir = Join-Path (Ensure-MiosBootstrapRepo) "cat"
         if (-not (Test-Path $srcDir)) {
-            $srcDir = "C:\mios-bootstrap\cat"
-        }
-        if (-not (Test-Path $srcDir)) {
-            Write-Error "MiOS-Cat (cat) folder not found in source checkouts!"
+            Write-Error "MiOS-Cat (cat) folder not found after fetch -- check network / GitHub access."
             exit 1
         }
         # 2. Resolve staging directory
