@@ -63,7 +63,7 @@
 #>
 param(
     [Parameter(Mandatory=$false)]
-    [ValidateSet('Default', 'BuildXboxISO', 'FlashUSB', 'OfflineSync')]
+    [ValidateSet('Default', 'BuildXboxISO', 'FlashUSB', 'OfflineSync', 'Install', 'Configure')]
     [string]$Action = 'Default',
     [string]$RepoUrl   = "https://github.com/mios-dev/mios-bootstrap.git",
     [string]$Branch    = "main",
@@ -202,6 +202,35 @@ if ($Action -ne 'Default') {
         robocopy "C:\MiOS" "$($drive):\ventoy\repo\MiOS" /E /XD .git .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 | Out-Null
         Write-Host "[+] Sync completed successfully." -ForegroundColor Green
         exit 0
+    }
+
+    if ($Action -eq 'Install') {
+        # The web door hands into the ONE guided surface: fetch the repo, then run
+        # installation\mios-install.ps1 (the SSOT-themed menu that explains every
+        # target and dispatches to the right local entrypoint). This replaces
+        # "re-implement each launch here" with "hand into the single installer".
+        Write-Host "[*] Action: Install. Fetching the repo and opening the guided MiOS installer..." -ForegroundColor Cyan
+        $installer = Join-Path (Ensure-MiosBootstrapRepo) "installation\mios-install.ps1"
+        if (-not (Test-Path $installer)) {
+            Write-Error "installation\mios-install.ps1 not found after fetch -- check network / GitHub access."
+            exit 1
+        }
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+        exit $LASTEXITCODE
+    }
+
+    if ($Action -eq 'Configure') {
+        # Same door, straight to the one SSOT editor: mios-install's `configure`
+        # target opens the MiOS Portal / configurator (:8640/configure, else the
+        # MiOS-DEV launcher, else the offline HTML).
+        Write-Host "[*] Action: Configure. Fetching the repo and opening the MiOS configurator (Portal)..." -ForegroundColor Cyan
+        $installer = Join-Path (Ensure-MiosBootstrapRepo) "installation\mios-install.ps1"
+        if (-not (Test-Path $installer)) {
+            Write-Error "installation\mios-install.ps1 not found after fetch -- check network / GitHub access."
+            exit 1
+        }
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer configure
+        exit $LASTEXITCODE
     }
 }
 

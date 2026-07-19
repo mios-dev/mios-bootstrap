@@ -53,6 +53,19 @@ irm .../mios | iex   (Windows)   /   curl .../mios | bash   (Linux)
        configure  → Portal/configurator @ :8640/configure   (the one SSOT editor)
 ```
 
+## Reaching the guided surface from the web door
+
+```powershell
+# Guided menu (fetch repo, then the SSOT-themed installer that explains every target):
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1))) -Action Install
+# Straight to the one SSOT editor (MiOS Portal / configurator):
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1))) -Action Configure
+```
+
+Both fetch the repo (git, else GitHub zip) exactly once, then hand into
+`installation\mios-install.ps1` — no launch logic re-implemented in the web door.
+`Default` (the bare `irm | iex`) still runs the full Pass-1/Pass-2 bootstrap unchanged.
+
 ## Steps (incremental; each keeps things working)
 
 1. **[DONE] `configure` target in `mios-install`** — the guided installer now opens the Portal /
