@@ -6,16 +6,18 @@
 # entrypoints get printed as ready-to-run guidance, never executed here),
 # builds that entrypoint's real argv/env, and execs it. No business logic is
 # duplicated from any wrapped script.
-# AI-related: build-mios.sh, cat/MiOS-Cat.sh, cat/MiOS-Cat.bat,
+# The themed logger, layered SSOT resolver, find_mios_bin, self-elevate, and repo-fetch are the ONE
+# shared contract in installation/mios-common.sh (sourced below); this file adds only the dispatcher.
+# AI-related: mios-common.sh, build-mios.sh, cat/MiOS-Cat.sh, cat/MiOS-Cat.bat,
 # cat/autounattend/Build-MiOSXboxISO.ps1, cat/autounattend/Deploy-MiOSXbox.ps1,
 # cat/autounattend/Invoke-MiOSProvision.ps1, cat/autounattend/Build-MiOSSeed.ps1,
 # build-mios.ps1, mios-build, mios-update, mios.toml, installation/mios-install.ps1,
 # installation/mios-install.bat, installation/README.md
-# AI-functions: usage, resolve_mios_toml, find_mios_bin, resolve_flash_or_live,
-# resolve_live, resolve_flash, resolve_build_mios_sh, resolve_fedora,
-# resolve_bootc, resolve_mios_update_like, resolve_update, resolve_build,
-# resolve_xbox, resolve_oci, resolve_seed, log_info, log_ok, log_warn,
-# log_err, log_phase, die
+# AI-functions: usage, resolve_flash_or_live, resolve_live, resolve_flash,
+# resolve_build_mios_sh, resolve_fedora, resolve_bootc, resolve_mios_update_like,
+# resolve_update, resolve_build, resolve_xbox, resolve_oci, resolve_seed
+#   (shared from mios-common.sh: mios_ssot_value, mios_ssot_path, find_mios_bin,
+#    mios_self_elevate, mios_ensure_repo, log_info, log_ok, log_warn, log_err, log_phase, die)
 #
 # mios-install.sh -- unified MiOS provisioning dispatcher (Linux)
 #
@@ -57,48 +59,16 @@ CAT_DIR="${ROOT}/cat"
 MIOS_CAT_SH="${CAT_DIR}/MiOS-Cat.sh"
 
 # ============================================================================
-# Logging -- same helper names/style as build-mios.sh (log_info/log_ok/
-# log_warn/log_err/log_phase) for a consistent operator experience across
-# the two scripts one is likely to run back to back.
+# Shared library -- ONE SSOT-[colors] themed logger (log_info/ok/warn/err/phase/
+# die), ONE layered SSOT resolver (mios_ssot_value / mios_ssot_path, the same
+# user>host>vendor order as usr/lib/mios/mios_toml.py), find_mios_bin, ONE
+# self-elevate (mios_self_elevate), ONE repo-fetch (mios_ensure_repo).
+# Set _MIOS_REPO_ROOT BEFORE sourcing so the resolver includes this checkout's
+# mios.toml as the repo-local layer (and the theme reads its [colors]).
 # ============================================================================
-_bold=$(tput bold 2>/dev/null || true)
-_red=$(tput setaf 1 2>/dev/null || true)
-_green=$(tput setaf 2 2>/dev/null || true)
-_yellow=$(tput setaf 3 2>/dev/null || true)
-_cyan=$(tput setaf 6 2>/dev/null || true)
-_reset=$(tput sgr0 2>/dev/null || true)
-log_info()  { printf '%s[INFO]%s %s\n' "${_cyan}" "${_reset}" "$*"; }
-log_ok()    { printf '%s[ OK ]%s %s\n' "${_green}" "${_reset}" "$*"; }
-log_warn()  { printf '%s[WARN]%s %s\n' "${_yellow}" "${_reset}" "$*" >&2; }
-log_err()   { printf '%s[ERR ]%s %s\n' "${_red}" "${_reset}" "$*" >&2; }
-log_phase() { printf '\n%s%s== %s ==%s\n\n' "${_bold}" "${_cyan}" "$*" "${_reset}"; }
-die() { log_err "$*"; exit 1; }
-
-# ============================================================================
-# mios.toml resolution -- same dual-fallback every existing entrypoint
-# already uses (repo-root copy, else the host-installed SSOT copy). Used
-# only to fill the <ssot> placeholder in printed Windows-target guidance;
-# build-mios.sh/mios-update/mios-build each resolve it themselves.
-# ============================================================================
-resolve_mios_toml() {
-    local c
-    for c in "${ROOT}/mios.toml" "/etc/mios/mios.toml" "/usr/share/mios/mios.toml"; do
-        [[ -f "$c" ]] && { printf '%s\n' "$c"; return 0; }
-    done
-    printf '%s\n' "${ROOT}/mios.toml"   # best-effort guess even if missing
-}
-
-# Find an already-installed-host maintenance binary (mios-build / mios-update).
-# These ship as part of the MiOS OS image (/usr/bin/mios-*), not this
-# bootstrap checkout -- absent here on a fresh clone is expected.
-find_mios_bin() {
-    local name="$1" p
-    if command -v "$name" >/dev/null 2>&1; then command -v "$name"; return 0; fi
-    for p in "/usr/bin/${name}" "/usr/libexec/mios/${name}"; do
-        [[ -x "$p" ]] && { printf '%s\n' "$p"; return 0; }
-    done
-    return 1
-}
+_MIOS_REPO_ROOT="$ROOT"
+# shellcheck source=installation/mios-common.sh
+. "${SCRIPT_DIR}/mios-common.sh"
 
 # ============================================================================
 # Usage
@@ -338,7 +308,7 @@ resolve_build() {
 # the exact command to paste on a Windows host rather than faking a run.
 resolve_xbox() {
     TYPE="${TYPE:-iso}"
-    local toml; toml="$(resolve_mios_toml)"
+    local toml; toml="$(mios_ssot_path)"
     local script args_str extra=""
     (( ${#PASSTHROUGH[@]} )) && extra=" ${PASSTHROUGH[*]}"
     case "$TYPE" in
@@ -394,7 +364,7 @@ IMPORTANT (source-verified against the CURRENT build-mios.ps1): its -BootstrapOn
 resolve_seed() {
     TYPE="${TYPE:-dev}"
     [[ "$TYPE" == "dev" ]] || die "target 'seed' supports --type dev (got '${TYPE}')"
-    local toml; toml="$(resolve_mios_toml)"
+    local toml; toml="$(mios_ssot_path)"
     local extra=""
     (( ${#PASSTHROUGH[@]} )) && extra=" ${PASSTHROUGH[*]}"
     WINDOWS_GUIDANCE="target 'seed' (--type dev) is a Windows-only entrypoint (exports an existing MiOS-DEV WSL2 distro + OCI image as an offline seed blob) -- it cannot run on Linux. On a Windows host, run:
@@ -462,9 +432,9 @@ if (( FORBIDS_ROOT )) && [[ "$(id -u)" -eq 0 ]]; then
     die "target '${TARGET}' must NOT run as root/sudo -- the underlying script (MiOS-Cat.sh) self-invokes sudo internally for the individual steps that need it, and exits immediately if launched already-elevated. Re-run as your normal user."
 fi
 
-if (( REQUIRES_ROOT )) && [[ "$(id -u)" -ne 0 ]]; then
-    log_info "target '${TARGET}' needs root -- re-executing via 'sudo -E'..."
-    exec sudo -E "$0" "${ORIG_ARGS[@]}"
+if (( REQUIRES_ROOT )); then
+    # mios_self_elevate (mios-common) no-ops if already root, else exec's sudo -E.
+    mios_self_elevate "$0" "${ORIG_ARGS[@]}"
 fi
 
 # ============================================================================

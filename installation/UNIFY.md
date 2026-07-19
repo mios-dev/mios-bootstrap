@@ -58,9 +58,14 @@ irm .../mios | iex   (Windows)   /   curl .../mios | bash   (Linux)
 1. **[DONE] `configure` target in `mios-install`** — the guided installer now opens the Portal /
    configurator (`:8640/configure`, else MiOS-DEV launcher, else offline HTML). One surface for
    install **and** config.
-2. **Shared `installation/mios-common.ps1` + `.sh`** — ONE `Test/Invoke-Elevate`, ONE layered
-   SSOT resolver (port `mios_toml.py`'s `vendor<host<user`), ONE `Ensure-Repo`, ONE prereq resolver.
-   Refactor `mios-install` to source it; migrate the other entrypoints one at a time.
+2. **[DONE] Shared `installation/mios-common.ps1` + `.sh`** — the ONE contract: layered SSOT
+   resolver (`Get-MiosSsotValue` / `mios_ssot_value`, `user > host > vendor`, same order as
+   `mios_toml.py`), SSOT-`[colors]` themed console/logger, `Test/Invoke-Elevate` +
+   `mios_self_elevate`, and `Ensure-MiosRepo` / `mios_ensure_repo`. Both `mios-install.ps1` and
+   `mios-install.sh` now source it and keep only their guided/dispatch surface (the two files each
+   shed ~40 lines of duplicated theme/elevation/resolver code). Verified: parse + all-target
+   dry-runs green in pwsh7 + WPS5.1 + Git-Bash. **Next:** migrate `Get-MiOS.ps1`, `build-mios.{ps1,sh}`,
+   and `MiOS-Cat.bat` to source the same contract (one at a time, each re-tested).
 3. **Break the loops in `MiOS-Cat.bat`** — drop the self-update `git pull` + the `irm Get-MiOS|iex`
    re-entry (line ~476); it calls the local `build-mios` directly. It becomes the flash executor.
 4. **Collapse redirectors** — `bootstrap.ps1`/`install.ps1`/`bootstrap.sh`/`install.sh` become thin
