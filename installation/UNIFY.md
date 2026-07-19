@@ -102,15 +102,18 @@ Both fetch the repo (git, else GitHub zip) exactly once, then hand into
    *separate* build-workspace concern from the installer checkout — retiring/aligning it is a
    `build-mios.ps1` change, tracked separately so it doesn't destabilize the working build path.
 
-6. **SSOT consolidation (the ~7× drift) — belongs in `C:\MiOS`, do it as a dedicated change.**
-   Current state (audited 2026-07-19): NO active gated drift — all three copies are
-   `mios_version = 0.3.0` and `[ports]` values match (gate 22 green); gate 48's key-subset holds.
-   The residual drift is hand-maintained *comments* going stale (e.g. bootstrap's `pgvector` line
-   still named the removed `surrealdb` — realigned to canonical in this pass). The permanent fix is a
-   `mios-sync-toml` projector (sibling of `mios-sync-theme`): keep `usr/share/mios/mios.toml` as the
-   one canonical VENDOR SSOT, and **generate** `C:\MiOS\mios.toml` (curated key-subset) and
-   `C:\mios-bootstrap\mios.toml` (the `[cat]`/`[autounattend]`/`[ports]` projection) from it at build,
-   gated by the existing drift-checks. Because that touches `C:\MiOS`'s build + CI drift-gates (a tree
-   AGY also writes), it must land as its own reviewed change with a green drift-gate run — NOT folded
-   into this installer-unification pass. Portal keeps writing only the user layer; nothing stays
-   hand-maintained across three copies.
+6. **[DONE] SSOT consolidation via `mios-sync-toml`.** Landed the projector (sibling of
+   `mios-sync-theme`) at `C:\MiOS\usr\libexec\mios\mios-sync-toml`: it regenerates the drift-prone
+   PROJECTED sections — `[ports]` and `[colors]` — **verbatim** from the canonical vendor SSOT
+   (`usr/share/mios/mios.toml`) into both derived copies (`C:\MiOS\mios.toml` and
+   `C:\mios-bootstrap\mios.toml`), never touching owned content (`[autounattend]`/`[smoke_tests]`/
+   `[mios_app]`, the gate-48 `ignored_prefixes`, and the copies' own `[ports.lan_firewall]`). Supports
+   `--check`. Enforcement: new **drift-gate 62** `check_toml_projection` in
+   `automation/38-drift-checks.sh` (+ a `test_toml_projection` negative test), complementing gate 22
+   (bootstrap `[ports]` value parity) and gate 48 (root key-subset) with a whole-block projection
+   check. Validated with real python/tomllib: tool idempotent; gates 22/48/62 green; negative test
+   passes; no key drops. Both the bootstrap `[colors]` projection and the `C:\MiOS` tool+gate
+   (`8682bd80`) are pushed.
+   *Extending coverage:* add a section name to `PROJECTED` in the tool only after confirming
+   canonical ⊇ derived for it (so a projection can never drop a key a consumer reads). Portal keeps
+   writing only the user layer; nothing is hand-maintained across three copies any more.
