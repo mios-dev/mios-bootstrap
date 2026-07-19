@@ -1,25 +1,21 @@
-# AI-hint: Unified provisioning dispatcher (Windows) -- the canonical implementation of
-# `mios-install`, a THIN launcher that validates <target>/--type/--stage, resolves the ONE
-# existing entrypoint + argv/env that satisfies the request, and calls it (never reimplements
-# it), wrapped in beautiful MiOS-branded, SSOT-derived (runtime [colors]) monitoring of the
-# pipeline build/target. Wraps MiOS-Cat.bat, build-mios.ps1, and cat\autounattend\*.ps1.
-# Linux-only verbs (build-mios.sh, mios-update) are ssh'd to $env:MIOS_REMOTE_HOST or printed
-# ready-to-paste. Sibling to build-mios.ps1/.sh, Get-MiOS.ps1 and cat\; nothing is moved.
-# AI-related: mios-install.sh, mios-install.bat, README.md, cat\MiOS-Cat.bat,
-# build-mios.ps1, cat\autounattend\Build-MiOSXboxISO.ps1, cat\autounattend\Deploy-MiOSXbox.ps1,
-# cat\autounattend\Invoke-MiOSProvision.ps1, cat\autounattend\Build-MiOSSeed.ps1,
-# cat\autounattend\Monitor-MiosCat.ps1, mios.toml
-# AI-functions: Get-MiosTomlValueSimple, Resolve-MiosTomlPath, Get-MiosPalette, Write-MiosBanner,
-#   Write-MiosPhase, Write-MiosLine, Write-MiosKV, Write-MiosSummary, Show-Usage, Test-MiosAdmin,
+# AI-hint: Unified MiOS provisioning installer (Windows) -- the canonical `mios-install`. It is a
+# GUIDED, SELF-EXPLAINING, MiOS-branded front-end (SSOT [colors] rendered at runtime, ANSI/VT force-
+# enabled so it looks right even on a bare Windows PowerShell 5.1 host) over the existing entrypoints:
+# it explains every choice, warns before anything destructive, confirms, then resolves the ONE real
+# entrypoint + argv/env that satisfies the request and runs it with live themed monitoring. It never
+# reimplements those entrypoints (MiOS-Cat.bat, build-mios.ps1, cat\autounattend\*.ps1) or moves them.
+# Runs on a factory Windows install: missing bits are explained, and the wrapped entrypoints self-
+# provision (WSL2/podman for image builds; the repo self-fetches for the web one-liner in Get-MiOS.ps1).
+# AI-related: mios-install.sh, mios-install.bat, README.md, Monitor-MiosFlash.ps1, cat\MiOS-Cat.bat,
+# build-mios.ps1, Get-MiOS.ps1, cat\autounattend\Build-MiOSXboxISO.ps1, Deploy-MiOSXbox.ps1,
+# Invoke-MiOSProvision.ps1, Build-MiOSSeed.ps1, mios.toml
+# AI-functions: Resolve-MiosTomlPath, Get-MiosTomlValueSimple, Get-MiosPalette, Enable-MiosVt, C, B,
+#   Show-MiosLogo, Rule, Write-MiosLine, Write-MiosKV, Get-MiosCatalog, Show-MiosWelcome,
+#   Invoke-MiosGuidedMenu, Show-MiosTargetBrief, Confirm-MiosProceed, Test-MiosAdmin,
 #   Invoke-MiosSelfElevate, Resolve-Target, Invoke-MiosMonitored
 #
-# mios-install.ps1 -- unified MiOS provisioning dispatcher (Windows PowerShell 5.1+/pwsh)
-#
-#   mios-install <target> [--type <name>] [--stage <name>] [--dry-run] [--unattended] [-- <native args>]
-#
-# Targets: live | xbox | fedora | bootc | oci | seed | flash | build | update
-# Stages:  prereqs | fetch | service | iso | flash
-# See installation\README.md for the full grammar + the target -> entrypoint mapping table.
+#   mios-install [<target>] [--type <name>] [--stage <name>] [--dry-run] [--unattended] [-- <native args>]
+#   No target (or `help`/`menu`) -> the guided menu, which explains every option.
 
 $ErrorActionPreference = 'Stop'
 $script:Root    = Split-Path -Parent $PSScriptRoot           # repo root (installation\ is one level down)
@@ -28,31 +24,24 @@ $script:BuildPs = Join-Path $script:Root 'build-mios.ps1'
 $script:AutoDir = Join-Path $script:Root 'cat\autounattend'
 
 # ============================================================================
-#  SSOT theme -- read [colors] from mios.toml at RUNTIME and build an ANSI palette
+#  SSOT theme -- read [colors] from mios.toml at RUNTIME; force ANSI/VT so the
+#  branding renders on a bare Windows PowerShell 5.1 host (VT is off there by default)
 # ============================================================================
 function Resolve-MiosTomlPath {
-    $candidates = @(
-        (Join-Path $script:Root 'mios.toml'),
-        'C:\MiOS\usr\share\mios\mios.toml',
-        'C:\MiOS\mios.toml'
-    )
-    foreach ($c in $candidates) { if (Test-Path -LiteralPath $c) { return $c } }
+    foreach ($c in @((Join-Path $script:Root 'mios.toml'), 'C:\MiOS\usr\share\mios\mios.toml', 'C:\MiOS\mios.toml')) {
+        if (Test-Path -LiteralPath $c) { return $c }
+    }
     return $null
 }
-
 function Get-MiosTomlValueSimple {
     param([string]$TomlText, [string]$Section, [string]$Key)
     if (-not $TomlText) { return $null }
-    # naive but sufficient: find the [Section] header, read until the next [header], match Key = "value"
-    $pattern = "(?ms)^\s*\[" + [regex]::Escape($Section) + "\]\s*(.*?)(?=^\s*\[|\z)"
-    $m = [regex]::Match($TomlText, $pattern)
+    $m = [regex]::Match($TomlText, "(?ms)^\s*\[" + [regex]::Escape($Section) + "\]\s*(.*?)(?=^\s*\[|\z)")
     if (-not $m.Success) { return $null }
-    $body = $m.Groups[1].Value
-    $km = [regex]::Match($body, "(?m)^\s*" + [regex]::Escape($Key) + "\s*=\s*`"([^`"]*)`"")
+    $km = [regex]::Match($m.Groups[1].Value, "(?m)^\s*" + [regex]::Escape($Key) + "\s*=\s*`"([^`"]*)`"")
     if ($km.Success) { return $km.Groups[1].Value }
     return $null
 }
-
 function ConvertTo-Rgb {
     param([string]$Hex, [int[]]$Fallback)
     if ($Hex -and $Hex -match '^#?([0-9A-Fa-f]{6})$') {
@@ -61,349 +50,342 @@ function ConvertTo-Rgb {
     }
     return $Fallback
 }
-
+function Enable-MiosVt {
+    $script:NoColor = $false
+    if ($env:MIOS_NO_COLOR -or $env:NO_COLOR) { $script:NoColor = $true; return }
+    try {
+        $sig = '[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);' +
+               '[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out int m);' +
+               '[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, int m);'
+        $k = Add-Type -MemberDefinition $sig -Name 'MiosVt' -Namespace 'MiosInstall' -PassThru -ErrorAction Stop
+        $h = $k::GetStdHandle(-11); $m = 0
+        if ($k::GetConsoleMode($h, [ref]$m)) { [void]$k::SetConsoleMode($h, ($m -bor 0x0004)) }
+    } catch {}
+    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+}
 function Get-MiosPalette {
-    # Returns a hashtable of ANSI-ready color escape strings, SSOT-derived, degrade-open.
     $toml = Resolve-MiosTomlPath
     $text = if ($toml) { Get-Content -Raw -LiteralPath $toml } else { $null }
     $script:TomlPath = $toml
-    # try to enable VT / detect color support
-    $script:UseColor = $true
-    try { if (-not $Host.UI.SupportsVirtualTerminal -and -not $env:WT_SESSION) { $script:UseColor = $false } } catch { }
-    if ($env:MIOS_NO_COLOR -or $env:NO_COLOR) { $script:UseColor = $false }
-    $defs = @{
-        bg='#282262'; fg='#E7DFD3'; accent='#1A407F'; cursor='#F35C15'; success='#3E7765';
-        warning='#F35C15'; error='#DC271B'; info='#1A407F'; muted='#948E8E'; subtle='#B7C9D7';
-        silver='#E0E0E0'
-    }
+    $defs = @{ bg='#282262'; fg='#E7DFD3'; accent='#1A407F'; cursor='#F35C15'; success='#3E7765';
+               warning='#F35C15'; error='#DC271B'; info='#1A407F'; muted='#948E8E'; subtle='#B7C9D7'; silver='#E0E0E0' }
     $pal = @{}
-    foreach ($k in $defs.Keys) {
-        $val = Get-MiosTomlValueSimple -TomlText $text -Section 'colors' -Key $k
-        if (-not $val) { $val = $defs[$k] }
-        $rgb = ConvertTo-Rgb -Hex $val -Fallback (ConvertTo-Rgb -Hex $defs[$k] -Fallback @(200,200,200))
-        $pal[$k] = $rgb
+    foreach ($key in $defs.Keys) {
+        $val = Get-MiosTomlValueSimple -TomlText $text -Section 'colors' -Key $key
+        if (-not $val) { $val = $defs[$key] }
+        $pal[$key] = ConvertTo-Rgb -Hex $val -Fallback (ConvertTo-Rgb -Hex $defs[$key] -Fallback @(200,200,200))
     }
     $script:Pal = $pal
-    return $pal
 }
-
 $script:ESC = [char]27
-function Fg   { param([int[]]$rgb) if (-not $script:UseColor) { return '' }; "$($script:ESC)[38;2;$($rgb[0]);$($rgb[1]);$($rgb[2])m" }
-function Bg   { param([int[]]$rgb) if (-not $script:UseColor) { return '' }; "$($script:ESC)[48;2;$($rgb[0]);$($rgb[1]);$($rgb[2])m" }
-function Rst  { if (-not $script:UseColor) { return '' }; "$($script:ESC)[0m" }
-function Bold { if (-not $script:UseColor) { return '' }; "$($script:ESC)[1m" }
+# C: colored text (SSOT palette); B: bold. Text is a param, so no bare-var/backtick pitfalls.
+function C { param([int[]]$rgb, [string]$t) if ($script:NoColor) { return $t }; "$script:ESC[38;2;$($rgb[0]);$($rgb[1]);$($rgb[2])m$t$script:ESC[0m" }
+function B { param([string]$t) if ($script:NoColor) { return $t }; "$script:ESC[1m$t$script:ESC[0m" }
+function Rule { param([int]$w=64) C $script:Pal.accent ([string]([char]0x2550) * $w) }
 
-# ============================================================================
-#  Themed output primitives
-# ============================================================================
-function Write-MiosBanner {
-    param([string]$Target, [string]$Type, [string]$Stage)
-    $ac = Fg $script:Pal.accent; $fg = Fg $script:Pal.fg; $cu = Fg $script:Pal.cursor
-    $su = Fg $script:Pal.subtle; $mu = Fg $script:Pal.muted; $r = Rst; $b = Bold
-    $line = ('=' * 66)
-    $tt = if ($Type) { $Type } else { '(default)' }
-    $ss = if ($Stage) { $Stage } else { 'full pipeline' }
+function Show-MiosLogo {
+    param([string]$Subtitle = 'the MiOS installer')
+    $ac = $script:Pal.accent; $cu = $script:Pal.cursor; $mu = $script:Pal.muted; $su = $script:Pal.subtle
     Write-Host ""
-    Write-Host "${ac}${line}${r}"
-    Write-Host "${ac}${b}   M i O S  ${r}${cu}${b}/installation${r}  ${mu}-- unified provisioning dispatcher${r}"
-    Write-Host "${ac}${line}${r}"
-    Write-Host "  ${su}target${r}  ${fg}${b}${Target}${r}"
-    Write-Host "  ${su}type${r}    ${fg}${tt}${r}"
-    Write-Host "  ${su}stage${r}   ${fg}${ss}${r}"
-    if ($script:TomlPath) { Write-Host "  ${su}ssot${r}    ${mu}$($script:TomlPath)${r}" }
-    Write-Host "${ac}${line}${r}"
+    Write-Host ("  " + (C $ac (B '███╗   ███╗██╗ ██████╗ ███████╗')))
+    Write-Host ("  " + (C $ac (B '████╗ ████║██║██╔═══██╗██╔════╝')) + "   " + (C $cu (B 'C A T')))
+    Write-Host ("  " + (C $ac (B '██╔████╔██║██║██║   ██║███████╗')) + "   " + (C $mu $Subtitle))
+    Write-Host ("  " + (C $ac (B '██║╚██╔╝██║██║██║   ██║╚════██║')))
+    Write-Host ("  " + (C $ac (B '██║ ╚═╝ ██║██║╚██████╔╝███████║')) + "   " + (C $su 'SecureBoot · UEFI · GPT'))
+    Write-Host ("  " + (C $ac (B '╚═╝     ╚═╝╚═╝ ╚═════╝ ╚══════╝')))
+    Write-Host ("  " + (Rule))
 }
-
-function Write-MiosPhase {
-    param([string]$Text)
-    $ac = Fg $script:Pal.accent; $cu = Fg $script:Pal.cursor; $r = Rst; $b = Bold
-    Write-Host ""
-    Write-Host ("$ac$b== $r$cu$b$Text$r $ac$b==$r")
-}
-
 function Write-MiosLine {
     param([string]$Kind, [string]$Text)
-    $r = Rst
     switch ($Kind) {
-        'ok'   { Write-Host ("$(Fg $script:Pal.success)[ OK ]$r $Text") }
-        'info' { Write-Host ("$(Fg $script:Pal.info)[INFO]$r $Text") }
-        'warn' { Write-Host ("$(Fg $script:Pal.warning)[WARN]$r $Text") }
-        'err'  { Write-Host ("$(Fg $script:Pal.error)[ERR ]$r $Text") }
-        default{ Write-Host $Text }
+        'ok'   { Write-Host ("  " + (C $script:Pal.success '[ OK ]') + " $Text") }
+        'info' { Write-Host ("  " + (C $script:Pal.info    '[INFO]') + " $Text") }
+        'warn' { Write-Host ("  " + (C $script:Pal.warning '[WARN]') + " $Text") }
+        'err'  { Write-Host ("  " + (C $script:Pal.error   '[ERR ]') + " $Text") }
+        default{ Write-Host "  $Text" }
     }
 }
-
 function Write-MiosKV {
     param([string]$Key, [string]$Value)
-    $su = Fg $script:Pal.subtle; $fg = Fg $script:Pal.fg; $r = Rst
-    Write-Host ("  {0}{1,-10}{2} {3}{4}{5}" -f $su, $Key, $r, $fg, $Value, $r)
+    Write-Host ("    " + (C $script:Pal.subtle ("{0,-9}" -f $Key)) + " " + (C $script:Pal.fg $Value))
 }
 
-function Write-MiosSummary {
-    param([string]$Target, [int]$ExitCode, [timespan]$Elapsed, [bool]$DryRun)
-    $ac = Fg $script:Pal.accent; $r = Rst; $b = Bold
-    $line = ('-' * 66)
-    Write-Host ""
-    Write-Host "$ac$line$r"
-    $dur = "{0:mm}m{0:ss}s" -f $Elapsed
-    if ($DryRun) {
-        Write-Host ("$(Fg $script:Pal.info)$b  DRY-RUN$r  {0}nothing was executed$r" -f (Fg $script:Pal.muted))
-    } elseif ($ExitCode -eq 0) {
-        Write-Host ("$(Fg $script:Pal.success)$b  SUCCESS$r  target '$Target' completed in $dur $(Fg $script:Pal.muted)(exit 0)$r")
-    } else {
-        Write-Host ("$(Fg $script:Pal.error)$b  FAILED$r   target '$Target' exited $ExitCode after $dur")
+# ============================================================================
+#  Target catalog -- every option, in plain English (what / produces / cost / warning)
+# ============================================================================
+function Get-MiosCatalog {
+    [ordered]@{
+        'flash' = @{ title = 'Build a bootable MiOS-Cat USB'; platform='windows'; needsAdmin=$true; destructive=$true
+            what = 'Wipes a USB stick and forges a complete MiOS boot drive: the Ventoy bootloader (SecureBoot/UEFI/GPT), the Fedora + MiOS-Xbox installers, recovery tools (WinPE + SystemRescue), and an offline copy of the MiOS repos.'
+            produces = 'A USB you can boot on ANY PC to install or recover MiOS.'
+            cost = '20-40 min (downloads + image builds, faster if cached)'
+            needs = 'A blank USB stick, and this machine as Administrator.' }
+        'live' = @{ title = 'Boot-and-chat live USB (zero install)'; platform='windows'; needsAdmin=$true; destructive=$true
+            what = 'Same as flash, but tuned so the USB boots straight into an ephemeral MiOS that you can chat with -- no install, nothing written to the target PC.'
+            produces = 'A USB that boots MiOS + its local AI, then discards everything on reboot.'
+            cost = '20-40 min'; needs = 'A blank USB stick + Administrator.' }
+        'xbox' = @{ title = 'Build the MiOS-Xbox Windows image  (--type iso|vm|provision)'; platform='windows'; needsAdmin=$false; destructive=$false
+            what = 'Compiles the MiOS-Xbox edition: a debloated, gaming-tuned Windows 11 image. --type iso builds the installer ISO (default); vm boots it in Hyper-V; provision applies it to this box.'
+            produces = 'MiOS-Xbox.iso (or a running VM), universal base drivers, no vendor bloat.'
+            cost = 'iso: 20-40 min (UUP + DISM + oscdimg)'; needs = 'DISM (ships with Windows). vm needs Hyper-V (Administrator).' }
+        'oci' = @{ title = 'Build the MiOS OCI / bootc image'; platform='windows'; needsAdmin=$true; destructive=$false
+            what = 'Builds the immutable MiOS container image (localhost/mios:latest) inside the MiOS-DEV WSL2/podman builder, which is auto-provisioned if this is a fresh Windows.'
+            produces = 'The bootc OCI image (add --stage iso for the full qcow2/raw disk matrix).'
+            cost = '20-60 min first run (installs WSL2 + podman, pulls layers)'; needs = 'WSL2 + podman (auto-installed) + Administrator.' }
+        'build' = @{ title = 'Build the FULL artifact matrix'; platform='windows'; needsAdmin=$true; destructive=$false
+            what = 'Everything oci does, plus every export format: WSL2 .tar/.vhdx, Hyper-V .vhdx, QEMU qcow2, live ISO, and BIB disk images.'
+            produces = 'All MiOS deployment artifacts under the builder output dir.'
+            cost = '45-90 min'; needs = 'WSL2 + podman (auto-installed) + Administrator.' }
+        'seed' = @{ title = 'Provision the MiOS-DEV builder (seed)'; platform='windows'; needsAdmin=$false; destructive=$false
+            what = 'Stands up the MiOS-DEV WSL2 build distro on this machine so you can build images locally, without building anything yet.'
+            produces = 'A ready MiOS-DEV builder distro.'
+            cost = '10-30 min'; needs = 'WSL2 (auto-installed).' }
+        'fedora' = @{ title = 'Deploy MiOS on bare-metal Fedora  (Linux/target)'; platform='linux'; needsAdmin=$false; destructive=$false
+            what = 'Turns a minimal Fedora host into a full mutable MiOS server (build-mios.sh overlay). Runs ON the Linux target, not here.'
+            produces = 'A native MiOS server, at parity with the WSL MiOS-Dev but bare-metal.'
+            cost = 'runs on the target'; needs = 'A Fedora host; set $env:MIOS_REMOTE_HOST to ssh it, or copy the printed command.' }
+        'bootc' = @{ title = 'Immutable bootc install/upgrade  (--type switch|upgrade, Linux/target)'; platform='linux'; needsAdmin=$false; destructive=$false
+            what = 'switch: point an already-bootc Fedora host at the MiOS image. upgrade: pull the newest MiOS onto an installed host. Runs ON the Linux target.'
+            produces = 'An immutable MiOS bootc host.'
+            cost = 'runs on the target'; needs = 'A bootc/MiOS host; $env:MIOS_REMOTE_HOST or the printed command.' }
+        'update' = @{ title = 'Upgrade an installed MiOS host  (Linux/target)'; platform='linux'; needsAdmin=$false; destructive=$false
+            what = 'Runs mios-update on an already-installed MiOS host to pull + apply the latest image.'
+            produces = 'An up-to-date MiOS host.'
+            cost = 'runs on the target'; needs = 'An installed MiOS host; $env:MIOS_REMOTE_HOST or the printed command.' }
     }
-    Write-Host "$ac$line$r"
 }
 
 # ============================================================================
-#  Usage
+#  Guided, self-explaining menu
 # ============================================================================
-function Show-Usage {
-    $ac = Fg $script:Pal.accent; $fg = Fg $script:Pal.fg; $su = Fg $script:Pal.subtle
-    $cu = Fg $script:Pal.cursor; $mu = Fg $script:Pal.muted; $r = Rst; $b = Bold
+function Show-MiosWelcome {
+    $mu = $script:Pal.muted; $fg = $script:Pal.fg; $su = $script:Pal.subtle
+    Write-Host ("  " + (C $fg 'This is the MiOS installer. Pick what you want to build or deploy below -- each option'))
+    Write-Host ("  " + (C $fg 'explains what it does, what it produces, and how long it takes before anything happens.'))
+    Write-Host ("  " + (C $mu 'Nothing is erased or built until you choose it and confirm. Ctrl+C exits at any time.'))
+    Write-Host ("  " + (Rule))
+}
+function Invoke-MiosGuidedMenu {
+    param([hashtable]$Catalog)
+    Show-MiosLogo -Subtitle 'the MiOS installer'
+    Show-MiosWelcome
+    $keys = @($Catalog.Keys)
+    $cu = $script:Pal.cursor; $fg = $script:Pal.fg; $mu = $script:Pal.muted; $su = $script:Pal.subtle; $wa = $script:Pal.warning
+    for ($i = 0; $i -lt $keys.Count; $i++) {
+        $k = $keys[$i]; $e = $Catalog[$k]
+        $num = C $cu (B ("{0,2}" -f ($i+1)))
+        $name = C $fg (B ("{0,-7}" -f $k))
+        Write-Host ("  $num  $name " + (C $su $e.title))
+        Write-Host ("       " + (C $mu $e.what))
+        $tag = "      $((C $su 'time:')) $((C $fg $e.cost))"
+        if ($e.destructive) { $tag += "    " + (C $wa (B 'WARNING: erases the target USB')) }
+        Write-Host $tag
+        Write-Host ""
+    }
+    Write-Host ("  " + (Rule))
+    Write-Host ("   " + (C $cu (B ' 0')) + "  " + (C $fg (B 'quit')) + "    " + (C $mu 'exit without doing anything'))
     Write-Host ""
-    Write-Host "${ac}${b} MiOS ${r}${cu}${b} mios-install${r} ${mu}-- one dispatcher, every deployment target${r}"
+    while ($true) {
+        $sel = Read-Host ("  " + (C $cu (B 'Choose 1-' + $keys.Count + ' (or 0 to quit)')))
+        if ($sel -match '^\s*0\s*$' -or $sel -match '^(?i:q|quit|exit)$') { Write-MiosLine 'info' 'Nothing done. Bye.'; exit 0 }
+        if ($sel -match '^\s*(\d+)\s*$' -and [int]$matches[1] -ge 1 -and [int]$matches[1] -le $keys.Count) {
+            return $keys[[int]$matches[1] - 1]
+        }
+        Write-MiosLine 'warn' "Enter a number 1-$($keys.Count), or 0 to quit."
+    }
+}
+function Show-MiosTargetBrief {
+    param([string]$Target, [hashtable]$Entry, [string]$Type, [string]$Stage)
+    $ac=$script:Pal.accent; $fg=$script:Pal.fg; $su=$script:Pal.subtle; $cu=$script:Pal.cursor; $mu=$script:Pal.muted; $wa=$script:Pal.warning
     Write-Host ""
-    Write-Host "${su} USAGE${r}"
-    Write-Host "   mios-install ${fg}<target>${r} [--type <name>] [--stage <name>] [--dry-run] [--unattended] [-- <native args>]"
-    Write-Host ""
-    Write-Host "${su} TARGETS${r}"
-    Write-Host "   ${fg}live${r}     boot-and-chat live USB           ${mu}-> MiOS-Cat.bat stage${r}"
-    Write-Host "   ${fg}flash${r}    build the bootable MiOS-Cat USB  ${mu}-> MiOS-Cat.bat stage${r}"
-    Write-Host "   ${fg}xbox${r}     Windows/Xbox image  --type iso|vm|provision"
-    Write-Host "   ${fg}oci${r}      MiOS OCI/bootc image            ${mu}-> build-mios.ps1 -Unattended${r}"
-    Write-Host "   ${fg}seed${r}     MiOS-DEV builder seed           ${mu}-> Build-MiOSSeed.ps1${r}"
-    Write-Host "   ${fg}build${r}    full artifact matrix            ${mu}-> build-mios.ps1 -Unattended${r}"
-    Write-Host "   ${fg}fedora${r}   mutable Fedora bare-metal        ${mu}-> build-mios.sh (Linux/target)${r}"
-    Write-Host "   ${fg}bootc${r}    immutable bootc  --type switch|upgrade"
-    Write-Host "   ${fg}update${r}   upgrade an installed host       ${mu}-> mios-update (Linux/target)${r}"
-    Write-Host ""
-    Write-Host "${su} STAGES${r}  ${mu} prereqs | fetch | service | iso | flash  (best-effort unless the target isolates it)${r}"
-    Write-Host ""
-    Write-Host "${su} EXAMPLES${r}"
-    Write-Host "   mios-install flash --dry-run"
-    Write-Host "   mios-install xbox --type vm --stage flash"
-    Write-Host "   mios-install oci --stage iso --unattended"
-    Write-Host "   mios-install seed -- -BuilderDistro MiOS-DEV-2 -Force"
-    Write-Host ""
+    Write-Host ("  " + (C $cu (B ('>> ' + $Target))) + "  " + (C $fg (B $Entry.title)))
+    Write-Host ("  " + (Rule))
+    Write-Host ("  " + (C $su 'What it does : ') + (C $fg $Entry.what))
+    Write-Host ("  " + (C $su 'Produces     : ') + (C $fg $Entry.produces))
+    Write-Host ("  " + (C $su 'Takes        : ') + (C $fg $Entry.cost))
+    Write-Host ("  " + (C $su 'Needs        : ') + (C $fg $Entry.needs))
+    if ($Type)  { Write-Host ("  " + (C $su 'Type         : ') + (C $fg $Type)) }
+    if ($Stage) { Write-Host ("  " + (C $su 'Stage        : ') + (C $fg $Stage)) }
+    if ($script:TomlPath) { Write-Host ("  " + (C $su 'SSOT config  : ') + (C $mu $script:TomlPath)) }
+    Write-Host ("  " + (Rule))
+}
+function Confirm-MiosProceed {
+    param([hashtable]$Entry, [bool]$Unattended, [string]$Drive)
+    if ($Unattended) { return $true }
+    if (-not [Environment]::UserInteractive) { return $true }
+    $wa=$script:Pal.warning; $cu=$script:Pal.cursor; $fg=$script:Pal.fg
+    if ($Entry.destructive) {
+        Write-Host ("  " + (C $wa (B "!!  This ERASES the entire target USB disk ($Drive). All data on it is lost.")))
+        $ans = Read-Host ("  " + (C $cu (B "Type ERASE to wipe $Drive and build, or anything else to cancel")))
+        if ($ans -cne 'ERASE') { Write-MiosLine 'info' 'Cancelled -- nothing was touched.'; return $false }
+        return $true
+    }
+    $ans = Read-Host ("  " + (C $cu (B 'Proceed? [Y/n]')))
+    if ($ans -match '^(?i:n|no)$') { Write-MiosLine 'info' 'Cancelled.'; return $false }
+    return $true
 }
 
 # ============================================================================
 #  Elevation
 # ============================================================================
 function Test-MiosAdmin {
-    try {
-        $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-        $p  = New-Object System.Security.Principal.WindowsPrincipal($id)
-        return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
-    } catch { return $false }
+    try { (New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator) } catch { $false }
 }
-
 function Invoke-MiosSelfElevate {
     param([string[]]$OrigArgs)
     if (Test-MiosAdmin) { return }
-    Write-MiosLine 'info' 'target needs Administrator -- relaunching elevated (UAC)...'
+    Write-MiosLine 'info' 'This step needs Administrator -- relaunching with a UAC prompt (click Yes)...'
     $psExe = (Get-Process -Id $PID).Path
-    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-File', $PSCommandPath) + $OrigArgs
     try {
-        $p = Start-Process -FilePath $psExe -ArgumentList $argList -Verb RunAs -PassThru -Wait
+        $p = Start-Process -FilePath $psExe -ArgumentList (@('-NoProfile','-ExecutionPolicy','Bypass','-File', $PSCommandPath) + $OrigArgs) -Verb RunAs -PassThru -Wait
         exit $p.ExitCode
-    } catch {
-        Write-MiosLine 'err' "elevation was declined or failed: $($_.Exception.Message)"
-        exit 1
-    }
+    } catch { Write-MiosLine 'err' "Elevation was declined -- re-run from an Administrator terminal. ($($_.Exception.Message))"; exit 1 }
 }
 
 # ============================================================================
-#  Target -> entrypoint resolution (the mapping table README documents)
+#  Target -> entrypoint resolution + themed monitored execution (unchanged logic)
 # ============================================================================
 function Resolve-Target {
     param([string]$Target, [string]$Type, [string]$Stage, [bool]$Unattended, [string[]]$Passthrough)
     $ssot = if ($script:TomlPath) { $script:TomlPath } else { Join-Path $script:Root 'mios.toml' }
-    $r = @{ Kind='ps'; Exe=$null; Args=@(); Env=@{}; NeedsAdmin=$false; Notes=@(); PrintOnly=$false; Platform='windows' }
-
+    $r = @{ Kind='ps'; Exe=$null; Args=@(); Env=@{}; NeedsAdmin=$false; Notes=@(); Platform='windows'; Drive='D:' }
     switch ($Target) {
         { $_ -in 'live','flash' } {
             if ($Type -and $Type -notin 'usb','live') { throw "target '$Target' only supports --type usb (got '$Type')" }
             $r.Kind='bat'; $r.Exe=$script:CatBat; $r.Args=@('stage') + $Passthrough; $r.NeedsAdmin=$true
             if ($Unattended) { $r.Env['NONINTERACTIVE']='1' }
-            $r.Notes += 'MiOS-Cat.bat stage is one monolithic pipeline; --stage is documentation-only here.'
+            $ssotText = if (Test-Path $ssot) { Get-Content -Raw $ssot } else { '' }
+            $d = Get-MiosTomlValueSimple -TomlText $ssotText -Section 'cat' -Key 'drivepath'
+            if ($d) { $r.Drive = "$($d):" }
         }
         'xbox' {
             $t = if ($Type) { $Type } else { 'iso' }
             switch ($t) {
-                'iso' {
-                    $r.Exe=(Join-Path $script:AutoDir 'Build-MiOSXboxISO.ps1'); $r.Args=@('-TomlPath', $ssot) + $Passthrough
-                }
-                'vm' {
-                    $r.Exe=(Join-Path $script:AutoDir 'Deploy-MiOSXbox.ps1'); $r.NeedsAdmin=$true
-                    $a=@('-TomlPath', $ssot)
-                    if ($Stage -eq 'flash') { $a += '-SkipBuild'; $r.Notes += 'stage flash -> -SkipBuild (boot an existing ISO into a Hyper-V VM).' }
-                    $r.Args=$a + $Passthrough
-                }
-                'provision' {
-                    $r.Exe=(Join-Path $script:AutoDir 'Invoke-MiOSProvision.ps1'); $r.Args=@('-TomlPath', $ssot) + $Passthrough
-                }
-                default { throw "target 'xbox' supports --type iso|vm|provision (got '$t')" }
+                'iso'       { $r.Exe=(Join-Path $script:AutoDir 'Build-MiOSXboxISO.ps1'); $r.Args=@('-TomlPath', $ssot) + $Passthrough }
+                'vm'        { $r.Exe=(Join-Path $script:AutoDir 'Deploy-MiOSXbox.ps1'); $r.NeedsAdmin=$true; $a=@('-TomlPath', $ssot); if ($Stage -eq 'flash') { $a += '-SkipBuild' }; $r.Args=$a + $Passthrough }
+                'provision' { $r.Exe=(Join-Path $script:AutoDir 'Invoke-MiOSProvision.ps1'); $r.Args=@('-TomlPath', $ssot) + $Passthrough }
+                default     { throw "target 'xbox' supports --type iso|vm|provision (got '$t')" }
             }
         }
         'oci' {
             $r.Exe=$script:BuildPs; $r.NeedsAdmin=$true; $r.Args=@('-Unattended') + $Passthrough
-            if ($Stage -eq 'iso') { $r.Notes += 'stage iso -> full BIB qcow2/raw matrix (MIOS_SKIP_BIB omitted).' }
-            else { $r.Env['MIOS_SKIP_BIB']='1'; $r.Notes += 'OCI-only build (MIOS_SKIP_BIB=1); use --stage iso for the full disk-image matrix.' }
+            if ($Stage -eq 'iso') { $r.Notes += 'full BIB qcow2/raw matrix' } else { $r.Env['MIOS_SKIP_BIB']='1' }
         }
-        'build' {
-            $r.Exe=$script:BuildPs; $r.NeedsAdmin=$true; $r.Args=@('-Unattended') + $Passthrough
-            $r.Notes += 'full artifact matrix (OCI + BIB + WSL/Hyper-V/QEMU exports).'
-        }
-        'seed' {
-            $r.Exe=(Join-Path $script:AutoDir 'Build-MiOSSeed.ps1'); $r.Args=@() + $Passthrough
-        }
+        'build' { $r.Exe=$script:BuildPs; $r.NeedsAdmin=$true; $r.Args=@('-Unattended') + $Passthrough }
+        'seed'  { $r.Exe=(Join-Path $script:AutoDir 'Build-MiOSSeed.ps1'); $r.Args=@() + $Passthrough }
         'fedora' {
             if ($Type -and $Type -ne 'fhs') { throw "target 'fedora' only supports --type fhs (got '$Type')" }
-            $r.Platform='linux'
-            $env = 'INSTALL_MODE=fhs'
-            if ($Unattended) { $env += ' MIOS_FHS_TOTAL_ROOT_MERGE=1 MIOS_PROMPT_TIMEOUT=1' }
-            $r.RemoteCmd = "sudo -E env $env bash ./build-mios.sh"
-            $r.Notes += 'Linux-only: run ON the target host.'
+            $r.Platform='linux'; $e='INSTALL_MODE=fhs'; if ($Unattended) { $e += ' MIOS_FHS_TOTAL_ROOT_MERGE=1 MIOS_PROMPT_TIMEOUT=1' }
+            $r.RemoteCmd = "sudo -E env $e bash ./build-mios.sh"
         }
         'bootc' {
-            $t = if ($Type) { $Type } else { 'switch' }
-            $r.Platform='linux'
+            $t = if ($Type) { $Type } else { 'switch' }; $r.Platform='linux'
             switch ($t) {
-                'switch'  {
-                    $env='INSTALL_MODE=bootc'
-                    if ($Unattended) { $env += ' MIOS_PROMPT_TIMEOUT=1' }
-                    $r.RemoteCmd = "sudo -E env $env bash ./build-mios.sh"
-                    $r.Notes += "bootc switch only engages if the target is already bootc-booted; else it falls back to fhs."
-                }
-                'upgrade' {
-                    $flag = if ($Stage -eq 'prereqs') { '--check' } elseif ($Stage -eq 'flash') { '--apply' } else { '--apply' }
-                    $r.RemoteCmd = "sudo mios-update $flag"
-                }
-                default { throw "target 'bootc' supports --type switch|upgrade (got '$t')" }
+                'switch'  { $e='INSTALL_MODE=bootc'; if ($Unattended) { $e += ' MIOS_PROMPT_TIMEOUT=1' }; $r.RemoteCmd = "sudo -E env $e bash ./build-mios.sh" }
+                'upgrade' { $flag = if ($Stage -eq 'prereqs') { '--check' } else { '--apply' }; $r.RemoteCmd = "sudo mios-update $flag" }
+                default   { throw "target 'bootc' supports --type switch|upgrade (got '$t')" }
             }
         }
-        'update' {
-            $r.Platform='linux'
-            $flag = if ($Stage -eq 'prereqs') { '--check' } else { '--apply' }
-            $r.RemoteCmd = "sudo mios-update $flag"
-        }
-        default { throw "unknown target '$Target'. Run with --help for the list." }
+        'update' { $r.Platform='linux'; $flag = if ($Stage -eq 'prereqs') { '--check' } else { '--apply' }; $r.RemoteCmd = "sudo mios-update $flag" }
+        default  { throw "unknown target '$Target'." }
     }
     return $r
 }
-
-# ============================================================================
-#  Monitored execution
-# ============================================================================
 function Invoke-MiosMonitored {
     param([hashtable]$Plan, [bool]$DryRun, [string]$Target)
     $start = Get-Date
-
-    # env
     foreach ($k in $Plan.Env.Keys) { Set-Item -Path "env:$k" -Value $Plan.Env[$k] }
-
     if ($Plan.Platform -eq 'linux') {
-        Write-MiosPhase "Linux target -- not runnable from Windows directly"
+        Write-Host ""; Write-MiosLine 'info' "'$Target' runs on the Linux target machine, not on Windows."
         $cmd = $Plan.RemoteCmd
-        if ($env:MIOS_REMOTE_HOST) {
+        if ($env:MIOS_REMOTE_HOST -and -not $DryRun) {
             Write-MiosLine 'info' "ssh $($env:MIOS_REMOTE_HOST): $cmd"
-            if ($DryRun) { Write-MiosSummary -Target $Target -ExitCode 0 -Elapsed ((Get-Date)-$start) -DryRun $true; return 0 }
-            & ssh $env:MIOS_REMOTE_HOST $cmd
-            $rc = $LASTEXITCODE
-            Write-MiosSummary -Target $Target -ExitCode $rc -Elapsed ((Get-Date)-$start) -DryRun $false
+            & ssh $env:MIOS_REMOTE_HOST $cmd; $rc = $LASTEXITCODE
             return $rc
-        } else {
-            Write-MiosLine 'warn' 'no $env:MIOS_REMOTE_HOST set -- run this ON the target host:'
-            $cu = Fg $script:Pal.cursor; $r = Rst
-            Write-Host ""
-            Write-Host ("    $cu$cmd$r")
-            Write-Host ""
-            Write-MiosSummary -Target $Target -ExitCode 0 -Elapsed ((Get-Date)-$start) -DryRun $true
-            return 0
         }
+        Write-MiosLine 'info' 'Run this ON the target host (or set $env:MIOS_REMOTE_HOST to ssh it for you):'
+        Write-Host ""; Write-Host ("    " + (C $script:Pal.cursor $cmd)); Write-Host ""
+        return 0
     }
-
-    # Windows exe/bat/ps1
     $exe = $Plan.Exe
-    if (-not (Test-Path -LiteralPath $exe)) { Write-MiosLine 'err' "entrypoint not found: $exe"; return 1 }
-    Write-MiosPhase "Resolved pipeline"
-    Write-MiosKV 'call' (Split-Path -Leaf $exe)
-    if ($Plan.Args.Count) { Write-MiosKV 'args' ($Plan.Args -join ' ') }
-    foreach ($k in $Plan.Env.Keys) { Write-MiosKV "env" ("{0}={1}" -f $k, $Plan.Env[$k]) }
-    foreach ($n in $Plan.Notes) { Write-MiosLine 'info' $n }
-
-    if ($DryRun) { Write-MiosSummary -Target $Target -ExitCode 0 -Elapsed ((Get-Date)-$start) -DryRun $true; return 0 }
-
-    Write-MiosPhase "Running -- live monitoring"
-    $gut = "$(Fg $script:Pal.accent)|$(Rst)"
-    $rc = 0
+    if (-not (Test-Path -LiteralPath $exe)) { Write-MiosLine 'err' "entrypoint not found (repo incomplete?): $exe"; return 1 }
+    $argStr = if ($Plan.Args.Count) { ' ' + ($Plan.Args -join ' ') } else { '' }
+    Write-Host ""; Write-MiosLine 'info' ("Launching " + (Split-Path -Leaf $exe) + $argStr)
+    foreach ($k in $Plan.Env.Keys) { Write-MiosKV 'env' ("{0}={1}" -f $k, $Plan.Env[$k]) }
+    if ($DryRun) { Write-Host ""; Write-MiosLine 'info' 'DRY-RUN -- nothing was executed.'; return 0 }
+    Write-Host ("  " + (Rule)); Write-Host ("  " + (C $script:Pal.subtle 'live output (elapsed | line):')); Write-Host ""
+    $gut = C $script:Pal.accent ([string][char]0x2502)
     if ($Plan.Kind -eq 'bat') {
-        & cmd.exe /c "`"$exe`"" @($Plan.Args) 2>&1 | ForEach-Object {
-            $el = "{0:mm}:{0:ss}" -f ((Get-Date)-$start)
-            Write-Host "$gut $(Fg $script:Pal.muted)$el$(Rst) $_"
-        }
+        & cmd.exe /c "`"$exe`"" @($Plan.Args) 2>&1 | ForEach-Object { Write-Host ("   $gut " + (C $script:Pal.muted ("{0:mm}:{0:ss}" -f ((Get-Date)-$start))) + " $_") }
         $rc = $LASTEXITCODE
     } else {
-        # run the child .ps1 in its own host process for a reliable exit code + clean isolation
         $psHost = (Get-Process -Id $PID).Path
-        & $psHost -NoProfile -ExecutionPolicy Bypass -File $exe @($Plan.Args) 2>&1 | ForEach-Object {
-            $el = "{0:mm}:{0:ss}" -f ((Get-Date)-$start)
-            Write-Host "$gut $(Fg $script:Pal.muted)$el$(Rst) $_"
-        }
+        & $psHost -NoProfile -ExecutionPolicy Bypass -File $exe @($Plan.Args) 2>&1 | ForEach-Object { Write-Host ("   $gut " + (C $script:Pal.muted ("{0:mm}:{0:ss}" -f ((Get-Date)-$start))) + " $_") }
         $rc = $LASTEXITCODE
     }
     if ($null -eq $rc) { $rc = 0 }
-    Write-MiosSummary -Target $Target -ExitCode $rc -Elapsed ((Get-Date)-$start) -DryRun $false
+    Write-Host ("  " + (Rule))
+    $dur = "{0:mm}m{0:ss}s" -f ((Get-Date)-$start)
+    if ($rc -eq 0) { Write-Host ("  " + (C $script:Pal.success (B "  DONE  '$Target' completed in $dur."))) }
+    else           { Write-Host ("  " + (C $script:Pal.error   (B "  FAILED  '$Target' exited $rc after $dur -- see the output above."))) }
     return $rc
 }
 
 # ============================================================================
-#  Argument parsing
+#  Main
 # ============================================================================
-[void](Get-MiosPalette)
-
+Enable-MiosVt
+Get-MiosPalette
+$catalog = Get-MiosCatalog
 $argv = @($args)
-if ($argv.Count -eq 0) { Show-Usage; exit 0 }
-switch ($argv[0]) { { $_ -in '-h','--help','help','/?' } { Show-Usage; exit 0 } }
-if ($argv[0] -like '-*') { Get-MiosPalette | Out-Null; Write-MiosLine 'err' "missing required <target> as the first argument (got '$($argv[0])'). Run --help."; exit 2 }
 
-$Target = $argv[0].ToLower()
-$Type = $null; $Stage = $null; $DryRun = $false; $Unattended = $false
-$Passthrough = @()
-$i = 1
+# Parse flags out first; the first non-flag token is the target (optional).
+$Target = $null; $Type = $null; $Stage = $null; $DryRun = $false; $Unattended = $false; $Passthrough = @()
+$i = 0
 while ($i -lt $argv.Count) {
     $a = $argv[$i]
     switch -regex ($a) {
-        '^--type$'       { $Type  = $argv[$i+1]; $i += 2; continue }
-        '^--type=(.+)$'  { $Type  = $matches[1]; $i += 1; continue }
-        '^--stage$'      { $Stage = $argv[$i+1]; $i += 2; continue }
-        '^--stage=(.+)$' { $Stage = $matches[1]; $i += 1; continue }
-        '^--dry-run$'    { $DryRun = $true; $i += 1; continue }
-        '^--unattended$' { $Unattended = $true; $i += 1; continue }
-        '^--$'           { if ($i+1 -lt $argv.Count) { $Passthrough += @($argv[($i+1)..($argv.Count-1)]) }; $i = $argv.Count; continue }
-        default          { $Passthrough += $a; $i += 1; continue }
+        '^(?i:-h|--help|/\?)$'    { $Target = 'help'; $i++; continue }
+        '^--type$'                { $Type = $argv[$i+1]; $i += 2; continue }
+        '^--type=(.+)$'           { $Type = $matches[1]; $i++; continue }
+        '^--stage$'               { $Stage = $argv[$i+1]; $i += 2; continue }
+        '^--stage=(.+)$'          { $Stage = $matches[1]; $i++; continue }
+        '^--dry-run$'             { $DryRun = $true; $i++; continue }
+        '^--unattended$'          { $Unattended = $true; $i++; continue }
+        '^--$'                    { if ($i+1 -lt $argv.Count) { $Passthrough += @($argv[($i+1)..($argv.Count-1)]) }; $i = $argv.Count; continue }
+        '^-'                      { $Passthrough += $a; $i++; continue }
+        default                   { if (-not $Target) { $Target = $a.ToLower() } else { $Passthrough += $a }; $i++; continue }
     }
 }
 
-$validTargets = @('live','xbox','fedora','bootc','oci','seed','flash','build','update')
-if ($Target -notin $validTargets) { Write-MiosLine 'err' "invalid target '$Target' (valid: $($validTargets -join ', '))"; exit 2 }
-if ($Stage -and $Stage -notin 'prereqs','fetch','service','iso','flash') { Write-MiosLine 'err' "invalid --stage '$Stage' (valid: prereqs|fetch|service|iso|flash)"; exit 2 }
+# No target, or explicit help/menu -> the guided, explained menu.
+if (-not $Target -or $Target -in 'help','menu') {
+    $Target = Invoke-MiosGuidedMenu -Catalog $catalog
+    $script:FromMenu = $true
+}
 
-Write-MiosBanner -Target $Target -Type $Type -Stage $Stage
+if (-not $catalog.Contains($Target)) {
+    Show-MiosLogo
+    Write-MiosLine 'err' "'$Target' isn't a MiOS install target."
+    Write-MiosLine 'info' "Valid: $(( @($catalog.Keys)) -join ', ') -- or run with no arguments for the guided menu."
+    exit 2
+}
+if ($Stage -and $Stage -notin 'prereqs','fetch','service','iso','flash') {
+    Write-MiosLine 'err' "invalid --stage '$Stage' (valid: prereqs|fetch|service|iso|flash)"; exit 2
+}
+
+$entry = $catalog[$Target]
+if (-not $script:FromMenu) { Show-MiosLogo }
+Show-MiosTargetBrief -Target $Target -Entry $entry -Type $Type -Stage $Stage
 
 try {
     $plan = Resolve-Target -Target $Target -Type $Type -Stage $Stage -Unattended $Unattended -Passthrough $Passthrough
-} catch {
-    Write-MiosLine 'err' $_.Exception.Message
-    exit 2
-}
+} catch { Write-MiosLine 'err' $_.Exception.Message; exit 2 }
+
+if (-not $DryRun -and -not (Confirm-MiosProceed -Entry $entry -Unattended $Unattended -Drive $plan.Drive)) { exit 0 }
 
 if ($plan.NeedsAdmin -and -not $DryRun -and $plan.Platform -eq 'windows') {
     Invoke-MiosSelfElevate -OrigArgs $argv
 }
 
-$exit = Invoke-MiosMonitored -Plan $plan -DryRun $DryRun -Target $Target
-exit $exit
+exit (Invoke-MiosMonitored -Plan $plan -DryRun $DryRun -Target $Target)
