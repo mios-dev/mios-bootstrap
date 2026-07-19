@@ -50,6 +50,22 @@ $dirs = @(
     $env:TEMP
 ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 
+# FAST PATH: if a valid, complete virtio-win ISO is ALREADY in a landing folder (a prior download,
+# or one the user kicked off ahead of time), use it directly -- no browser, no waiting. Newest wins.
+$existing = @($dirs |
+    ForEach-Object { Get-ChildItem $_ -Filter 'virtio-win*.iso' -File -ErrorAction SilentlyContinue } |
+    Where-Object { (Test-IsoValid $_.FullName) -and (Test-Complete $_.FullName) } |
+    Sort-Object LastWriteTime -Descending) | Select-Object -First 1
+if ($existing) {
+    Write-Host "[virtio] using already-downloaded ISO: $($existing.FullName)" -ForegroundColor Green
+    if (-not $Dest) { exit 0 }
+    $dd = Split-Path -Parent $Dest
+    if ($dd -and -not (Test-Path $dd)) { New-Item -ItemType Directory -Force -Path $dd | Out-Null }
+    Copy-Item -LiteralPath $existing.FullName -Destination $Dest -Force
+    if (Test-IsoValid $Dest) { Write-Host "[virtio] transported -> $Dest (build will now bake it)" -ForegroundColor Green; exit 0 }
+    Write-Host "[virtio] copy of existing ISO to $Dest did not validate -- falling through to browser fetch." -ForegroundColor Yellow
+}
+
 # Snapshot existing virtio ISOs so we only pick up the NEW / freshly-updated download.
 $before = @{}
 foreach ($d in $dirs) { foreach ($f in @(Get-ChildItem $d -Filter 'virtio-win*.iso' -File -ErrorAction SilentlyContinue)) { $before[$f.FullName] = $f.Length } }
