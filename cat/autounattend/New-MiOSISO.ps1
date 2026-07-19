@@ -937,6 +937,30 @@ function Invoke-MiOSImageServicing {
                 }
             }
         }
+        # Bake a BROAD common DRIVER PACK so MiOS-Xbox boots + gets online on most hardware out of
+        # the box: chipset (AMD Adrenalin / Intel), base GPU, and network (Realtek / Intel / Qualcomm
+        # WiFi + LAN). SSOT [autounattend].bake_driver_packs (default yes) + driver_pack_dir (a folder
+        # of .inf trees on MiOS-Repo\drivers, populated by the build/operator). Degrade-open: skips
+        # cleanly when the dir is empty (MiOS-PE's portable driver installer covers the rest at run).
+        if ((Get-Toml $Toml 'autounattend.bake_driver_packs' 'true') -match '^(?i:true|1|yes)$') {
+            $dpDir = Get-Toml $Toml 'autounattend.driver_pack_dir' ''
+            if (-not $dpDir) { $dpDir = Join-Path (Split-Path $MediaRoot) 'driverpacks' }
+            $dpInf = @(if (Test-Path $dpDir) { Get-ChildItem -Path $dpDir -Recurse -Filter *.inf -ErrorAction SilentlyContinue })
+            if ($dpInf.Count -gt 0) {
+                Write-Host "[*] Injecting $($dpInf.Count) common driver package(s) offline from $dpDir (chipset/GPU/network) ..." -ForegroundColor Cyan
+                Add-WindowsDriver -Path $mount -Driver $dpDir -Recurse -ForceUnsigned -ErrorAction SilentlyContinue | Out-Null
+                $bw = Join-Path $MediaRoot 'sources\boot.wim'
+                if (Test-Path $bw) {
+                    $bm = Join-Path (Split-Path $MediaRoot) 'dpbootmount'; New-Item -ItemType Directory -Force -Path $bm | Out-Null
+                    try { Mount-WindowsImage -Path $bm -ImagePath $bw -Index 1 -ErrorAction Stop | Out-Null
+                          Add-WindowsDriver -Path $bm -Driver $dpDir -Recurse -ForceUnsigned -ErrorAction SilentlyContinue | Out-Null
+                          Dismount-WindowsImage -Path $bm -Save -ErrorAction SilentlyContinue | Out-Null }
+                    catch { try { Dismount-WindowsImage -Path $bm -Discard -ErrorAction SilentlyContinue | Out-Null } catch {} }
+                }
+            } else {
+                Write-Host "[*] Driver-pack bake ON but $dpDir is empty -- populate MiOS-Repo\drivers with chipset/GPU/NIC .inf trees (AMD/Intel chipset, base GPU, Realtek/Intel/Qualcomm net). MiOS-PE's driver installer covers the rest at runtime." -ForegroundColor DarkGray
+            }
+        }
         # Optionally bake THIS BUILD HOST's third-party drivers into the image
         # (SSOT [autounattend].bake_host_drivers, default yes -- user-defined).
         # Export-WindowsDriver -Online dumps the host DriverStore's OEM/3rd-party
