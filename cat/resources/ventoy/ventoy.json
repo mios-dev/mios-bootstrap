@@ -29,6 +29,7 @@
         "ventoy_color": "#F35C15"
     },
     "menu_alias": [
+        { "image": "/MiOS-PE/MiOS_PE.wim", "alias": "MiOS-PE Mini Windows (Rescue & Recovery Suite)" },
         { "image": "/Live_Operating_Systems/MiOS-Live-Chat.iso", "alias": "MiOS Live-Chat AI (Ephemeral Live System)" },
         { "image": "/Live_Operating_Systems/Fedora-Server.iso", "alias": "Deploy MiOS Linux (Fedora Server + MiOS Overlay)" },
         { "image": "/Live_Operating_Systems/MiOS-Xbox.iso", "alias": "Deploy MiOS-Xbox (Windows Gaming Edition - CompactOS)" },
@@ -39,6 +40,7 @@
         { "image": "/Live_Operating_Systems/SystemRescue/SystemRescue.iso", "alias": "SystemRescue Arch Linux (Diagnostics & Disk Tools)" }
     ],
     "menu_class": [
+        { "key": "MiOS-PE", "class": "windows" },
         { "key": "MiOS-Live-Chat", "class": "linux" },
         { "key": "Fedora", "class": "fedora" },
         { "key": "MiOS-Xbox", "class": "windows" },

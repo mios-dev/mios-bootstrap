@@ -1068,6 +1068,11 @@ if %errorlevel% neq 0 ( echo [FATAL ERROR] DISM Export-Image failed! & exit /b %
 del "%wim_path%" /Q >nul 2>&1
 move "%trim_path%" "%wim_path%" >nul
 
+mkdir "%aio_stage%\MiOS-PE" >nul 2>&1
+copy "%wim_path%" "%aio_stage%\MiOS-PE\MiOS_PE.wim" /Y >nul 2>&1
+mkdir "%aio_stage%\Documents" >nul 2>&1
+if exist "%toml_path%" copy "%toml_path%" "%aio_stage%\Documents\mios.toml" /Y >nul 2>&1
+
 :: 8. Compile MiOS-Xbox ISO on Localhost SSD
 if "%build_xbox%"=="Enabled" (
     echo.
@@ -1195,6 +1200,18 @@ if exist "%aio_stage%\PortableApps" (
         echo [FATAL ERROR] Robocopy failed to write PortableApps to %drivepath%:\PortableApps!
         exit /b 1
     )
+)
+
+if exist "%aio_stage%\MiOS-PE" (
+    echo Writing MiOS-PE rescue directory to USB (%drivepath%:\MiOS-PE)...
+    mkdir "%drivepath%:\MiOS-PE" >nul 2>&1
+    robocopy "%aio_stage%\MiOS-PE" "%drivepath%:\MiOS-PE" /E /R:2 /W:2 /MT:32 >nul
+)
+
+if exist "%aio_stage%\Documents" (
+    echo Writing Documents vault to USB (%drivepath%:\Documents)...
+    mkdir "%drivepath%:\Documents" >nul 2>&1
+    robocopy "%aio_stage%\Documents" "%drivepath%:\Documents" /E /R:2 /W:2 /MT:32 >nul
 )
 
 :: 15. Finalize Branding & Start.exe launcher
