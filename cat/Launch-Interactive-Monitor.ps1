@@ -1,10 +1,10 @@
-# Launch MiOS-Cat Live Monitor directly on active logged-on user desktop screen (MAXIMIZED FULLSCREEN)
-$monScript = 'C:\mios-bootstrap\cat\autounattend\Monitor-MiosCat.ps1'
+# Launch MiOS-Cat Live Monitor (Python Rich Cross-Platform TUI) on active user desktop
+$pyScript = 'C:\mios-bootstrap\cat\autounattend\mios_monitor.py'
 
 # 1. Register Scheduled Task with explicit Interactive Logon Principal
 try {
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoExit -WindowStyle Maximized -ExecutionPolicy Bypass -File `"$monScript`""
+    $action = New-ScheduledTaskAction -Execute 'python.exe' -Argument "`"$pyScript`""
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 1)
     Register-ScheduledTask -TaskName 'MiOSMonitorInteractiveSession' -Action $action -Principal $principal -Settings $settings -Force | Out-Null
     Start-ScheduledTask -TaskName 'MiOSMonitorInteractiveSession' | Out-Null
@@ -14,7 +14,7 @@ try {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class Win32FocusMax {
+public class Win32FocusMaxPy {
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")]
@@ -27,15 +27,15 @@ public class Win32FocusMax {
 "@
 
 try {
-    $proc = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit -WindowStyle Maximized -ExecutionPolicy Bypass -File `"$monScript`"" -PassThru
+    $proc = Start-Process -FilePath "python.exe" -ArgumentList "`"$pyScript`"" -PassThru
     for ($i = 0; $i -lt 10; $i++) {
         Start-Sleep -Milliseconds 200
         $proc.Refresh()
         if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
-            [Win32FocusMax]::ShowWindow($proc.MainWindowHandle, 3) | Out-Null # SW_MAXIMIZE = 3
-            [Win32FocusMax]::ShowWindowAsync($proc.MainWindowHandle, 3) | Out-Null
-            [Win32FocusMax]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
-            [Win32FocusMax]::SwitchToThisWindow($proc.MainWindowHandle, $true) | Out-Null
+            [Win32FocusMaxPy]::ShowWindow($proc.MainWindowHandle, 3) | Out-Null # SW_MAXIMIZE = 3
+            [Win32FocusMaxPy]::ShowWindowAsync($proc.MainWindowHandle, 3) | Out-Null
+            [Win32FocusMaxPy]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
+            [Win32FocusMaxPy]::SwitchToThisWindow($proc.MainWindowHandle, $true) | Out-Null
             break
         }
     }
@@ -45,14 +45,14 @@ try {
 $desktop = [Environment]::GetFolderPath('Desktop')
 if ($desktop -and (Test-Path $desktop)) {
     $batPath = Join-Path $desktop "MiOS-Cat Live Monitor.bat"
-    $batContent = "@echo off`r`npowershell.exe -NoExit -WindowStyle Maximized -ExecutionPolicy Bypass -File `"C:\mios-bootstrap\cat\autounattend\Monitor-MiosCat.ps1`"`r`n"
+    $batContent = "@echo off`r`npython.exe `"C:\mios-bootstrap\cat\autounattend\mios_monitor.py`"`r`n"
     [System.IO.File]::WriteAllText($batPath, $batContent)
 
     $shortcutPath = Join-Path $desktop "MiOS-Cat Live Monitor.lnk"
     $ws = New-Object -ComObject WScript.Shell
     $sc = $ws.CreateShortcut($shortcutPath)
-    $sc.TargetPath = "powershell.exe"
-    $sc.Arguments = "-NoExit -WindowStyle Maximized -ExecutionPolicy Bypass -File `"$monScript`""
+    $sc.TargetPath = "python.exe"
+    $sc.Arguments = "`"$pyScript`""
     $sc.WorkingDirectory = "C:\mios-bootstrap\cat"
     $sc.IconLocation = "shell32.dll,220"
     $sc.Save()
