@@ -17,7 +17,7 @@ try {
         $vtSig = '[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);' +
                  '[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out int m);' +
                  '[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, int m);'
-        $k = Add-Type -MemberDefinition $vtSig -Name 'MiosVtMonMax2' -Namespace 'MiosCat' -PassThru -ErrorAction Stop
+        $k = Add-Type -MemberDefinition $vtSig -Name 'MiosVtMonMax3' -Namespace 'MiosCat' -PassThru -ErrorAction Stop
         $h = $k::GetStdHandle(-11); $m = 0
         if ($k::GetConsoleMode($h, [ref]$m)) { [void]$k::SetConsoleMode($h, ($m -bor 0x0004)) }
     }
@@ -27,12 +27,15 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 # Force Console Window to MAXIMIZE (SW_MAXIMIZE = 3)
 try {
     $user32Sig = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
-    $u32 = Add-Type -MemberDefinition $user32Sig -Name 'MiosMaxWin2' -Namespace 'MiosCat' -PassThru -ErrorAction Stop
+    $u32 = Add-Type -MemberDefinition $user32Sig -Name 'MiosMaxWin3' -Namespace 'MiosCat' -PassThru -ErrorAction Stop
     $hwnd = (Get-Process -Id $PID).MainWindowHandle
     if ($hwnd -ne [IntPtr]::Zero) {
         $u32::ShowWindow($hwnd, 3) | Out-Null
     }
 } catch {}
+
+# Hide cursor to prevent flicker
+try { [Console]::CursorVisible = $false } catch {}
 
 # Stretch Console Window & Buffer to Maximum Screen Dimensions
 try {
@@ -40,7 +43,7 @@ try {
     $maxH = [Console]::LargestWindowHeight
     if ($maxW -gt 80 -and $maxH -gt 30) {
         $rawUI = $host.UI.RawUI
-        $rawUI.BufferSize = New-Object System.Management.Automation.Host.Size($maxW, [math]::Max(500, $maxH * 4))
+        $rawUI.BufferSize = New-Object System.Management.Automation.Host.Size($maxW, $maxH)
         $rawUI.WindowSize = New-Object System.Management.Automation.Host.Size($maxW, $maxH)
     }
 } catch {}
@@ -169,18 +172,29 @@ $stages = @(
 )
 
 $lastOverallPct = 0.0
+Clear-Host
 
 # -----------------------------------------------------------------------------
-# 3. Main Dynamic Fullscreen Live Refresh Loop
+# 3. Main Dynamic Fullscreen Live Refresh Loop (Zero-Scroll Cursor Position)
 # -----------------------------------------------------------------------------
 while ($true) {
+    # Set Cursor Position to Top-Left (0, 0) instead of Clear-Host to prevent viewport scroll
+    try { [Console]::SetCursorPosition(0, 0) } catch { Clear-Host }
+
     $spinIdx = ($spinIdx + 1) % $spin.Count
     $curSpin = $spin[$spinIdx]
 
-    # Dynamically detect current screen buffer dimensions
+    # Dynamically detect current screen dimensions
     $winW = [math]::Max(120, $host.UI.RawUI.WindowSize.Width)
     $winH = [math]::Max(40, $host.UI.RawUI.WindowSize.Height)
     $innerWidth = $winW - 4
+
+    # Keep Buffer Size matched to Window Size so scrolling CANNOT occur
+    try {
+        if ($host.UI.RawUI.BufferSize.Width -ne $winW -or $host.UI.RawUI.BufferSize.Height -ne $winH) {
+            $host.UI.RawUI.BufferSize = New-Object System.Management.Automation.Host.Size($winW, $winH)
+        }
+    } catch {}
 
     # Fast Instant USB D: Space Query via System.IO.DriveInfo (0ms)
     $usbMB = 0.0
@@ -233,7 +247,7 @@ while ($true) {
                 $sr = New-Object System.IO.StreamReader($fs)
                 $dAll = ($sr.ReadToEnd() -split "`r?`n")
                 $sr.Close(); $fs.Close()
-                $dismLines = $dAll | Where-Object { $_ -match 'DISM Package Manager|Processing|Image|Mounting|Unmounting' } | Select-Object -Last 6
+                $dismLines = $dAll | Where-Object { $_ -match 'DISM Package Manager|Processing|Image|Mounting|Unmounting' } | Select-Object -Last 4
             } catch {}
         }
     }
@@ -306,17 +320,16 @@ while ($true) {
     if ($calcPct -gt $lastOverallPct) { $lastOverallPct = $calcPct }
     if ($currentStageId -eq 10 -and $subTaskPct -eq 100.0) { $lastOverallPct = 100.0 }
 
-    # Multi-source streaming tail scaled to full screen height
-    $maxLogLines = [math]::Max(10, $winH - 26)
+    # Calculate exact available height for streaming log lines (28 lines fixed layout)
+    $maxLogLines = [math]::Max(4, $winH - 28)
     $combinedTail = @()
     $combinedTail += ($allLines | Where-Object { $_.Trim() -and $_ -notmatch '^\s*[\=\-\#]+\s*$' } | Select-Object -Last ($maxLogLines - 2))
     if ($dismLines) { $combinedTail += ($dismLines | ForEach-Object { "[DISM] $_" }) }
     $recentTail = $combinedTail | Select-Object -Last $maxLogLines
 
     # -----------------------------------------------------------------------------
-    # 4. Render FULLSCREEN SSOT-Themed Graphical Dashboard
+    # 4. Render FULLSCREEN SSOT-Themed Graphical Dashboard (Zero-Scroll Safe)
     # -----------------------------------------------------------------------------
-    Clear-Host
     $topLine   = [string]$cBoxTL + ([string]$cBoxHoriz * ($innerWidth + 2)) + [string]$cBoxTR
     $divLine   = [string]$cBoxLDivider + ([string]$cBoxHoriz * ($innerWidth + 2)) + [string]$cBoxRDivider
     $botLine   = [string]$cBoxBL + ([string]$cBoxHoriz * ($innerWidth + 2)) + [string]$cBoxBR
@@ -437,7 +450,7 @@ while ($true) {
         Write-Host (C $pal.accent " $v")
     }
 
-    Write-Host (C $pal.accent $botLine)
+    Write-Host (C $pal.accent $botLine) -NoNewline
 
     if ($lastOverallPct -ge 100.0) {
         Write-Host ("`n  " + (C $pal.success "[AIO SUCCESS] Build and Flash Complete! You can close this monitor.") + "`n")
