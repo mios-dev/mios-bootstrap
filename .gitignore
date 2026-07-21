@@ -104,6 +104,10 @@
 !installation/
 !installation/**
 
+# cat/ -- MiOS-Cat unified installer entrypoint
+!cat/
+!cat/**
+
 # Re-ignore noise
 **/__pycache__/
 **/*.pyc

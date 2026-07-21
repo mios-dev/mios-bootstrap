@@ -190,16 +190,17 @@ if ($Action -ne 'Default') {
         Write-Host "[*] Action: OfflineSync. Staging repositories to USB..." -ForegroundColor Cyan
         $drive = 'D'
         $toml = 'C:\mios-bootstrap\mios.toml'
+        if (-not (Test-Path $toml)) { $toml = 'C:\MiOS\usr\share\mios\mios.toml' }
         if (-not (Test-Path $toml)) { $toml = 'C:\MiOS\mios.toml' }
         if (Test-Path $toml) {
             $drive = (Get-Content $toml | Select-String -Pattern '^\s*drivepath\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value })
             if (-not $drive) { $drive = 'D' }
         }
         Write-Host "[*] Target USB Drive: $($drive):" -ForegroundColor Cyan
-        New-Item -ItemType Directory -Force -Path "$($drive):\ventoy\repo\mios-bootstrap" | Out-Null
-        New-Item -ItemType Directory -Force -Path "$($drive):\ventoy\repo\MiOS" | Out-Null
-        robocopy "C:\mios-bootstrap" "$($drive):\ventoy\repo\mios-bootstrap" /E /XD .git .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 | Out-Null
-        robocopy "C:\MiOS" "$($drive):\ventoy\repo\MiOS" /E /XD .git .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 | Out-Null
+        New-Item -ItemType Directory -Force -Path "$($drive):\repos\mios-bootstrap" | Out-Null
+        New-Item -ItemType Directory -Force -Path "$($drive):\repos\MiOS" | Out-Null
+        robocopy "C:\mios-bootstrap" "$($drive):\repos\mios-bootstrap" /E /XD .git .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 | Out-Null
+        robocopy "C:\MiOS" "$($drive):\repos\MiOS" /E /XD .git .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 | Out-Null
         Write-Host "[+] Sync completed successfully." -ForegroundColor Green
         exit 0
     }

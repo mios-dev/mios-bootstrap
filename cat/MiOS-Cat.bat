@@ -31,6 +31,9 @@ set "medicatver=21.12"
 :: it cannot be resolved (offline + no build-recorded pin + no Ventoy already staged) the
 :: flash fails loud rather than silently pinning a stale version.
 set "ventoy_ver="
+set "min_disk_gb=512"
+set "repo_label=MiOS-Repo"
+set "data_label=MiOS-Data"
 powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 25GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\medicat_stage' } else { $env:TEMP + '\medicat_stage' }; [System.IO.File]::WriteAllText(\"%~dp0stage_path.txt\", $p)"
 set /p stage_dir=<"%~dp0stage_path.txt"
 del "%~dp0stage_path.txt" /Q >nul 2>&1
@@ -49,12 +52,12 @@ set "subtle_color=#B7C9D7"
 :: whose escaped-quote regex broke cmd parsing -- so the whole block had been `goto`-skipped
 :: and NOTHING was actually SSOT-driven. [char]34 supplies the double-quotes so there are no
 :: nested \" to trip cmd. The hardcoded defaults above stand as fallbacks for any key
-:: mios.toml omits (degrade-open on a missing/partial SSOT). TOML values are quoted.
+:: mios.toml omits (degrade-open on a missing/partial SSOT). TOML values are quoted or numeric.
 if not exist "%toml_path%" goto no_toml
 echo Loading installation settings from mios.toml SSOT...
 set "ssot_env=%TEMP%\mios-cat-ssot.cmd"
 del "%ssot_env%" /q >nul 2>&1
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content -Raw -LiteralPath '%toml_path%'; $q=[char]34; function G([string]$k){ $m=[regex]::Match($t, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*'+$q+'([^'+$q+'\r\n]*)'+$q)); if($m.Success){ $m.Groups[1].Value -replace '\\\\','\' } }; $map=[ordered]@{ drivepath='drivepath'; medicatver='medicatver'; ventoy_ver='ventoy_version'; file='cache_path'; bg_color='bg'; fg_color='fg'; accent_color='accent'; cursor_color='cursor'; success_color='success'; muted_color='muted'; subtle_color='subtle'; live_chat_enabled='live_chat_enabled'; live_chat_iso_name='live_chat_iso_name'; live_chat_iso_src='live_chat_iso_src' }; $o=New-Object System.Collections.Generic.List[string]; foreach($e in $map.GetEnumerator()){ $v=G $e.Value; if($v){ $o.Add('set '+$q+$e.Key+'='+$v+$q) } }; if($o.Count){ Set-Content -LiteralPath '%ssot_env%' -Value $o -Encoding ascii }" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content -Raw -LiteralPath '%toml_path%'; $q=[char]34; function G([string]$k){ $m=[regex]::Match($t, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*(?:'+$q+'([^'+$q+'\r\n]*)'+$q+'|(\d+))')); if($m.Success){ if($m.Groups[1].Value){ $m.Groups[1].Value -replace '\\\\','\' } else { $m.Groups[2].Value } } }; function GS([string]$sec,[string]$k){ $sm=[regex]::Match($t, ('(?ms)^\s*\['+[regex]::Escape($sec)+'\]\s*(.*?)(?=\r?\n\s*\[|\Z)')); if($sm.Success){ $m=[regex]::Match($sm.Groups[1].Value, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*(?:'+$q+'([^'+$q+'\r\n]*)'+$q+'|(\d+))')); if($m.Success){ if($m.Groups[1].Value){ $m.Groups[1].Value -replace '\\\\','\' } else { $m.Groups[2].Value } } } }; $map=[ordered]@{ drivepath='drivepath'; medicatver='medicatver'; ventoy_ver='ventoy_version'; file='cache_path'; bg_color='bg'; fg_color='fg'; accent_color='accent'; cursor_color='cursor'; success_color='success'; muted_color='muted'; subtle_color='subtle'; live_chat_enabled='live_chat_enabled'; live_chat_iso_name='live_chat_iso_name'; live_chat_iso_src='live_chat_iso_src' }; $o=New-Object System.Collections.Generic.List[string]; foreach($e in $map.GetEnumerator()){ $v=G $e.Value; if($v){ $o.Add('set '+$q+$e.Key+'='+$v+$q) } }; $mg=G 'min_disk_gb'; if($mg){ $o.Add('set '+$q+'min_disk_gb='+$mg+$q) }; $rl=GS 'cat.repo_partition' 'label'; if($rl){ $o.Add('set '+$q+'repo_label='+$rl+$q) }; $dl=GS 'cat.data_partition' 'label'; if($dl){ $o.Add('set '+$q+'data_label='+$dl+$q) }; if($o.Count){ Set-Content -LiteralPath '%ssot_env%' -Value $o -Encoding ascii }" 2>nul
 if exist "%ssot_env%" call "%ssot_env%"
 if exist "%ssot_env%" del "%ssot_env%" /q >nul 2>&1
 :no_toml
@@ -924,22 +927,22 @@ echo.
 echo Formatting and merging all USB partitions back to a single disk letter (%drivepath%:)...
 powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { Get-Partition -DiskNumber $d.Number | Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue; Initialize-Disk -Number $d.Number -PartitionStyle GPT -ErrorAction SilentlyContinue; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter %drivepath% -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Cat' -Confirm:$false | Out-Null }; Update-HostStorageCache }" >nul 2>&1
 
-:: Disk-size-aware partition plan (SSOT: [cat.data_partition].min_disk_gb=128). Ventoy's /R
-:: reserves space at the DISK END for OUR partitions -- a hardcoded 4GB starves MiOS-Repo and
-:: any MiOS-Data vault, so scale the reservation to the disk: on >=128GB reserve everything past
-:: a bounded 64GB Ventoy/ISO partition (-> a tiny MiOS-Repo config + a MiOS-Data vault for the rest);
-:: on disks under 128GB keep the 4GB floor -- MiOS-Repo takes it, no MiOS-Data (degrade-open).
+:: Disk-size-aware partition plan (SSOT: [cat.data_partition].min_disk_gb=%min_disk_gb%). Ventoy's /R
+:: reserves space at the DISK END for OUR partitions -- a hardcoded 4GB starves %repo_label% and
+:: any %data_label% vault, so scale the reservation to the disk: on >=%min_disk_gb%GB reserve everything past
+:: a bounded 64GB Ventoy/ISO partition (-> a tiny %repo_label% config + a %data_label% vault for the rest);
+:: on disks under %min_disk_gb%GB keep the 4GB floor -- %repo_label% takes it, no %data_label% (degrade-open).
 set "vtoy_reserve_mb=4096"
 set "mios_repo_gb=0"
 set "mios_make_data=0"
 :: Capture the plan as a single CSV line (reserve_mb,repo_gb,make_data) via for/f -- robust,
 :: no temp .cmd whose multi-line set-commands could collapse onto one line and cross-contaminate.
-for /f "usebackq tokens=1,2,3 delims=," %%a in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Partition -DriveLetter '%drivepath%' -ErrorAction SilentlyContinue; $disk = if ($p) { Get-Disk -Number $p.DiskNumber } else { Get-Disk | Where-Object { $_.BusType -in 'USB','SD' } | Sort-Object Size -Descending | Select-Object -First 1 }; if ($disk) { $g=[math]::Floor($disk.Size/1GB); $ventoy=64; $repo=1; if ($g -ge 128) { $rsv=($g-$ventoy)*1024; $mk=1 } else { $rsv=4096; $repo=0; $mk=0 }; Write-Output ('' + $rsv + ',' + $repo + ',' + $mk) }"`) do (
+for /f "usebackq tokens=1,2,3 delims=," %%a in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Partition -DriveLetter '%drivepath%' -ErrorAction SilentlyContinue; $disk = if ($p) { Get-Disk -Number $p.DiskNumber } else { Get-Disk | Where-Object { $_.BusType -in 'USB','SD' } | Sort-Object Size -Descending | Select-Object -First 1 }; if ($disk) { $g=[math]::Floor($disk.Size/1GB); $ventoy=64; $repo=1; $minGB=[int]'%min_disk_gb%'; if ($g -ge $minGB) { $rsv=($g-$ventoy)*1024; $mk=1 } else { $rsv=4096; $repo=0; $mk=0 }; Write-Output ('' + $rsv + ',' + $repo + ',' + $mk) }"`) do (
     set "vtoy_reserve_mb=%%a"
     set "mios_repo_gb=%%b"
     set "mios_make_data=%%c"
 )
-echo   Disk partition plan: reserve %vtoy_reserve_mb% MB at disk end ^(MiOS-Repo %mios_repo_gb% GB; MiOS-Data=%mios_make_data%^)
+echo   Disk partition plan: reserve %vtoy_reserve_mb% MB at disk end ^(%repo_label% %mios_repo_gb% GB; %data_label%=%mios_make_data%^)
 
 echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
 cd /d "%stage_dir%\Ventoy2Disk"
@@ -973,10 +976,10 @@ echo Formatting primary partition as %filesystem% (%partition_label%)...
 format %drivepath%: /FS:%filesystem% /X /Q /V:%partition_label% /Y >nul
 if errorlevel 1 echo [WARN] format of %drivepath%: returned non-zero -- the data partition may be unusable. >&2
 
-echo Creating secure offline repository partition (MiOS-Repo)...
-echo   (>=128GB disks: MiOS-Repo %mios_repo_gb% GB + a MiOS-Data vault in the reserved tail;
-echo    smaller disks give the whole reserved tail to MiOS-Repo -- degrade-open, never abort)
-powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ('%mios_make_data%' -eq '1') { $rp = New-Partition -DiskNumber $d.Number -Size %mios_repo_gb%GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Data' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel 'MiOS-Repo' -Confirm:$false | Out-Null } }" >nul 2>&1
+echo Creating secure offline repository partition (%repo_label%)...
+echo   (>=%min_disk_gb%GB disks: %repo_label% %mios_repo_gb% GB + a %data_label% vault in the reserved tail;
+echo    smaller disks give the whole reserved tail to %repo_label% -- degrade-open, never abort)
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ('%mios_make_data%' -eq '1') { $rp = New-Partition -DiskNumber $d.Number -Size %mios_repo_gb%GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -NewFileSystemLabel '%data_label%' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null } }" >nul 2>&1
 
 :: 6. Pull/Download Medicat core archive to M:\ (large storage)
 set "download_needed=0"
@@ -1056,10 +1059,10 @@ copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
 copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 
 :: Resolve the config + data partitions by LABEL (robust vs partition-number ordering):
-::   MiOS-Repo = tiny shadow-config "brain" (SSOT + launcher, mere MB, always present)
-::   MiOS-Data = the bulk vault (offline repos + CDN/CI + package/dependency/model/OCI-layer
-::               caches), present only on >=128GB disks. Repos -> MiOS-Data; brain -> MiOS-Repo.
-for /f "usebackq tokens=1,2 delims=," %%a in (`powershell -NoProfile -Command "$rp=(Get-Volume -FileSystemLabel 'MiOS-Repo' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; $dp=(Get-Volume -FileSystemLabel 'MiOS-Data' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; if (-not $rp) { $rp='_' }; if (-not $dp) { $dp='_' }; Write-Output ($rp + ',' + $dp)"`) do (
+::   %repo_label% = tiny shadow-config "brain" (SSOT + launcher, mere MB, always present)
+::   %data_label% = the bulk vault (offline repos + CDN/CI + package/dependency/model/OCI-layer
+::               caches), present only on >=%min_disk_gb%GB disks. Repos -> %data_label%; brain -> %repo_label%.
+for /f "usebackq tokens=1,2 delims=," %%a in (`powershell -NoProfile -Command "$rp=(Get-Volume -FileSystemLabel '%repo_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; $dp=(Get-Volume -FileSystemLabel '%data_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; if (-not $rp) { $rp='_' }; if (-not $dp) { $dp='_' }; Write-Output ($rp + ',' + $dp)"`) do (
     set "repodrive=%%a"
     set "datadrive=%%b"
 )
@@ -1068,20 +1071,20 @@ if "%datadrive%"=="_" set "datadrive=%repodrive%"
 if "%repodrive%"=="" set "repodrive=%drivepath%"
 if "%datadrive%"=="" set "datadrive=%repodrive%"
 
-:: Bulk: stage the offline repos onto MiOS-Data (the big vault) under repos\. The Linux kickstart
+:: Bulk: stage the offline repos onto %data_label% (the big vault) under repos\. The Linux kickstart
 :: AND the Windows bootstrap_root resolver both scan every partition/root + a repos\ subdir, so it
 :: never matters which partition holds them -- no single location can strand an offline install.
-echo Staging offline repositories to the MiOS-Data vault (%datadrive%:)...
+echo Staging offline repositories to the %data_label% vault (%datadrive%:)...
 mkdir "%datadrive%:\repos\mios-bootstrap" >nul 2>&1
 robocopy "C:\mios-bootstrap" "%datadrive%:\repos\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
 mkdir "%datadrive%:\repos\MiOS" >nul 2>&1
 robocopy "C:\MiOS" "%datadrive%:\repos\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
 
 :: Shadow-config "brain": the live SSOT, the architecture diagram, and a self-copy of this
-:: launcher on the tiny MiOS-Repo partition (%repodrive%:) -- always present + mere MB, so a
+:: launcher on the tiny %repo_label% partition (%repodrive%:) -- always present + mere MB, so a
 :: booted/target system can re-read config, re-open the topology, or re-run the flasher offline.
-echo Staging shadow-config brain (SSOT + architecture + launcher) to MiOS-Repo (%repodrive%:)...
-if exist "%~dp0..\mios.toml" copy "%~dp0..\mios.toml" "%repodrive%:\mios.toml" /Y >nul 2>&1
+echo Staging shadow-config brain (SSOT + architecture + launcher) to %repo_label% (%repodrive%:)...
+if exist "%toml_path%" copy "%toml_path%" "%repodrive%:\mios.toml" /Y >nul 2>&1
 copy "%~f0" "%repodrive%:\MiOS-Cat.bat" /Y >nul 2>&1
 if exist "%USERPROFILE%\Downloads\mios_visual_architecture_idealistic.html" copy "%USERPROFILE%\Downloads\mios_visual_architecture_idealistic.html" "%repodrive%:\mios.html" /Y >nul 2>&1
 if not exist "%repodrive%:\mios.html" if exist "%USERPROFILE%\Downloads\mios_visual_architecture.html" copy "%USERPROFILE%\Downloads\mios_visual_architecture.html" "%repodrive%:\mios.html" /Y >nul 2>&1
