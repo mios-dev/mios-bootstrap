@@ -1242,6 +1242,19 @@ mios-guacamole-postgres = true
 mios-guacd              = true
 
 # ----------------------------------------------------------------------------
+# [cat] -- MiOS-Cat USB installer & flash pipeline SSOT
+# ----------------------------------------------------------------------------
+[cat]
+monitor_enabled   = true
+show_live_monitor = true
+drivepath         = "D"
+filesystem        = "NTFS"
+partition_scheme  = "GPT"
+secure_boot       = "Enabled"
+build_xbox        = "Enabled"
+gaming_optimize   = "Enabled"
+
+# ----------------------------------------------------------------------------
 # [autounattend] -- MiOS custom-Windows ISO pipeline SSOT (WS-XBOX / WS-WEDITION).
 # Consumed by mios-uup-fetch.ps1, New-MiOSISO.ps1, ConvertTo-MiOSPreset.ps1, and
 # New-MiOSAutounattend.ps1. Every key degrades open to a MiOS default in-script,
