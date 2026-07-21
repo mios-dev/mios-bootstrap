@@ -9,7 +9,24 @@ param(
 )
 
 # -----------------------------------------------------------------------------
-# 1. Load Canonical SSOT Library & Resolve Configuration Live
+# 1. Console Window Geometry Initialization (120x42)
+# -----------------------------------------------------------------------------
+try {
+    $rawUI = $host.UI.RawUI
+    $bufSize = $rawUI.BufferSize
+    $winSize = $rawUI.WindowSize
+    if ($bufSize.Width -lt 120) { $bufSize.Width = 120 }
+    if ($bufSize.Height -lt 500) { $bufSize.Height = 500 }
+    $rawUI.BufferSize = $bufSize
+    if ($winSize.Width -ne 120 -or $winSize.Height -ne 42) {
+        $winSize.Width = 120
+        $winSize.Height = 42
+        $rawUI.WindowSize = $winSize
+    }
+} catch {}
+
+# -----------------------------------------------------------------------------
+# 2. Load Canonical SSOT Library & Resolve Configuration Live
 # -----------------------------------------------------------------------------
 $libPath = Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1'
 if (-not (Test-Path $libPath)) {
@@ -43,7 +60,7 @@ $g = [Convert]::ToByte($accentHex.Substring(2,2), 16)
 $b = [Convert]::ToByte($accentHex.Substring(4,2), 16)
 
 # -----------------------------------------------------------------------------
-# 2. ANSI TrueColor & Theme Palette
+# 3. ANSI TrueColor & Theme Palette
 # -----------------------------------------------------------------------------
 $e = [char]27
 $cReset   = "$e[0m"
@@ -55,23 +72,46 @@ $cWarn    = "$e[38;2;245;158;11m$cBold"
 $cError   = "$e[38;2;239;68;68m$cBold"
 $cMuted   = "$e[38;2;100;116;139m"
 $cFg      = "$e[38;2;241;245;249m"
+$cMag     = "$e[38;2;217;70;239m$cBold"
+$cCyan    = "$e[38;2;6;182;212m$cBold"
 $cBadge   = "$e[48;2;30;41;59m$e[38;2;226;232;240m"
 
-[Console]::Title = "MiOS-Cat v$ssotVersion -- SSOT Live Build & Flash Monitor"
+[Console]::Title = "MiOS-Cat v$ssotVersion -- SSOT Live Build & Flash Telemetry Stream"
 
 function Format-ProgressBar {
-    param([double]$pct, [int]$width = 45)
+    param([double]$pct, [int]$width = 65)
     $pctClamped = [math]::Min(100.0, [math]::Max(0.0, $pct))
     $filled = [int][math]::Round(($pctClamped / 100.0) * $width)
     $empty = $width - $filled
     if ($filled -lt 0) { $filled = 0 }
     if ($empty -lt 0) { $empty = 0 }
 
-    $barFilled = "#" * $filled
-    $barEmpty  = "-" * $empty
+    $barFilled = "█" * $filled
+    $barEmpty  = "░" * $empty
     
     $color = if ($pctClamped -ge 100.0) { $cSuccess } elseif ($pctClamped -gt 70.0) { $cHeader } elseif ($pctClamped -gt 30.0) { $cAccent } else { $cWarn }
     return ("{0}[{1}{2}{3}] {4:F1}%{5}" -f $color, $barFilled, $cMuted, $barEmpty, $pctClamped, $cReset)
+}
+
+function Colorize-LogLine {
+    param([string]$line, [int]$maxLen = 110)
+    if (-not $line) { return "" }
+    $clean = $line.Trim() -replace "$e\[[0-9;]*m", ""
+    if ($clean.Length -gt $maxLen) { $clean = $clean.Substring(0, $maxLen) + "..." }
+
+    if ($clean -match '\[OK\]|\[DONE\]|\[SUCCESS\]|100\.0%') {
+        return ("   {0}✔{1} {2}{3}{4}" -f $cSuccess, $cReset, $cSuccess, $clean, $cReset)
+    } elseif ($clean -match '\[!\]|\[WARNING\]|\[WAIT\]|retry|fallback') {
+        return ("   {0}⚠{1} {2}{3}{4}" -f $cWarn, $cReset, $cWarn, $clean, $cReset)
+    } elseif ($clean -match '\[ERROR\]|\[FATAL\]|FAILED|die') {
+        return ("   {0}✖{1} {2}{3}{4}" -f $cError, $cReset, $cError, $clean, $cReset)
+    } elseif ($clean -match 'Extracting|Servicing|Compiling|Flashing|Robocopy|Converting') {
+        return ("   {0}⚡{1} {2}{3}{4}" -f $cMag, $cReset, $cMag, $clean, $cReset)
+    } elseif ($clean -match '\[\*\]|\[INFO\]|Stage|Building') {
+        return ("   {0}ℹ{1} {2}{3}{4}" -f $cCyan, $cReset, $cCyan, $clean, $cReset)
+    } else {
+        return ("   {0}›{1} {2}{3}{4}" -f $cMuted, $cReset, $cFg, $clean, $cReset)
+    }
 }
 
 $stages = @(
@@ -90,10 +130,10 @@ $stages = @(
 $lastOverallPct = 0.0
 
 # -----------------------------------------------------------------------------
-# 3. Main Live Refresh Loop
+# 4. Main Live Refresh Loop
 # -----------------------------------------------------------------------------
 while ($true) {
-    # Resolve SINGLE LATEST active log file to prevent stale historical log pollution
+    # Resolve SINGLE LATEST active installer log file
     $primaryLog = 'C:\Windows\Temp\mios-cat-install.log'
     $chosenLog = $null
 
@@ -131,11 +171,58 @@ while ($true) {
         $allLines = $allLines[$startIdx..($allLines.Count - 1)]
     }
 
-    # Inspect active running processes
-    $proc7z = Get-Process 7z, 7za -ErrorAction SilentlyContinue
-    $procRobo = Get-Process robocopy -ErrorAction SilentlyContinue
-    $procDism = Get-Process dism -ErrorAction SilentlyContinue
-    $procCurl = Get-Process curl -ErrorAction SilentlyContinue
+    # Stream active DISM log if modified recently
+    $dismLogPath = 'C:\Windows\Logs\DISM\dism.log'
+    $dismLines = @()
+    if (Test-Path $dismLogPath) {
+        $dismItem = Get-Item $dismLogPath
+        if ($dismItem.LastWriteTime -ge (Get-Date).AddMinutes(-10)) {
+            try {
+                $dStream = [System.IO.File]::Open($dismLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                $dReader = New-Object System.IO.StreamReader($dStream)
+                $dAll = @()
+                while (-not $dReader.EndOfStream) { $dAll += $dReader.ReadLine() }
+                $dReader.Close(); $dStream.Close()
+                $dismLines = $dAll | Where-Object { $_ -match 'DISM Package Manager|Processing|Image|Mounting|Unmounting' } | Select-Object -Last 5
+            } catch {}
+        }
+    }
+
+    # Stream active UUP / aria2 progress log if active
+    $uupLogLines = @()
+    $uupPkgDir = 'M:\MiOS\uup\package'
+    if (Test-Path $uupPkgDir) {
+        $uupLogs = Get-ChildItem -Path $uupPkgDir -Filter '*.log' -ErrorAction SilentlyContinue |
+                   Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($uupLogs) {
+            try {
+                $uLines = Get-Content -LiteralPath $uupLogs.FullName -ErrorAction SilentlyContinue | Select-Object -Last 5
+                if ($uLines) { $uupLogLines = $uLines }
+            } catch {}
+        }
+    }
+
+    # Inspect active running subprocesses & compute telemetry
+    $proc7z     = Get-Process 7z, 7za -ErrorAction SilentlyContinue
+    $procRobo   = Get-Process robocopy -ErrorAction SilentlyContinue
+    $procDism   = Get-Process dism -ErrorAction SilentlyContinue
+    $procCurl   = Get-Process curl, aria2c -ErrorAction SilentlyContinue
+    $procWim    = Get-Process wimlib-imagex -ErrorAction SilentlyContinue
+
+    $activeProcs = @()
+    $totalRamMB = 0.0
+
+    foreach ($p in ($proc7z + $procRobo + $procDism + $procCurl + $procWim)) {
+        if ($p) {
+            $ram = [math]::Round(($p.WorkingSet64 / 1MB), 1)
+            $totalRamMB += $ram
+            $activeProcs += [pscustomobject]@{
+                Name = $p.ProcessName
+                Id   = $p.Id
+                Ram  = "${ram}MB"
+            }
+        }
+    }
 
     # Calculate real-time USB drive D: bytes & files
     $usbFiles = 0
@@ -152,11 +239,15 @@ while ($true) {
 
     # Calculate real-time AIO Stage bytes & files
     $stageMB = 0.0
+    $stageFiles = 0
     $stagePath = "M:\MiOS\medicat_stage\AIO_Stage"
     if (Test-Path $stagePath) {
         try {
             $stgStats = Get-ChildItem -Path $stagePath -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum
-            if ($stgStats) { $stageMB = [math]::Round(($stgStats.Sum / 1MB), 2) }
+            if ($stgStats) {
+                $stageFiles = $stgStats.Count
+                $stageMB = [math]::Round(($stgStats.Sum / 1MB), 2)
+            }
         } catch {}
     }
 
@@ -186,7 +277,7 @@ while ($true) {
 
         if ($line -match '\[!\]|\[WARNING\]|\[FATAL ERROR\]|ERROR') {
             $cleanAlert = $line -replace '\s+', ' '
-            if ($cleanAlert.Length -gt 85) { $cleanAlert = $cleanAlert.Substring(0, 85) + "..." }
+            if ($cleanAlert.Length -gt 100) { $cleanAlert = $cleanAlert.Substring(0, 100) + "..." }
             if ($alerts -notcontains $cleanAlert) { $alerts += $cleanAlert }
         }
     }
@@ -194,11 +285,15 @@ while ($true) {
     # Override stage based on live active processes
     if ($proc7z) {
         $currentStageId = [math]::Max($currentStageId, 2)
-        $subTaskName = "7-Zip Extracting Payloads (7z active) | SSD Stage: $stageMB MB"
+        $subTaskName = "7-Zip Extracting Payloads (7z active) | SSD Stage: $stageFiles files ($stageMB MB)"
     }
     if ($procDism) {
         $currentStageId = [math]::Max($currentStageId, 3)
         $subTaskName = "DISM Servicing WinPE / Image (DISM active)..."
+    }
+    if ($procWim) {
+        $currentStageId = [math]::Max($currentStageId, 4)
+        $subTaskName = "WIMLib Exporting & Compressing Image..."
     }
     if ($procRobo) {
         $currentStageId = [math]::Max($currentStageId, 9)
@@ -211,59 +306,74 @@ while ($true) {
     if ($calcPct -gt $lastOverallPct) { $lastOverallPct = $calcPct }
     if ($currentStageId -eq 10 -and $subTaskPct -eq 100.0) { $lastOverallPct = 100.0 }
 
+    # Combine multi-source live log lines for 12-line streaming tail
+    $combinedTail = @()
+    $combinedTail += ($allLines | Where-Object { $_.Trim() -and $_ -notmatch '^\s*[\=\-\#]+\s*$' } | Select-Object -Last 10)
+    if ($dismLines) { $combinedTail += ($dismLines | ForEach-Object { "[DISM] $_" }) }
+    if ($uupLogLines) { $combinedTail += ($uupLogLines | ForEach-Object { "[UUP] $_" }) }
+    $recentTail = $combinedTail | Select-Object -Last 12
+
     # -----------------------------------------------------------------------------
-    # Render Dashboard UI
+    # Render High-Definition Dashboard UI (120 Cols x 42 Rows)
     # -----------------------------------------------------------------------------
     Clear-Host
-    Write-Host ("{0}+------------------------------------------------------------------------------+" -f $cAccent)
-    Write-Host ("{0}|      {1}M i O S   v{2}   --   S S O T   L I V E   F L A S H   M O N I T O R{3}        |" -f $cAccent, $cWarn, $ssotVersion, $cAccent)
-    Write-Host ("{0}+------------------------------------------------------------------------------+{1}" -f $cAccent, $cReset)
-    Write-Host (" {0}  SSOT Config : {1}{2}{3}" -f $cMuted, $cFg, $TomlPath, $cReset)
-    Write-Host (" {0}  Target USB  : {1}D:\ (Files: {2} | Size: {3} MB){4}" -f $cMuted, $cFg, $usbFiles, $usbMB, $cReset)
-    Write-Host (" {0}  SSD Stage   : {1}{2} MB{3}" -f $cMuted, $cFg, $stageMB, $cReset)
-    Write-Host ("{0}--------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
+    Write-Host ("{0}╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗" -f $cAccent)
+    Write-Host ("{0}║               {1}M i O S   v{2}   --   S S O T   L I V E   F L A S H   M O N I T O R{3}                              ║" -f $cAccent, $cWarn, $ssotVersion, $cAccent)
+    Write-Host ("{0}║               {1}{2}{3}                                              ║" -f $cAccent, $cMuted, $ssotTagline.PadRight(60), $cAccent)
+    Write-Host ("{0}╠═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣{1}" -f $cAccent, $cReset)
+    Write-Host (" {0}  SSOT Config : {1}{2}{3}" -f $cMuted, $cFg, $TomlPath.PadRight(50), $cReset)
+    Write-Host (" {0}  Target USB  : {1}D:\ (Files: {2} | Written: {3} MB){4}" -f $cMuted, $cFg, $usbFiles, $usbMB, $cReset)
+    Write-Host (" {0}  SSD Stage   : {1}M:\ (Files: {2} | Staged: {3} MB){4}" -f $cMuted, $cFg, $stageFiles, $stageMB, $cReset)
+    
+    $procSummary = if ($activeProcs.Count -gt 0) {
+        ($activeProcs | ForEach-Object { "$($_.Name)[PID:$($_.Id) RAM:$($_.Ram)]" }) -join ' '
+    } else {
+        "Idle / Waiting for Subprocess Dispatch"
+    }
+    Write-Host (" {0}  Subprocesses: {1}{2} (Total RAM: {3:F1} MB){4}" -f $cMuted, $cCyan, $procSummary, $totalRamMB, $cReset)
+    Write-Host ("{0}─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────{1}" -f $cMuted, $cReset)
 
     Write-Host (" {0}  ACTIVE STAGE  {1} {2}Stage {3} of 10 : {4}{5}{6}" -f $cBadge, $cReset, $cBold, $currentStageId, $cAccent, $stg.Name, $cReset)
     Write-Host (" {0}  CURRENT TASK  {1} {2}{3}{4}" -f $cBadge, $cReset, $cFg, $subTaskName, $cReset)
     Write-Host ""
 
-    Write-Host ("  Overall Progress : {0}" -f (Format-ProgressBar -pct $lastOverallPct -width 48))
-    Write-Host ("  Sub-Task Progress: {0}" -f (Format-ProgressBar -pct $subTaskPct -width 48))
+    Write-Host ("  Overall Progress : {0}" -f (Format-ProgressBar -pct $lastOverallPct -width 65))
+    Write-Host ("  Sub-Task Progress: {0}" -f (Format-ProgressBar -pct $subTaskPct -width 65))
     Write-Host ""
-    Write-Host ("{0}--------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
+    Write-Host ("{0}─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────{1}" -f $cMuted, $cReset)
 
-    Write-Host ("{0} PIPELINE STAGES:{1}" -f $cBold, $cReset)
-    for ($s = 1; $s -le 10; $s++) {
-        $stgItem = $stages | Where-Object Id -eq $s
-        $badgeText = if ($s -lt $currentStageId) { "{0}[  DONE  ]{1}" -f $cSuccess, $cReset }
-                     elseif ($s -eq $currentStageId) { "{0}[ RUNNING ]{1}" -f $cWarn, $cReset }
-                     else { "{0}[ QUEUED  ]{1}" -f $cMuted, $cReset }
-        $numStr = $s.ToString().PadLeft(2, ' ')
-        Write-Host ("   {0} Stage {1} : {2}" -f $badgeText, $numStr, $stgItem.Name)
+    Write-Host ("{0} PIPELINE STAGES STATUS:{1}" -f $cBold, $cReset)
+    for ($s = 1; $s -le 10; $s += 2) {
+        $stg1 = $stages | Where-Object Id -eq $s
+        $stg2 = $stages | Where-Object Id -eq ($s + 1)
+
+        $b1 = if ($s -lt $currentStageId) { "{0}[ DONE ]{1}" -f $cSuccess, $cReset } elseif ($s -eq $currentStageId) { "{0}[RUNNING]{1}" -f $cWarn, $cReset } else { "{0}[QUEUED ]{1}" -f $cMuted, $cReset }
+        $b2 = if (($s + 1) -lt $currentStageId) { "{0}[ DONE ]{1}" -f $cSuccess, $cReset } elseif (($s + 1) -eq $currentStageId) { "{0}[RUNNING]{1}" -f $cWarn, $cReset } else { "{0}[QUEUED ]{1}" -f $cMuted, $cReset }
+
+        $str1 = (" {0} Stg {1:D2}: {2}" -f $b1, $s, $stg1.Name.PadRight(35))
+        $str2 = (" {0} Stg {1:D2}: {2}" -f $b2, ($s + 1), $stg2.Name.PadRight(35))
+        Write-Host ("  {0}    │   {1}" -f $str1, $str2)
     }
-    Write-Host ("{0}--------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
+    Write-Host ("{0}─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────{1}" -f $cMuted, $cReset)
 
     if ($alerts.Count -gt 0) {
-        Write-Host ("{0} ALERTS AND WARNINGS ({1}):{2}" -f $cWarn, $alerts.Count, $cReset)
+        Write-Host ("{0} ALERTS & WARNINGS ({1}):{2}" -f $cWarn, $alerts.Count, $cReset)
         foreach ($alt in ($alerts | Select-Object -Last 3)) {
-            Write-Host ("   {0}[!]{1} {2}" -f $cWarn, $cReset, $alt)
+            Write-Host ("   {0}⚠{1} {2}" -f $cWarn, $cReset, $alt)
         }
-        Write-Host ("{0}--------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
+        Write-Host ("{0}─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────{1}" -f $cMuted, $cReset)
     }
 
-    Write-Host ("{0} LIVE LOG TAIL:{1}" -f $cBold, $cReset)
-    $tail = $allLines | Where-Object { $_.Trim() -and $_ -notmatch '^\s*[\=\-\#]+\s*$' } | Select-Object -Last 5
-    if ($tail) {
-        foreach ($tLine in $tail) {
-            $cleanLine = $tLine.Trim() -replace "$e\[[0-9;]*m", ""
-            if ($cleanLine.Length -gt 80) { $cleanLine = $cleanLine.Substring(0, 80) + "..." }
-            Write-Host ("   {0}>{1} {2}{3}{4}" -f $cMuted, $cReset, $cFg, $cleanLine, $cReset)
+    Write-Host ("{0} LIVE MULTI-SOURCE LOG STREAM (12 LINES):{1}" -f $cBold, $cReset)
+    if ($recentTail) {
+        foreach ($tLine in $recentTail) {
+            Write-Host (Colorize-LogLine -line $tLine -maxLen 110)
         }
     } else {
-        Write-Host ("   {0}> Monitoring active tasks live...{1}" -f $cMuted, $cReset)
+        Write-Host ("   {0}› Monitoring active build pipeline live...{1}" -f $cMuted, $cReset)
     }
 
-    Write-Host ("{0}--------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
+    Write-Host ("{0}─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────{1}" -f $cMuted, $cReset)
 
     if ($lastOverallPct -ge 100.0) {
         Write-Host ("`n  {0}[AIO SUCCESS] Build and Flash Complete! You can close this monitor.{1}`n" -f $cSuccess, $cReset)
