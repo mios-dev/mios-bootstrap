@@ -1222,19 +1222,17 @@ copy "%maindir%\icon.ico" "%drivepath%:\icon.ico" /Y >nul
 attrib +h +s "%drivepath%:\autorun.inf" >nul 2>&1
 attrib +h +s "%drivepath%:\icon.ico" >nul 2>&1
 
-(
-echo using System;
-echo using System.Diagnostics;
-echo using System.IO;
-echo class Launcher {
-echo     static void Main^(^) {
-echo         string path = Path.Combine^(AppDomain.CurrentDomain.BaseDirectory, @"PortableApps\PortableApps.com\PortableAppsPlatform.exe"^);
-echo         if ^(File.Exists^(path^)^) {
-echo             Process.Start^(new ProcessStartInfo { FileName = path, UseShellExecute = true }^);
-echo         }
-echo     }
-echo }
-) > "%temp%\launcher.cs"
+echo using System; > "%temp%\launcher.cs"
+echo using System.Diagnostics; >> "%temp%\launcher.cs"
+echo using System.IO; >> "%temp%\launcher.cs"
+echo class Launcher { >> "%temp%\launcher.cs"
+echo     static void Main^(^) { >> "%temp%\launcher.cs"
+echo         string path = Path.Combine^(AppDomain.CurrentDomain.BaseDirectory, @"PortableApps\PortableApps.com\PortableAppsPlatform.exe"^); >> "%temp%\launcher.cs"
+echo         if ^(File.Exists^(path^)^) { >> "%temp%\launcher.cs"
+echo             Process.Start^(new ProcessStartInfo { FileName = path, UseShellExecute = true }^); >> "%temp%\launcher.cs"
+echo         } >> "%temp%\launcher.cs"
+echo     } >> "%temp%\launcher.cs"
+echo } >> "%temp%\launcher.cs"
 
 C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%maindir%\icon.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
 del "%temp%\launcher.cs" /Q >nul 2>&1
