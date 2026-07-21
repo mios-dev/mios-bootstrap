@@ -1,4 +1,4 @@
-﻿$TargetLanguage = $Args[0]
+$TargetLanguage = $Args[0]
 
 
 $text1 = "IF YOU PAID FOR THIS SOFTWARE, THEN YOU WERE SCAMMED!"
@@ -10,27 +10,27 @@ $text6 = "USE THIS SOFTWARE AT YOUR OWN RISK!"
 
 
 
-$Uri1 = “https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text1”
+$Uri1 = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text1"
 $Response = Invoke-RestMethod -Uri $Uri1 -Method Get
 $Translation1 = $Response[0].SyncRoot | foreach { $_[0] }
 
-$Uri2 = “https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text2”
+$Uri2 = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text2"
 $Response = Invoke-RestMethod -Uri $Uri2 -Method Get
 $Translation2 = $Response[0].SyncRoot | foreach { $_[0] }
 
-$Uri3 = “https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text3”
+$Uri3 = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text3"
 $Response = Invoke-RestMethod -Uri $Uri3 -Method Get
 $Translation3 = $Response[0].SyncRoot | foreach { $_[0] }
 
-$Uri4 = “https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text4”
+$Uri4 = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text4"
 $Response = Invoke-RestMethod -Uri $Uri4 -Method Get
 $Translation4 = $Response[0].SyncRoot | foreach { $_[0] }
 
-$Uri5 = “https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text5”
+$Uri5 = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text5"
 $Response = Invoke-RestMethod -Uri $Uri5 -Method Get
 $Translation5 = $Response[0].SyncRoot | foreach { $_[0] }
 
-$Uri6 = “https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text6”
+$Uri6 = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=$($TargetLanguage)&dt=t&q=$text6"
 $Response = Invoke-RestMethod -Uri $Uri6 -Method Get
 $Translation6 = $Response[0].SyncRoot | foreach { $_[0] }
 

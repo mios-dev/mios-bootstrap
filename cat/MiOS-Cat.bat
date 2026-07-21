@@ -63,34 +63,36 @@ if exist "%ssot_env%" del "%ssot_env%" /q >nul 2>&1
 :no_toml
 
 :: Self-Update Check
-echo Checking for script updates...
-powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }"
-if %errorlevel% equ 0 (
-    cd /d "C:\MiOS" >nul 2>&1
-    if %errorlevel% equ 0 (
-        git fetch >nul 2>&1
-        for /f "usebackq tokens=*" %%a in (`git status -uno ^| findstr /C:"behind"`) do (
-            echo Updates detected in MiOS repository. Pulling latest version...
-            git pull >nul 2>&1
-            echo Restarting script from updated checkout...
-            start "" cmd.exe /c "%~f0"
-            exit /b 0
+if not "%NONINTERACTIVE%"=="1" (
+    echo Checking for script updates...
+    powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+    if errorlevel 0 (
+        cd /d "C:\MiOS" >nul 2>&1
+        if errorlevel 0 (
+            git fetch >nul 2>&1
+            for /f "usebackq tokens=*" %%a in (`git status -uno 2^>nul ^| findstr /C:"behind"`) do (
+                echo Updates detected in MiOS repository. Pulling latest version...
+                git pull >nul 2>&1
+                echo Restarting script from updated checkout...
+                start "" cmd.exe /c "%~f0" %*
+                exit /b 0
+            )
         )
-    )
-    cd /d "C:\mios-bootstrap" >nul 2>&1
-    if %errorlevel% equ 0 (
-        git fetch >nul 2>&1
-        for /f "usebackq tokens=*" %%a in (`git status -uno ^| findstr /C:"behind"`) do (
-            echo Updates detected in mios-bootstrap repository. Pulling latest version...
-            git pull >nul 2>&1
-            echo Restarting script from updated checkout...
-            start "" cmd.exe /c "%~f0"
-            exit /b 0
+        cd /d "C:\mios-bootstrap" >nul 2>&1
+        if errorlevel 0 (
+            git fetch >nul 2>&1
+            for /f "usebackq tokens=*" %%a in (`git status -uno 2^>nul ^| findstr /C:"behind"`) do (
+                echo Updates detected in mios-bootstrap repository. Pulling latest version...
+                git pull >nul 2>&1
+                echo Restarting script from updated checkout...
+                start "" cmd.exe /c "%~f0" %*
+                exit /b 0
+            )
         )
+        cd /d "%maindir%"
+    ) else (
+        echo [OFFLINE] Skipping self-update check.
     )
-    cd /d "%maindir%"
-) else (
-    echo [OFFLINE] Skipping self-update check.
 )
 
 :: Call Preflight Checks
@@ -101,12 +103,17 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: Download 7z helper if missing
-if not exist bin md bin
+:: Ensure 7z helper availability (local bin, system PATH, or default installs)
+if not exist bin md bin >nul 2>&1
 if not exist bin\7z.exe (
-    echo Downloading 7z helper...
-    curl -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.exe" -o ./bin/7z.exe
-    curl -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll" -o ./bin/7z.dll
+    if exist "C:\Program Files\7-Zip\7z.exe" (
+        copy "C:\Program Files\7-Zip\7z.exe" bin\7z.exe >nul 2>&1
+        if exist "C:\Program Files\7-Zip\7z.dll" copy "C:\Program Files\7-Zip\7z.dll" bin\7z.dll >nul 2>&1
+    ) else (
+        echo Downloading 7z helper...
+        curl -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.exe" -o ./bin/7z.exe
+        curl -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll" -o ./bin/7z.dll
+    )
 )
 
 set "partition_scheme=GPT"
@@ -876,18 +883,13 @@ if not exist "%drivepath%:\" (
     goto menu
 )
 
-:: 4. Download Ventoy bootloader -- newest upstream GLOBALLY (resolved live from GitHub),
-::    else a BUILD-recorded pin (SSOT [cat].ventoy_version). No hand-pin, no stale offline
-::    fallback: if nothing resolves we fail loud below. The extracted dir is normalized to
-::    a version-agnostic "Ventoy2Disk", so everything downstream is version-independent.
+:: 4. Download Ventoy bootloader -- newest upstream GLOBALLY
 echo Checking Ventoy files...
 if not exist "%stage_dir%\Ventoy2Disk" call :resolve_ventoy_latest
 if not exist "%stage_dir%\Ventoy2Disk" if not defined ventoy_ver (
     echo.
     echo [FAIL] Could not resolve a Ventoy version: no network to reach GitHub, no
-    echo        build-recorded pin in [cat].ventoy_version, and no Ventoy staged on
-    echo        this USB. MiOS pins nothing by hand -- connect once to fetch the
-    echo        newest release, or stage Ventoy at build. Refusing to flash blind.
+    echo        build-recorded pin in [cat].ventoy_version, and no Ventoy staged.
     exit /b 1
 )
 if not exist "%stage_dir%\Ventoy2Disk" (
@@ -897,93 +899,27 @@ if not exist "%stage_dir%\Ventoy2Disk" (
     for /d %%V in ("%stage_dir%\ventoy-*") do ren "%%V" Ventoy2Disk
     del "%stage_dir%\ventoy.zip" /Q >nul 2>&1
     if not exist "%stage_dir%\Ventoy2Disk\Ventoy2Disk.exe" (
-        echo.
         echo [FAIL] Ventoy %ventoy_ver% download/extract failed -- no Ventoy2Disk.exe present.
-        echo        The resolved version must be a REAL Ventoy release tag
-        echo        ^(https://github.com/ventoy/Ventoy/releases^); refusing to flash a
-        echo        USB with no bootloader.
         exit /b 1
     )
 )
 
-set "skip_format_extract=0"
-if "%force_format%"=="Disabled" (
-    if exist "%drivepath%:\CdUsb.Y" (
-        if exist "%drivepath%:\Start.exe" (
-            if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" set "skip_format_extract=1"
-            if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" set "skip_format_extract=1"
-        )
-    )
-)
+:: 5. Prepare Localhost AIO Staging Directory
+set "aio_stage=%stage_dir%\AIO_Stage"
+if exist "%aio_stage%" rmdir "%aio_stage%" /S /Q >nul 2>&1
+mkdir "%aio_stage%\Live_Operating_Systems\Mini_Windows" >nul 2>&1
+mkdir "%aio_stage%\Live_Operating_Systems\SystemRescue" >nul 2>&1
 
-if "%skip_format_extract%"=="1" (
-    echo.
-    echo ==========================================================
-    echo [INFO] Existing MiOS-Cat installation detected on %drivepath%:.
-    echo Skipping format, Ventoy bootloader install, and archive decompression.
-    echo ==========================================================
-    goto skip_extraction
-)
-
-:: 5. Install Ventoy to USB drive
 echo.
-echo Formatting and merging all USB partitions back to a single disk letter (%drivepath%:)...
-powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { Get-Partition -DiskNumber $d.Number | Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue; Initialize-Disk -Number $d.Number -PartitionStyle GPT -ErrorAction SilentlyContinue; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter %drivepath% -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Cat' -Confirm:$false | Out-Null }; Update-HostStorageCache }" >nul 2>&1
+echo ==========================================================
+echo    PHASE 1: ALL-IN-ONE (AIO) LOCALHOST STAGING & COMPILATION
+echo ==========================================================
+echo Staging & compiling all images on localhost SSD: %aio_stage%
+echo Zero USB writes until ALL images pass fail-fast verification!
+echo ==========================================================
+echo.
 
-:: Disk-size-aware partition plan (SSOT: [cat.data_partition].min_disk_gb=%min_disk_gb%). Ventoy's /R
-:: reserves space at the DISK END for OUR partitions -- a hardcoded 4GB starves %repo_label% and
-:: any %data_label% vault, so scale the reservation to the disk: on >=%min_disk_gb%GB reserve everything past
-:: a bounded 64GB Ventoy/ISO partition (-> a tiny %repo_label% config + a %data_label% vault for the rest);
-:: on disks under %min_disk_gb%GB keep the 4GB floor -- %repo_label% takes it, no %data_label% (degrade-open).
-set "vtoy_reserve_mb=4096"
-set "mios_repo_gb=0"
-set "mios_make_data=0"
-:: Capture the plan as a single CSV line (reserve_mb,repo_gb,make_data) via for/f -- robust,
-:: no temp .cmd whose multi-line set-commands could collapse onto one line and cross-contaminate.
-for /f "usebackq tokens=1,2,3 delims=," %%a in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Partition -DriveLetter '%drivepath%' -ErrorAction SilentlyContinue; $disk = if ($p) { Get-Disk -Number $p.DiskNumber } else { Get-Disk | Where-Object { $_.BusType -in 'USB','SD' } | Sort-Object Size -Descending | Select-Object -First 1 }; if ($disk) { $g=[math]::Floor($disk.Size/1GB); $ventoy=64; $repo=1; $minGB=[int]'%min_disk_gb%'; if ($g -ge $minGB) { $rsv=($g-$ventoy)*1024; $mk=1 } else { $rsv=4096; $repo=0; $mk=0 }; Write-Output ('' + $rsv + ',' + $repo + ',' + $mk) }"`) do (
-    set "vtoy_reserve_mb=%%a"
-    set "mios_repo_gb=%%b"
-    set "mios_make_data=%%c"
-)
-echo   Disk partition plan: reserve %vtoy_reserve_mb% MB at disk end ^(%repo_label% %mios_repo_gb% GB; %data_label%=%mios_make_data%^)
-
-echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
-cd /d "%stage_dir%\Ventoy2Disk"
-set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme% /R:%vtoy_reserve_mb% /y"
-if "%secure_boot%"=="Enabled" (
-    set "vtoy_args=%vtoy_args% /S"
-) else (
-    set "vtoy_args=%vtoy_args% /NOUSBCheck"
-)
-Ventoy2Disk.exe VTOYCLI %vtoy_args%
-if errorlevel 1 (
-    echo [FAIL] Ventoy install to %drivepath%: FAILED -- the USB will NOT boot. Aborting instead of shipping a dead stick. >&2
-    cd /d "%maindir%"
-    exit /b 1
-)
-cd /d "%maindir%"
-:: Verify Ventoy actually installed by checking for its VTOYEFI boot partition (VTOYCLI /I creates
-:: a ~32MB EFI partition labeled VTOYEFI). The old check looked for %drivepath%:\ventoy\ventoy.json
-:: and \grub\ventoy.cfg -- files STAGED LATER, so it false-alarmed on every fresh install.
-set "vtoy_ok="
-for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "if (Get-Volume -FileSystemLabel 'VTOYEFI' -ErrorAction SilentlyContinue) { 'ok' }"`) do set "vtoy_ok=%%v"
-if not "%vtoy_ok%"=="ok" (
-    echo [WARN] VTOYEFI boot partition not detected after VTOYCLI -- Ventoy may not have installed; boot may be broken. >&2
-)
-
-echo Waiting 5s for partition remount...
-ping localhost -n 6 >nul
-
-:: Format partition with 64KB allocation unit size for USB 3+ high-speed throughput
-echo Formatting primary partition as %filesystem% (%partition_label%) with 64KB cluster size...
-format %drivepath%: /FS:%filesystem% /A:64K /X /Q /V:%partition_label% /Y >nul
-if errorlevel 1 echo [WARN] format of %drivepath%: returned non-zero -- the data partition may be unusable. >&2
-
-echo Creating secure offline repository partition (%repo_label%)...
-echo   Disk plan: %repo_label% %mios_repo_gb% GB + %data_label% vault in reserved tail
-powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ('%mios_make_data%' -eq '1') { $rp = New-Partition -DiskNumber $d.Number -Size %mios_repo_gb%GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%data_label%' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null } }" >nul 2>&1
-
-:: 6. Pull/Download Medicat core archive to M:\ (large storage)
+:: 6. Pull/Download Medicat core archive to M:\
 set "download_needed=0"
 if not exist "%file%" (
     set "download_needed=1"
@@ -998,342 +934,107 @@ if %errorlevel% neq 0 (
 
 :do_download
 if "%download_needed%"=="1" (
-    echo.
-    echo Pulling/Resuming core Medicat files 23 GB from CDN...
-    echo This might take a while depending on your internet connection.
-    echo Saving to: %file%
-    echo.
+    echo Pulling/Resuming core Medicat files 23 GB from CDN to %file%...
     curl.exe -C - -e "https://installer.medicatusb.com" -L "https://cat.tcbl.dev/MediCat.USB.v21.12.7z" -o "%file%" -#
 ) else (
     echo [OK] Core Medicat archive found and complete at %file%
 )
 
-:: 6b. Pull/Download the FULL Fedora Server DVD (offline-capable install source)
+:: 6b. Extract WIM payload to Localhost AIO Stage
+echo Extracting Mini_Windows WIM from core archive to Localhost SSD...
+"%maindir%\bin\7z.exe" x "%file%" -o"%aio_stage%\" "Live_Operating_Systems/Mini_Windows/*" -mmt=on -aoa -y >nul
+
+:: 6c. Pull/Download Fedora Server DVD
 set "fedora_ver=44"
 set "fedora_build=-1.7"
 set "fedora_file=M:\Fedora-Server-dvd-x86_64-%fedora_ver%%fedora_build%.iso"
 if exist "%fedora_file%" echo [OK] Fedora Server DVD found at %fedora_file%
 if exist "%fedora_file%" goto fedora_dvd_ok
-echo.
-echo Fedora Server DVD ISO not found in M:\
-echo Pulling the FULL Fedora %fedora_ver% Server DVD ~2.5 GB -- carries packages for OFFLINE install...
+echo Pulling FULL Fedora %fedora_ver% Server DVD ~2.5 GB...
 curl.exe -C - -L "https://download.fedoraproject.org/pub/fedora/linux/releases/%fedora_ver%/Server/x86_64/iso/Fedora-Server-dvd-x86_64-%fedora_ver%%fedora_build%.iso" -o "%fedora_file%" -#
 set "fedora_sz=0"
 if exist "%fedora_file%" for %%A in ("%fedora_file%") do set "fedora_sz=%%~zA"
 if not "%fedora_sz:~9,1%"=="" goto fedora_dvd_ok
-echo [FAIL] Fedora DVD download failed or looks like a 404/redirect stub (%fedora_sz% bytes; a valid DVD is ~2.5 GB). >&2
-echo        Confirm Fedora %fedora_ver% is current (bump fedora_ver / use archive.fedoraproject.org), or pre-stage the ISO at %fedora_file%. >&2
-del "%fedora_file%" 2>nul
-exit /b 1
+echo [FATAL ERROR] Fedora DVD download failed! & exit /b 1
 :fedora_dvd_ok
+copy "%fedora_file%" "%aio_stage%\Live_Operating_Systems\Fedora-Server.iso" /Y >nul
 
-:: 6c. Ensure the latest SystemRescue (Arch Linux rescue ISO) is staged
+:: 6d. Ensure SystemRescue Arch Linux ISO is staged
 set "sysrescue_ver=13.01"
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "try { $r=(Invoke-WebRequest -Uri 'https://www.system-rescue.org/Download/' -UseBasicParsing -TimeoutSec 6 -Headers @{'User-Agent'='MiOS-Cat'}).Content; if ($r -match 'systemrescue-([0-9]+\.[0-9]+)-amd64\.iso') { $Matches[1] } else { '13.01' } } catch { '13.01' }"`) do set "sysrescue_ver=%%i"
-set "sysrescue_target=%drivepath%:\Live_Operating_Systems\SystemRescue\SystemRescue.iso"
-if exist "%sysrescue_target%" goto sysrescue_ok
+set "sysrescue_local=%aio_stage%\Live_Operating_Systems\SystemRescue\SystemRescue.iso"
 if exist "M:\systemrescue-%sysrescue_ver%-amd64.iso" (
-    mkdir "%drivepath%:\Live_Operating_Systems\SystemRescue" >nul 2>&1
-    copy "M:\systemrescue-%sysrescue_ver%-amd64.iso" "%sysrescue_target%" /Y >nul 2>&1
+    copy "M:\systemrescue-%sysrescue_ver%-amd64.iso" "%sysrescue_local%" /Y >nul 2>&1
 )
-if exist "%sysrescue_target%" goto sysrescue_ok
-
-echo.
-echo SystemRescue Arch Linux ISO not found at %sysrescue_target%.
-echo Pulling SystemRescue %sysrescue_ver% (newest upstream Arch rescue ISO)...
-mkdir "%drivepath%:\Live_Operating_Systems\SystemRescue" >nul 2>&1
-curl.exe -C - -L --connect-timeout 10 --retry 2 "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_target%" -#
-if not exist "%sysrescue_target%" (
-    echo [RETRY] Primary mirror timed out, pulling from fastly CDN fallback...
-    curl.exe -C - -L --connect-timeout 10 --retry 2 "https://fastly-cdn.system-rescue.org/releases/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_target%" -#
+if not exist "%sysrescue_local%" (
+    echo Pulling SystemRescue %sysrescue_ver%...
+    curl.exe -C - -L --connect-timeout 10 --retry 2 "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_local%" -#
 )
-if not exist "%sysrescue_target%" echo [WARN] Could not pull SystemRescue ISO -- continuing with extraction payload. >&2
-
-:sysrescue_ok
-
-set "SURGICAL_LIST=Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/*"
-
-:: 7. Multithreaded extraction to D:\ (-mmt=on for high-speed multi-core performance)
-echo.
-if not "%extract_mode%"=="Surgical" goto do_full_extract
-echo Extracting minimal boot files and portable apps from %file% to %drivepath%:...
-echo Multithreaded 7-Zip extraction enabled (-mmt=on)...
-"%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ %SURGICAL_LIST% -mmt=on -aoa -y
-goto post_extract
-
-:do_full_extract
-echo Extracting ALL files from %file% to %drivepath%:...
-"%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -mmt=on -aoa -y
-
-:post_extract
-
-if not "%extract_mode%"=="Surgical" goto skip_debloat
-echo [DEBLOAT] Purging bloated program folders from %drivepath%:\Programs...
-powershell -NoProfile -Command "$keep = @('7-Zip_x64', 'Bootice', 'DiskGeniusLite', 'Everything_x64', 'WizTree', 'HW Monitor', 'HDSentinel', 'Sysinternals', 'ventoy'); if (Test-Path '%drivepath%:\Programs') { Get-ChildItem -Path '%drivepath%:\Programs' -Directory | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }" >nul 2>&1
-:skip_debloat
-
-:skip_extraction
-call :check_drive_ready
-
-:: 8. Apply custom MiOS templates and layouts
-echo.
-echo Applying custom MiOS configurations, wallpapers, and layouts...
-xcopy "%maindir%\resources\ventoy" "%drivepath%:\ventoy\" /E /I /H /Y /Q >nul
-xcopy "%maindir%\resources\theme" "%drivepath%:\ventoy\theme\" /E /I /H /Y /Q >nul
-copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun.sh" /Y >nul
-mkdir "%drivepath%:\autorun" >nul 2>&1
-copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun.sh" /Y >nul
-copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
-copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
-
-:: Resolve the config + data partitions by LABEL (robust vs partition-number ordering):
-::   %repo_label% = tiny shadow-config "brain" (SSOT + launcher, mere MB, always present)
-::   %data_label% = the bulk vault (offline repos + CDN/CI + package/dependency/model/OCI-layer
-::               caches), present only on >=%min_disk_gb%GB disks. Repos -> %data_label%; brain -> %repo_label%.
-for /f "usebackq tokens=1,2 delims=," %%a in (`powershell -NoProfile -Command "$rp=(Get-Volume -FileSystemLabel '%repo_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; $dp=(Get-Volume -FileSystemLabel '%data_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; if (-not $rp) { $rp='_' }; if (-not $dp) { $dp='_' }; Write-Output ($rp + ',' + $dp)"`) do (
-    set "repodrive=%%a"
-    set "datadrive=%%b"
+if not exist "%sysrescue_local%" (
+    echo [FATAL ERROR] SystemRescue ISO download failed! & exit /b 1
 )
-if "%repodrive%"=="_" set "repodrive=%drivepath%"
-if "%datadrive%"=="_" set "datadrive=%repodrive%"
-if "%repodrive%"=="" set "repodrive=%drivepath%"
-if "%datadrive%"=="" set "datadrive=%repodrive%"
 
-:: Bulk: stage the offline repos onto %data_label% using 32-thread Robocopy (/MT:32)
-echo Staging offline repositories to the %data_label% vault (%datadrive%:) with 32 parallel threads...
-mkdir "%datadrive%:\repos\mios-bootstrap" >nul 2>&1
-robocopy "C:\mios-bootstrap" "%datadrive%:\repos\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 /MT:32 >nul
-mkdir "%datadrive%:\repos\MiOS" >nul 2>&1
-robocopy "C:\MiOS" "%datadrive%:\repos\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 /MT:32 >nul
-
-:: Shadow-config "brain": the live SSOT, the architecture diagram, and a self-copy of this
-:: launcher on the tiny %repo_label% partition (%repodrive%:) -- always present + mere MB, so a
-:: booted/target system can re-read config, re-open the topology, or re-run the flasher offline.
-echo Staging shadow-config brain (SSOT + architecture + launcher) to %repo_label% (%repodrive%:)...
-if exist "%toml_path%" copy "%toml_path%" "%repodrive%:\mios.toml" /Y >nul 2>&1
-copy "%~f0" "%repodrive%:\MiOS-Cat.bat" /Y >nul 2>&1
-if exist "%USERPROFILE%\Downloads\mios_visual_architecture_idealistic.html" copy "%USERPROFILE%\Downloads\mios_visual_architecture_idealistic.html" "%repodrive%:\mios.html" /Y >nul 2>&1
-if not exist "%repodrive%:\mios.html" if exist "%USERPROFILE%\Downloads\mios_visual_architecture.html" copy "%USERPROFILE%\Downloads\mios_visual_architecture.html" "%repodrive%:\mios.html" /Y >nul 2>&1
-
-:: Overwrite stock System images
-echo Customizing System folder thumbnails...
-copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\System\background.jpg" /Y >nul
-copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\System\Antivirus.jpg" /Y >nul
-
-:: Write autorun.inf for USB drive branding and custom icon
-echo Injecting custom USB drive branding and icons...
-attrib -r -h -s "%drivepath%:\autorun.inf" >nul 2>&1
-attrib -r -h -s "%drivepath%:\icon.ico" >nul 2>&1
-(
-echo [Autorun]
-echo Icon=icon.ico
-echo Label=MiOS-Cat
-) > "%drivepath%:\autorun.inf"
-copy "%maindir%\icon.ico" "%drivepath%:\icon.ico" /Y >nul
-attrib +h +s "%drivepath%:\autorun.inf" >nul 2>&1
-attrib +h +s "%drivepath%:\icon.ico" >nul 2>&1
-
-:: Configure custom folder icons using desktop.ini
-for %%F in (System ventoy Live_Operating_Systems PortableApps Documents autorun) do (
-    if exist "%drivepath%:\%%F" (
-        attrib -r -h -s "%drivepath%:\%%F\desktop.ini" >nul 2>&1
-        attrib -r -h -s "%drivepath%:\%%F\icon.ico" >nul 2>&1
-        copy "%maindir%\icon.ico" "%drivepath%:\%%F\icon.ico" /Y >nul
-        (
-        echo [.ShellClassInfo]
-        echo IconResource=icon.ico,0
-        ) > "%drivepath%:\%%F\desktop.ini"
-        attrib +r "%drivepath%:\%%F" >nul 2>&1
-        attrib +h +s "%drivepath%:\%%F\desktop.ini" >nul 2>&1
-        attrib +h +s "%drivepath%:\%%F\icon.ico" >nul 2>&1
+:: 7. Perform Localhost Offline DISM Servicing on MiOS_PE.wim (Zero USB mounting!)
+set "wim_path=%aio_stage%\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim"
+if not exist "%wim_path%" (
+    if exist "%aio_stage%\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" (
+        move "%aio_stage%\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" "%wim_path%" >nul
     )
-)
-
-:: Compile custom branded launcher to replace stock Start.exe
-echo Compiling custom branded Start.exe launcher...
-(
-echo using System;
-echo using System.Diagnostics;
-echo using System.IO;
-echo class Launcher {
-echo     static void Main^(^) {
-echo         string path = Path.Combine^(AppDomain.CurrentDomain.BaseDirectory, @"PortableApps\PortableApps.com\PortableAppsPlatform.exe"^);
-echo         if ^(File.Exists^(path^)^) {
-echo             Process.Start^(new ProcessStartInfo {
-echo                 FileName = path,
-echo                 UseShellExecute = true
-echo             }^);
-echo         }
-echo     }
-echo }
-) > "%temp%\launcher.cs"
-
-C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%maindir%\icon.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
-del "%temp%\launcher.cs" /Q >nul 2>&1
-
-:: Copy Fedora ISO and Kickstart to Ventoy paths
-echo Copying Fedora Server ISO and Kickstart template to USB...
-copy "%fedora_file%" "%drivepath%:\Live_Operating_Systems\Fedora-Server.iso" /Y >nul
-copy "%maindir%\resources\ventoy\mios-kickstart.cfg" "%drivepath%:\ventoy\mios-kickstart.cfg" /Y >nul
-
-
-:: Brand the PortableApps Menu to match MiOS
-echo Theming PortableApps Platform...
-mkdir "%drivepath%:\PortableApps\PortableApps.com\App\Graphics" >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\PortableApps\PortableApps.com\App\Graphics\logo.png" /Y >nul
-copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\PortableApps\PortableApps.com\App\Graphics\header.png" /Y >nul
-copy "%maindir%\resources\theme\uefi\background.jpg" "%drivepath%:\PortableApps\PortableApps.com\App\Graphics\menu_bg.png" /Y >nul
-
-:: Create custom themed ini config for PortableApps Menu
-mkdir "%drivepath%:\PortableApps\PortableApps.com\Data" >nul 2>&1
-(
-echo [Theme]
-echo Color=Custom
-echo PrimaryColor=%subtle_color%
-echo SecondaryColor=%muted_color%
-echo AccentColor=%accent_color%
-echo SetTheme=Custom
-echo Logo=logo.png
-echo.
-echo [Files]
-echo CommonDocumentsDirectory=..\..\Documents
-echo CommonPicturesDirectory=..\..\Documents
-echo CommonMusicDirectory=..\..\Documents
-echo CommonVideoDirectory=..\..\Documents
-) > "%drivepath%:\PortableApps\PortableApps.com\Data\PortableAppsMenu.ini"
-
-:: Theme CrystalDiskInfo to Dark
-mkdir "%drivepath%:\PortableApps\CrystalDiskInfoPortable\Data\settings" >nul 2>&1
-(
-echo [Setting]
-echo Theme=Dark
-) > "%drivepath%:\PortableApps\CrystalDiskInfoPortable\Data\settings\DiskInfo.ini"
-
-:: Configure Snappy Driver Installer Origin (SDIO) globally
-mkdir "%drivepath%:\PortableApps\SnappyDriverInstallerOrigin\drivers" >nul 2>&1
-(
-echo [disable]
-echo update=1
-echo [window]
-echo theme=Metallic
-echo [drp]
-echo path=drivers
-) > "%drivepath%:\PortableApps\SnappyDriverInstallerOrigin\sdi.cfg" 2>nul
-mkdir "%drivepath%:\PortableApps\SDIO\drivers" >nul 2>&1
-(
-echo [disable]
-echo update=1
-echo [window]
-echo theme=Metallic
-echo [drp]
-echo path=drivers
-) > "%drivepath%:\PortableApps\SDIO\sdi.cfg" 2>nul
-
-
-:: 8b. Create integration folders and write themed README.md files (No empty folders!)
-echo Creating integrated directories and documentation...
-mkdir "%drivepath%:\PortableApps\MiOS-Xbox-Builder" >nul 2>&1
-copy "%maindir%\resources\MiOS-Xbox-Builder.bat" "%drivepath%:\PortableApps\MiOS-Xbox-Builder\MiOS-Xbox-Builder.bat" /Y >nul
-(
-echo # MiOS-Xbox Builder
-echo This utility executes the full offline build and servicing pipeline for the MiOS-Xbox system,
-echo generating customized, debloated installation ISOs and images.
-) > "%drivepath%:\PortableApps\MiOS-Xbox-Builder\README.md"
-
-mkdir "%drivepath%:\Documents" >nul 2>&1
-(
-echo # MiOS-Cat Documents
-echo This directory stores application data, scripts, configs, and diagnostic logs
-echo compiled during system deployment and recovery. It is integrated directly with the
-echo PortableApps suite on disk and mapped to host filesystems.
-) > "%drivepath%:\Documents\README.md"
-
-(
-echo # MiOS-Cat Portable Applications
-echo This folder contains a surgical, minimal selection of portable diagnostic
-echo and imaging utilities tailored specifically for MiOS deployment.
-) > "%drivepath%:\PortableApps\README.md"
-
-(
-echo # MiOS-Cat Live Boot Configurations
-echo This folder stores bootloader files, Grub configuration templates, and custom theme layouts.
-) > "%drivepath%:\ventoy\README.md"
-
-(
-echo # MiOS-Cat Operating Systems
-echo This folder contains the live WinPE recovery image ^(MiOS_PE.wim^) and SystemRescue ISO.
-) > "%drivepath%:\Live_Operating_Systems\README.md"
-
-
-:: 9. Rename WIM and perform Offline DISM wallpaper servicing
-echo.
-call :check_drive_ready
-set "wim_path=%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim"
-set "serviced_marker=%drivepath%:\Live_Operating_Systems\Mini_Windows\serviced.marker"
-
-set "skip_wim_servicing=0"
-if exist "%wim_path%" (
-    if exist "%serviced_marker%" (
-        if "%bake_drivers%"=="Disabled" (
-            set "skip_wim_servicing=1"
-        )
-    )
-)
-
-if "%skip_wim_servicing%"=="1" (
-    echo [INFO] Serviced MiOS_PE.wim and marker detected. Skipping offline DISM servicing.
-    goto skip_wim_servicing
 )
 
 if not exist "%wim_path%" (
-    if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" (
-        echo Renaming WIM image to MiOS_PE.wim...
-        move "%drivepath%:\Live_Operating_Systems\Mini_Windows\Mini_Windows_10.wim" "%wim_path%" >nul
-    )
+    echo [FATAL ERROR] Required WIM image file not found at %wim_path%!
+    exit /b 1
 )
 
-echo Performing offline servicing on MiOS_PE.wim to inject MiOS custom wallpaper...
-echo Cleaning up any stale/orphaned DISM mount points...
+echo Performing offline DISM servicing on Localhost WIM image: %wim_path%
 dism /Cleanup-Wim >nul 2>&1
+if exist "%stage_dir%\mount" rmdir "%stage_dir%\mount" /S /Q >nul 2>&1
 mkdir "%stage_dir%\mount" >nul 2>&1
-echo Mounting WIM image (Index 1)...
+echo Mounting WIM image on Localhost SSD (%stage_dir%\mount)...
 dism /Mount-Image /ImageFile:"%wim_path%" /Index:1 /MountDir:"%stage_dir%\mount"
+if %errorlevel% neq 0 (
+    echo [FATAL ERROR] DISM failed to mount %wim_path% with exit code %errorlevel%!
+    dism /Cleanup-Wim >nul 2>&1
+    exit /b %errorlevel%
+)
 
 if "%bake_drivers%"=="Enabled" (
-    echo.
     echo [DRIVER BAKE] Exporting build-host drivers for WinPE injection...
-    echo This may take several minutes depending on the number of host drivers...
     mkdir "%stage_dir%\hostdrivers" >nul 2>&1
     dism /Online /Export-Driver /Destination:"%stage_dir%\hostdrivers"
-    echo.
-    echo [DRIVER BAKE] Injecting host drivers into MiOS_PE.wim...
+    if %errorlevel% neq 0 ( echo [FATAL ERROR] DISM Export-Driver failed! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b %errorlevel% )
     dism /Image:"%stage_dir%\mount" /Add-Driver /Driver:"%stage_dir%\hostdrivers" /Recurse /ForceUnsigned
+    if %errorlevel% neq 0 ( echo [FATAL ERROR] DISM Add-Driver failed! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b %errorlevel% )
     rmdir /s /q "%stage_dir%\hostdrivers" >nul 2>&1
-) else (
-    echo [DRIVER BAKE] Skipped driver bake - disabled in config.
 )
 
-echo Replacing wallpapers inside WIM image...
+echo Injecting custom wallpaper, Geist Mono font, and Console colors into WIM...
+set "wallpaper_src="
+if exist "%maindir%\resources\theme\uefi\background.jpg" set "wallpaper_src=%maindir%\resources\theme\uefi\background.jpg"
+if "%wallpaper_src%"=="" if exist "%~dp0..\resources\theme\uefi\background.jpg" set "wallpaper_src=%~dp0..\resources\theme\uefi\background.jpg"
+if "%wallpaper_src%"=="" if exist "D:\ventoy\theme\uefi\background.jpg" set "wallpaper_src=D:\ventoy\theme\uefi\background.jpg"
+if "%wallpaper_src%"=="" ( echo [FATAL ERROR] background.jpg missing! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
+
 takeown /f "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /a >nul 2>&1
 icacls "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.jpg" "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /Y >nul
+copy "%wallpaper_src%" "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /Y >nul
+copy "%wallpaper_src%" "%stage_dir%\mount\Windows\System32\winpe.jpg" /Y >nul
+copy "%wallpaper_src%" "%stage_dir%\mount\Windows\System32\winre.jpg" /Y >nul
+copy "%wallpaper_src%" "%stage_dir%\mount\Windows\Web\Screen\img100.jpg" /Y >nul
 
-takeown /f "%stage_dir%\mount\Windows\System32\winpe.jpg" /a >nul 2>&1
-icacls "%stage_dir%\mount\Windows\System32\winpe.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.jpg" "%stage_dir%\mount\Windows\System32\winpe.jpg" /Y >nul
+set "font_src="
+if exist "C:\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" set "font_src=C:\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf"
+if "%font_src%"=="" if exist "%maindir%\resources\fonts\GeistMonoNerdFontMono-Regular.otf" set "font_src=%maindir%\resources\fonts\GeistMonoNerdFontMono-Regular.otf"
+if "%font_src%"=="" if exist "%~dp0..\resources\fonts\GeistMonoNerdFontMono-Regular.otf" set "font_src=%~dp0..\resources\fonts\GeistMonoNerdFontMono-Regular.otf"
+if "%font_src%"=="" ( echo [FATAL ERROR] GeistMono font missing! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
+copy "%font_src%" "%stage_dir%\mount\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" /Y >nul
 
-takeown /f "%stage_dir%\mount\Windows\System32\winre.jpg" /a >nul 2>&1
-icacls "%stage_dir%\mount\Windows\System32\winre.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.jpg" "%stage_dir%\mount\Windows\System32\winre.jpg" /Y >nul
+reg load HKEY_USERS\pe-default "%stage_dir%\mount\Windows\System32\config\DEFAULT" >nul 2>&1
+if %errorlevel% neq 0 ( echo [FATAL ERROR] Failed to load DEFAULT hive! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
+reg load HKEY_USERS\pe-software "%stage_dir%\mount\Windows\System32\config\SOFTWARE" >nul 2>&1
+if %errorlevel% neq 0 ( echo [FATAL ERROR] Failed to load SOFTWARE hive! & reg unload HKEY_USERS\pe-default /f >nul 2>&1 & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
 
-takeown /f "%stage_dir%\mount\Windows\Web\Screen\img100.jpg" /a >nul 2>&1
-icacls "%stage_dir%\mount\Windows\Web\Screen\img100.jpg" /grant administrators:F >nul 2>&1
-copy "%maindir%\resources\theme\uefi\background.jpg" "%stage_dir%\mount\Windows\Web\Screen\img100.jpg" /Y >nul
-
-echo Injecting Geist Mono font and custom Console colors into WIM image...
-copy "C:\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" "%stage_dir%\mount\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" /Y >nul
-reg load HKEY_USERS\pe-default "%stage_dir%\mount\Windows\System32\config\DEFAULT" >nul
-reg load HKEY_USERS\pe-software "%stage_dir%\mount\Windows\System32\config\SOFTWARE" >nul
 reg add "HKEY_USERS\pe-software\Microsoft\Windows NT\CurrentVersion\Fonts" /v "GeistMono Nerd Font Mono Regular (TrueType)" /t REG_SZ /d "GeistMonoNerdFontMono-Regular.otf" /f >nul
 reg add "HKEY_USERS\pe-default\Console" /v "ColorTable00" /t REG_DWORD /d 6431272 /f >nul
 reg add "HKEY_USERS\pe-default\Console" /v "ColorTable07" /t REG_DWORD /d 13885415 /f >nul
@@ -1346,81 +1047,180 @@ reg add "HKEY_USERS\pe-default\Console" /v "FontFamily" /t REG_DWORD /d 54 /f >n
 reg add "HKEY_USERS\pe-default\Console\%%SystemRoot%%_System32_cmd.exe" /v "FaceName" /t REG_SZ /d "GeistMono Nerd Font Mono" /f >nul
 reg add "HKEY_USERS\pe-default\Console\%%SystemRoot%%_System32_cmd.exe" /v "FontSize" /t REG_DWORD /d 1048576 /f >nul
 reg add "HKEY_USERS\pe-default\Console\%%SystemRoot%%_System32_cmd.exe" /v "FontFamily" /t REG_DWORD /d 54 /f >nul
-reg unload HKEY_USERS\pe-default >nul
-reg unload HKEY_USERS\pe-software >nul
 
-echo Committing changes and unmounting WIM image...
-set "retry_count=0"
-:unmount_retry
+reg unload HKEY_USERS\pe-default >nul 2>&1
+reg unload HKEY_USERS\pe-software >nul 2>&1
+
+echo Committing changes and unmounting Localhost WIM image...
 dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Commit
 if %errorlevel% neq 0 (
-    set /a retry_count+=1
-    if %retry_count% lss 4 (
-        echo [WARNING] Unmount failed - possibly locked. Retrying in 4 seconds - attempt %retry_count%/3...
-        ping localhost -n 5 >nul
-        goto unmount_retry
-    )
-    echo [ERROR] Failed to unmount the image after 3 attempts. Force-cleaning mount points...
+    echo [FATAL ERROR] Failed to unmount and commit Localhost WIM image!
+    dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
     dism /Cleanup-Wim >nul 2>&1
+    exit /b 1
 )
-rmdir "%stage_dir%\mount" /S /Q >nul 2>&1
+if exist "%stage_dir%\mount" rmdir "%stage_dir%\mount" /S /Q >nul 2>&1
 
-echo Exporting and compressing MiOS_PE.wim to reclaim space...
-dism /Export-Image /SourceImageFile:"%wim_path%" /SourceIndex:1 /DestinationImageFile:"%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim" /Compress:max >nul 2>&1
-if exist "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim" (
-    del "%wim_path%" /Q
-    move "%drivepath%:\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim" "%wim_path%" >nul
+echo Exporting and compressing Localhost MiOS_PE.wim...
+set "trim_path=%aio_stage%\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim"
+dism /Export-Image /SourceImageFile:"%wim_path%" /SourceIndex:1 /DestinationImageFile:"%trim_path%" /Compress:max
+if %errorlevel% neq 0 ( echo [FATAL ERROR] DISM Export-Image failed! & exit /b %errorlevel% )
+del "%wim_path%" /Q >nul 2>&1
+move "%trim_path%" "%wim_path%" >nul
+
+:: 8. Compile MiOS-Xbox ISO on Localhost SSD
+if "%build_xbox%"=="Enabled" (
+    echo.
+    echo Compiling MiOS-Xbox Installer ISO on Localhost SSD...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autounattend\Render-MiosRunToml.ps1" -TomlPath "%toml_path%" -UupChannel "%uup_channel%" -BakeDrivers "%bake_drivers%" -GamingOptimize "%gaming_optimize%"
+    if errorlevel 1 ( echo [FATAL ERROR] Render-MiosRunToml failed! & exit /b 1 )
+
+    set "xbox_builder_script=%~dp0autounattend\Build-MiOSXboxISO.ps1"
+    if not exist "%xbox_builder_script%" set "xbox_builder_script=%~dp0cat\autounattend\Build-MiOSXboxISO.ps1"
+    if not exist "%xbox_builder_script%" set "xbox_builder_script=C:\mios-bootstrap\cat\autounattend\Build-MiOSXboxISO.ps1"
+    if not exist "%xbox_builder_script%" ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 script missing! & exit /b 1 )
+
+    powershell.exe -ExecutionPolicy Bypass -File "%xbox_builder_script%" -TomlPath "%temp%\mios_run.toml" -OutIso "%aio_stage%\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%stage_dir%\isobuild_live" -SkipWsl -SkipPrereqs
+    if errorlevel 1 ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 failed! & exit /b 1 )
 )
-echo Done > "%serviced_marker%"
 
-:skip_wim_servicing
+:: 9. Stage Live-Chat ISO if available
+if "%live_chat_iso_src%"=="" set "live_chat_iso_src=M:\MiOS-Live-Chat.iso"
+if exist "%live_chat_iso_src%" (
+    copy "%live_chat_iso_src%" "%aio_stage%\Live_Operating_Systems\MiOS-Live-Chat.iso" /Y >nul 2>&1
+)
 
-:: 9b. Stage the W10 live-chat ISO (built off-host via 'just live-chat-iso' on a Linux/podman
-:: builder). MiOS-Cat.bat only COPIES the finished artifact -- same "M:\ pre-staged input" idiom
-:: as fedora_file -- and degrades open (warn + continue) so a missing live-chat ISO never fails
-:: the whole USB build. The grub "Chat with MiOS AI" row is media-guarded, so an absent ISO
-:: simply hides the row rather than leaving a dead menu entry. Defaults are resolved BEFORE the
-:: enabled-check block so the in-block %live_chat_iso_src% is never a stale/empty parse-time value.
-if "%live_chat_iso_src%"==""  set "live_chat_iso_src=M:\MiOS-Live-Chat.iso"
-if "%live_chat_iso_name%"=="" set "live_chat_iso_name=MiOS-Live-Chat.iso"
-if not "%live_chat_enabled%"=="False" (
-    if exist "%live_chat_iso_src%" (
-        echo Staging W10 live-chat ISO: %live_chat_iso_src% -^> %drivepath%:\Live_Operating_Systems\%live_chat_iso_name%
-        copy "%live_chat_iso_src%" "%drivepath%:\Live_Operating_Systems\%live_chat_iso_name%" /Y >nul
-        if errorlevel 1 (echo [WARN] Failed to copy the live-chat ISO -- "Chat with MiOS AI" entry stays hidden.) else (echo [OK] Live-chat ISO staged.)
-    ) else (
-        echo [INFO] No pre-built live-chat ISO at %live_chat_iso_src% -- build it once via 'just live-chat-iso' on a Linux builder ^(automation/build/live-iso.sh^). Skipping; the "Chat with MiOS AI" row stays hidden ^(media-guarded, no dead menu row^).
+:: 10. FAIL FAST VERIFICATION GATE (Check all compiled images before touching USB drive)
+echo.
+echo Checking AIO compiled images verification gate...
+if not exist "%aio_stage%\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" (
+    echo [FATAL ERROR] AIO verification failed: MiOS_PE.wim missing from stage! & exit /b 1
+)
+if "%build_xbox%"=="Enabled" (
+    if not exist "%aio_stage%\Live_Operating_Systems\MiOS-Xbox.iso" (
+        echo [FATAL ERROR] AIO verification failed: MiOS-Xbox.iso missing from stage! & exit /b 1
     )
 )
-
-:: 10. Compile the inline live build of MiOS-Xbox ISO directly to the USB drive
-if "%build_xbox%" neq "Enabled" goto skip_xbox_build
-
-call :check_drive_ready
-echo.
-echo ==========================================================
-echo   Compiling Inline Live Build of MiOS-Xbox Installer ISO  
-echo ==========================================================
-echo This will pull the build prereqs, merge configurations,
-echo and assemble the custom MiOS-Xbox installation media.
-echo Output path: %drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso
-echo ==========================================================
-echo.
-
-echo Generating customized runtime configuration...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autounattend\Render-MiosRunToml.ps1" -TomlPath "%toml_path%" -UupChannel "%uup_channel%" -BakeDrivers "%bake_drivers%" -GamingOptimize "%gaming_optimize%"
-powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 15GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\isobuild_live' } else { 'C:\MiOS\isobuild_live' }; [System.IO.File]::WriteAllText(\"%~dp0work_path.txt\", $p)"
-set /p workdir_path=<"%~dp0work_path.txt"
-del "%~dp0work_path.txt" /Q >nul 2>&1
-powershell.exe -ExecutionPolicy Bypass -File "C:\mios-bootstrap\cat\autounattend\Build-MiOSXboxISO.ps1" -TomlPath "%temp%\mios_run.toml" -OutIso "%drivepath%:\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%workdir_path%" -SkipWsl -SkipPrereqs
-
-:skip_xbox_build
+if not exist "%aio_stage%\Live_Operating_Systems\SystemRescue\SystemRescue.iso" (
+    echo [FATAL ERROR] AIO verification failed: SystemRescue.iso missing from stage! & exit /b 1
+)
+echo [AIO SUCCESS] All images 100%% compiled, serviced, and verified on Localhost SSD!
 
 echo.
 echo ==========================================================
-echo     MiOS-Cat DEDICATED USB INSTALLATION COMPLETED         
+echo    PHASE 2: TARGET DRIVE FORMAT & SINGLE-PASS FLASH WRITE
 echo ==========================================================
-echo Drive %drivepath%: is now ready to boot into MiOS-Cat!
+echo Target Drive: %drivepath%:
+echo ==========================================================
+echo.
+
+:: 11. Format & Initialize Target USB Drive
+echo Formatting and merging all USB partitions back to a single disk letter (%drivepath%:)...
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { Get-Partition -DiskNumber $d.Number | Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue; Initialize-Disk -Number $d.Number -PartitionStyle GPT -ErrorAction SilentlyContinue; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter %drivepath% -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Cat' -Confirm:$false | Out-Null }; Update-HostStorageCache }" >nul 2>&1
+
+set "vtoy_reserve_mb=4096"
+set "mios_repo_gb=0"
+set "mios_make_data=0"
+for /f "usebackq tokens=1,2,3 delims=," %%a in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Partition -DriveLetter '%drivepath%' -ErrorAction SilentlyContinue; $disk = if ($p) { Get-Disk -Number $p.DiskNumber } else { Get-Disk | Where-Object { $_.BusType -in 'USB','SD' } | Sort-Object Size -Descending | Select-Object -First 1 }; if ($disk) { $g=[math]::Floor($disk.Size/1GB); $ventoy=64; $repo=1; $minGB=[int]'%min_disk_gb%'; if ($g -ge $minGB) { $rsv=($g-$ventoy)*1024; $mk=1 } else { $rsv=4096; $repo=0; $mk=0 }; Write-Output ('' + $rsv + ',' + $repo + ',' + $mk) }"`) do (
+    set "vtoy_reserve_mb=%%a"
+    set "mios_repo_gb=%%b"
+    set "mios_make_data=%%c"
+)
+
+echo Installing Ventoy bootloader to %drivepath%:...
+cd /d "%stage_dir%\Ventoy2Disk"
+set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme% /R:%vtoy_reserve_mb% /y"
+if "%secure_boot%"=="Enabled" ( set "vtoy_args=%vtoy_args% /S" ) else ( set "vtoy_args=%vtoy_args% /NOUSBCheck" )
+Ventoy2Disk.exe VTOYCLI %vtoy_args%
+if errorlevel 1 ( echo [FATAL ERROR] Ventoy install failed! & exit /b 1 )
+cd /d "%maindir%"
+
+echo Waiting 5s for partition remount...
+ping localhost -n 6 >nul
+format %drivepath%: /FS:%filesystem% /A:64K /X /Q /V:%partition_label% /Y >nul
+
+echo Creating secure offline repository partition (%repo_label%)...
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ('%mios_make_data%' -eq '1') { $rp = New-Partition -DiskNumber $d.Number -Size %mios_repo_gb%GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%data_label%' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null } }" >nul 2>&1
+
+:: 12. Multithreaded extraction of Medicat payload
+set "SURGICAL_LIST=System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/*"
+echo Extracting payload to %drivepath%: (-mmt=on)...
+"%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ %SURGICAL_LIST% -mmt=on -aoa -y >nul
+
+:: 13. Apply custom MiOS templates, PortableApps & shadow-config brain
+xcopy "%maindir%\resources\ventoy" "%drivepath%:\ventoy\" /E /I /H /Y /Q >nul
+xcopy "%maindir%\resources\theme" "%drivepath%:\ventoy\theme\" /E /I /H /Y /Q >nul
+copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun.sh" /Y >nul
+mkdir "%drivepath%:\autorun" >nul 2>&1
+copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun.sh" /Y >nul
+copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
+copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
+
+for /f "usebackq tokens=1,2 delims=," %%a in (`powershell -NoProfile -Command "$rp=(Get-Volume -FileSystemLabel '%repo_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; $dp=(Get-Volume -FileSystemLabel '%data_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; if (-not $rp) { $rp='_' }; if (-not $dp) { $dp='_' }; Write-Output ($rp + ',' + $dp)"`) do (
+    set "repodrive=%%a"
+    set "datadrive=%%b"
+)
+if "%repodrive%"=="_" set "repodrive=%drivepath%"
+if "%datadrive%"=="_" set "datadrive=%repodrive%"
+if "%repodrive%"=="" set "repodrive=%drivepath%"
+if "%datadrive%"=="" set "datadrive=%repodrive%"
+
+echo Staging offline repositories to the %data_label% vault (%datadrive%:)...
+mkdir "%datadrive%:\repos\mios-bootstrap" >nul 2>&1
+robocopy "C:\mios-bootstrap" "%datadrive%:\repos\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 /MT:32 >nul
+mkdir "%datadrive%:\repos\MiOS" >nul 2>&1
+robocopy "C:\MiOS" "%datadrive%:\repos\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 /MT:32 >nul
+
+echo Staging shadow-config brain to %repo_label% (%repodrive%:)...
+if exist "%toml_path%" copy "%toml_path%" "%repodrive%:\mios.toml" /Y >nul 2>&1
+copy "%~f0" "%repodrive%:\MiOS-Cat.bat" /Y >nul 2>&1
+
+:: 14. SINGLE-PASS FLASH WRITE: Copy all compiled AIO images to target drive D: in one go!
+echo.
+echo ==========================================================
+echo   SINGLE FLASH PASS: WRITING ALL AIO IMAGES TO USB (%drivepath%:)
+echo ==========================================================
+mkdir "%drivepath%:\Live_Operating_Systems" >nul 2>&1
+robocopy "%aio_stage%\Live_Operating_Systems" "%drivepath%:\Live_Operating_Systems" /E /R:2 /W:2 /MT:32
+if errorlevel 8 (
+    echo [FATAL ERROR] Robocopy failed to write AIO images to %drivepath%:\Live_Operating_Systems!
+    exit /b 1
+)
+
+:: 15. Finalize Branding & Start.exe launcher
+attrib -r -h -s "%drivepath%:\autorun.inf" >nul 2>&1
+(
+echo [Autorun]
+echo Icon=icon.ico
+echo Label=MiOS-Cat
+) > "%drivepath%:\autorun.inf"
+copy "%maindir%\icon.ico" "%drivepath%:\icon.ico" /Y >nul
+attrib +h +s "%drivepath%:\autorun.inf" >nul 2>&1
+attrib +h +s "%drivepath%:\icon.ico" >nul 2>&1
+
+(
+echo using System;
+echo using System.Diagnostics;
+echo using System.IO;
+echo class Launcher {
+echo     static void Main^(^) {
+echo         string path = Path.Combine^(AppDomain.CurrentDomain.BaseDirectory, @"PortableApps\PortableApps.com\PortableAppsPlatform.exe"^);
+echo         if ^(File.Exists^(path^)^) {
+echo             Process.Start^(new ProcessStartInfo { FileName = path, UseShellExecute = true }^);
+echo         }
+echo     }
+echo }
+) > "%temp%\launcher.cs"
+
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%maindir%\icon.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
+del "%temp%\launcher.cs" /Q >nul 2>&1
+
+echo.
+echo ==========================================================
+echo     MiOS-Cat ALL-IN-ONE USB FLASHING SUCCESSFULLY COMPLETED
+echo ==========================================================
+echo All images were compiled on localhost SSD & written in one pass.
+echo Target drive %drivepath%: is now ready to boot!
 echo ==========================================================
 if not "%NONINTERACTIVE%"=="1" pause
 goto :eof

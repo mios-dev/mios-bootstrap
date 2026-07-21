@@ -133,15 +133,16 @@ Write-Host ('=================================================') -ForegroundColo
 Write-Host ''
 
 # --------------------------------------------------------------------------
-# Run the pipeline (New-MiOSISO orchestrates Stages 0-4).
+# Run the pipeline (Build-MiOSXboxISO orchestrates Stages 0-3 cleanly).
 # --------------------------------------------------------------------------
 $isoArgs = @{ TomlPath = $TomlPath }
 if ($mode -eq 'local') { $isoArgs.SourceIso = $localBase }
-if ($SkipServicing)    { $isoArgs.SkipServicing = $true }
-if ($Edition)          { $isoArgs.Edition = $Edition }
+if ($SkipServicing)    { $isoArgs.SkipMerge = $true }
 
-$out = & (Join-Path $here 'New-MiOSISO.ps1') @isoArgs
-# New-MiOSISO returns $OutIso; guard against any leaked host lines.
+$builder = Join-Path $here 'Build-MiOSXboxISO.ps1'
+if (-not (Test-Path $builder)) { $builder = Join-Path $here 'New-MiOSISO.ps1' }
+$out = & $builder @isoArgs
+# Extract output ISO path safely
 $iso = @($out) | Where-Object { "$_" -match '\.iso$' -and (Test-Path "$_") } | Select-Object -Last 1
 if (-not $iso) { throw "Pipeline finished but no output ISO was produced (last value: '$out')." }
 Write-Host ''
