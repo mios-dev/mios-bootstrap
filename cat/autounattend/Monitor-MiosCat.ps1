@@ -62,19 +62,26 @@ $b = [Convert]::ToByte($accentHex.Substring(4,2), 16)
 # -----------------------------------------------------------------------------
 # 3. ANSI TrueColor & Theme Palette
 # -----------------------------------------------------------------------------
-$e = [char]27
-$cReset   = "$e[0m"
-$cBold    = "$e[1m"
-$cAccent  = "$e[38;2;${r};${g};${b}m$cBold"
-$cHeader  = "$e[38;2;96;165;250m$cBold"
-$cSuccess = "$e[38;2;16;185;129m$cBold"
-$cWarn    = "$e[38;2;245;158;11m$cBold"
-$cError   = "$e[38;2;239;68;68m$cBold"
-$cMuted   = "$e[38;2;100;116;139m"
-$cFg      = "$e[38;2;241;245;249m"
-$cMag     = "$e[38;2;217;70;239m$cBold"
-$cCyan    = "$e[38;2;6;182;212m$cBold"
-$cBadge   = "$e[48;2;30;41;59m$e[38;2;226;232;240m"
+$cReset   = [char]27 + '[0m'
+$cBold    = [char]27 + '[1m'
+$cAccent  = [char]27 + '[38;2;' + $r + ';' + $g + ';' + $b + 'm' + $cBold
+$cHeader  = [char]27 + '[38;2;96;165;250m' + $cBold
+$cSuccess = [char]27 + '[38;2;16;185;129m' + $cBold
+$cWarn    = [char]27 + '[38;2;245;158;11m' + $cBold
+$cError   = [char]27 + '[38;2;239;68;68m' + $cBold
+$cMuted   = [char]27 + '[38;2;100;116;139m'
+$cFg      = [char]27 + '[38;2;241;245;249m'
+$cMag     = [char]27 + '[38;2;217;70;239m' + $cBold
+$cCyan    = [char]27 + '[38;2;6;182;212m' + $cBold
+$cBadge   = [char]27 + '[48;2;30;41;59m' + [char]27 + '[38;2;226;232;240m'
+
+$charBlock = [char]0x2588
+$charShade = [char]0x2591
+$symOk     = [char]0x2714
+$symWarn   = [char]0x26A0
+$symErr    = [char]0x2716
+$symMag    = [char]0x26A1
+$symInfo   = [char]0x2139
 
 [Console]::Title = "MiOS-Cat v$ssotVersion -- SSOT Live Build & Flash Telemetry Stream"
 
@@ -86,8 +93,8 @@ function Format-ProgressBar {
     if ($filled -lt 0) { $filled = 0 }
     if ($empty -lt 0) { $empty = 0 }
 
-    $barFilled = "█" * $filled
-    $barEmpty  = "░" * $empty
+    $barFilled = [string]$charBlock * $filled
+    $barEmpty  = [string]$charShade * $empty
     
     $color = if ($pctClamped -ge 100.0) { $cSuccess } elseif ($pctClamped -gt 70.0) { $cHeader } elseif ($pctClamped -gt 30.0) { $cAccent } else { $cWarn }
     return ("{0}[{1}{2}{3}] {4:F1}%{5}" -f $color, $barFilled, $cMuted, $barEmpty, $pctClamped, $cReset)
@@ -96,21 +103,21 @@ function Format-ProgressBar {
 function Colorize-LogLine {
     param([string]$line, [int]$maxLen = 110)
     if (-not $line) { return "" }
-    $clean = $line.Trim() -replace "$e\[[0-9;]*m", ""
+    $clean = $line.Trim() -replace "\x1b\[[0-9;]*m", ""
     if ($clean.Length -gt $maxLen) { $clean = $clean.Substring(0, $maxLen) + "..." }
 
     if ($clean -match '\[OK\]|\[DONE\]|\[SUCCESS\]|100\.0%') {
-        return ("   {0}✔{1} {2}{3}{4}" -f $cSuccess, $cReset, $cSuccess, $clean, $cReset)
+        return ("   {0}{1}{2} {3}{4}{5}" -f $cSuccess, $symOk, $cReset, $cSuccess, $clean, $cReset)
     } elseif ($clean -match '\[!\]|\[WARNING\]|\[WAIT\]|retry|fallback') {
-        return ("   {0}⚠{1} {2}{3}{4}" -f $cWarn, $cReset, $cWarn, $clean, $cReset)
+        return ("   {0}{1}{2} {3}{4}{5}" -f $cWarn, $symWarn, $cReset, $cWarn, $clean, $cReset)
     } elseif ($clean -match '\[ERROR\]|\[FATAL\]|FAILED|die') {
-        return ("   {0}✖{1} {2}{3}{4}" -f $cError, $cReset, $cError, $clean, $cReset)
+        return ("   {0}{1}{2} {3}{4}{5}" -f $cError, $symErr, $cReset, $cError, $clean, $cReset)
     } elseif ($clean -match 'Extracting|Servicing|Compiling|Flashing|Robocopy|Converting') {
-        return ("   {0}⚡{1} {2}{3}{4}" -f $cMag, $cReset, $cMag, $clean, $cReset)
+        return ("   {0}{1}{2} {3}{4}{5}" -f $cMag, $symMag, $cReset, $cMag, $clean, $cReset)
     } elseif ($clean -match '\[\*\]|\[INFO\]|Stage|Building') {
-        return ("   {0}ℹ{1} {2}{3}{4}" -f $cCyan, $cReset, $cCyan, $clean, $cReset)
+        return ("   {0}{1}{2} {3}{4}{5}" -f $cCyan, $symInfo, $cReset, $cCyan, $clean, $cReset)
     } else {
-        return ("   {0}›{1} {2}{3}{4}" -f $cMuted, $cReset, $cFg, $clean, $cReset)
+        return ("   {0}>{1} {2}{3}{4}" -f $cMuted, $cReset, $cFg, $clean, $cReset)
     }
 }
 
@@ -317,10 +324,10 @@ while ($true) {
     # Render High-Definition Dashboard UI (120 Cols x 42 Rows)
     # -----------------------------------------------------------------------------
     Clear-Host
-    Write-Host ("{0}╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗" -f $cAccent)
-    Write-Host ("{0}║               {1}M i O S   v{2}   --   S S O T   L I V E   F L A S H   M O N I T O R{3}                              ║" -f $cAccent, $cWarn, $ssotVersion, $cAccent)
-    Write-Host ("{0}║               {1}{2}{3}                                              ║" -f $cAccent, $cMuted, $ssotTagline.PadRight(60), $cAccent)
-    Write-Host ("{0}╠═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╣{1}" -f $cAccent, $cReset)
+    Write-Host ("{0}+-------------------------------------------------------------------------------------------------------------------------+" -f $cAccent)
+    Write-Host ("{0}|               {1}M i O S   v{2}   --   S S O T   L I V E   F L A S H   M O N I T O R{3}                              |" -f $cAccent, $cWarn, $ssotVersion, $cAccent)
+    Write-Host ("{0}|               {1}{2}{3}                                              |" -f $cAccent, $cMuted, $ssotTagline.PadRight(60), $cAccent)
+    Write-Host ("{0}+-------------------------------------------------------------------------------------------------------------------------+{1}" -f $cAccent, $cReset)
     Write-Host (" {0}  SSOT Config : {1}{2}{3}" -f $cMuted, $cFg, $TomlPath.PadRight(50), $cReset)
     Write-Host (" {0}  Target USB  : {1}D:\ (Files: {2} | Written: {3} MB){4}" -f $cMuted, $cFg, $usbFiles, $usbMB, $cReset)
     Write-Host (" {0}  SSD Stage   : {1}M:\ (Files: {2} | Staged: {3} MB){4}" -f $cMuted, $cFg, $stageFiles, $stageMB, $cReset)
@@ -331,7 +338,7 @@ while ($true) {
         "Idle / Waiting for Subprocess Dispatch"
     }
     Write-Host (" {0}  Subprocesses: {1}{2} (Total RAM: {3:F1} MB){4}" -f $cMuted, $cCyan, $procSummary, $totalRamMB, $cReset)
-    Write-Host ("{0}─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────{1}" -f $cMuted, $cReset)
+    Write-Host ("{0}-------------------------------------------------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
 
     Write-Host (" {0}  ACTIVE STAGE  {1} {2}Stage {3} of 10 : {4}{5}{6}" -f $cBadge, $cReset, $cBold, $currentStageId, $cAccent, $stg.Name, $cReset)
     Write-Host (" {0}  CURRENT TASK  {1} {2}{3}{4}" -f $cBadge, $cReset, $cFg, $subTaskName, $cReset)
@@ -340,7 +347,7 @@ while ($true) {
     Write-Host ("  Overall Progress : {0}" -f (Format-ProgressBar -pct $lastOverallPct -width 65))
     Write-Host ("  Sub-Task Progress: {0}" -f (Format-ProgressBar -pct $subTaskPct -width 65))
     Write-Host ""
-    Write-Host ("{0}─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────{1}" -f $cMuted, $cReset)
+    Write-Host ("{0}-------------------------------------------------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
 
     Write-Host ("{0} PIPELINE STAGES STATUS:{1}" -f $cBold, $cReset)
     for ($s = 1; $s -le 10; $s += 2) {
@@ -352,16 +359,16 @@ while ($true) {
 
         $str1 = (" {0} Stg {1:D2}: {2}" -f $b1, $s, $stg1.Name.PadRight(35))
         $str2 = (" {0} Stg {1:D2}: {2}" -f $b2, ($s + 1), $stg2.Name.PadRight(35))
-        Write-Host ("  {0}    │   {1}" -f $str1, $str2)
+        Write-Host ("  {0}    |   {1}" -f $str1, $str2)
     }
-    Write-Host ("{0}─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────{1}" -f $cMuted, $cReset)
+    Write-Host ("{0}-------------------------------------------------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
 
     if ($alerts.Count -gt 0) {
         Write-Host ("{0} ALERTS & WARNINGS ({1}):{2}" -f $cWarn, $alerts.Count, $cReset)
         foreach ($alt in ($alerts | Select-Object -Last 3)) {
-            Write-Host ("   {0}⚠{1} {2}" -f $cWarn, $cReset, $alt)
+            Write-Host ("   {0}!{1} {2}" -f $cWarn, $cReset, $alt)
         }
-        Write-Host ("{0}─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────{1}" -f $cMuted, $cReset)
+        Write-Host ("{0}-------------------------------------------------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
     }
 
     Write-Host ("{0} LIVE MULTI-SOURCE LOG STREAM (12 LINES):{1}" -f $cBold, $cReset)
@@ -370,10 +377,10 @@ while ($true) {
             Write-Host (Colorize-LogLine -line $tLine -maxLen 110)
         }
     } else {
-        Write-Host ("   {0}› Monitoring active build pipeline live...{1}" -f $cMuted, $cReset)
+        Write-Host ("   {0}> Monitoring active build pipeline live...{1}" -f $cMuted, $cReset)
     }
 
-    Write-Host ("{0}─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────{1}" -f $cMuted, $cReset)
+    Write-Host ("{0}-------------------------------------------------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
 
     if ($lastOverallPct -ge 100.0) {
         Write-Host ("`n  {0}[AIO SUCCESS] Build and Flash Complete! You can close this monitor.{1}`n" -f $cSuccess, $cReset)
