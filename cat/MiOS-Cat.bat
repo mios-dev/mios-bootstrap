@@ -886,7 +886,7 @@ if not exist "%drivepath%:\" (
 :: Full visible monitor defaults to ON (SSOT cat.monitor_enabled = true / show_live_monitor = true)
 if not "%monitor_enabled%"=="false" if not "%show_live_monitor%"=="false" (
     echo Launching live interactive monitor on Session 1...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell.exe -ArgumentList '-NoExit','-ExecutionPolicy','Bypass','-File','C:\mios-bootstrap\cat\autounattend\Monitor-MiosCat.ps1' -ErrorAction SilentlyContinue" >nul 2>&1
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Launch-Monitor-Foreground.ps1" >nul 2>&1
     powershell -NoProfile -ExecutionPolicy Bypass -Command "schtasks /Create /TN 'MiOSMonitor' /TR 'powershell.exe -NoExit -ExecutionPolicy Bypass -File C:\mios-bootstrap\cat\autounattend\Monitor-MiosCat.ps1' /SC ONCE /ST 23:59 /IT /F; schtasks /Run /TN 'MiOSMonitor'" >nul 2>&1
     powershell -NoProfile -ExecutionPolicy Bypass -Command "schtasks /Create /TN 'MiOSFlashProgress' /TR 'powershell.exe -NoExit -ExecutionPolicy Bypass -File C:\Users\Administrator\.gemini\antigravity-ide\brain\dba6616d-053d-43cd-b86d-a98f223952b8\scratch\monitor_loop.ps1' /SC ONCE /ST 23:59 /IT /F; schtasks /Run /TN 'MiOSFlashProgress'" >nul 2>&1
 )
