@@ -9,10 +9,14 @@ import sys
 import os
 import time
 import glob
-import psutil
 import shutil
 import re
 from datetime import datetime
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 from rich.live import Live
 from rich.layout import Layout
@@ -110,19 +114,25 @@ def get_active_processes():
     procs = []
     total_ram = 0.0
     is_dism = False
-    target_names = {'7z.exe', '7za.exe', 'robocopy.exe', 'dism.exe', 'curl.exe', 'aria2c.exe', 'wimlib-imagex.exe'}
+    target_names = {'7z', '7za', 'robocopy', 'dism', 'curl', 'aria2c', 'wimlib-imagex'}
     
-    for p in psutil.process_iter(['pid', 'name', 'memory_info']):
+    if psutil is not None:
         try:
-            pname = p.info['name'].lower()
-            if pname in target_names or pname.replace('.exe','') in target_names:
-                ram_mb = round(p.info['memory_info'].rss / (1024 * 1024), 1)
-                total_ram += ram_mb
-                clean_name = p.info['name'].replace('.exe','')
-                procs.append(f"{clean_name}[PID:{p.info['pid']} {ram_mb}MB]")
-                if 'dism' in pname:
-                    is_dism = True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            for p in psutil.process_iter(['pid', 'name', 'memory_info']):
+                try:
+                    if not p.info or not p.info.get('name'):
+                        continue
+                    pname = p.info['name'].lower().replace('.exe','')
+                    if pname in target_names:
+                        mem_info = p.info.get('memory_info')
+                        ram_mb = round(mem_info.rss / (1024 * 1024), 1) if mem_info else 0.0
+                        total_ram += ram_mb
+                        procs.append(f"{pname}[PID:{p.info['pid']} {ram_mb}MB]")
+                        if 'dism' in pname:
+                            is_dism = True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except Exception:
             pass
     return procs, round(total_ram, 1), is_dism
 
