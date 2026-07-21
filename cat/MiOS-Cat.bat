@@ -1042,8 +1042,12 @@ echo.
 echo SystemRescue Arch Linux ISO not found at %sysrescue_target%.
 echo Pulling SystemRescue %sysrescue_ver% (newest upstream Arch rescue ISO)...
 mkdir "%drivepath%:\Live_Operating_Systems\SystemRescue" >nul 2>&1
-curl.exe -C - -L "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_target%" -#
-if errorlevel 1 echo [WARN] Could not pull SystemRescue ISO -- continuing with extraction payload. >&2
+curl.exe -C - -L --connect-timeout 10 --retry 2 "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_target%" -#
+if not exist "%sysrescue_target%" (
+    echo [RETRY] Primary mirror timed out, pulling from fastly CDN fallback...
+    curl.exe -C - -L --connect-timeout 10 --retry 2 "https://fastly-cdn.system-rescue.org/releases/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_target%" -#
+)
+if not exist "%sysrescue_target%" echo [WARN] Could not pull SystemRescue ISO -- continuing with extraction payload. >&2
 
 :sysrescue_ok
 
@@ -1583,6 +1587,13 @@ echo Updating %~2 at %~1 ...
 cd /d "%~1"
 git fetch >nul 2>&1
 git pull
+goto :eof
+
+:check_drive_ready
+if exist "%drivepath%:\" goto :eof
+echo [WARN] Drive %drivepath%: not mounted! Attempting auto-reassign...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Disk | Where-Object BusType -eq 'USB' | Get-Partition | Where-Object Size -gt 100MB | Select-Object -First 1 | Set-Partition -NewDriveLetter '%drivepath%' -ErrorAction SilentlyContinue" >nul 2>&1
+timeout /t 2 /nobreak >nul
 goto :eof
 
 
