@@ -1028,7 +1028,8 @@ exit /b 1
 :fedora_dvd_ok
 
 :: 6c. Ensure the latest SystemRescue (Arch Linux rescue ISO) is staged
-set "sysrescue_ver=11.02"
+set "sysrescue_ver=13.01"
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "try { $r=(Invoke-WebRequest -Uri 'https://www.system-rescue.org/Download/' -UseBasicParsing -TimeoutSec 6 -Headers @{'User-Agent'='MiOS-Cat'}).Content; if ($r -match 'systemrescue-([0-9]+\.[0-9]+)-amd64\.iso') { $Matches[1] } else { '13.01' } } catch { '13.01' }"`) do set "sysrescue_ver=%%i"
 set "sysrescue_target=%drivepath%:\Live_Operating_Systems\SystemRescue\SystemRescue.iso"
 if exist "%sysrescue_target%" goto sysrescue_ok
 if exist "M:\systemrescue-%sysrescue_ver%-amd64.iso" (
@@ -1039,7 +1040,7 @@ if exist "%sysrescue_target%" goto sysrescue_ok
 
 echo.
 echo SystemRescue Arch Linux ISO not found at %sysrescue_target%.
-echo Pulling SystemRescue %sysrescue_ver% Arch rescue ISO...
+echo Pulling SystemRescue %sysrescue_ver% (newest upstream Arch rescue ISO)...
 mkdir "%drivepath%:\Live_Operating_Systems\SystemRescue" >nul 2>&1
 curl.exe -C - -L "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_target%" -#
 if errorlevel 1 echo [WARN] Could not pull SystemRescue ISO -- continuing with extraction payload. >&2
@@ -1050,19 +1051,22 @@ set "SURGICAL_LIST=Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/
 
 :: 7. Multithreaded extraction to D:\ (-mmt=on for high-speed multi-core performance)
 echo.
-if "%extract_mode%"=="Surgical" (
-    echo Extracting minimal boot files and portable apps from %file% to %drivepath%:...
-    echo Multithreaded 7-Zip extraction enabled (-mmt=on)...
-    "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ %SURGICAL_LIST% -mmt=on -aoa -y
-) else (
-    echo Extracting ALL files from %file% to %drivepath%:...
-    "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -mmt=on -aoa -y
-)
+if not "%extract_mode%"=="Surgical" goto do_full_extract
+echo Extracting minimal boot files and portable apps from %file% to %drivepath%:...
+echo Multithreaded 7-Zip extraction enabled (-mmt=on)...
+"%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ %SURGICAL_LIST% -mmt=on -aoa -y
+goto post_extract
 
-if "%extract_mode%"=="Surgical" (
-    echo [DEBLOAT] Purging bloated program folders from %drivepath%:\Programs...
-    powershell -NoProfile -Command "$keep = @('7-Zip_x64', 'Bootice', 'DiskGeniusLite', 'Everything_x64', 'WizTree', 'HW Monitor', 'HDSentinel', 'Sysinternals', 'ventoy'); if (Test-Path '%drivepath%:\Programs') { Get-ChildItem -Path '%drivepath%:\Programs' -Directory | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }" >nul 2>&1
-)
+:do_full_extract
+echo Extracting ALL files from %file% to %drivepath%:...
+"%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -mmt=on -aoa -y
+
+:post_extract
+
+if not "%extract_mode%"=="Surgical" goto skip_debloat
+echo [DEBLOAT] Purging bloated program folders from %drivepath%:\Programs...
+powershell -NoProfile -Command "$keep = @('7-Zip_x64', 'Bootice', 'DiskGeniusLite', 'Everything_x64', 'WizTree', 'HW Monitor', 'HDSentinel', 'Sysinternals', 'ventoy'); if (Test-Path '%drivepath%:\Programs') { Get-ChildItem -Path '%drivepath%:\Programs' -Directory | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+:skip_debloat
 
 :skip_extraction
 call :check_drive_ready
