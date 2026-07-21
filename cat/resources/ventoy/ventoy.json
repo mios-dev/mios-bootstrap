@@ -32,12 +32,20 @@
         { "image": "/Live_Operating_Systems/MiOS-Live-Chat.iso", "alias": "MiOS Live-Chat AI (Ephemeral Live System)" },
         { "image": "/Live_Operating_Systems/Fedora-Server.iso", "alias": "Deploy MiOS Linux (Fedora Server + MiOS Overlay)" },
         { "image": "/Live_Operating_Systems/MiOS-Xbox.iso", "alias": "Deploy MiOS-Xbox (Windows Gaming Edition - CompactOS)" },
+        { "image": "/Live_Operating_Systems/Mini_Windows/MiOS_PE.wim", "alias": "MiOS-PE Mini Windows (Live Rescue & Imaging Environment)" },
+        { "image": "/Live_Operating_Systems/Mini_Windows/10.Win10PE.wim", "alias": "MiOS-PE Windows 10 Live Environment (Mini Windows)" },
+        { "image": "/Live_Operating_Systems/Mini_Windows/11.Win11PE.wim", "alias": "MiOS-PE Windows 11 Live Environment (Mini Windows)" },
+        { "image": "/Live_Operating_Systems/MiOS_PE.wim", "alias": "MiOS-PE Mini Windows (Live Environment)" },
         { "image": "/Live_Operating_Systems/SystemRescue/SystemRescue.iso", "alias": "SystemRescue Arch Linux (Diagnostics & Disk Tools)" }
     ],
     "menu_class": [
         { "key": "MiOS-Live-Chat", "class": "linux" },
         { "key": "Fedora", "class": "fedora" },
         { "key": "MiOS-Xbox", "class": "windows" },
+        { "key": "MiOS_PE", "class": "windows" },
+        { "key": "Win10PE", "class": "windows" },
+        { "key": "Win11PE", "class": "windows" },
+        { "key": "Mini_Windows", "class": "windows" },
         { "key": "SystemRescue", "class": "arch" }
     ],
     "conf_replace_legacy":[
