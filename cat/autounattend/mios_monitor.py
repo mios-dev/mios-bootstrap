@@ -72,7 +72,7 @@ PAL = parse_toml_colors(TOML_PATH)
 STAGES = [
     {"id": 1, "name": "Preflight Checks & SSOT Init",  "min": 0.0,  "max": 10.0},
     {"id": 2, "name": "Medicat & Core Downloads",      "min": 10.0, "max": 25.0},
-    {"id": 3, "name": "Localhost WinPE WIM Servicing", "min": 25.0, "max": 40.0},
+    {"id": 3, "name": "Localhost WinPE Servicing",     "min": 25.0, "max": 40.0},
     {"id": 4, "name": "WinPE Unmount & Compression",  "min": 40.0, "max": 50.0},
     {"id": 5, "name": "MiOS-Xbox ISO Compilation",     "min": 50.0, "max": 65.0},
     {"id": 6, "name": "Dedicated Directory Staging",   "min": 65.0, "max": 75.0},
@@ -114,6 +114,7 @@ def get_active_processes():
     procs = []
     total_ram = 0.0
     is_dism = False
+    is_robocopy = False
     target_names = {'7z', '7za', 'robocopy', 'dism', 'curl', 'aria2c', 'wimlib-imagex'}
     
     if psutil is not None:
@@ -130,11 +131,13 @@ def get_active_processes():
                         procs.append(f"{pname}[PID:{p.info['pid']} {ram_mb}MB]")
                         if 'dism' in pname:
                             is_dism = True
+                        if 'robocopy' in pname:
+                            is_robocopy = True
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
         except Exception:
             pass
-    return procs, round(total_ram, 1), is_dism
+    return procs, round(total_ram, 1), is_dism, is_robocopy
 
 # -----------------------------------------------------------------------------
 # 3. Main Layout Generator
@@ -158,7 +161,7 @@ def render_dashboard(step_counter):
     # Measure Telemetry
     usb_mb = get_disk_mb("D:\\")
     ssd_mb = get_disk_mb("M:\\")
-    proc_list, total_ram, is_dism = get_active_processes()
+    proc_list, total_ram, is_dism, is_robocopy = get_active_processes()
     proc_str = " ".join(proc_list) if proc_list else "Idle / Waiting for Subprocess Dispatch"
     
     # Read Active Log Stream
@@ -193,11 +196,12 @@ def render_dashboard(step_counter):
     if start_idx >= 0:
         log_lines = log_lines[start_idx:]
 
-    # Determine Active Stage
+    # Determine Active Stage accurately
     current_stage_id = 1
     sub_task_pct = 0.0
     sub_task_name = "Initializing preflight checks & environment..."
     alerts = []
+    is_completed = False
 
     for line in log_lines:
         if re.search(r'RUNNING PREFLIGHT CHECKS', line): current_stage_id = max(current_stage_id, 1)
@@ -206,29 +210,42 @@ def render_dashboard(step_counter):
         if re.search(r'Exporting and compressing Localhost|trim_path|Rebuilding boot\.wim', line): current_stage_id = max(current_stage_id, 4)
         if re.search(r'Compiling MiOS-Xbox|autounattend|New-MiOSISO|Removing.*capabilities|Disabling|Mounting.*26100|Stock ISO|oscdimg|Baking|wallpaper|SetupComplete|virtio|Dismount -Save', line): current_stage_id = max(current_stage_id, 5)
         if re.search(r'Writing MiOS-PE|Writing Documents|PortableApps', line): current_stage_id = max(current_stage_id, 6)
-        if re.search(r'SINGLE FLASH PASS|Zero USB writes', line): current_stage_id = max(current_stage_id, 7)
-        if re.search(r'Ventoy|autorun\.inf', line): current_stage_id = max(current_stage_id, 8)
-        if re.search(r'Writing PortableApps suite|robocopy .* D:', line): current_stage_id = max(current_stage_id, 9)
-        if re.search(r'MiOS-Cat DEDICATED USB INSTALLATION COMPLETED|AIO SUCCESS', line): current_stage_id = 10; sub_task_pct = 100.0
+        if re.search(r'SINGLE FLASH PASS|Zero USB writes|\[AIO SUCCESS\] All images 100% compiled', line): current_stage_id = max(current_stage_id, 7)
+        if re.search(r'Ventoy|Installing Ventoy|autorun\.inf|TARGET DRIVE FORMAT', line): current_stage_id = max(current_stage_id, 8)
+        if re.search(r'Writing PortableApps suite|robocopy .* D:|Extracting payload to D:', line): current_stage_id = max(current_stage_id, 9)
+        if re.search(r'MiOS-Cat DEDICATED USB INSTALLATION COMPLETED|FLASH COMPLETE SUCCESS', line):
+            is_completed = True
 
-        pm = re.search(r'(\d+\.\d+)%', line)
+        pm = re.search(r'(\d+(\.\d+)?)%', line)
         if pm:
             val = float(pm.group(1))
-            if val <= 100.0: sub_task_pct = val
+            if val <= 100.0:
+                sub_task_pct = val
 
         if re.search(r'\[!\]|\[WARNING\]|\[FATAL ERROR\]|ERROR', line):
             alerts.append(line)
 
-    if is_dism or any(re.search(r'virtio|Dismount -Save|Baking|wallpaper|SetupComplete', l) for l in log_lines):
-        current_stage_id = max(current_stage_id, 5)
+    # Process Overrides
+    if is_robocopy:
+        current_stage_id = 9
+    elif is_dism and current_stage_id < 5:
+        current_stage_id = 5
 
-    if log_lines:
-        clean_last = re.sub(r'\x1b\[[0-9;]*m', '', log_lines[-1])
-        sub_task_name = f"{spin_char} {clean_last[:90]}"
+    if is_completed and not proc_list:
+        current_stage_id = 10
+        sub_task_pct = 100.0
+        overall_pct = 100.0
+    else:
+        stg = next((s for s in STAGES if s['id'] == current_stage_id), STAGES[0])
+        range_pct = stg['max'] - stg['min']
+        overall_pct = min(99.9, stg['min'] + (range_pct * (sub_task_pct / 100.0)))
 
-    stg = next((s for s in STAGES if s['id'] == current_stage_id), STAGES[0])
-    range_pct = stg['max'] - stg['min']
-    overall_pct = stg['min'] + (range_pct * (sub_task_pct / 100.0))
+    # Subtask name resolution (Find last non-progress line)
+    for l in reversed(log_lines):
+        clean_l = re.sub(r'\x1b\[[0-9;]*m', '', l).strip()
+        if clean_l and not re.match(r'^\d+(\.\d+)?%$', clean_l) and not clean_l.startswith('[' + '=' * 10):
+            sub_task_name = f"{spin_char} {clean_l[:90]}"
+            break
 
     # Construct Layout
     layout = make_layout()
@@ -249,7 +266,7 @@ def render_dashboard(step_counter):
     left_table.add_row("SSD Stage", f"M:\\ (SSD Volume Used: {ssd_mb} MB)")
     left_table.add_row("Subprocesses", f"[{PAL['cyan']}]{proc_str} (RAM: {total_ram} MB)[/{PAL['cyan']}]")
     left_table.add_row("", "")
-    left_table.add_row("Active Stage", f"Stage {current_stage_id} of 10 : [{PAL['warning']}]{stg['name']}[/{PAL['warning']}]")
+    left_table.add_row("Active Stage", f"Stage {current_stage_id} of 10 : [{PAL['warning']}]{STAGES[current_stage_id-1]['name']}[/{PAL['warning']}]")
     left_table.add_row("Current Task", sub_task_name)
     left_table.add_row("", "")
     left_table.add_row("Overall Progress", f"[{PAL['success']}]{overall_pct:.1f}%[/{PAL['success']}]")
@@ -257,10 +274,10 @@ def render_dashboard(step_counter):
 
     layout["left"].update(Panel(left_table, title="[bold]SYSTEM TELEMETRY[/bold]", border_style=PAL['accent']))
 
-    # 3. Right Pipeline Stages Panel
-    right_table = Table(show_header=False, box=None, padding=(0, 1))
-    right_table.add_column("S1", width=30)
-    right_table.add_column("S2", width=30)
+    # 3. Right Pipeline Stages Panel (Wider columns to prevent text wrapping)
+    right_table = Table(show_header=False, box=None, padding=(0, 1), expand=True)
+    right_table.add_column("S1", ratio=1)
+    right_table.add_column("S2", ratio=1)
 
     for i in range(0, 10, 2):
         s1 = STAGES[i]
@@ -270,14 +287,21 @@ def render_dashboard(step_counter):
         b2 = f"[{PAL['success']}][ DONE ][/{PAL['success']}]" if s2['id'] < current_stage_id else (f"[{PAL['warning']}][{spin_char} RUN ][/{PAL['warning']}]" if s2['id'] == current_stage_id else f"[{PAL['muted']}][QUEUED][/{PAL['muted']}]")
 
         right_table.add_row(
-            f"{b1} Stg {s1['id']:02d}: {s1['name'][:20]}",
-            f"{b2} Stg {s2['id']:02d}: {s2['name'][:20]}"
+            f"{b1} Stg {s1['id']:02d}: {s1['name']}",
+            f"{b2} Stg {s2['id']:02d}: {s2['name']}"
         )
 
     layout["right"].update(Panel(right_table, title="[bold]PIPELINE STAGES STATUS[/bold]", border_style=PAL['accent']))
 
-    # 4. Bottom Streaming Log Panel
-    recent_tail = log_lines[-12:] + dism_lines[-4:]
+    # 4. Bottom Streaming Log Panel (Filtered Buffer: Excludes Raw Progress Lines)
+    filtered_logs = []
+    for l in log_lines:
+        clean_l = re.sub(r'\x1b\[[0-9;]*m', '', l).strip()
+        if not clean_l or re.match(r'^\d+(\.\d+)?%$', clean_l) or re.match(r'^\[?[\=\-\#]+\s*\d+(\.\d+)?%\s*[\=\-\#]*\]?$', clean_l):
+            continue
+        filtered_logs.append(clean_l)
+
+    recent_tail = filtered_logs[-12:] + dism_lines[-3:]
     log_text = Text()
     if recent_tail:
         for l in recent_tail[-12:]:
@@ -288,14 +312,14 @@ def render_dashboard(step_counter):
                 log_text.append(f"   ⚠ {clean}\n", style=PAL['warning'])
             elif 'ERROR' in clean or 'FAILED' in clean:
                 log_text.append(f"   ✖ {clean}\n", style=PAL['error'])
-            elif any(k in clean for k in ['Extracting', 'Servicing', 'Compiling', 'Flashing', 'Removing', 'Disabling', 'virtio']):
+            elif any(k in clean for k in ['Extracting', 'Servicing', 'Compiling', 'Flashing', 'Removing', 'Disabling', 'virtio', 'Baking']):
                 log_text.append(f"   ⚡ {clean}\n", style=PAL['magenta'])
             else:
                 log_text.append(f"   > {clean}\n", style=PAL['fg'])
     else:
         log_text.append("   > Monitoring active build pipeline live...\n", style=PAL['muted'])
 
-    layout["logs"].update(Panel(log_text, title="[bold]LIVE MULTI-SOURCE LOG STREAM[/bold]", border_style=PAL['accent']))
+    layout["logs"].update(Panel(log_text, title="[bold]LIVE MULTI-SOURCE LOG STREAM (FILTERED BUFFER)[/bold]", border_style=PAL['accent']))
 
     return layout
 
