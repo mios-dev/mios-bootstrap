@@ -863,7 +863,10 @@ echo.
 set "confirm="
 if "%NONINTERACTIVE%"=="1" set "confirm=Y"
 if not "%NONINTERACTIVE%"=="1" set /p "confirm=Are you sure you want to format %drivepath%: and install? (Y/N): "
-if /i not "%confirm%"=="Y" goto menu
+if /i "%confirm%"=="y" set "confirm=Y"
+if /i "%confirm%"=="yes" set "confirm=Y"
+if /i "%confirm%"=="1" set "confirm=Y"
+if not "%confirm%"=="Y" goto menu
 
 :: Ensure target drive exists
 if not exist "%drivepath%:\" (
@@ -1027,27 +1030,31 @@ exit /b 1
 :: 6c. Ensure the latest SystemRescue (Arch Linux rescue ISO) is staged
 set "sysrescue_ver=11.02"
 set "sysrescue_target=%drivepath%:\Live_Operating_Systems\SystemRescue\SystemRescue.iso"
-if not exist "%sysrescue_target%" if exist "M:\systemrescue-%sysrescue_ver%-amd64.iso" (
+if exist "%sysrescue_target%" goto sysrescue_ok
+if exist "M:\systemrescue-%sysrescue_ver%-amd64.iso" (
     mkdir "%drivepath%:\Live_Operating_Systems\SystemRescue" >nul 2>&1
     copy "M:\systemrescue-%sysrescue_ver%-amd64.iso" "%sysrescue_target%" /Y >nul 2>&1
 )
-if not exist "%sysrescue_target%" (
-    echo.
-    echo SystemRescue Arch Linux ISO not found at %sysrescue_target%.
-    echo Pulling SystemRescue %sysrescue_ver% Arch rescue ISO...
-    mkdir "%drivepath%:\Live_Operating_Systems\SystemRescue" >nul 2>&1
-    curl.exe -C - -L "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_target%" -#
-    if errorlevel 1 echo [WARN] Could not pull SystemRescue ISO -- continuing with extraction payload. >&2
-)
+if exist "%sysrescue_target%" goto sysrescue_ok
+
+echo.
+echo SystemRescue Arch Linux ISO not found at %sysrescue_target%.
+echo Pulling SystemRescue %sysrescue_ver% Arch rescue ISO...
+mkdir "%drivepath%:\Live_Operating_Systems\SystemRescue" >nul 2>&1
+curl.exe -C - -L "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_target%" -#
+if errorlevel 1 echo [WARN] Could not pull SystemRescue ISO -- continuing with extraction payload. >&2
+
+:sysrescue_ok
+
+set "SURGICAL_LIST=Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/*"
 
 :: 7. Multithreaded extraction to D:\ (-mmt=on for high-speed multi-core performance)
+echo.
 if "%extract_mode%"=="Surgical" (
-    echo.
     echo Extracting minimal boot files and portable apps from %file% to %drivepath%:...
     echo Multithreaded 7-Zip extraction enabled (-mmt=on)...
-    "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* "Programs/HW Monitor/*" Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/* -mmt=on -aoa -y
+    "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ %SURGICAL_LIST% -mmt=on -aoa -y
 ) else (
-    echo.
     echo Extracting ALL files from %file% to %drivepath%:...
     "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -mmt=on -aoa -y
 )
