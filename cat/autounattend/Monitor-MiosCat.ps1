@@ -17,7 +17,7 @@ try {
         $vtSig = '[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);' +
                  '[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out int m);' +
                  '[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, int m);'
-        $k = Add-Type -MemberDefinition $vtSig -Name 'MiosVtMonMax' -Namespace 'MiosCat' -PassThru -ErrorAction Stop
+        $k = Add-Type -MemberDefinition $vtSig -Name 'MiosVtMonMax2' -Namespace 'MiosCat' -PassThru -ErrorAction Stop
         $h = $k::GetStdHandle(-11); $m = 0
         if ($k::GetConsoleMode($h, [ref]$m)) { [void]$k::SetConsoleMode($h, ($m -bor 0x0004)) }
     }
@@ -27,10 +27,21 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 # Force Console Window to MAXIMIZE (SW_MAXIMIZE = 3)
 try {
     $user32Sig = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
-    $u32 = Add-Type -MemberDefinition $user32Sig -Name 'MiosMaxWin' -Namespace 'MiosCat' -PassThru -ErrorAction Stop
+    $u32 = Add-Type -MemberDefinition $user32Sig -Name 'MiosMaxWin2' -Namespace 'MiosCat' -PassThru -ErrorAction Stop
     $hwnd = (Get-Process -Id $PID).MainWindowHandle
     if ($hwnd -ne [IntPtr]::Zero) {
         $u32::ShowWindow($hwnd, 3) | Out-Null
+    }
+} catch {}
+
+# Stretch Console Window & Buffer to Maximum Screen Dimensions
+try {
+    $maxW = [Console]::LargestWindowWidth
+    $maxH = [Console]::LargestWindowHeight
+    if ($maxW -gt 80 -and $maxH -gt 30) {
+        $rawUI = $host.UI.RawUI
+        $rawUI.BufferSize = New-Object System.Management.Automation.Host.Size($maxW, [math]::Max(500, $maxH * 4))
+        $rawUI.WindowSize = New-Object System.Management.Automation.Host.Size($maxW, $maxH)
     }
 } catch {}
 
@@ -135,7 +146,7 @@ function Colorize-LogLine {
         return ("   " + (C $pal.warning "$symWarn $clean"))
     } elseif ($clean -match '\[ERROR\]|\[FATAL\]|FAILED|die') {
         return ("   " + (C $pal.error "$symErr $clean"))
-    } elseif ($clean -match 'Extracting|Servicing|Compiling|Flashing|Robocopy|Converting|Removing|Disabling|Baking|staged|wallpaper|SetupComplete') {
+    } elseif ($clean -match 'Extracting|Servicing|Compiling|Flashing|Robocopy|Converting|Removing|Disabling|Baking|staged|wallpaper|SetupComplete|virtio|dism') {
         return ("   " + (C $pal.mag "$symMag $clean"))
     } elseif ($clean -match '\[\*\]|\[INFO\]|Stage|Building') {
         return ("   " + (C $pal.cyan "$symInfo $clean"))
@@ -193,18 +204,13 @@ while ($true) {
         } catch {}
     }
 
-    # Resolve SINGLE LATEST active installer log file
-    $primaryLog = 'C:\Windows\Temp\mios-cat-install.log'
-    $chosenLog = $null
+    # Resolve Active Log File: Prioritize Large Active Task Logs Over 73-byte Stub Files
+    $taskLogs = Get-ChildItem -Path "C:\Users\Administrator\.gemini\antigravity-ide\brain\dba6616d-053d-43cd-b86d-a98f223952b8\.system_generated\tasks\task-*.log" -ErrorAction SilentlyContinue |
+                Where-Object { $_.Length -gt 500 } |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -ExpandProperty FullName
 
-    if ((Test-Path $primaryLog) -and (Get-Item $primaryLog).Length -gt 0) {
-        $chosenLog = $primaryLog
-    } else {
-        $latestTaskLog = Get-ChildItem -Path "C:\Users\Administrator\.gemini\antigravity-ide\brain\dba6616d-053d-43cd-b86d-a98f223952b8\.system_generated\tasks\task-*.log" -ErrorAction SilentlyContinue |
-                         Sort-Object LastWriteTime -Descending |
-                         Select-Object -First 1 -ExpandProperty FullName
-        if ($latestTaskLog) { $chosenLog = $latestTaskLog }
-    }
+    $chosenLog = if ($taskLogs -and $taskLogs.Count) { $taskLogs[0] } else { 'C:\Windows\Temp\mios-cat-install.log' }
 
     $allLines = @()
     if ($chosenLog -and (Test-Path $chosenLog)) {
@@ -214,18 +220,6 @@ while ($true) {
             $out = $sr.ReadToEnd(); $sr.Close(); $fs.Close()
             $allLines = $out -split "`r?`n"
         } catch {}
-    }
-
-    # Slice log lines after the LAST run start marker
-    $startIdx = -1
-    for ($i = $allLines.Count - 1; $i -ge 0; $i--) {
-        if ($allLines[$i] -match '\[START\]|RUNNING PREFLIGHT CHECKS|STARTING MiOS-Cat INSTALLATION') {
-            $startIdx = $i
-            break
-        }
-    }
-    if ($startIdx -ge 0) {
-        $allLines = $allLines[$startIdx..($allLines.Count - 1)]
     }
 
     # Stream active DISM log if modified recently
@@ -262,7 +256,7 @@ while ($true) {
         } catch {}
     }
 
-    # Robust Stage Resolution Algorithm (Scans entire log slice)
+    # Global Pipeline Stage Determination
     $currentStageId = 1
     $subTaskPct = 0.0
     $subTaskName = "Initializing preflight checks & environment..."
@@ -274,7 +268,7 @@ while ($true) {
         if ($line -match "PHASE 1: ALL-IN-ONE|Core Medicat archive|Downloading|Pulling") { $currentStageId = [math]::Max($currentStageId, 2); $subTaskName = "Extracting/staging core archives to SSD..." }
         if ($line -match "Extracting Mini_Windows WIM|Servicing Mini_Windows|Mounting.*boot\.wim") { $currentStageId = [math]::Max($currentStageId, 3); $subTaskName = "Localhost DISM servicing of MiOS_PE.wim..." }
         if ($line -match "Exporting and compressing Localhost|trim_path|Rebuilding boot\.wim") { $currentStageId = [math]::Max($currentStageId, 4); $subTaskName = "Compressing MiOS_PE.wim with /Compress:max..." }
-        if ($line -match "Compiling MiOS-Xbox|autounattend|New-MiOSISO|Removing 44 capabilities|Disabling|Mounting.*26100|Stock ISO|oscdimg|Baking|wallpaper|SetupComplete") { $currentStageId = [math]::Max($currentStageId, 5); $subTaskName = "Compiling MiOS-Xbox Installer ISO..." }
+        if ($line -match "Compiling MiOS-Xbox|autounattend|New-MiOSISO|Removing.*capabilities|Disabling|Mounting.*26100|Stock ISO|oscdimg|Baking|wallpaper|SetupComplete|virtio|Dismount -Save") { $currentStageId = [math]::Max($currentStageId, 5); $subTaskName = "Compiling MiOS-Xbox Installer ISO..." }
         if ($line -match "Writing MiOS-PE|Writing Documents|PortableApps") { $currentStageId = [math]::Max($currentStageId, 6); $subTaskName = "Staging dedicated MiOS-PE & Documents folders..." }
         if ($line -match "SINGLE FLASH PASS|Zero USB writes") { $currentStageId = [math]::Max($currentStageId, 7); $subTaskName = "Fail-fast verification passed. Starting flash..." }
         if ($line -match "Ventoy|autorun\.inf") { $currentStageId = [math]::Max($currentStageId, 8); $subTaskName = "Applying Ventoy tree menu & theme configuration..." }
@@ -293,12 +287,12 @@ while ($true) {
         }
     }
 
-    # If DISM or ISO build is active, enforce Stage 5 minimum
-    if ($isDismRunning -or ($allLines -match 'Removing|Disabling|wallpaper|SetupComplete|New-MiOSISO')) {
+    # If DISM is running or log shows image servicing, enforce Stage 5 minimum
+    if ($isDismRunning -or ($allLines -match 'virtio|Dismount -Save|Baking|wallpaper|SetupComplete')) {
         $currentStageId = [math]::Max($currentStageId, 5)
     }
 
-    # Display the latest active log line as the current task
+    # Display the latest active log line as the current subtask
     $lastLogLine = $allLines | Where-Object { $_.Trim() -and $_ -notmatch '^\s*[\=\-\#]+\s*$' } | Select-Object -Last 1
     if ($lastLogLine) {
         $cleanTask = $lastLogLine.Trim() -replace "\x1b\[[0-9;]*m", ""
