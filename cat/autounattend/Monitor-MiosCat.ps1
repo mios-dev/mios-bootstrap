@@ -93,27 +93,23 @@ $lastOverallPct = 0.0
 # 3. Main Live Refresh Loop
 # -----------------------------------------------------------------------------
 while ($true) {
-    # Resolve ACTIVE log files modified within the last hour ONLY
-    $cutoff = (Get-Date).AddHours(-1)
-    $candidateLogs = @(
-        'C:\Windows\Temp\mios-cat-install.log',
-        'C:\isobuild_stage\cat-install.log'
-    )
-    $taskLogs = Get-ChildItem -Path "C:\Users\Administrator\.gemini\antigravity-ide\brain\dba6616d-053d-43cd-b86d-a98f223952b8\.system_generated\tasks\task-*.log" -ErrorAction SilentlyContinue |
-                Where-Object { $_.LastWriteTime -ge $cutoff } |
-                Sort-Object LastWriteTime -Descending |
-                Select-Object -ExpandProperty FullName
+    # Resolve SINGLE LATEST active log file to prevent stale historical log pollution
+    $primaryLog = 'C:\Windows\Temp\mios-cat-install.log'
+    $chosenLog = $null
 
-    $activeLogs = @()
-    foreach ($path in ($taskLogs + $candidateLogs)) {
-        if (Test-Path $path) { $activeLogs += $path }
+    if ((Test-Path $primaryLog) -and (Get-Item $primaryLog).Length -gt 0) {
+        $chosenLog = $primaryLog
+    } else {
+        $latestTaskLog = Get-ChildItem -Path "C:\Users\Administrator\.gemini\antigravity-ide\brain\dba6616d-053d-43cd-b86d-a98f223952b8\.system_generated\tasks\task-*.log" -ErrorAction SilentlyContinue |
+                         Sort-Object LastWriteTime -Descending |
+                         Select-Object -First 1 -ExpandProperty FullName
+        if ($latestTaskLog) { $chosenLog = $latestTaskLog }
     }
-    if (-not $activeLogs -and $LogPath -and (Test-Path $LogPath)) { $activeLogs = @($LogPath) }
 
     $allLines = @()
-    foreach ($path in $activeLogs) {
+    if ($chosenLog -and (Test-Path $chosenLog)) {
         try {
-            $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            $stream = [System.IO.File]::Open($chosenLog, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
             $reader = New-Object System.IO.StreamReader($stream)
             while (-not $reader.EndOfStream) {
                 $allLines += $reader.ReadLine()
@@ -121,6 +117,18 @@ while ($true) {
             $reader.Close()
             $stream.Close()
         } catch {}
+    }
+
+    # Slice log lines after the LAST run start marker to discard stale historical errors
+    $startIdx = -1
+    for ($i = $allLines.Count - 1; $i -ge 0; $i--) {
+        if ($allLines[$i] -match '\[START\]|RUNNING PREFLIGHT CHECKS|STARTING MiOS-Cat INSTALLATION') {
+            $startIdx = $i
+            break
+        }
+    }
+    if ($startIdx -ge 0) {
+        $allLines = $allLines[$startIdx..($allLines.Count - 1)]
     }
 
     # Inspect active running processes

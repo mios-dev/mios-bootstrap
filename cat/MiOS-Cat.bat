@@ -876,8 +876,11 @@ if /i "%confirm%"=="1" set "confirm=Y"
 if not "%confirm%"=="Y" goto menu
 
 :: Ensure target drive exists
+set "log_file=C:\Windows\Temp\mios-cat-install.log"
+echo [START] MiOS-Cat Flash Execution Started at %DATE% %TIME% > "%log_file%"
+
 if not exist "%drivepath%:\" (
-    echo [ERROR] Target drive %drivepath%: was not found!
+    echo [ERROR] Target drive %drivepath%: was not found! | tee -a "%log_file%" 2>nul
     echo Please insert your USB drive and ensure it is mounted as %drivepath%:\
     if not "%NONINTERACTIVE%"=="1" pause
     goto menu
