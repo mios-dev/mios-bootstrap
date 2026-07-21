@@ -1080,20 +1080,8 @@ mkdir "%aio_stage%\Documents" >nul 2>&1
 if exist "%toml_path%" copy "%toml_path%" "%aio_stage%\Documents\mios.toml" /Y >nul 2>&1
 
 :: 8. Compile MiOS-Xbox ISO on Localhost SSD
-if "%build_xbox%"=="Enabled" (
-    echo.
-    echo Compiling MiOS-Xbox Installer ISO on Localhost SSD...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autounattend\Render-MiosRunToml.ps1" -TomlPath "%toml_path%" -UupChannel "%uup_channel%" -BakeDrivers "%bake_drivers%" -GamingOptimize "%gaming_optimize%"
-    if errorlevel 1 ( echo [FATAL ERROR] Render-MiosRunToml failed! & exit /b 1 )
-
-    set "xbox_builder_script=%~dp0autounattend\Build-MiOSXboxISO.ps1"
-    if not exist "%xbox_builder_script%" set "xbox_builder_script=%~dp0cat\autounattend\Build-MiOSXboxISO.ps1"
-    if not exist "%xbox_builder_script%" set "xbox_builder_script=C:\mios-bootstrap\cat\autounattend\Build-MiOSXboxISO.ps1"
-    if not exist "%xbox_builder_script%" ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 script missing! & exit /b 1 )
-
-    powershell.exe -ExecutionPolicy Bypass -File "%xbox_builder_script%" -TomlPath "%temp%\mios_run.toml" -OutIso "%aio_stage%\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%stage_dir%\isobuild_live" -SkipWsl -SkipPrereqs
-    if errorlevel 1 ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 failed! & exit /b 1 )
-)
+if "%build_xbox%"=="Enabled" call :compile_xbox_iso
+if errorlevel 1 exit /b 1
 
 :: 9. Stage Live-Chat ISO if available
 if "%live_chat_iso_src%"=="" set "live_chat_iso_src=M:\MiOS-Live-Chat.iso"
@@ -1427,6 +1415,17 @@ if exist "%drivepath%:\" goto :eof
 echo [WARN] Drive %drivepath%: not mounted! Attempting auto-reassign...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Disk | Where-Object BusType -eq 'USB' | Get-Partition | Where-Object Size -gt 100MB | Select-Object -First 1 | Set-Partition -NewDriveLetter '%drivepath%' -ErrorAction SilentlyContinue" >nul 2>&1
 timeout /t 2 /nobreak >nul
-goto :eof
+:compile_xbox_iso
+echo.
+echo Compiling MiOS-Xbox Installer ISO on Localhost SSD...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0autounattend\Render-MiosRunToml.ps1" -TomlPath "%toml_path%" -UupChannel "%uup_channel%" -BakeDrivers "%bake_drivers%" -GamingOptimize "%gaming_optimize%"
+if errorlevel 1 ( echo [FATAL ERROR] Render-MiosRunToml failed! & exit /b 1 )
 
+set "xbox_builder_script=%~dp0autounattend\Build-MiOSXboxISO.ps1"
+if not exist "%xbox_builder_script%" set "xbox_builder_script=%~dp0cat\autounattend\Build-MiOSXboxISO.ps1"
+if not exist "%xbox_builder_script%" set "xbox_builder_script=C:\mios-bootstrap\cat\autounattend\Build-MiOSXboxISO.ps1"
+if not exist "%xbox_builder_script%" ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 script missing! & exit /b 1 )
 
+powershell.exe -ExecutionPolicy Bypass -File "%xbox_builder_script%" -TomlPath "%temp%\mios_run.toml" -OutIso "%aio_stage%\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%stage_dir%\isobuild_live" -SkipWsl -SkipPrereqs
+if errorlevel 1 ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 failed! & exit /b 1 )
+exit /b 0

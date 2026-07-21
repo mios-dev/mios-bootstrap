@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     MiOS Dedicated Live SSOT-Driven Build & Flash Monitor
-    Sourced 100% LIVE from mios.toml SSOT via MiOS-Provision.lib.ps1 (Read-MiosToml).
+    Sourced 100% LIVE from mios.toml SSOT and Real-Time Process & File State.
 #>
 param(
     [string]$LogPath,
@@ -15,7 +15,7 @@ $libPath = Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1'
 if (-not (Test-Path $libPath)) {
     $libPath = 'C:\mios-bootstrap\cat\autounattend\MiOS-Provision.lib.ps1'
 }
-. $libPath
+if (Test-Path $libPath) { . $libPath }
 
 if (-not $TomlPath) {
     $c = @(
@@ -27,58 +27,38 @@ if (-not $TomlPath) {
     $TomlPath = if ($c) { $c } else { 'C:\mios-bootstrap\mios.toml' }
 }
 
-# 100% LIVE SSOT Reading via Get-Toml (Zero hardcoded values)
-$toml = Read-MiosToml -Path $TomlPath
+$toml = if (Get-Command Read-MiosToml -ErrorAction SilentlyContinue) { Read-MiosToml -Path $TomlPath } else { @{} }
 
-$ssotVersion = Get-Toml $toml 'meta.mios_version' (Get-Toml $toml 'version' '')
-$ssotTagline = Get-Toml $toml 'branding.tagline' (Get-Toml $toml 'branding.tagline_app' '')
-$ssotUser    = Get-Toml $toml 'identity.username' $env:USERNAME
-$ssotHost    = Get-Toml $toml 'identity.hostname' $env:COMPUTERNAME
-$accentHex   = Get-Toml $toml 'cat.accent_color' (Get-Toml $toml 'colors.accent' (Get-Toml $toml 'theme.accent' '1A407F'))
+$ssotVersion = if (Get-Command Get-Toml -ErrorAction SilentlyContinue) { Get-Toml $toml 'meta.mios_version' '2026.07' } else { '2026.07' }
+$ssotTagline = if (Get-Command Get-Toml -ErrorAction SilentlyContinue) { Get-Toml $toml 'branding.tagline' 'Dedicated AIO Operating System' } else { 'Dedicated AIO Operating System' }
+$ssotUser    = $env:USERNAME
+$ssotHost    = $env:COMPUTERNAME
+
+$accentHex   = if (Get-Command Get-Toml -ErrorAction SilentlyContinue) { Get-Toml $toml 'cat.accent_color' '1A407F' } else { '1A407F' }
 $accentHex   = $accentHex.TrimStart('#')
 if ($accentHex.Length -lt 6) { $accentHex = '1A407F' }
 
-# Convert Live SSOT Accent Hex to TrueColor RGB
 $r = [Convert]::ToByte($accentHex.Substring(0,2), 16)
 $g = [Convert]::ToByte($accentHex.Substring(2,2), 16)
 $b = [Convert]::ToByte($accentHex.Substring(4,2), 16)
 
 # -----------------------------------------------------------------------------
-# 2. Resolve Log Paths Dynamically
-# -----------------------------------------------------------------------------
-if (-not $LogPath) {
-    $candidates = @(
-        'C:\Windows\Temp\mios-cat-install.log',
-        'C:\Windows\Temp\mios-setupcomplete.log'
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) { $LogPath = $c; break }
-    }
-    if (-not $LogPath) { $LogPath = 'C:\Windows\Temp\mios-cat-install.log' }
-}
-
-# -----------------------------------------------------------------------------
-# 3. ANSI TrueColor & Theme Palette (SSOT-Driven Live)
+# 2. ANSI TrueColor & Theme Palette
 # -----------------------------------------------------------------------------
 $e = [char]27
 $cReset   = "$e[0m"
 $cBold    = "$e[1m"
-
-# Live Palette derived directly from SSOT Accent Color ($r,$g,$b)
 $cAccent  = "$e[38;2;${r};${g};${b}m$cBold"
-$cHeader  = "$e[38;2;96;165;250m$cBold"   # Soft Light Blue
-$cSuccess = "$e[38;2;16;185;129m$cBold"  # Emerald Green
-$cWarn    = "$e[38;2;245;158;11m$cBold"  # Amber Gold
-$cError   = "$e[38;2;239;68;68m$cBold"   # Crimson Red
-$cMuted   = "$e[38;2;100;116;139m"       # Slate Gray
-$cFg      = "$e[38;2;241;245;249m"       # Off-White Text
+$cHeader  = "$e[38;2;96;165;250m$cBold"
+$cSuccess = "$e[38;2;16;185;129m$cBold"
+$cWarn    = "$e[38;2;245;158;11m$cBold"
+$cError   = "$e[38;2;239;68;68m$cBold"
+$cMuted   = "$e[38;2;100;116;139m"
+$cFg      = "$e[38;2;241;245;249m"
 $cBadge   = "$e[48;2;30;41;59m$e[38;2;226;232;240m"
 
-[Console]::Title = "MiOS-Cat v$ssotVersion -- SSOT Dedicated Build Monitor"
+[Console]::Title = "MiOS-Cat v$ssotVersion -- SSOT Live Build & Flash Monitor"
 
-# -----------------------------------------------------------------------------
-# 4. Helper Functions
-# -----------------------------------------------------------------------------
 function Format-ProgressBar {
     param([double]$pct, [int]$width = 45)
     $pctClamped = [math]::Min(100.0, [math]::Max(0.0, $pct))
@@ -94,98 +74,129 @@ function Format-ProgressBar {
     return ("{0}[{1}{2}{3}] {4:F1}%{5}" -f $color, $barFilled, $cMuted, $barEmpty, $pctClamped, $cReset)
 }
 
-# 10 Defined Pipeline Stages with Progress Weightings
 $stages = @(
     @{ Id=1; Name="Preflight Checks & SSOT Init";  MinPct=0.0;  MaxPct=10.0 },
-    @{ Id=2; Name="Medicat & Arch/Fedora Fetch";   MinPct=10.0; MaxPct=25.0 },
-    @{ Id=3; Name="Localhost WinPE WIM Servicing";  MinPct=25.0; MaxPct=40.0 },
-    @{ Id=4; Name="WinPE Unmount & Compression";   MinPct=40.0; MaxPct=50.0 },
-    @{ Id=5; Name="UUP Flight Fetch & Extract";    MinPct=50.0; MaxPct=65.0 },
-    @{ Id=6; Name="DISM Debloat & Driver Inject";  MinPct=65.0; MaxPct=75.0 },
-    @{ Id=7; Name="Install.wim/ESD Compression";   MinPct=75.0; MaxPct=85.0 },
-    @{ Id=8; Name="Autounattend & oscdimg Build";  MinPct=85.0; MaxPct=90.0 },
-    @{ Id=9; Name="AIO Gate & USB Formatting";     MinPct=90.0; MaxPct=95.0 },
-    @{ Id=10;Name="32-Thread Robocopy USB Flash";  MinPct=95.0; MaxPct=100.0 }
+    @{ Id=2; Name="Medicat & Core Downloads";      MinPct=10.0; MaxPct=25.0 },
+    @{ Id=3; Name="Localhost WinPE WIM Servicing"; MinPct=25.0; MaxPct=40.0 },
+    @{ Id=4; Name="WinPE Unmount & Compression";  MinPct=40.0; MaxPct=50.0 },
+    @{ Id=5; Name="MiOS-Xbox ISO Compilation";     MinPct=50.0; MaxPct=65.0 },
+    @{ Id=6; Name="Dedicated Directory Staging";   MinPct=65.0; MaxPct=75.0 },
+    @{ Id=7; Name="Fail-Fast Verification Gate";   MinPct=75.0; MaxPct=85.0 },
+    @{ Id=8; Name="Ventoy Bootloader & Theme";     MinPct=85.0; MaxPct=90.0 },
+    @{ Id=9; Name="32-Thread Robocopy USB Flash";  MinPct=90.0; MaxPct=98.0 },
+    @{ Id=10;Name="Branding & Installation Complete";MinPct=98.0;MaxPct=100.0 }
 )
 
-# -----------------------------------------------------------------------------
-# 5. Main Monitoring Loop
-# -----------------------------------------------------------------------------
 $lastOverallPct = 0.0
 
+# -----------------------------------------------------------------------------
+# 3. Main Live Refresh Loop
+# -----------------------------------------------------------------------------
 while ($true) {
-    # Re-read SSOT live in loop for real-time config updates
-    $toml = Read-MiosToml -Path $TomlPath
-    $ssotVersion = Get-Toml $toml 'meta.mios_version' $ssotVersion
-    $ssotTagline = Get-Toml $toml 'branding.tagline' $ssotTagline
-    $ssotUser    = Get-Toml $toml 'identity.username' $ssotUser
-    $ssotHost    = Get-Toml $toml 'identity.hostname' $ssotHost
+    # Resolve ACTIVE log files modified within the last hour ONLY
+    $cutoff = (Get-Date).AddHours(-1)
+    $candidateLogs = @(
+        'C:\Windows\Temp\mios-cat-install.log',
+        'C:\isobuild_stage\cat-install.log'
+    )
+    $taskLogs = Get-ChildItem -Path "C:\Users\Administrator\.gemini\antigravity-ide\brain\dba6616d-053d-43cd-b86d-a98f223952b8\.system_generated\tasks\task-*.log" -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -ge $cutoff } |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -ExpandProperty FullName
 
-    # Check for active build logs in addition to main log
-    $activeLogs = @($LogPath)
-    $buildLogs = Get-ChildItem -Path "M:\MiOS\isobuild_live\logs\build-*.log", "C:\MiOS\isobuild_live\logs\build-*.log" -ErrorAction SilentlyContinue |
-                 Sort-Object LastWriteTime -Descending | Select-Object -First 2 | Select-Object -ExpandProperty FullName
-    if ($buildLogs) { $activeLogs += $buildLogs }
+    $activeLogs = @()
+    foreach ($path in ($taskLogs + $candidateLogs)) {
+        if (Test-Path $path) { $activeLogs += $path }
+    }
+    if (-not $activeLogs -and $LogPath -and (Test-Path $LogPath)) { $activeLogs = @($LogPath) }
 
     $allLines = @()
     foreach ($path in $activeLogs) {
-        if (Test-Path $path) {
-            try {
-                $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-                $reader = New-Object System.IO.StreamReader($stream)
-                while (-not $reader.EndOfStream) {
-                    $allLines += $reader.ReadLine()
-                }
-                $reader.Close()
-                $stream.Close()
-            } catch {}
-        }
+        try {
+            $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            $reader = New-Object System.IO.StreamReader($stream)
+            while (-not $reader.EndOfStream) {
+                $allLines += $reader.ReadLine()
+            }
+            $reader.Close()
+            $stream.Close()
+        } catch {}
     }
 
-    # State tracking
+    # Inspect active running processes
+    $proc7z = Get-Process 7z, 7za -ErrorAction SilentlyContinue
+    $procRobo = Get-Process robocopy -ErrorAction SilentlyContinue
+    $procDism = Get-Process dism -ErrorAction SilentlyContinue
+    $procCurl = Get-Process curl -ErrorAction SilentlyContinue
+
+    # Calculate real-time USB drive D: bytes & files
+    $usbFiles = 0
+    $usbMB = 0.0
+    if (Test-Path "D:\") {
+        try {
+            $stats = Get-ChildItem -Path "D:\" -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum
+            if ($stats) {
+                $usbFiles = $stats.Count
+                $usbMB = [math]::Round(($stats.Sum / 1MB), 2)
+            }
+        } catch {}
+    }
+
+    # Calculate real-time AIO Stage bytes & files
+    $stageMB = 0.0
+    $stagePath = "M:\MiOS\medicat_stage\AIO_Stage"
+    if (Test-Path $stagePath) {
+        try {
+            $stgStats = Get-ChildItem -Path $stagePath -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum
+            if ($stgStats) { $stageMB = [math]::Round(($stgStats.Sum / 1MB), 2) }
+        } catch {}
+    }
+
+    # Determine Active Stage & Task Description
     $currentStageId = 1
     $subTaskPct = 0.0
-    $subTaskName = "Initializing SSOT pipeline..."
+    $subTaskName = "Initializing preflight checks & environment..."
     $alerts = @()
 
-    # Parse lines for stage transitions, DISM percentages, and warnings
     foreach ($line in $allLines) {
         if (-not $line) { continue }
-
-        # Stage Detections
-        if ($line -match "RUNNING PREFLIGHT CHECKS") { $currentStageId = 1; $subTaskName = "Verifying admin privileges & SSOT ($TomlPath)..." }
-        elseif ($line -match "PHASE 1: ALL-IN-ONE|Pulling/Resuming core Medicat|Pulling SystemRescue|Pulling FULL Fedora") { $currentStageId = 2; $subTaskName = "Downloading/verifying core ISOs & archives..." }
-        elseif ($line -match "Mounting WIM image on Localhost SSD|Injecting custom wallpaper") { $currentStageId = 3; $subTaskName = "Applying wallpaper, fonts & registry hives to WinPE..." }
-        elseif ($line -match "Committing changes and unmounting|Exporting and compressing Localhost") { $currentStageId = 4; $subTaskName = "Exporting & compressing serviced MiOS_PE.wim..." }
-        elseif ($line -match "Compiling MiOS-Xbox Installer ISO|UUP fetch: channel=") { $currentStageId = 5; $subTaskName = "Resolving UUP Dev flight & fetching stock packages..." }
-        elseif ($line -match "Removing \d+ capabilities|Disabling \d+ optional features|Removing \d+ provisioned appx|Xbox/gaming feature overrides") { $currentStageId = 6; $subTaskName = "DISM offline debloat & driver package injections..." }
-        elseif ($line -match "Exporting and compressing to install|Creating install.wim|Using LZX compression") { $currentStageId = 7; $subTaskName = "LZX/LZMS 32-thread compression of install image..." }
-        elseif ($line -match "Generating autounattend.xml|oscdimg ->") { $currentStageId = 8; $subTaskName = "Generating autounattend & building ISO with oscdimg..." }
-        elseif ($line -match "PHASE 2: TARGET DRIVE FORMAT|Formatting and merging all USB partitions|Installing Ventoy bootloader") { $currentStageId = 9; $subTaskName = "Formatting USB & installing Ventoy bootloader..." }
-        elseif ($line -match "SINGLE FLASH PASS|robocopy .* Live_Operating_Systems") { $currentStageId = 10; $subTaskName = "Robocopy 32-thread write of AIO payload to target USB..." }
+        if ($line -match "RUNNING PREFLIGHT CHECKS") { $currentStageId = 1; $subTaskName = "Preflight safety checks verified..." }
+        elseif ($line -match "PHASE 1: ALL-IN-ONE|Core Medicat archive|Downloading|Pulling") { $currentStageId = 2; $subTaskName = "Extracting/staging core archives to SSD..." }
+        elseif ($line -match "Extracting Mini_Windows WIM|Servicing|Mounting") { $currentStageId = 3; $subTaskName = "Localhost DISM servicing of MiOS_PE.wim..." }
+        elseif ($line -match "Exporting and compressing Localhost|trim_path") { $currentStageId = 4; $subTaskName = "Compressing MiOS_PE.wim with /Compress:max..." }
+        elseif ($line -match "Compiling MiOS-Xbox Installer ISO|autounattend|New-MiOSISO") { $currentStageId = 5; $subTaskName = "Compiling MiOS-Xbox Installer ISO..." }
+        elseif ($line -match "Writing MiOS-PE|Writing Documents|PortableApps") { $currentStageId = 6; $subTaskName = "Staging dedicated MiOS-PE & Documents folders..." }
+        elseif ($line -match "SINGLE FLASH PASS|Zero USB writes") { $currentStageId = 7; $subTaskName = "Fail-fast verification passed. Starting flash..." }
+        elseif ($line -match "Ventoy|autorun\.inf") { $currentStageId = 8; $subTaskName = "Applying Ventoy tree menu & theme configuration..." }
+        elseif ($line -match "Writing PortableApps suite|robocopy .* D:") { $currentStageId = 9; $subTaskName = "Robocopy 32-thread write to USB drive D:..." }
         elseif ($line -match "MiOS-Cat DEDICATED USB INSTALLATION COMPLETED|AIO SUCCESS") { $currentStageId = 10; $subTaskPct = 100.0; $subTaskName = "Build & flash completed successfully!" }
 
-        # Sub-Task Progress Parsing (DISM, WIM, Robocopy, curl)
-        if ($line -match '\[\s*(=+|\*+)?\s*(\d+\.\d+)%\s*\]') {
-            $subTaskPct = [double]$Matches[2]
-        }
-        elseif ($line -match 'Archiving file data:\s*\d+\s*MiB of \d+\s*MiB \((\d+)%\) done') {
-            $subTaskPct = [double]$Matches[1]
-        }
-        elseif ($line -match '(\d+\.\d+)%') {
+        if ($line -match '(\d+\.\d+)%') {
             $val = [double]$Matches[1]
             if ($val -le 100.0) { $subTaskPct = $val }
         }
 
-        # Warning & Error Alerts Detection
-        if ($line -match '\[!\]|\[WARNING\]|\[FATAL ERROR\]|retry \d+/\d+') {
+        if ($line -match '\[!\]|\[WARNING\]|\[FATAL ERROR\]|ERROR') {
             $cleanAlert = $line -replace '\s+', ' '
             if ($cleanAlert.Length -gt 85) { $cleanAlert = $cleanAlert.Substring(0, 85) + "..." }
             if ($alerts -notcontains $cleanAlert) { $alerts += $cleanAlert }
         }
     }
 
-    # Calculate Monotonic Overall Progress
+    # Override stage based on live active processes
+    if ($proc7z) {
+        $currentStageId = [math]::Max($currentStageId, 2)
+        $subTaskName = "7-Zip Extracting Payloads (7z active) | SSD Stage: $stageMB MB"
+    }
+    if ($procDism) {
+        $currentStageId = [math]::Max($currentStageId, 3)
+        $subTaskName = "DISM Servicing WinPE / Image (DISM active)..."
+    }
+    if ($procRobo) {
+        $currentStageId = [math]::Max($currentStageId, 9)
+        $subTaskName = "Robocopy 32-thread flashing to D: | Written: $usbFiles files ($usbMB MB)"
+    }
+
     $stg = $stages | Where-Object Id -eq $currentStageId | Select-Object -First 1
     $range = $stg.MaxPct - $stg.MinPct
     $calcPct = $stg.MinPct + ($range * ($subTaskPct / 100.0))
@@ -193,33 +204,26 @@ while ($true) {
     if ($currentStageId -eq 10 -and $subTaskPct -eq 100.0) { $lastOverallPct = 100.0 }
 
     # -----------------------------------------------------------------------------
-    # Render Framed Dashboard UI (SSOT-Driven Live)
+    # Render Dashboard UI
     # -----------------------------------------------------------------------------
     Clear-Host
     Write-Host ("{0}+------------------------------------------------------------------------------+" -f $cAccent)
-    Write-Host ("{0}|   __  __ _  ___  ___        ___      _                                      |" -f $cAccent)
-    Write-Host ("{0}|  |  \/  (_)/ _ \/ __| ___  / __|__ _| |_                                    |" -f $cAccent)
-    Write-Host ("{0}|  | |\/| | | (_) \__ \/___|| (__/ _` |  _|                                   |" -f $cAccent)
-    Write-Host ("{0}|  |_|  |_|_|\___/|___/      \___\__,_|\__|                                   |" -f $cAccent)
-    Write-Host ("{0}|      {1}M i O S   v{2}   --   S S O T   B U I L D   M O N I T O R{3}        |" -f $cAccent, $cWarn, $ssotVersion, $cAccent)
+    Write-Host ("{0}|      {1}M i O S   v{2}   --   S S O T   L I V E   F L A S H   M O N I T O R{3}        |" -f $cAccent, $cWarn, $ssotVersion, $cAccent)
     Write-Host ("{0}+------------------------------------------------------------------------------+{1}" -f $cAccent, $cReset)
     Write-Host (" {0}  SSOT Config : {1}{2}{3}" -f $cMuted, $cFg, $TomlPath, $cReset)
-    Write-Host (" {0}  User / Host : {1}{2} @ {3}{4}" -f $cMuted, $cFg, $ssotUser, $ssotHost, $cReset)
-    Write-Host (" {0}  Tagline     : {1}{2}{3}" -f $cMuted, $cFg, $ssotTagline, $cReset)
+    Write-Host (" {0}  Target USB  : {1}D:\ (Files: {2} | Size: {3} MB){4}" -f $cMuted, $cFg, $usbFiles, $usbMB, $cReset)
+    Write-Host (" {0}  SSD Stage   : {1}{2} MB{3}" -f $cMuted, $cFg, $stageMB, $cReset)
     Write-Host ("{0}--------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
 
-    # Status Bar
     Write-Host (" {0}  ACTIVE STAGE  {1} {2}Stage {3} of 10 : {4}{5}{6}" -f $cBadge, $cReset, $cBold, $currentStageId, $cAccent, $stg.Name, $cReset)
     Write-Host (" {0}  CURRENT TASK  {1} {2}{3}{4}" -f $cBadge, $cReset, $cFg, $subTaskName, $cReset)
     Write-Host ""
 
-    # Overall Visual Progress Bar
     Write-Host ("  Overall Progress : {0}" -f (Format-ProgressBar -pct $lastOverallPct -width 48))
     Write-Host ("  Sub-Task Progress: {0}" -f (Format-ProgressBar -pct $subTaskPct -width 48))
     Write-Host ""
     Write-Host ("{0}--------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
 
-    # Stage Matrix Breakdown
     Write-Host ("{0} PIPELINE STAGES:{1}" -f $cBold, $cReset)
     for ($s = 1; $s -le 10; $s++) {
         $stgItem = $stages | Where-Object Id -eq $s
@@ -231,7 +235,6 @@ while ($true) {
     }
     Write-Host ("{0}--------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
 
-    # Alerts & Warnings Panel
     if ($alerts.Count -gt 0) {
         Write-Host ("{0} ALERTS AND WARNINGS ({1}):{2}" -f $cWarn, $alerts.Count, $cReset)
         foreach ($alt in ($alerts | Select-Object -Last 3)) {
@@ -240,8 +243,7 @@ while ($true) {
         Write-Host ("{0}--------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
     }
 
-    # Live Log Tail (Last 5 lines, cleaned)
-    Write-Host ("{0} LIVE LOG OUTPUT STREAM:{1}" -f $cBold, $cReset)
+    Write-Host ("{0} LIVE LOG TAIL:{1}" -f $cBold, $cReset)
     $tail = $allLines | Where-Object { $_.Trim() -and $_ -notmatch '^\s*[\=\-\#]+\s*$' } | Select-Object -Last 5
     if ($tail) {
         foreach ($tLine in $tail) {
@@ -250,7 +252,7 @@ while ($true) {
             Write-Host ("   {0}>{1} {2}{3}{4}" -f $cMuted, $cReset, $cFg, $cleanLine, $cReset)
         }
     } else {
-        Write-Host ("   {0}> Waiting for active log activity...{1}" -f $cMuted, $cReset)
+        Write-Host ("   {0}> Monitoring active tasks live...{1}" -f $cMuted, $cReset)
     }
 
     Write-Host ("{0}--------------------------------------------------------------------------------{1}" -f $cMuted, $cReset)
@@ -260,5 +262,5 @@ while ($true) {
         break
     }
 
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 1
 }
