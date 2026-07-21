@@ -11,6 +11,13 @@ rem ============================================================================
 set "LOG=%WINDIR%\Temp\mios-setupcomplete.log"
 echo [MiOS] SetupComplete start %DATE% %TIME%>>"%LOG%"
 
+rem --- NATIVE BITLOCKER DISABLE: prevent Win11 24H2 automatic drive encryption ---
+echo [MiOS] disabling BitLocker automatic encryption %DATE% %TIME%>>"%LOG%"
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\BitLocker" /v PreventDeviceEncryption /t REG_DWORD /d 1 /f >>"%LOG%" 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\FVE" /v PreventDeviceEncryption /t REG_DWORD /d 1 /f >>"%LOG%" 2>&1
+manage-bde.exe -off C: >>"%LOG%" 2>&1
+powershell.exe -NoProfile -Command "try { Get-BitLockerVolume | Where-Object { $_.VolumeStatus -ne 'FullyDecrypted' } | Disable-BitLocker -ErrorAction SilentlyContinue } catch {}" >>"%LOG%" 2>&1
+
 rem --- Linux-like FS layout (was FirstLogonCommands; do it reliably here) ------
 for %%D in (etc usr home opt srv var bin lib root tmp) do md "%SystemDrive%\%%D" 2>nul
 md "%ProgramData%\MiOS" 2>nul

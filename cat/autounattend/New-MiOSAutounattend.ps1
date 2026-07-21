@@ -318,6 +318,9 @@ function New-MiOSAutounattendXml {
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <settings pass="windowsPE">
+    <component name="Microsoft-Windows-SecureStartup-FilterDriver" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <PreventDeviceEncryption>true</PreventDeviceEncryption>
+    </component>
     <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <SetupUILanguage><UILanguage>$uiLang</UILanguage></SetupUILanguage>
       <InputLocale>$inputLocale</InputLocale>
@@ -340,7 +343,15 @@ $diskXml
       </ImageInstall>
     </component>
   </settings>
+  <settings pass="offlineServicing">
+    <component name="Microsoft-Windows-SecureStartup-FilterDriver" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <PreventDeviceEncryption>true</PreventDeviceEncryption>
+    </component>
+  </settings>
   <settings pass="specialize">
+    <component name="Microsoft-Windows-SecureStartup-FilterDriver" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <PreventDeviceEncryption>true</PreventDeviceEncryption>
+    </component>
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <ComputerName>$computerName</ComputerName>
       <RegisteredOwner>MiOS</RegisteredOwner>
@@ -350,6 +361,9 @@ $diskXml
     <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <RunSynchronous>
         <RunSynchronousCommand wcm:action="add"><Order>1</Order><Path>cmd /c reg add HKLM\SYSTEM\CurrentControlSet\Control\FileSystem /v LongPathsEnabled /t REG_DWORD /d 1 /f || exit 0</Path><Description>Enable NTFS long paths for MiOS</Description></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>2</Order><Path>cmd /c reg add HKLM\SYSTEM\CurrentControlSet\Control\BitLocker /v PreventDeviceEncryption /t REG_DWORD /d 1 /f || exit 0</Path><Description>Disable BitLocker Automatic Device Encryption</Description></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>3</Order><Path>cmd /c reg add HKLM\SOFTWARE\Policies\Microsoft\FVE /v PreventDeviceEncryption /t REG_DWORD /d 1 /f || exit 0</Path><Description>Disable BitLocker Group Policy Encryption</Description></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>4</Order><Path>cmd /c manage-bde -off C: || exit 0</Path><Description>Turn off BitLocker on SystemDrive</Description></RunSynchronousCommand>
 $preOobeXml
       </RunSynchronous>
     </component>
