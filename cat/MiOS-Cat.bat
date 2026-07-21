@@ -883,6 +883,10 @@ if not exist "%drivepath%:\" (
     goto menu
 )
 
+:: Full visible monitor defaults to ON (Session 1 Desktop Injection)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "schtasks /Create /TN 'MiOSMonitor' /TR 'powershell.exe -NoExit -ExecutionPolicy Bypass -File C:\mios-bootstrap\cat\autounattend\Monitor-MiosCat.ps1' /SC ONCE /ST 23:59 /IT /F; schtasks /Run /TN 'MiOSMonitor'" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "schtasks /Create /TN 'MiOSFlashProgress' /TR 'powershell.exe -NoExit -ExecutionPolicy Bypass -File C:\Users\Administrator\.gemini\antigravity-ide\brain\dba6616d-053d-43cd-b86d-a98f223952b8\scratch\monitor_loop.ps1' /SC ONCE /ST 23:59 /IT /F; schtasks /Run /TN 'MiOSFlashProgress'" >nul 2>&1
+
 :: 4. Download Ventoy bootloader -- newest upstream GLOBALLY
 echo Checking Ventoy files...
 if not exist "%stage_dir%\Ventoy2Disk" call :resolve_ventoy_latest
