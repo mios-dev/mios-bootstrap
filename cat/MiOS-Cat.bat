@@ -1110,7 +1110,7 @@ echo [AIO SUCCESS] All images 100%% compiled, serviced, and verified on Localhos
 
 echo.
 echo ==========================================================
-echo    PHASE 2: TARGET DRIVE FORMAT & SINGLE-PASS FLASH WRITE
+echo    PHASE 2: TARGET DRIVE FORMAT ^& SINGLE-PASS FLASH WRITE
 echo ==========================================================
 echo Target Drive: %drivepath%:
 echo ==========================================================
@@ -1222,17 +1222,7 @@ copy "%maindir%\icon.ico" "%drivepath%:\icon.ico" /Y >nul
 attrib +h +s "%drivepath%:\autorun.inf" >nul 2>&1
 attrib +h +s "%drivepath%:\icon.ico" >nul 2>&1
 
-echo using System; > "%temp%\launcher.cs"
-echo using System.Diagnostics; >> "%temp%\launcher.cs"
-echo using System.IO; >> "%temp%\launcher.cs"
-echo class Launcher { >> "%temp%\launcher.cs"
-echo     static void Main^(^) { >> "%temp%\launcher.cs"
-echo         string path = Path.Combine^(AppDomain.CurrentDomain.BaseDirectory, @"PortableApps\PortableApps.com\PortableAppsPlatform.exe"^); >> "%temp%\launcher.cs"
-echo         if ^(File.Exists^(path^)^) { >> "%temp%\launcher.cs"
-echo             Process.Start^(new ProcessStartInfo { FileName = path, UseShellExecute = true }^); >> "%temp%\launcher.cs"
-echo         } >> "%temp%\launcher.cs"
-echo     } >> "%temp%\launcher.cs"
-echo } >> "%temp%\launcher.cs"
+powershell -NoProfile -Command "Set-Content -Path '%temp%\launcher.cs' -Value 'using System; using System.Diagnostics; using System.IO; class Launcher { static void Main() { string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @\"PortableApps\PortableApps.com\PortableAppsPlatform.exe\"); if (File.Exists(path)) { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); } } }'" >nul 2>&1
 
 C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%maindir%\icon.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
 del "%temp%\launcher.cs" /Q >nul 2>&1
