@@ -940,9 +940,9 @@ if "%download_needed%"=="1" (
     echo [OK] Core Medicat archive found and complete at %file%
 )
 
-:: 6b. Extract WIM payload to Localhost AIO Stage
-echo Extracting Mini_Windows WIM from core archive to Localhost SSD...
-"%maindir%\bin\7z.exe" x "%file%" -o"%aio_stage%\" "Live_Operating_Systems/Mini_Windows/*" -mmt=on -aoa -y >nul
+:: 6b. Extract WIM payload & PortableApps suite to Localhost AIO Stage
+echo Extracting Mini_Windows WIM & PortableApps suite from core archive to Localhost SSD...
+"%maindir%\bin\7z.exe" x "%file%" -o"%aio_stage%\" "Live_Operating_Systems/Mini_Windows/*" "PortableApps/*" -mmt=on -aoa -y >nul
 
 :: 6c. Pull/Download Fedora Server DVD
 set "fedora_ver=44"
@@ -1185,6 +1185,16 @@ robocopy "%aio_stage%\Live_Operating_Systems" "%drivepath%:\Live_Operating_Syste
 if errorlevel 8 (
     echo [FATAL ERROR] Robocopy failed to write AIO images to %drivepath%:\Live_Operating_Systems!
     exit /b 1
+)
+
+if exist "%aio_stage%\PortableApps" (
+    echo Writing PortableApps suite to USB (%drivepath%:\PortableApps)...
+    mkdir "%drivepath%:\PortableApps" >nul 2>&1
+    robocopy "%aio_stage%\PortableApps" "%drivepath%:\PortableApps" /E /R:2 /W:2 /MT:32
+    if errorlevel 8 (
+        echo [FATAL ERROR] Robocopy failed to write PortableApps to %drivepath%:\PortableApps!
+        exit /b 1
+    )
 )
 
 :: 15. Finalize Branding & Start.exe launcher
