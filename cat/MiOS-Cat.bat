@@ -142,11 +142,11 @@ set "force_format=Enabled"
 :: launcher and scripts can deep-link straight to an action.
 :: ------------------------------------------------------------------
 if /i "%~1"=="menu"      goto menu
-if /i "%~1"=="build"     goto sub_build
-if /i "%~1"=="stage"     goto start_install
-if /i "%~1"=="install"   goto sub_deploy
-if /i "%~1"=="deploy"    goto sub_deploy
-if /i "%~1"=="provision" goto sub_deploy
+if /i "%~1"=="build"     set "NONINTERACTIVE=1" & goto sub_build
+if /i "%~1"=="stage"     set "NONINTERACTIVE=1" & goto start_install
+if /i "%~1"=="install"   set "NONINTERACTIVE=1" & goto sub_deploy
+if /i "%~1"=="deploy"    set "NONINTERACTIVE=1" & goto sub_deploy
+if /i "%~1"=="provision" set "NONINTERACTIVE=1" & goto sub_deploy
 if /i "%~1"=="update"    goto sub_update
 if /i "%~1"=="config"    goto sub_config
 if /i "%~1"=="manual"    goto sub_manual
@@ -912,9 +912,9 @@ mkdir "%aio_stage%\Live_Operating_Systems\SystemRescue" >nul 2>&1
 
 echo.
 echo ==========================================================
-echo    PHASE 1: ALL-IN-ONE (AIO) LOCALHOST STAGING & COMPILATION
+echo    PHASE 1: ALL-IN-ONE (AIO) LOCALHOST STAGING AND COMPILATION
 echo ==========================================================
-echo Staging & compiling all images on localhost SSD: %aio_stage%
+echo Staging and compiling all images on localhost SSD: %aio_stage%
 echo Zero USB writes until ALL images pass fail-fast verification!
 echo ==========================================================
 echo.
@@ -941,8 +941,8 @@ if "%download_needed%"=="1" (
 )
 
 :: 6b. Extract WIM payload & PortableApps suite to Localhost AIO Stage
-echo Extracting Mini_Windows WIM & PortableApps suite from core archive to Localhost SSD...
-"%maindir%\bin\7z.exe" x "%file%" -o"%aio_stage%\" "Live_Operating_Systems/Mini_Windows/*" "PortableApps/*" -mmt=on -aoa -y >nul
+echo Extracting Mini_Windows WIM and PortableApps suite from core archive to Localhost SSD...
+"%maindir%\bin\7z.exe" x "%file%" -o"%aio_stage%" "Live_Operating_Systems/Mini_Windows/*" "PortableApps/*" -mmt=on -aoa -y >nul
 
 :: 6c. Pull/Download Fedora Server DVD
 set "fedora_ver=44"
