@@ -140,7 +140,7 @@ function Colorize-LogLine {
         return ("   " + (C $pal.warning "$symWarn $clean"))
     } elseif ($clean -match '\[ERROR\]|\[FATAL\]|FAILED|die') {
         return ("   " + (C $pal.error "$symErr $clean"))
-    } elseif ($clean -match 'Extracting|Servicing|Compiling|Flashing|Robocopy|Converting|Removing') {
+    } elseif ($clean -match 'Extracting|Servicing|Compiling|Flashing|Robocopy|Converting|Removing|Disabling') {
         return ("   " + (C $pal.mag "$symMag $clean"))
     } elseif ($clean -match '\[\*\]|\[INFO\]|Stage|Building') {
         return ("   " + (C $pal.cyan "$symInfo $clean"))
@@ -247,6 +247,7 @@ while ($true) {
     # Inspect active running subprocesses safely
     $activeProcs = @()
     $totalRamMB = 0.0
+    $isDismActive = $false
     foreach ($procName in @('7z', '7za', 'robocopy', 'dism', 'curl', 'aria2c', 'wimlib-imagex')) {
         try {
             $procs = Get-Process -Name $procName -ErrorAction SilentlyContinue
@@ -255,12 +256,13 @@ while ($true) {
                     $ram = [math]::Round(($p.WorkingSet64 / 1MB), 1)
                     $totalRamMB += $ram
                     $activeProcs += [pscustomobject]@{ Name = $p.ProcessName; Id = $p.Id; Ram = "${ram}MB" }
+                    if ($procName -eq 'dism') { $isDismActive = $true }
                 }
             }
         } catch {}
     }
 
-    # Determine Active Stage & Task Description
+    # Determine Active Stage & Task Description by Scanning Log Output
     $currentStageId = 1
     $subTaskPct = 0.0
     $subTaskName = "Initializing preflight checks & environment..."
@@ -268,16 +270,16 @@ while ($true) {
 
     foreach ($line in $allLines) {
         if (-not $line) { continue }
-        if ($line -match "RUNNING PREFLIGHT CHECKS") { $currentStageId = 1; $subTaskName = "Preflight safety checks verified..." }
-        elseif ($line -match "PHASE 1: ALL-IN-ONE|Core Medicat archive|Downloading|Pulling") { $currentStageId = 2; $subTaskName = "Extracting/staging core archives to SSD..." }
-        elseif ($line -match "Extracting Mini_Windows WIM|Servicing Mini_Windows|Mounting") { $currentStageId = 3; $subTaskName = "Localhost DISM servicing of MiOS_PE.wim..." }
-        elseif ($line -match "Exporting and compressing Localhost|trim_path") { $currentStageId = 4; $subTaskName = "Compressing MiOS_PE.wim with /Compress:max..." }
-        elseif ($line -match "Compiling MiOS-Xbox|autounattend|New-MiOSISO|Removing 44 capabilities|Mounting install image") { $currentStageId = 5; $subTaskName = "Compiling MiOS-Xbox Installer ISO..." }
-        elseif ($line -match "Writing MiOS-PE|Writing Documents|PortableApps") { $currentStageId = 6; $subTaskName = "Staging dedicated MiOS-PE & Documents folders..." }
-        elseif ($line -match "SINGLE FLASH PASS|Zero USB writes") { $currentStageId = 7; $subTaskName = "Fail-fast verification passed. Starting flash..." }
-        elseif ($line -match "Ventoy|autorun\.inf") { $currentStageId = 8; $subTaskName = "Applying Ventoy tree menu & theme configuration..." }
-        elseif ($line -match "Writing PortableApps suite|robocopy .* D:") { $currentStageId = 9; $subTaskName = "Robocopy 32-thread write to USB drive D:..." }
-        elseif ($line -match "MiOS-Cat DEDICATED USB INSTALLATION COMPLETED|AIO SUCCESS") { $currentStageId = 10; $subTaskPct = 100.0; $subTaskName = "Build & flash completed successfully!" }
+        if ($line -match "RUNNING PREFLIGHT CHECKS") { $currentStageId = [math]::Max($currentStageId, 1); $subTaskName = "Preflight safety checks verified..." }
+        if ($line -match "PHASE 1: ALL-IN-ONE|Core Medicat archive|Downloading|Pulling") { $currentStageId = [math]::Max($currentStageId, 2); $subTaskName = "Extracting/staging core archives to SSD..." }
+        if ($line -match "Extracting Mini_Windows WIM|Servicing Mini_Windows|Mounting.*boot\.wim") { $currentStageId = [math]::Max($currentStageId, 3); $subTaskName = "Localhost DISM servicing of MiOS_PE.wim..." }
+        if ($line -match "Exporting and compressing Localhost|trim_path|Rebuilding boot\.wim") { $currentStageId = [math]::Max($currentStageId, 4); $subTaskName = "Compressing MiOS_PE.wim with /Compress:max..." }
+        if ($line -match "Compiling MiOS-Xbox|autounattend|New-MiOSISO|Removing 44 capabilities|Disabling|Mounting.*26100|Stock ISO|oscdimg") { $currentStageId = [math]::Max($currentStageId, 5); $subTaskName = "Compiling MiOS-Xbox Installer ISO..." }
+        if ($line -match "Writing MiOS-PE|Writing Documents|PortableApps") { $currentStageId = [math]::Max($currentStageId, 6); $subTaskName = "Staging dedicated MiOS-PE & Documents folders..." }
+        if ($line -match "SINGLE FLASH PASS|Zero USB writes") { $currentStageId = [math]::Max($currentStageId, 7); $subTaskName = "Fail-fast verification passed. Starting flash..." }
+        if ($line -match "Ventoy|autorun\.inf") { $currentStageId = [math]::Max($currentStageId, 8); $subTaskName = "Applying Ventoy tree menu & theme configuration..." }
+        if ($line -match "Writing PortableApps suite|robocopy .* D:") { $currentStageId = [math]::Max($currentStageId, 9); $subTaskName = "Robocopy 32-thread write to USB drive D:..." }
+        if ($line -match "MiOS-Cat DEDICATED USB INSTALLATION COMPLETED|AIO SUCCESS") { $currentStageId = 10; $subTaskPct = 100.0; $subTaskName = "Build & flash completed successfully!" }
 
         if ($line -match '(\d+\.\d+)%') {
             $val = [double]$Matches[1]
