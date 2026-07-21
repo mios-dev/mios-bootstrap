@@ -1,17 +1,36 @@
 # Launch MiOS-Cat Live Monitor directly on active logged-on user desktop screen
 $monScript = 'C:\mios-bootstrap\cat\autounattend\Monitor-MiosCat.ps1'
 
-# 1. Launch standard PowerShell console directly in foreground
-try {
-    Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$monScript`"" -ErrorAction SilentlyContinue
-} catch {}
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Focus {
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    public static extern bool SwitchToThisWindow(IntPtr hWnd, bool fUnknown);
+}
+"@
 
-# 2. Backup launch via cmd start
-try {
-    Start-Process -FilePath 'cmd.exe' -ArgumentList "/c start `"MiOS Live Flash Monitor`" powershell.exe -NoExit -ExecutionPolicy Bypass -File `"$monScript`"" -ErrorAction SilentlyContinue
-} catch {}
+# 1. Launch standard PowerShell console process
+$proc = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$monScript`"" -PassThru
 
-# 3. Scheduled Task fallback for user token
+# 2. Force focus into active foreground via Win32 P/Invoke
+for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Milliseconds 200
+    $proc.Refresh()
+    if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+        [Win32Focus]::ShowWindowAsync($proc.MainWindowHandle, 9) | Out-Null
+        [Win32Focus]::ShowWindowAsync($proc.MainWindowHandle, 5) | Out-Null
+        [Win32Focus]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
+        [Win32Focus]::SwitchToThisWindow($proc.MainWindowHandle, $true) | Out-Null
+        break
+    }
+}
+
+# 3. Scheduled Task fallback
 try {
     $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoExit -ExecutionPolicy Bypass -File `"$monScript`""
