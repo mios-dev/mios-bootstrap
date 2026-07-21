@@ -339,6 +339,7 @@ $diskXml
         <OSImage>
           <InstallTo><DiskID>0</DiskID><PartitionID>$installPartId</PartitionID></InstallTo>
           <InstallFrom><MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>$edition</Value></MetaData></InstallFrom>
+          <Compact>true</Compact>
         </OSImage>
       </ImageInstall>
     </component>

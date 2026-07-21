@@ -18,6 +18,10 @@ reg add "HKLM\SOFTWARE\Policies\Microsoft\FVE" /v PreventDeviceEncryption /t REG
 manage-bde.exe -off C: >>"%LOG%" 2>&1
 powershell.exe -NoProfile -Command "try { Get-BitLockerVolume | Where-Object { $_.VolumeStatus -ne 'FullyDecrypted' } | Disable-BitLocker -ErrorAction SilentlyContinue } catch {}" >>"%LOG%" 2>&1
 
+rem --- COMPACT OS: enforce CompactOS LZX/XPRESS WOF OS compression ---
+echo [MiOS] enabling CompactOS OS compression %DATE% %TIME%>>"%LOG%"
+compact.exe /CompactOS:always >>"%LOG%" 2>&1
+
 rem --- Linux-like FS layout (was FirstLogonCommands; do it reliably here) ------
 for %%D in (etc usr home opt srv var bin lib root tmp) do md "%SystemDrive%\%%D" 2>nul
 md "%ProgramData%\MiOS" 2>nul

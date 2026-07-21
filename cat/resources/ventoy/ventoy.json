@@ -4,34 +4,42 @@
         { "VTOY_TREE_VIEW_MENU_STYLE": "0" },
         { "VTOY_WIN11_BYPASS_CHECK": "1" },
         { "VTOY_LINUX_REMOUNT": "1" },
-        { "VTOY_SECONDARY_BOOT_MENU": "1" }
+        { "VTOY_SECONDARY_BOOT_MENU": "1" },
+        { "VTOY_DEFAULT_IMAGE": "/Live_Operating_Systems/MiOS-Live-Chat.iso" }
     ],
     "theme":{
-        "gfxmode": "1024x768"
+        "file": "/ventoy/theme/uefi/theme.txt",
+        "gfxmode": "1920x1080,1280x1024,1024x768",
+        "ventoy_left": "5%",
+        "ventoy_top": "0%",
+        "ventoy_color": "#F35C15"
     },
     "theme_legacy":{
         "file": "/ventoy/theme/legacy/theme.txt",
         "gfxmode": "1024x768",
-        "ventoy_left": "0%",
+        "ventoy_left": "5%",
         "ventoy_top": "0",
         "ventoy_color": "#1A407F"
     },
     "theme_uefi":{
         "file": "/ventoy/theme/uefi/theme.txt",
-        "gfxmode": "1024x768",
-        "ventoy_left": "0%",
+        "gfxmode": "1920x1080,1280x1024,1024x768",
+        "ventoy_left": "5%",
         "ventoy_top": "0%",
-        "ventoy_color": "#1A407F"
+        "ventoy_color": "#F35C15"
     },
-    "theme_ia32":{
-        "gfxmode": "1024x768"
-    },
-    "theme_aa64":{
-        "gfxmode": "1024x768"
-    },
-    "theme_mips":{
-        "gfxmode": "1024x768"
-    },
+    "menu_alias": [
+        { "image": "/Live_Operating_Systems/MiOS-Live-Chat.iso", "alias": "MiOS Live-Chat AI (Ephemeral Live System)" },
+        { "image": "/Live_Operating_Systems/Fedora-Server.iso", "alias": "Deploy MiOS Linux (Fedora Server + MiOS Overlay)" },
+        { "image": "/Live_Operating_Systems/MiOS-Xbox.iso", "alias": "Deploy MiOS-Xbox (Windows Gaming Edition - CompactOS)" },
+        { "image": "/Live_Operating_Systems/SystemRescue/SystemRescue.iso", "alias": "SystemRescue Arch Linux (Diagnostics & Disk Tools)" }
+    ],
+    "menu_class": [
+        { "key": "MiOS-Live-Chat", "class": "linux" },
+        { "key": "Fedora", "class": "fedora" },
+        { "key": "MiOS-Xbox", "class": "windows" },
+        { "key": "SystemRescue", "class": "arch" }
+    ],
     "conf_replace_legacy":[
         {
             "iso": "/Live_Operating_Systems/SystemRescue/SystemRescue.iso",

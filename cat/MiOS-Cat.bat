@@ -1027,6 +1027,22 @@ del "%fedora_file%" 2>nul
 exit /b 1
 :fedora_dvd_ok
 
+:: 6c. Ensure the latest SystemRescue (Arch Linux rescue ISO) is staged
+set "sysrescue_ver=11.02"
+set "sysrescue_target=%drivepath%:\Live_Operating_Systems\SystemRescue\SystemRescue.iso"
+if not exist "%sysrescue_target%" if exist "M:\systemrescue-%sysrescue_ver%-amd64.iso" (
+    mkdir "%drivepath%:\Live_Operating_Systems\SystemRescue" >nul 2>&1
+    copy "M:\systemrescue-%sysrescue_ver%-amd64.iso" "%sysrescue_target%" /Y >nul 2>&1
+)
+if not exist "%sysrescue_target%" (
+    echo.
+    echo SystemRescue Arch Linux ISO not found at %sysrescue_target%.
+    echo Pulling SystemRescue %sysrescue_ver% Arch rescue ISO...
+    mkdir "%drivepath%:\Live_Operating_Systems\SystemRescue" >nul 2>&1
+    curl.exe -C - -L "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_target%" -#
+    if errorlevel 1 echo [WARN] Could not pull SystemRescue ISO -- continuing with extraction payload. >&2
+)
+
 :: 7. Minimal/Surgical extraction to D:\ to fit the drive
 if "%extract_mode%"=="Surgical" (
     echo.

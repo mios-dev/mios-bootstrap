@@ -1,29 +1,28 @@
-
 desktop-image: "background.jpg"
-title-text: " "
-title-color: "#ffffff"
-message-color: "#f2f2f2"
+title-text: "MiOS-Cat Unified System Deployment & Recovery"
+title-color: "#E7DFD3"
+message-color: "#E7DFD3"
 
 terminal-box: "terminal_box_*.png"
 
 + boot_menu {
   left = 10%
   width = 80%
-  top = 30%
-  height = 50%
+  top = 28%
+  height = 54%
 
   menu_pixmap_style = "menu_*.png"
 
-  item_color = "#ffffff"  
-  item_height = 30
+  item_color = "#E7DFD3"  
+  item_height = 32
   
-  item_spacing = 1
-  item_padding = 1
+  item_spacing = 2
+  item_padding = 2
 
-  selected_item_color= "#f2f2f2"
+  selected_item_color= "#F35C15"
   selected_item_pixmap_style = "select_*.png"
 
-  item_icon_space = 0
+  item_icon_space = 4
 
   scrollbar = true
   scrollbar_width = 10
@@ -36,9 +35,9 @@ terminal-box: "terminal_box_*.png"
 
   left = 20%
   width = 60%
-  top = 85%
+  top = 84%
 
-  text_color = "red"
+  text_color = "#F35C15"
   bar_style = "*"
   highlight_style = "*"
 }
@@ -46,52 +45,47 @@ terminal-box: "terminal_box_*.png"
 + hbox{ 
     left = 30%
     top = 95%
-    width = 10%
+    width = 20%
     height = 25
-    + label {text = "@VTOY_HOTKEY_TIP@" color = "blue" align = "left"} 
+    + label {text = "@VTOY_HOTKEY_TIP@" color = "#B7C9D7" align = "left"} 
 }
-
 
 + hbox{ 
     left = 30%
     top = 95%-25
-    width = 10%
+    width = 20%
     height = 25
-    + label {text = "@VTOY_MEM_DISK@" color = "red" align = "left"} 
+    + label {text = "#VTOY_MEM_DISK@" color = "#F35C15" align = "left"} 
 }
-
 
 + hbox{ 
     left = 30%
     top = 95%-50
-    width = 10%
+    width = 20%
     height = 25
-    + label {text = "@VTOY_ISO_RAW@" color = "red" align = "left"} 
+    + label {text = "@VTOY_ISO_RAW@" color = "#F35C15" align = "left"} 
 }
-
 
 + hbox{ 
     left = 30%+200
     top = 95%-50
-    width = 10%
+    width = 20%
     height = 25
-    + label {text = "@VTOY_GRUB2_MODE@" color = "red" align = "left"} 
+    + label {text = "@VTOY_GRUB2_MODE@" color = "#F35C15" align = "left"} 
 }
 
 + hbox{ 
     left = 30%+200
     top = 95%-25
-    width = 10%
+    width = 20%
     height = 25
-    + label {text = "@VTOY_WIMBOOT_MODE@" color = "red" align = "left"} 
+    + label {text = "@VTOY_WIMBOOT_MODE@" color = "#F35C15" align = "left"} 
 }
 
 + hbox{ 
-    left = 90%
+    left = 85%
     top = 55 
-    width = 10%
+    width = 15%
     height = 25
-    + label {text = "@VTOY_ISO_UEFI_DRV@" color = "red" align = "left"} 
+    + label {text = "@VTOY_ISO_UEFI_DRV@" color = "#F35C15" align = "left"} 
 }
-
-
