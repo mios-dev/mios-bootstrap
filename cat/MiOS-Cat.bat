@@ -946,7 +946,7 @@ echo   Disk partition plan: reserve %vtoy_reserve_mb% MB at disk end ^(%repo_lab
 
 echo Installing Ventoy to %drivepath%: (%partition_scheme% partition scheme)...
 cd /d "%stage_dir%\Ventoy2Disk"
-set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme% /R:%vtoy_reserve_mb%"
+set "vtoy_args=/I /Drive:%drivepath%: /%partition_scheme% /R:%vtoy_reserve_mb% /y"
 if "%secure_boot%"=="Enabled" (
     set "vtoy_args=%vtoy_args% /S"
 ) else (
@@ -971,15 +971,14 @@ if not "%vtoy_ok%"=="ok" (
 echo Waiting 5s for partition remount...
 ping localhost -n 6 >nul
 
-:: Format partition
-echo Formatting primary partition as %filesystem% (%partition_label%)...
-format %drivepath%: /FS:%filesystem% /X /Q /V:%partition_label% /Y >nul
+:: Format partition with 64KB allocation unit size for USB 3+ high-speed throughput
+echo Formatting primary partition as %filesystem% (%partition_label%) with 64KB cluster size...
+format %drivepath%: /FS:%filesystem% /A:64K /X /Q /V:%partition_label% /Y >nul
 if errorlevel 1 echo [WARN] format of %drivepath%: returned non-zero -- the data partition may be unusable. >&2
 
 echo Creating secure offline repository partition (%repo_label%)...
-echo   (>=%min_disk_gb%GB disks: %repo_label% %mios_repo_gb% GB + a %data_label% vault in the reserved tail;
-echo    smaller disks give the whole reserved tail to %repo_label% -- degrade-open, never abort)
-powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ('%mios_make_data%' -eq '1') { $rp = New-Partition -DiskNumber $d.Number -Size %mios_repo_gb%GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -NewFileSystemLabel '%data_label%' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null } }" >nul 2>&1
+echo   Disk plan: %repo_label% %mios_repo_gb% GB + %data_label% vault in reserved tail
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ('%mios_make_data%' -eq '1') { $rp = New-Partition -DiskNumber $d.Number -Size %mios_repo_gb%GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%data_label%' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null } }" >nul 2>&1
 
 :: 6. Pull/Download Medicat core archive to M:\ (large storage)
 set "download_needed=0"
@@ -1007,8 +1006,6 @@ if "%download_needed%"=="1" (
 )
 
 :: 6b. Pull/Download the FULL Fedora Server DVD (offline-capable install source)
-:: Fedora 40 is EOL (moved to archive.fedoraproject.org) -- pin a CURRENT release and
-:: size-validate the download so a 404/redirect stub can never masquerade as the ISO.
 set "fedora_ver=44"
 set "fedora_build=-1.7"
 set "fedora_file=M:\Fedora-Server-dvd-x86_64-%fedora_ver%%fedora_build%.iso"
@@ -1043,16 +1040,16 @@ if not exist "%sysrescue_target%" (
     if errorlevel 1 echo [WARN] Could not pull SystemRescue ISO -- continuing with extraction payload. >&2
 )
 
-:: 7. Minimal/Surgical extraction to D:\ to fit the drive
+:: 7. Multithreaded extraction to D:\ (-mmt=on for high-speed multi-core performance)
 if "%extract_mode%"=="Surgical" (
     echo.
     echo Extracting minimal boot files and portable apps from %file% to %drivepath%:...
-    echo Extracting only PE, SystemRescue, and core startup structures...
-    "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* "Programs/HW Monitor/*" Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/* -aoa -y
+    echo Multithreaded 7-Zip extraction enabled (-mmt=on)...
+    "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ Live_Operating_Systems/Mini_Windows/* Live_Operating_Systems/SystemRescue/* System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* "Programs/HW Monitor/*" Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/* -mmt=on -aoa -y
 ) else (
     echo.
     echo Extracting ALL files from %file% to %drivepath%:...
-    "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -aoa -y
+    "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ -mmt=on -aoa -y
 )
 
 if "%extract_mode%"=="Surgical" (
@@ -1087,14 +1084,12 @@ if "%datadrive%"=="_" set "datadrive=%repodrive%"
 if "%repodrive%"=="" set "repodrive=%drivepath%"
 if "%datadrive%"=="" set "datadrive=%repodrive%"
 
-:: Bulk: stage the offline repos onto %data_label% (the big vault) under repos\. The Linux kickstart
-:: AND the Windows bootstrap_root resolver both scan every partition/root + a repos\ subdir, so it
-:: never matters which partition holds them -- no single location can strand an offline install.
-echo Staging offline repositories to the %data_label% vault (%datadrive%:)...
+:: Bulk: stage the offline repos onto %data_label% using 32-thread Robocopy (/MT:32)
+echo Staging offline repositories to the %data_label% vault (%datadrive%:) with 32 parallel threads...
 mkdir "%datadrive%:\repos\mios-bootstrap" >nul 2>&1
-robocopy "C:\mios-bootstrap" "%datadrive%:\repos\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+robocopy "C:\mios-bootstrap" "%datadrive%:\repos\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 /MT:32 >nul
 mkdir "%datadrive%:\repos\MiOS" >nul 2>&1
-robocopy "C:\MiOS" "%datadrive%:\repos\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 >nul
+robocopy "C:\MiOS" "%datadrive%:\repos\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 /MT:32 >nul
 
 :: Shadow-config "brain": the live SSOT, the architecture diagram, and a self-copy of this
 :: launcher on the tiny %repo_label% partition (%repodrive%:) -- always present + mere MB, so a
@@ -1501,7 +1496,7 @@ set "env_builder=not provisioned (Build will self-bootstrap)"
 where wsl >nul 2>&1
 if "%errorlevel%"=="0" set "env_builder=WSL2 present"
 set "env_disk=no removable USB detected"
-for /f "usebackq tokens=*" %%d in (`powershell -NoProfile -Command "if (Get-Volume ^| Where-Object { $_.DriveType -eq 'Removable' -and $_.DriveLetter }) { 'removable USB present' } else { 'no removable USB detected' }"`) do set "env_disk=%%d"
+for /f "usebackq tokens=*" %%d in (`powershell -NoProfile -Command "if (Get-Volume | Where-Object { $_.DriveType -eq 'Removable' -and $_.DriveLetter }) { 'removable USB present' } else { 'no removable USB detected' }"`) do set "env_disk=%%d"
 goto :eof
 
 :resolve_bootstrap_root
