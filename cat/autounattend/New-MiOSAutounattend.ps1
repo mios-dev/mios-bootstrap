@@ -280,7 +280,7 @@ function New-MiOSAutounattendXml {
     # layout would land on the wrong profile. It is emitted in FirstLogonCommands
     # (user context) below instead.
     $_preOobe = New-Object System.Text.StringBuilder
-    $_ord = 2
+    $_ord = 5
     foreach ($sc in @(New-MiOSHostServiceCommands -Toml $Toml)) {
         [void]$_preOobe.AppendLine(('        <RunSynchronousCommand wcm:action="add"><Order>{0}</Order><Path>cmd /c {1}</Path><Description>MiOS boot-time service plane (pre-logon)</Description></RunSynchronousCommand>' -f $_ord, [Security.SecurityElement]::Escape($sc)))
         $_ord++
