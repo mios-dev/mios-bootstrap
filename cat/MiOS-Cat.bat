@@ -1199,6 +1199,26 @@ echo [Setting]
 echo Theme=Dark
 ) > "%drivepath%:\PortableApps\CrystalDiskInfoPortable\Data\settings\DiskInfo.ini"
 
+:: Configure Snappy Driver Installer Origin (SDIO) globally
+mkdir "%drivepath%:\PortableApps\SnappyDriverInstallerOrigin\drivers" >nul 2>&1
+(
+echo [disable]
+echo update=1
+echo [window]
+echo theme=Metallic
+echo [drp]
+echo path=drivers
+) > "%drivepath%:\PortableApps\SnappyDriverInstallerOrigin\sdi.cfg" 2>nul
+mkdir "%drivepath%:\PortableApps\SDIO\drivers" >nul 2>&1
+(
+echo [disable]
+echo update=1
+echo [window]
+echo theme=Metallic
+echo [drp]
+echo path=drivers
+) > "%drivepath%:\PortableApps\SDIO\sdi.cfg" 2>nul
+
 
 :: 8b. Create integration folders and write themed README.md files (No empty folders!)
 echo Creating integrated directories and documentation...

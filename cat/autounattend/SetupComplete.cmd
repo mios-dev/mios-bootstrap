@@ -22,6 +22,106 @@ rem --- COMPACT OS: enforce CompactOS LZX/XPRESS WOF OS compression ---
 echo [MiOS] enabling CompactOS OS compression %DATE% %TIME%>>"%LOG%"
 compact.exe /CompactOS:always >>"%LOG%" 2>&1
 
+rem --- GLOBAL PORTABLE APPS & SDIO STAGING: install PortableApps + SDIO machine-wide ---
+echo [MiOS] staging global PortableApps & Snappy Driver Installer Origin %DATE% %TIME%>>"%LOG%"
+set "PORTSRC="
+for %%D in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do (
+    if exist "%%D:\PortableApps" set "PORTSRC=%%D:\PortableApps"
+)
+if defined PORTSRC (
+    echo [MiOS] found PortableApps source at %PORTSRC% >>"%LOG%"
+    mkdir "%SystemDrive%\PortableApps" >nul 2>&1
+    robocopy "%PORTSRC%" "%SystemDrive%\PortableApps" /E /R:2 /W:2 >>"%LOG%" 2>&1
+) else (
+    echo [MiOS] WARN: PortableApps source not found on optical/USB drive >>"%LOG%"
+)
+
+rem --- Ensure SDIO (Snappy Driver Installer Origin) config & drivers directory ---
+if exist "%SystemDrive%\PortableApps\SnappyDriverInstallerOrigin" (
+    mkdir "%SystemDrive%\PortableApps\SnappyDriverInstallerOrigin\drivers" >nul 2>&1
+    (
+        echo [disable]
+        echo update=1
+        echo [window]
+        echo theme=Metallic
+        echo [drp]
+        echo path=drivers
+    ) > "%SystemDrive%\PortableApps\SnappyDriverInstallerOrigin\sdi.cfg" 2>nul
+)
+if exist "%SystemDrive%\PortableApps\SDIO" (
+    mkdir "%SystemDrive%\PortableApps\SDIO\drivers" >nul 2>&1
+    (
+        echo [disable]
+        echo update=1
+        echo [window]
+        echo theme=Metallic
+        echo [drp]
+        echo path=drivers
+    ) > "%SystemDrive%\PortableApps\SDIO\sdi.cfg" 2>nul
+)
+
+rem --- GLOBAL SHORTCUTS & SYSTEM PATH INTEGRATION ---
+mkdir "%ProgramData%\Microsoft\Windows\Start Menu\Programs\MiOS Tools" >nul 2>&1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+    $p = 'C:\PortableApps';
+    $sm = '$env:ProgramData\Microsoft\Windows\Start Menu\Programs\MiOS Tools';
+    $w = New-Object -ComObject WScript.Shell;
+    
+    $sdio = Get-ChildItem -Path $p -Recurse -Filter 'SDIO*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1;
+    if ($sdio) {
+        $s = $w.CreateShortcut(\"$sm\Snappy Driver Installer Origin.lnk\");
+        $s.TargetPath = $sdio.FullName;
+        $s.WorkingDirectory = $sdio.DirectoryName;
+        $s.Description = 'MiOS Global Snappy Driver Installer Origin';
+        $s.Save();
+    }
+    
+    if (Test-Path \"$p\PortableApps.com\PortableAppsPlatform.exe\") {
+        $s = $w.CreateShortcut(\"$sm\PortableApps Platform.lnk\");
+        $s.TargetPath = \"$p\PortableApps.com\PortableAppsPlatform.exe\";
+        $s.WorkingDirectory = \"$p\PortableApps.com\";
+        $s.Description = 'MiOS Global PortableApps Suite';
+        $s.Save();
+    }
+
+    $cdi = Get-ChildItem -Path $p -Recurse -Filter 'CrystalDiskInfo*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1;
+    if ($cdi) {
+        $s = $w.CreateShortcut(\"$sm\CrystalDiskInfo.lnk\");
+        $s.TargetPath = $cdi.FullName;
+        $s.WorkingDirectory = $cdi.DirectoryName;
+        $s.Save();
+    }
+
+    $npp = Get-ChildItem -Path $p -Recurse -Filter 'Notepad++*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1;
+    if ($npp) {
+        $s = $w.CreateShortcut(\"$sm\Notepad++.lnk\");
+        $s.TargetPath = $npp.FullName;
+        $s.WorkingDirectory = $npp.DirectoryName;
+        $s.Save();
+    }
+
+    $wiz = Get-ChildItem -Path $p -Recurse -Filter 'WizTree*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1;
+    if ($wiz) {
+        $s = $w.CreateShortcut(\"$sm\WizTree.lnk\");
+        $s.TargetPath = $wiz.FullName;
+        $s.WorkingDirectory = $wiz.DirectoryName;
+        $s.Save();
+    }
+
+    $s = $w.CreateShortcut('$env:Public\Desktop\MiOS Tools.lnk');
+    $s.TargetPath = $sm;
+    $s.Description = 'MiOS Diagnostic & Driver Tools';
+    $s.Save();
+" >>"%LOG%" 2>&1
+
+powershell.exe -NoProfile -Command "
+    $oldPath = [Environment]::GetEnvironmentVariable('Path', 'Machine');
+    $add = 'C:\PortableApps';
+    if ($oldPath -notlike '*C:\PortableApps*') {
+        [Environment]::SetEnvironmentVariable('Path', $oldPath + ';' + $add, 'Machine');
+    }
+" >>"%LOG%" 2>&1
+
 rem --- Linux-like FS layout (was FirstLogonCommands; do it reliably here) ------
 for %%D in (etc usr home opt srv var bin lib root tmp) do md "%SystemDrive%\%%D" 2>nul
 md "%ProgramData%\MiOS" 2>nul

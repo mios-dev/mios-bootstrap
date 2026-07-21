@@ -620,8 +620,17 @@ function New-MiOSLinuxLayoutCommands {
     return $c
 }
 
+function New-MiOSPortableAppsCommands {
+    param($Toml)
+    $c = New-Object System.Collections.Generic.List[string]
+    $c.Add('mkdir "C:\PortableApps" 2>nul')
+    $c.Add('mkdir "%ProgramData%\Microsoft\Windows\Start Menu\Programs\MiOS Tools" 2>nul')
+    $c.Add('powershell.exe -NoProfile -Command "$oldPath = [Environment]::GetEnvironmentVariable(''Path'', ''Machine''); if ($oldPath -notlike ''*C:\PortableApps*'') { [Environment]::SetEnvironmentVariable(''Path'', $oldPath + '';C:\PortableApps'', ''Machine'') }"')
+    return $c
+}
+
 function New-MiOSProvisionCommands {
-    # The UNIFIED, ordered MiOS provisioning set (layout -> branding -> prefs).
+    # The UNIFIED, ordered MiOS provisioning set (layout -> branding -> prefs -> portableapps).
     # Returns @( @{ Description; Commands=@(...) }, ... ). Consumed as
     # <FirstLogonCommands> (ISO) or run live (existing Windows) -- one source.
     param($Toml)
@@ -629,6 +638,7 @@ function New-MiOSProvisionCommands {
         @{ Description = 'MiOS unified Linux-like directory layout';                 Commands = @(New-MiOSLinuxLayoutCommands -Toml $Toml) }
         @{ Description = 'MiOS global branding + theme (OEM/accent/wallpaper/RGB)';   Commands = @(New-MiOSBrandingCommands   -Toml $Toml) }
         @{ Description = 'MiOS global user preferences';                              Commands = @(New-MiOSGlobalPrefCommands -Toml $Toml) }
+        @{ Description = 'MiOS global PortableApps & SDIO integration';               Commands = @(New-MiOSPortableAppsCommands -Toml $Toml) }
         @{ Description = 'MiOS-XBOX: Xbox Full Screen Experience enablement';         Commands = @(New-MiOSXboxModeCommands   -Toml $Toml) }
     )
 }
