@@ -1242,19 +1242,6 @@ mios-guacamole-postgres = true
 mios-guacd              = true
 
 # ----------------------------------------------------------------------------
-# [cat] -- MiOS-Cat USB installer & flash pipeline SSOT
-# ----------------------------------------------------------------------------
-[cat]
-monitor_enabled   = true
-show_live_monitor = true
-drivepath         = "D"
-filesystem        = "NTFS"
-partition_scheme  = "GPT"
-secure_boot       = "Enabled"
-build_xbox        = "Enabled"
-gaming_optimize   = "Enabled"
-
-# ----------------------------------------------------------------------------
 # [autounattend] -- MiOS custom-Windows ISO pipeline SSOT (WS-XBOX / WS-WEDITION).
 # Consumed by mios-uup-fetch.ps1, New-MiOSISO.ps1, ConvertTo-MiOSPreset.ps1, and
 # New-MiOSAutounattend.ps1. Every key degrades open to a MiOS default in-script,
@@ -1617,13 +1604,20 @@ branding.living_wallpaper    = "true"
 #   log_path       : directory for the launcher's build/stage logs ('' -> beside the launcher)
 # ----------------------------------------------------------------------------
 [cat]
-drivepath      = "D"
-medicatver     = "21.12"
-cache_path     = "M:\\MediCat.USB.v21.12.7z"
-ventoy_version = "latest"
-xbox_builder   = ""
-build_driver   = ""
-log_path       = ""
+monitor_enabled   = true
+show_live_monitor = true
+drivepath         = "D"
+filesystem        = "NTFS"
+partition_scheme  = "GPT"
+secure_boot       = "Enabled"
+build_xbox        = "Enabled"
+gaming_optimize   = "Enabled"
+medicatver        = "21.12"
+cache_path        = "M:\\MediCat.USB.v21.12.7z"
+ventoy_version    = "latest"
+xbox_builder      = ""
+build_driver      = ""
+log_path          = ""
 
 # ----------------------------------------------------------------------------
 # [cat.live_chat] -- W10: MiOS-Cat zero-install live-USB-to-AI-chat. The OS-side
