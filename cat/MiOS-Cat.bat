@@ -1152,8 +1152,9 @@ echo Extracting payload to %drivepath%: (-mmt=on)...
 :: 13. Apply custom MiOS templates, PortableApps & shadow-config brain
 xcopy "%maindir%\resources\ventoy" "%drivepath%:\ventoy\" /E /I /H /Y /Q >nul
 xcopy "%maindir%\resources\theme" "%drivepath%:\ventoy\theme\" /E /I /H /Y /Q >nul
-copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun.sh" /Y >nul
 mkdir "%drivepath%:\autorun" >nul 2>&1
+if exist "%maindir%\resources\autorun" xcopy "%maindir%\resources\autorun" "%drivepath%:\autorun\" /E /I /H /Y /Q >nul
+copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun.sh" /Y >nul
 copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun.sh" /Y >nul
 copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
 copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
