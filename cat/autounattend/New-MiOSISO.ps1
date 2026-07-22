@@ -1293,14 +1293,17 @@ function Invoke-MiOSImageServicing {
         if ($_serviced) {
             Write-Host "[*] Committing image (Dismount -Save) ..." -ForegroundColor Cyan
             $dismountSuccess = $false
-            for ($attempt = 1; $attempt -le 3; $attempt++) {
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
                 try {
+                    foreach ($h in @('MIOS_SYS','MIOS_SOFT','MIOS_DEF','MIOS_DEFU','MIOS_RSYS','MIOS_RSW')) {
+                        & reg.exe unload "HKLM\$h" 2>&1 | Out-Null
+                    }
                     [System.GC]::Collect()
                     [System.GC]::WaitForPendingFinalizers()
-                    & reg.exe unload 'HKLM\MIOS_RSYS' 2>&1 | Out-Null
-                    & reg.exe unload 'HKLM\MIOS_RSW' 2>&1 | Out-Null
+                    Start-Sleep -Seconds 2
+
                     $mountClean = $mount.TrimEnd('\')
-                    & dism.exe /Unmount-Image /MountDir:"$mountClean" /Commit 2>&1 | Out-Null
+                    $dismOut = & dism.exe /Unmount-Image /MountDir:"$mountClean" /Commit 2>&1
                     if ($LASTEXITCODE -eq 0) {
                         $dismountSuccess = $true
                         break
@@ -1309,7 +1312,7 @@ function Invoke-MiOSImageServicing {
                     $dismountSuccess = $true
                     break
                 } catch {
-                    Write-Host "    [!] Dismount save failed (attempt $attempt/3): $($_.Exception.Message.Split([Environment]::NewLine)[0]). Retrying in 4 seconds..." -ForegroundColor Yellow
+                    Write-Host "    [!] Dismount save failed (attempt $attempt/5): $($_.Exception.Message.Split([Environment]::NewLine)[0]). Retrying in 4 seconds..." -ForegroundColor Yellow
                     Start-Sleep -Seconds 4
                 }
             }
@@ -1388,6 +1391,22 @@ if (-not $WorkDir) { $WorkDir = Join-Path $buildRoot 'isobuild' }
 # whether the converter built minimal natively (only true when WE ran it, not -SourceIso).
 $fetched = -not $SourceIso
 if (-not $SourceIso) {
+    # Ensure any stale UUP converter mount points (M:\MountUUP, C:\MountUUP) are cleanly dismounted
+    # and DISM mount points are purged before uup-converter-wim.cmd attempts to mount.
+    foreach ($mDir in @('M:\MountUUP','C:\MountUUP')) {
+        if (Test-Path $mDir) {
+            try { Dismount-WindowsImage -Path $mDir -Discard -ErrorAction SilentlyContinue | Out-Null } catch {}
+        }
+    }
+    foreach ($m in @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue)) {
+        if ($m.MountPath -like '*MountUUP*') {
+            try { Dismount-WindowsImage -Path $m.MountPath -Discard -ErrorAction SilentlyContinue | Out-Null } catch {}
+        }
+    }
+    try { & dism.exe /Cleanup-Mountpoints 2>&1 | Out-Null } catch {}
+    try { & dism.exe /Cleanup-Wim 2>&1 | Out-Null } catch {}
+    try { Clear-WindowsCorruptMountPoint -ErrorAction SilentlyContinue | Out-Null } catch {}
+
     Write-Host "[*] No -SourceIso; fetching stock ISO via mios-uup-fetch (channel from SSOT) ..." -ForegroundColor Cyan
     $SourceIso = & (Join-Path $PSScriptRoot 'mios-uup-fetch.ps1') -TomlPath $TomlPath -Esd:$Esd -Edition $Edition
 }
