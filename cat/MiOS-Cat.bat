@@ -995,11 +995,24 @@ if not exist "%wim_path%" (
 )
 
 echo Performing offline DISM servicing on Localhost WIM image: %wim_path%
+reg unload HKEY_USERS\pe-default >nul 2>&1
+reg unload HKEY_USERS\pe-software >nul 2>&1
+dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
+dism /Cleanup-Wim >nul 2>&1
+powershell -NoProfile -Command "Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*mount*' -or $_.ImagePath -like '*MiOS_PE.wim*' } | ForEach-Object { Dismount-WindowsImage -Path $_.Path -Discard -ErrorAction SilentlyContinue }" >nul 2>&1
 dism /Cleanup-Wim >nul 2>&1
 if exist "%stage_dir%\mount" rmdir "%stage_dir%\mount" /S /Q >nul 2>&1
 mkdir "%stage_dir%\mount" >nul 2>&1
+
 echo Mounting WIM image on Localhost SSD (%stage_dir%\mount)...
 dism /Mount-Image /ImageFile:"%wim_path%" /Index:1 /MountDir:"%stage_dir%\mount"
+if %errorlevel% neq 0 (
+    echo [WARN] DISM mount failed, retrying after DISM cleanup...
+    dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
+    dism /Cleanup-Wim >nul 2>&1
+    ping localhost -n 4 >nul
+    dism /Mount-Image /ImageFile:"%wim_path%" /Index:1 /MountDir:"%stage_dir%\mount"
+)
 if %errorlevel% neq 0 (
     echo [FATAL ERROR] DISM failed to mount %wim_path% with exit code %errorlevel%!
     dism /Cleanup-Wim >nul 2>&1
