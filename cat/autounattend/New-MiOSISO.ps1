@@ -720,6 +720,17 @@ function Set-MiOSRemoteAccessOffline {
         Write-Host "    RDP listener on (NLA=$nla), TermService/sshd autostart -> offline SYSTEM hive" -ForegroundColor DarkGray
     } finally { [gc]::Collect(); & reg.exe unload 'HKLM\MIOS_RSYS' | Out-Null }
 
+    $sw = Join-Path $Mount 'Windows\System32\config\SOFTWARE'
+    if (Test-Path $sw) {
+        & reg.exe load 'HKLM\MIOS_RSW' $sw 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            try {
+                & reg.exe add 'HKLM\MIOS_RSW\Microsoft\Windows NT\CurrentVersion\Guest\EnhancedSessionMode' /v EnhancedSessionModeAllowed /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+                Write-Host "    Hyper-V Enhanced Session Mode enabled -> offline SOFTWARE hive" -ForegroundColor DarkGray
+            } finally { [gc]::Collect(); & reg.exe unload 'HKLM\MIOS_RSW' 2>&1 | Out-Null }
+        }
+    }
+
     # ---- (B1) OFFLINE OpenSSH.Server capability (non-fatal; online fallback in cmd) --
     if ($doSsh) {
         try {
@@ -841,9 +852,13 @@ function Set-MiOSRemoteAccessOffline {
     $doLoop     = (Get-Toml $Toml 'autounattend.remote.loopback_adapter' 'false') -match '^(?i:true|1|yes)$'
     $r = @('@echo off', 'set "L=%WINDIR%\Temp\mios-remote.log"', 'echo [MiOS] remote-access apply %DATE% %TIME%>>"%L%"')
     $r += 'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f>>"%L%" 2>&1'
+    $r += 'reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Guest\EnhancedSessionMode" /v EnhancedSessionModeAllowed /t REG_DWORD /d 1 /f>>"%L%" 2>&1'
     $r += 'netsh advfirewall firewall set rule group="remote desktop" new enable=Yes>>"%L%" 2>&1'
     if ($grantUsers) {
-        foreach ($u in $users) { $r += ('net localgroup "Remote Desktop Users" "{0}" /add>>"%L%" 2>&1' -f $u) }
+        foreach ($u in $users) {
+            $r += ('net localgroup "Remote Desktop Users" "{0}" /add>>"%L%" 2>&1' -f $u)
+            $r += ('powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-LocalGroupMember -Group ''Remote Desktop Users'' -Member ''{0}'' -ErrorAction SilentlyContinue">>"%L%" 2>&1' -f $u)
+        }
         $r += 'echo [MiOS] granted enhanced-session sign-in to: ' + ($users -join ', ') + '>>"%L%"'
     }
     if ($doSsh) {
