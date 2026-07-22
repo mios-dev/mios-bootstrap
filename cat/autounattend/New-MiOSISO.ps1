@@ -474,6 +474,34 @@ function Set-MiOSIdentityOffline {
             $staged = @(Get-ChildItem $curDst -File -EA SilentlyContinue).Count
             $curScheme = 'Bibata-Modern-Classic'
             Write-Host "    staged $staged Bibata cursor(s) -> Windows\Cursors\Bibata-Modern-Classic" -ForegroundColor DarkGray
+
+            # --- OEM Systems-Integrator Native Cursor Replacement ---
+            # Overwrite default Windows Cursors in C:\Windows\Cursors so system contexts
+            # (Winlogon, Logon Screen, Shutdown Screen, Default User) natively use custom cursors without unloading.
+            $sysCur = Join-Path $Mount 'Windows\Cursors'
+            $cMap = @{
+                'aero_arrow.cur'   = 'pointer.cur'
+                'aero_helpsel.cur' = 'help.cur'
+                'aero_working.ani' = 'working.ani'
+                'aero_busy.ani'    = 'busy.ani'
+                'aero_cross.cur'   = 'cross.cur'
+                'aero_text.cur'    = 'text.cur'
+                'aero_unavail.cur' = 'unavail.cur'
+                'aero_ns.cur'       = 'ns.cur'
+                'aero_ew.cur'       = 'ew.cur'
+                'aero_nwse.cur'     = 'nwse.cur'
+                'aero_nesw.cur'     = 'nesw.cur'
+                'aero_move.cur'     = 'move.cur'
+                'aero_up.cur'       = 'up.cur'
+                'aero_link.cur'     = 'link.cur'
+                'aero_pin.cur'      = 'pin.cur'
+                'aero_person.cur'   = 'person.cur'
+            }
+            foreach ($k in $cMap.Keys) {
+                $src = Join-Path $curDst $cMap[$k]
+                if (Test-Path $src) { Copy-Item $src (Join-Path $sysCur $k) -Force -EA SilentlyContinue }
+            }
+            Write-Host "    overwrote system default cursors in Windows\Cursors\ (OEM native cursor retention on Shutdown/Logon)" -ForegroundColor Green
         } else { Write-Host "    [!] Bibata: no cursor set found in archive (got $($allCur.Count) .cur/.ani files) -- cursor scheme skipped" -ForegroundColor Yellow }
     } catch { Write-Host "    [!] Bibata cursor stage skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
 

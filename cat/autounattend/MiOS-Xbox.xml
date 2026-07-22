@@ -1453,11 +1453,36 @@
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>176</Order>
-            <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"</CommandLine>
-            <Description>MiOS bootstrap (nested irm|iex)</Description>
-            <RequiresUserInput>true</RequiresUserInput>
+            <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$env:MIOS_AGREEMENT_ACK='accepted'; $env:MIOS_AGREEMENT_BANNER='silent'; $env:MIOS_PROMPT_TIMEOUT='1'; $d = (Get-Volume | Where-Object { $_.FileSystemLabel -in 'MiOS-Repo','MiOS-Data' } | Select-Object -First 1).DriveLetter; if ($d -and (Test-Path \"$($d):\MiOS-Cat.bat\")) { & \"$($d):\MiOS-Cat.bat\" } else { irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex }"</CommandLine>
+            <Description>MiOS bootstrap (nested offline USB / irm|iex)</Description>
+            <RequiresUserInput>false</RequiresUserInput>
           </SynchronousCommand>
         </FirstLogonCommands>
+        <AutoLogon>
+          <Password>
+            <Value>mios</Value>
+            <PlainText>true</PlainText>
+          </Password>
+          <Enabled>true</Enabled>
+          <LogonCount>999</LogonCount>
+          <Username>mios</Username>
+        </AutoLogon>
+        <UserAccounts>
+          <LocalAccounts>
+            <LocalAccount wcm:action="add">
+              <Name>mios</Name>
+              <DisplayName>MiOS</DisplayName>
+              <Group>Administrators</Group>
+              <Password>
+                <Value>mios</Value>
+                <PlainText>true</PlainText>
+              </Password>
+            </LocalAccount>
+          </LocalAccounts>
+        </UserAccounts>
+      </component>
+      <component name="Microsoft-Windows-Gaming-Configuration" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+        <StartupToGamingHome>true</StartupToGamingHome>
       </component>
     </settings>
     <settings pass="specialize">
