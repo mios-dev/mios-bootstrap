@@ -809,6 +809,7 @@ function Set-MiOSRemoteAccessOffline {
     $accounts = @($Toml.accounts)
     if ($accounts.Count -eq 0) { $accounts = @(@{ name = (Get-Toml $Toml 'identity.username' 'mios') }) }
     $users = @($accounts | ForEach-Object { "$($_.name)".Trim() } | Where-Object { $_ })
+    $doSsh      = (Get-Toml $Toml 'autounattend.remote.openssh_server' 'true')  -match '^(?i:true|1|yes)$'
     $grantUsers = (Get-Toml $Toml 'autounattend.remote.grant_rdp_users' 'true')   -match '^(?i:true|1|yes)$'
     $doPsr      = (Get-Toml $Toml 'autounattend.remote.enable_psremoting' 'true') -match '^(?i:true|1|yes)$'
     $doLoop     = (Get-Toml $Toml 'autounattend.remote.loopback_adapter' 'false') -match '^(?i:true|1|yes)$'
@@ -820,10 +821,12 @@ function Set-MiOSRemoteAccessOffline {
         $r += 'echo [MiOS] granted enhanced-session sign-in to: ' + ($users -join ', ') + '>>"%L%"'
     }
     if ($doSsh) {
-        $r += 'powershell -NoProfile -ExecutionPolicy Bypass -Command "if ((Get-WindowsCapability -Online -Name ''OpenSSH.Server*'').State -ne ''Installed''){ Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 }">>"%L%" 2>&1'
+        $r += 'dism /online /enable-feature /featurename:OpenSSH-Server-Package-Client /all /norestart>>"%L%" 2>&1'
+        $r += 'powershell -NoProfile -ExecutionPolicy Bypass -Command "if ((Get-WindowsCapability -Online -Name ''OpenSSH.Server*'').State -ne ''Installed''){ try { Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction Stop } catch {} }">>"%L%" 2>&1'
         $r += 'sc config sshd start= auto>>"%L%" 2>&1'
         $r += 'sc config ssh-agent start= auto>>"%L%" 2>&1'
         $r += 'net start sshd>>"%L%" 2>&1'
+        $r += 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Service -Name sshd -StartupType Automatic -Status Running -ErrorAction SilentlyContinue">>"%L%" 2>&1'
         $r += 'netsh advfirewall firewall add rule name="OpenSSH Server (sshd)" dir=in action=allow protocol=TCP localport=22>>"%L%" 2>&1'
     }
     if ($doPsr) { $r += 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck">>"%L%" 2>&1' }
