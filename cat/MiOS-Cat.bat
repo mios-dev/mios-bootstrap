@@ -1116,6 +1116,18 @@ echo Target Drive: %drivepath%:
 echo ==========================================================
 echo.
 
+set "flash_log=%TEMP%\mios-cat-flash.log"
+set "flash_marker=%TEMP%\mios-cat-flash.marker"
+del "%flash_marker%" /q >nul 2>&1
+echo [INFO] Starting MiOS-Cat USB flash operations... > "%flash_log%"
+
+echo Spawning live graphical MiOS Flash Monitor...
+if exist "C:\mios-bootstrap\installation\Monitor-MiosFlash.ps1" (
+    start "MiOS Flash Monitor" powershell -NoProfile -ExecutionPolicy Bypass -Command "powershell -NoProfile -ExecutionPolicy Bypass -File 'C:\mios-bootstrap\installation\Monitor-MiosFlash.ps1' -LogPath '%flash_log%' -MarkerPath '%flash_marker%'"
+) else if exist "%maindir%\resources\autorun\Monitor-MiosFlash.ps1" (
+    start "MiOS Flash Monitor" powershell -NoProfile -ExecutionPolicy Bypass -Command "powershell -NoProfile -ExecutionPolicy Bypass -File '%maindir%\resources\autorun\Monitor-MiosFlash.ps1' -LogPath '%flash_log%' -MarkerPath '%flash_marker%'"
+)
+
 :: 11. Format & Initialize Target USB Drive
 echo Formatting and merging all USB partitions back to a single disk letter (%drivepath%:)...
 powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { Get-Partition -DiskNumber $d.Number | Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue; Initialize-Disk -Number $d.Number -PartitionStyle GPT -ErrorAction SilentlyContinue; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter %drivepath% -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Cat' -Confirm:$false | Out-Null }; Update-HostStorageCache }" >nul 2>&1
@@ -1233,6 +1245,8 @@ if exist "%drivepath%:\autorun\mios.ico" (
     C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%drivepath%:\autorun\mios.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
 )
 del "%temp%\launcher.cs" /Q >nul 2>&1
+
+if exist "%flash_marker%" ( echo SUCCESS > "%flash_marker%" ) else if defined TEMP ( echo SUCCESS > "%TEMP%\mios-cat-flash.marker" )
 
 echo.
 echo ==========================================================

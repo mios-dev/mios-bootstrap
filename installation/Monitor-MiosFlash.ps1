@@ -12,8 +12,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$LogPath = 'C:\Users\ADMINI~1\AppData\Local\Temp\claude\c--\f3261662-e926-4a58-a106-1600bd500498\scratchpad\mios-cat-flash.log',
-    [string]$MarkerPath = 'C:\Users\ADMINI~1\AppData\Local\Temp\claude\c--\f3261662-e926-4a58-a106-1600bd500498\scratchpad\mios-cat-flash.marker',
+    [string]$LogPath = (Join-Path $env:TEMP 'mios-cat-flash.log'),
+    [string]$MarkerPath = (Join-Path $env:TEMP 'mios-cat-flash.marker'),
     [switch]$Once,
     [int]$IntervalMs = 250
 )
