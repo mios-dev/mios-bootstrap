@@ -864,6 +864,7 @@ function Set-MiOSRemoteAccessOffline {
     if ($doSsh) {
         $r += 'dism /online /enable-feature /featurename:OpenSSH-Server-Package-Client /all /norestart>>"%L%" 2>&1'
         $r += 'powershell -NoProfile -ExecutionPolicy Bypass -Command "if ((Get-WindowsCapability -Online -Name ''OpenSSH.Server*'').State -ne ''Installed''){ try { Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction Stop } catch {} }">>"%L%" 2>&1'
+        $r += 'reg add "HKLM\SOFTWARE\OpenSSH" /v DefaultShell /t REG_SZ /d "%WINDIR%\System32\WindowsPowerShell\v1.0\powershell.exe" /f>>"%L%" 2>&1'
         $r += 'sc config sshd start= auto>>"%L%" 2>&1'
         $r += 'sc config ssh-agent start= auto>>"%L%" 2>&1'
         $r += 'net start sshd>>"%L%" 2>&1'
