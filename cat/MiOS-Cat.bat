@@ -1040,7 +1040,7 @@ copy "%font_src%" "%stage_dir%\mount\Windows\Fonts\GeistMonoNerdFontMono-Regular
 reg load HKEY_USERS\pe-default "%stage_dir%\mount\Windows\System32\config\DEFAULT" >nul 2>&1
 if %errorlevel% neq 0 ( echo [FATAL ERROR] Failed to load DEFAULT hive! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
 reg load HKEY_USERS\pe-software "%stage_dir%\mount\Windows\System32\config\SOFTWARE" >nul 2>&1
-if %errorlevel% neq 0 ( echo [FATAL ERROR] Failed to load SOFTWARE hive! & reg unload HKEY_USERS\pe-default /f >nul 2>&1 & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
+if %errorlevel% neq 0 ( echo [FATAL ERROR] Failed to load SOFTWARE hive! & reg unload HKEY_USERS\pe-default >nul 2>&1 & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
 
 reg add "HKEY_USERS\pe-software\Microsoft\Windows NT\CurrentVersion\Fonts" /v "GeistMono Nerd Font Mono Regular (TrueType)" /t REG_SZ /d "GeistMonoNerdFontMono-Regular.otf" /f >nul
 reg add "HKEY_USERS\pe-default\Console" /v "ColorTable00" /t REG_DWORD /d 6431272 /f >nul
@@ -1055,8 +1055,8 @@ reg add "HKEY_USERS\pe-default\Console\%%SystemRoot%%_System32_cmd.exe" /v "Face
 reg add "HKEY_USERS\pe-default\Console\%%SystemRoot%%_System32_cmd.exe" /v "FontSize" /t REG_DWORD /d 1048576 /f >nul
 reg add "HKEY_USERS\pe-default\Console\%%SystemRoot%%_System32_cmd.exe" /v "FontFamily" /t REG_DWORD /d 54 /f >nul
 
-reg unload HKEY_USERS\pe-default /f >nul 2>&1
-reg unload HKEY_USERS\pe-software /f >nul 2>&1
+reg unload HKEY_USERS\pe-default >nul 2>&1
+reg unload HKEY_USERS\pe-software >nul 2>&1
 powershell -NoProfile -Command "[System.GC]::Collect(); [System.GC]::WaitForPendingFinalizers()" >nul 2>&1
 ping localhost -n 3 >nul
 
@@ -1065,8 +1065,8 @@ dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Commit
 if %errorlevel% neq 0 (
     echo Retrying WIM unmount commit...
     ping localhost -n 4 >nul
-    reg unload HKEY_USERS\pe-default /f >nul 2>&1
-    reg unload HKEY_USERS\pe-software /f >nul 2>&1
+    reg unload HKEY_USERS\pe-default >nul 2>&1
+    reg unload HKEY_USERS\pe-software >nul 2>&1
     dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Commit
 )
 if %errorlevel% neq 0 (
