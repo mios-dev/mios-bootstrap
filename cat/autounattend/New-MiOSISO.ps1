@@ -1295,22 +1295,41 @@ function Invoke-MiOSImageServicing {
             $dismountSuccess = $false
             for ($attempt = 1; $attempt -le 5; $attempt++) {
                 try {
-                    foreach ($h in @('MIOS_SYS','MIOS_SOFT','MIOS_DEF','MIOS_DEFU','MIOS_RSYS','MIOS_RSW')) {
+                    Set-Location -Path $PSScriptRoot -ErrorAction SilentlyContinue
+                    foreach ($h in @('MIOS_SYS','MIOS_SOFT','MIOS_DEF','MIOS_DEFU','MIOS_RSYS','MIOS_RSW','MIOS_NTUSER')) {
                         & reg.exe unload "HKLM\$h" 2>&1 | Out-Null
                     }
                     [System.GC]::Collect()
                     [System.GC]::WaitForPendingFinalizers()
                     Start-Sleep -Seconds 2
 
-                    $mountClean = $mount.TrimEnd('\')
-                    $dismOut = & dism.exe /Unmount-Image /MountDir:"$mountClean" /Commit 2>&1
-                    if ($LASTEXITCODE -eq 0) {
+                    $activeMount = Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*MountUUP*' -or $_.Path -like "*$($mount.TrimEnd('\'))*" } | Select-Object -First 1
+                    $targetPath = if ($activeMount -and $activeMount.Path) { $activeMount.Path } else { $mount }
+                    $mountClean = $targetPath.TrimEnd('\')
+
+                    try {
+                        Dismount-WindowsImage -Path $targetPath -Save -ErrorAction Stop | Out-Null
                         $dismountSuccess = $true
                         break
+                    } catch {
+                        try {
+                            Dismount-WindowsImage -Path $mountClean -Save -ErrorAction Stop | Out-Null
+                            $dismountSuccess = $true
+                            break
+                        } catch {
+                            $dismOut = & dism.exe /Unmount-Image /MountDir:"$mountClean" /Commit 2>&1
+                            if ($LASTEXITCODE -eq 0) {
+                                $dismountSuccess = $true
+                                break
+                            }
+                            $dismOut2 = & dism.exe /Unmount-Image /MountDir:"$targetPath" /Commit 2>&1
+                            if ($LASTEXITCODE -eq 0) {
+                                $dismountSuccess = $true
+                                break
+                            }
+                            throw $_
+                        }
                     }
-                    Dismount-WindowsImage -Path $mountClean -Save -ErrorAction Stop | Out-Null
-                    $dismountSuccess = $true
-                    break
                 } catch {
                     Write-Host "    [!] Dismount save failed (attempt $attempt/5): $($_.Exception.Message.Split([Environment]::NewLine)[0]). Retrying in 4 seconds..." -ForegroundColor Yellow
                     Start-Sleep -Seconds 4
@@ -1318,7 +1337,9 @@ function Invoke-MiOSImageServicing {
             }
             if (-not $dismountSuccess) {
                 Write-Host "    [!] Force-discarding due to repeated dismount save failures..." -ForegroundColor Yellow
-                Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null
+                $activeMount = Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*MountUUP*' -or $_.Path -like "*$($mount.TrimEnd('\'))*" } | Select-Object -First 1
+                $discardPath = if ($activeMount -and $activeMount.Path) { $activeMount.Path } else { $mount }
+                Dismount-WindowsImage -Path $discardPath -Discard -ErrorAction SilentlyContinue | Out-Null
                 throw "Dismount commit save failed permanently."
             }
         } else {
