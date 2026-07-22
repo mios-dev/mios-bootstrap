@@ -966,7 +966,7 @@ copy "%fedora_file%" "%aio_stage%\Live_Operating_Systems\Fedora-Server.iso" /Y >
 
 :: 6d. Ensure SystemRescue Arch Linux ISO is staged with LATEST upstream version
 set "sysrescue_ver=13.01"
-powershell -NoProfile -Command "try { $r=(Invoke-WebRequest -Uri 'https://www.system-rescue.org/Download/' -UseBasicParsing -TimeoutSec 6 -Headers @{'User-Agent'='MiOS-Cat'}).Content; if ($r -match 'systemrescue-([0-9]+\.[0-9]+)-amd64\.iso') { Set-Content -LiteralPath '$env:TEMP\sysrescue_ver.txt' -Value $Matches[1] } } catch {}" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0get_sysrescue_ver.ps1" >nul 2>&1
 if exist "%TEMP%\sysrescue_ver.txt" set /p sysrescue_ver=<"%TEMP%\sysrescue_ver.txt"
 if exist "%TEMP%\sysrescue_ver.txt" del "%TEMP%\sysrescue_ver.txt" /q >nul 2>&1
 set "sysrescue_local=%aio_stage%\Live_Operating_Systems\SystemRescue\SystemRescue.iso"
