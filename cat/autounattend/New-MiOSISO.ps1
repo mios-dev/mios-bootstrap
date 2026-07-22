@@ -980,25 +980,36 @@ function Invoke-MiOSImageServicing {
     # Dismount EVERY mount whose ImagePath is this wim (or MountPath is our dir), run native
     # `dism /cleanup-wim`, clear corrupt mount points, and retry until nothing of this wim remains.
     # All non-fatal.
-    for ($mAttempt = 1; $mAttempt -le 4; $mAttempt++) {
+    for ($mAttempt = 1; $mAttempt -le 5; $mAttempt++) {
         foreach ($m in @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue)) {
-            if ($m.ImagePath -eq $wim -or $m.MountPath -eq $mount -or $m.MountPath -like '*MountUUP*') {
+            if ($m.ImagePath -eq $wim -or $m.MountPath -eq $mount -or $m.MountPath -like '*MountUUP*' -or $m.MountPath -like '*mount*') {
                 try { Dismount-WindowsImage -Path $m.MountPath -Discard -ErrorAction Stop | Out-Null }
-                catch { Write-Host "    stale mount at $($m.MountPath) ($($_.Exception.Message.Split([Environment]::NewLine)[0])) -- forcing" -ForegroundColor Yellow }
+                catch {
+                    try { & dism.exe /Unmount-Image /MountDir:"$($m.MountPath.TrimEnd('\'))" /Discard 2>&1 | Out-Null } catch {}
+                }
             }
         }
         if (Test-Path "M:\MountUUP") { try { Dismount-WindowsImage -Path "M:\MountUUP" -Discard -ErrorAction SilentlyContinue | Out-Null } catch {} }
         if (Test-Path $mount) { try { Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null } catch {} }
+        try { & dism.exe /Unmount-Image /MountDir:"$($mount.TrimEnd('\'))" /Discard 2>&1 | Out-Null } catch {}
         try { & dism.exe /Cleanup-Mountpoints 2>&1 | Out-Null } catch {}
         try { & dism.exe /Cleanup-Wim 2>&1 | Out-Null } catch {}
         try { Clear-WindowsCorruptMountPoint -ErrorAction SilentlyContinue | Out-Null } catch {}
-        if (Test-Path $mount) { try { Remove-Item $mount -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
+        if (Test-Path $mount) {
+            try { Remove-Item $mount -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+            try { & cmd.exe /c "rd /s /q `"$mount`"" 2>&1 | Out-Null } catch {}
+        }
         $staleLeft = @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.ImagePath -eq $wim -or $_.MountPath -eq $mount -or $_.MountPath -like '*MountUUP*' })
-        if ($staleLeft.Count -eq 0 -and -not (Test-Path $mount)) { break }
+        if ($staleLeft.Count -eq 0 -and (-not (Test-Path $mount) -or (Get-ChildItem $mount -ErrorAction SilentlyContinue).Count -eq 0)) { break }
         Start-Sleep -Seconds 2
     }
+    if (Test-Path $mount) {
+        if ((Get-ChildItem $mount -ErrorAction SilentlyContinue).Count -gt 0) {
+            $mount = "M:\MountUUP_$([guid]::NewGuid().ToString().Substring(0,8))"
+        }
+    }
     New-Item -ItemType Directory -Force -Path $mount | Out-Null
-    Write-Host "[*] Mounting install image index $idx ..." -ForegroundColor Cyan
+    Write-Host "[*] Mounting install image index $idx to $mount ..." -ForegroundColor Cyan
     Mount-WindowsImage -Path $mount -ImagePath $wim -Index $idx | Out-Null
     $_serviced = $false
     try {
