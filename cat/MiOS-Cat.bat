@@ -39,9 +39,8 @@ set "ventoy_ver="
 set "min_disk_gb=512"
 set "repo_label=MiOS-Repo"
 set "data_label=MiOS-Data"
-powershell -NoProfile -Command "$v = Get-Volume; $target = $null; $max = 0; foreach ($vol in $v) { if ($vol.DriveType -eq 'Fixed' -and $vol.SizeRemaining -gt 25GB -and $vol.SizeRemaining -gt $max) { $max = $vol.SizeRemaining; $target = $vol } }; $p = if ($target) { $target.DriveLetter + ':\MiOS\medicat_stage' } else { $env:TEMP + '\medicat_stage' }; [System.IO.File]::WriteAllText(\"%~dp0stage_path.txt\", $p)"
-set /p stage_dir=<"%~dp0stage_path.txt"
-del "%~dp0stage_path.txt" /Q >nul 2>&1
+set "stage_dir=M:\MiOS\medicat_stage"
+if not exist "M:\" set "stage_dir=%TEMP%\medicat_stage"
 mkdir "%stage_dir%" >nul 2>&1
 set "file=M:\MediCat.USB.v21.12.7z"
 set "bg_color=#282262"
