@@ -101,7 +101,18 @@ SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 # 2. Dynamic Telemetry & Log Resolver
 # -----------------------------------------------------------------------------
 def get_active_log():
-    task_logs = glob.glob(r"C:\Users\Administrator\.gemini\antigravity-ide\brain\*\.system_generated\tasks\task-*.log")
+    all_task_logs = glob.glob(r"C:\Users\Administrator\.gemini\antigravity-ide\brain\*\.system_generated\tasks\task-*.log")
+    task_logs = []
+    for tpath in all_task_logs:
+        try:
+            if os.path.getsize(tpath) > 1000:
+                with open(tpath, 'r', encoding='utf-8', errors='ignore') as f:
+                    head = f.read(4096)
+                    if "STARTING MiOS-Cat" in head or "MiOS-Cat DEDICATED USB" in head or "SINGLE FLASH PASS" in head:
+                        task_logs.append(tpath)
+        except Exception:
+            pass
+
     task_logs += glob.glob(r"C:\Windows\Temp\mios-cat-*.log")
     task_logs += glob.glob(r"M:\medicat_stage\isobuild_live\logs\*.log")
     valid_logs = []
@@ -115,6 +126,7 @@ def get_active_log():
         valid_logs.sort(reverse=True)
         return valid_logs[0][1]
     return r'C:\Windows\Temp\mios-cat-install.log'
+
 
 def get_disk_mb(path):
     if os.path.exists(path):
@@ -228,8 +240,9 @@ def render_dashboard(step_counter):
         if re.search(r'SINGLE FLASH PASS|Zero USB writes|\[AIO SUCCESS\] All images 100% compiled', line): current_stage_id = max(current_stage_id, 7)
         if re.search(r'Ventoy|Installing Ventoy|autorun\.inf|TARGET DRIVE FORMAT', line): current_stage_id = max(current_stage_id, 8)
         if re.search(r'Writing PortableApps suite|robocopy .* D:|Extracting payload to D:', line): current_stage_id = max(current_stage_id, 9)
-        if re.search(r'MiOS-Cat DEDICATED USB INSTALLATION COMPLETED|FLASH COMPLETE SUCCESS', line):
+        if re.search(r'MiOS-Cat.*COMPLETED|FLASH COMPLETE SUCCESS|is now ready to boot', line, re.IGNORECASE):
             is_completed = True
+
 
         pm = re.search(r'(\d+(\.\d+)?)%', line)
         if pm:

@@ -96,12 +96,18 @@ function Expand-MiOSIso {
     param([string]$Iso, [string]$Dest)
     if (Test-Path $Dest) { Remove-Item $Dest -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $Dest | Out-Null
-    Write-Host "[*] Mounting $Iso ..." -ForegroundColor Cyan
-    $img = Mount-DiskImage -ImagePath $Iso -PassThru
-    try {
-        $drive = ($img | Get-Volume).DriveLetter + ':'
-        & robocopy "$drive\" $Dest /E /NFL /NDL /NJH /NJS /NP | Out-Null
-    } finally { Dismount-DiskImage -ImagePath $Iso | Out-Null }
+    Write-Host "[*] Extracting $Iso ..." -ForegroundColor Cyan
+    $7z = Get-Command 7z.exe -ErrorAction SilentlyContinue
+    $7zExe = if ($7z) { $7z.Source } elseif (Test-Path 'C:\Program Files\7-Zip\7z.exe') { 'C:\Program Files\7-Zip\7z.exe' } else { $null }
+    if ($7zExe) {
+        & $7zExe x "$Iso" "-o$Dest" -y | Out-Null
+    } else {
+        $img = Mount-DiskImage -ImagePath $Iso -PassThru
+        try {
+            $drive = ($img | Get-Volume).DriveLetter + ':'
+            & robocopy "$drive\" $Dest /E /NFL /NDL /NJH /NJS /NP | Out-Null
+        } finally { Dismount-DiskImage -ImagePath $Iso | Out-Null }
+    }
     # Clear read-only bit copied from the DVD so we can re-service + re-master.
     Get-ChildItem $Dest -Recurse -File | ForEach-Object { $_.IsReadOnly = $false }
     return $Dest
@@ -1325,39 +1331,33 @@ function Invoke-MiOSImageServicing {
             for ($attempt = 1; $attempt -le 5; $attempt++) {
                 try {
                     Set-Location -Path $PSScriptRoot -ErrorAction SilentlyContinue
-                    foreach ($h in @('MIOS_SYS','MIOS_SOFT','MIOS_DEF','MIOS_DEFU','MIOS_RSYS','MIOS_RSW','MIOS_NTUSER')) {
-                        & reg.exe unload "HKLM\$h" 2>&1 | Out-Null
-                    }
+                    & cmd.exe /c "for %h in (MIOS_CUR_SW MIOS_DEFT MIOS_SYS MIOS_SOFT MIOS_DEF MIOS_DEFU MIOS_RSYS MIOS_RSW MIOS_NTUSER pe-default pe-software) do reg unload HKLM\%h >nul 2>&1"
+                    & cmd.exe /c "for %h in (MIOS_CUR_SW MIOS_DEFT MIOS_SYS MIOS_SOFT MIOS_DEF MIOS_DEFU MIOS_RSYS MIOS_RSW MIOS_NTUSER pe-default pe-software) do reg unload HKU\%h >nul 2>&1"
                     [System.GC]::Collect()
                     [System.GC]::WaitForPendingFinalizers()
-                    Start-Sleep -Seconds 2
+                    Start-Sleep -Seconds 3
 
-                    $activeMount = Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*MountUUP*' -or $_.Path -like "*$($mount.TrimEnd('\'))*" } | Select-Object -First 1
-                    $targetPath = if ($activeMount -and $activeMount.Path) { $activeMount.Path } else { $mount }
+                    $mountClean = $mount.TrimEnd('\')
+                    $activeMount = Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.Path.TrimEnd('\') -eq $mountClean } | Select-Object -First 1
+                    if (-not $activeMount) {
+                        $activeMount = Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*$mountClean*" } | Select-Object -First 1
+                    }
+                    $targetPath = if ($activeMount -and $activeMount.Path) { $activeMount.Path } else { $mountClean }
+                    $targetClean = $targetPath.TrimEnd('\')
                     $mountClean = $targetPath.TrimEnd('\')
 
+                    $dismArgs = @("/Unmount-Image", "/MountDir:$mountClean", "/Commit")
+                    $dismOut = & dism.exe $dismArgs 2>&1
+                    if ($LASTEXITCODE -eq 0) {
+                        $dismountSuccess = $true
+                        break
+                    }
                     try {
-                        Dismount-WindowsImage -Path $targetPath -Save -ErrorAction Stop | Out-Null
+                        Dismount-WindowsImage -Path $mountClean -Save -ErrorAction Stop | Out-Null
                         $dismountSuccess = $true
                         break
                     } catch {
-                        try {
-                            Dismount-WindowsImage -Path $mountClean -Save -ErrorAction Stop | Out-Null
-                            $dismountSuccess = $true
-                            break
-                        } catch {
-                            $dismOut = & dism.exe /Unmount-Image /MountDir:"$mountClean" /Commit 2>&1
-                            if ($LASTEXITCODE -eq 0) {
-                                $dismountSuccess = $true
-                                break
-                            }
-                            $dismOut2 = & dism.exe /Unmount-Image /MountDir:"$targetPath" /Commit 2>&1
-                            if ($LASTEXITCODE -eq 0) {
-                                $dismountSuccess = $true
-                                break
-                            }
-                            throw $_
-                        }
+                        throw "dism.exe /Unmount-Image failed (exit $LASTEXITCODE): $dismOut"
                     }
                 } catch {
                     Write-Host "    [!] Dismount save failed (attempt $attempt/5): $($_.Exception.Message.Split([Environment]::NewLine)[0]). Retrying in 4 seconds..." -ForegroundColor Yellow
@@ -1366,8 +1366,8 @@ function Invoke-MiOSImageServicing {
             }
             if (-not $dismountSuccess) {
                 Write-Host "    [!] Force-discarding due to repeated dismount save failures..." -ForegroundColor Yellow
-                $activeMount = Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*MountUUP*' -or $_.Path -like "*$($mount.TrimEnd('\'))*" } | Select-Object -First 1
-                $discardPath = if ($activeMount -and $activeMount.Path) { $activeMount.Path } else { $mount }
+                $activeMount = Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.Path.TrimEnd('\') -eq $mountClean } | Select-Object -First 1
+                $discardPath = if ($activeMount -and $activeMount.Path) { $activeMount.Path } else { $mountClean }
                 Dismount-WindowsImage -Path $discardPath -Discard -ErrorAction SilentlyContinue | Out-Null
                 throw "Dismount commit save failed permanently."
             }
@@ -1457,8 +1457,21 @@ if (-not $SourceIso) {
     try { & dism.exe /Cleanup-Wim 2>&1 | Out-Null } catch {}
     try { Clear-WindowsCorruptMountPoint -ErrorAction SilentlyContinue | Out-Null } catch {}
 
-    Write-Host "[*] No -SourceIso; fetching stock ISO via mios-uup-fetch (channel from SSOT) ..." -ForegroundColor Cyan
-    $SourceIso = & (Join-Path $PSScriptRoot 'mios-uup-fetch.ps1') -TomlPath $TomlPath -Esd:$Esd -Edition $Edition
+    Write-Host "[*] No -SourceIso passed; checking for pre-built ISO in UUP package catalog..." -ForegroundColor Cyan
+    $candidateIso = $null
+    foreach ($searchDir in @((Join-Path $buildRoot 'uup\package'), (Join-Path $buildRoot '..\uup\package'), 'M:\MiOS\uup\package', 'M:\uup\package')) {
+        if (Test-Path $searchDir) {
+            $found = Get-ChildItem -Path $searchDir -Filter '*.iso' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $candidateIso = $found.FullName; break }
+        }
+    }
+    if ($candidateIso) {
+        $SourceIso = $candidateIso
+        Write-Host "[*] Found pre-built stock ISO: $SourceIso" -ForegroundColor Green
+    } else {
+        Write-Host "[*] Fetching stock ISO via mios-uup-fetch (channel from SSOT) ..." -ForegroundColor Cyan
+        $SourceIso = & (Join-Path $PSScriptRoot 'mios-uup-fetch.ps1') -TomlPath $TomlPath -Esd:$Esd -Edition $Edition
+    }
 }
 if (-not (Test-Path $SourceIso)) { throw "Source ISO not found: $SourceIso" }
 

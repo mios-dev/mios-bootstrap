@@ -967,16 +967,22 @@ echo [FATAL ERROR] Fedora DVD download failed! & exit /b 1
 :fedora_dvd_ok
 copy "%fedora_file%" "%aio_stage%\Live_Operating_Systems\Fedora-Server.iso" /Y >nul
 
-:: 6d. Ensure SystemRescue Arch Linux ISO is staged
+:: 6d. Ensure SystemRescue Arch Linux ISO is staged with LATEST upstream version
 set "sysrescue_ver=13.01"
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "try { $r=(Invoke-WebRequest -Uri 'https://www.system-rescue.org/Download/' -UseBasicParsing -TimeoutSec 6 -Headers @{'User-Agent'='MiOS-Cat'}).Content; if ($r -match 'systemrescue-([0-9]+\.[0-9]+)-amd64\.iso') { $Matches[1] } else { '13.01' } } catch { '13.01' }"`) do set "sysrescue_ver=%%i"
 set "sysrescue_local=%aio_stage%\Live_Operating_Systems\SystemRescue\SystemRescue.iso"
-if exist "M:\systemrescue-%sysrescue_ver%-amd64.iso" (
-    copy "M:\systemrescue-%sysrescue_ver%-amd64.iso" "%sysrescue_local%" /Y >nul 2>&1
+set "sysrescue_cache=M:\systemrescue-%sysrescue_ver%-amd64.iso"
+if exist "%sysrescue_cache%" (
+    copy "%sysrescue_cache%" "%sysrescue_local%" /Y >nul 2>&1
 )
 if not exist "%sysrescue_local%" (
-    echo Pulling SystemRescue %sysrescue_ver%...
-    curl.exe -C - -L --connect-timeout 10 --retry 2 "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_local%" -#
+    echo Pulling SystemRescue %sysrescue_ver% (LATEST upstream release)...
+    curl.exe -C - -L --connect-timeout 10 --retry 3 "https://fastly-cdn.system-rescue.org/releases/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_cache%" -#
+    if exist "%sysrescue_cache%" copy "%sysrescue_cache%" "%sysrescue_local%" /Y >nul 2>&1
+)
+if not exist "%sysrescue_local%" (
+    echo Fallback: Pulling SystemRescue %sysrescue_ver% from SourceForge...
+    curl.exe -C - -L --connect-timeout 10 --retry 3 "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_local%" -#
 )
 if not exist "%sysrescue_local%" (
     echo [FATAL ERROR] SystemRescue ISO download failed! & exit /b 1
@@ -1219,10 +1225,8 @@ if exist "%toml_path%" copy "%toml_path%" "%repodrive%:\mios.toml" /Y >nul 2>&1
 copy "%~f0" "%repodrive%:\MiOS-Cat.bat" /Y >nul 2>&1
 
 echo Staging MiOS drive icons and autorun.inf across all partitions...
-if exist "%maindir%\resources\autorun\mios-stage-icons.ps1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%maindir%\resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
-) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$cd='%drivepath%'; $rd='%repodrive%'; $dd='%datadrive%'; Add-Type -AssemblyName System.Drawing -EA SilentlyContinue; function New-Ico($p, $lbl) { try { $s=256; $bmp=New-Object System.Drawing.Bitmap $s,$s; $g=[System.Drawing.Graphics]::FromImage($bmp); $g.SmoothingMode='AntiAlias'; $bg=[System.Drawing.Color]::FromArgb(40,34,98); $fg=[System.Drawing.Color]::FromArgb(231,223,211); $accent=[System.Drawing.Color]::FromArgb(243,92,21); $shade=[System.Drawing.Color]::FromArgb(20,17,49); $g.Clear($bg); $cx=$s/2.0; $cy=$s/2.2; $r=$s*0.36; $hH=$r*0.55; $hW=$r*0.866; $vTop=[System.Drawing.PointF]::new($cx,$cy-$hH*1.10); $vTopR=[System.Drawing.PointF]::new($cx+$hW,$cy-$hH*0.55); $vBotR=[System.Drawing.PointF]::new($cx+$hW,$cy+$hH*0.55); $vBot=[System.Drawing.PointF]::new($cx,$cy+$hH*1.10); $vBotL=[System.Drawing.PointF]::new($cx-$hW,$cy+$hH*0.55); $vTopL=[System.Drawing.PointF]::new($cx-$hW,$cy-$hH*0.55); $vMid=[System.Drawing.PointF]::new($cx,$cy); $bT=New-Object System.Drawing.SolidBrush($accent); $bL=New-Object System.Drawing.SolidBrush($fg); $bR=New-Object System.Drawing.SolidBrush($shade); $g.FillPolygon($bT,@($vTop,$vTopR,$vMid,$vTopL)); $g.FillPolygon($bL,@($vTopL,$vMid,$vBot,$vBotL)); $g.FillPolygon($bR,@($vTopR,$vBotR,$vBot,$vMid)); $hP=New-Object System.Drawing.Pen($bg,4); for($i=1;$i -le 2;$i++){ $t=$i/3.0; $a=[System.Drawing.PointF]::new($vTopL.X+($vMid.X-$vTopL.X)*$t,$vTopL.Y+($vMid.Y-$vTopL.Y)*$t); $b=[System.Drawing.PointF]::new($vBotL.X+($vBot.X-$vBotL.X)*$t,$vBotL.Y+($vBot.Y-$vBotL.Y)*$t); $g.DrawLine($hP,$a,$b); $a2=[System.Drawing.PointF]::new($vTopR.X+($vMid.X-$vTopR.X)*$t,$vTopR.Y+($vMid.Y-$vTopR.Y)*$t); $b2=[System.Drawing.PointF]::new($vBotR.X+($vBot.X-$vBotR.X)*$t,$vBotR.Y+($vBot.Y-$vBotR.Y)*$t); $g.DrawLine($hP,$a2,$b2) }; $eP=New-Object System.Drawing.Pen($bg,6); $g.DrawPolygon($eP,@($vTop,$vTopR,$vBotR,$vBot,$vBotL,$vTopL)); $g.DrawLine($eP,$vMid,$vTop); $g.DrawLine($eP,$vMid,$vBot); $g.DrawLine($eP,$vMid,$vTopL); $g.DrawLine($eP,$vMid,$vTopR); if($lbl){ $fL=New-Object System.Drawing.Font('Consolas',15,[System.Drawing.FontStyle]::Bold); $sf=New-Object System.Drawing.StringFormat; $sf.Alignment=[System.Drawing.StringAlignment]::Center; $sf.LineAlignment=[System.Drawing.StringAlignment]::Center; $g.DrawString($lbl.ToUpper(),$fL,[System.Drawing.Brushes]::LightSkyBlue,(New-Object System.Drawing.RectangleF 0,205,256,45),$sf) }; $dir=[System.IO.Path]::GetDirectoryName($p); if(-not (Test-Path $dir)){ New-Item -ItemType Directory -Force -Path $dir|Out-Null }; $fs=New-Object System.IO.FileStream($p,[System.IO.FileMode]::Create); [System.Drawing.Icon]::FromHandle($bmp.GetHicon()).Save($fs); $fs.Close() } catch{} }; function Stage-Ico($let,$lbl){ if(-not $let -or $let -eq '_'){ return }; $r=\"$($let.Trim(':')):\"; if(-not (Test-Path $r)){ return }; $a=Join-Path $r 'autorun'; $ico=Join-Path $a 'mios.ico'; New-Ico $ico $lbl; $inf=Join-Path $r 'autorun.inf'; if(Test-Path $inf){ try{ Set-ItemProperty -Path $inf -Name Attributes -Value Normal -EA SilentlyContinue }catch{} }; [System.IO.File]::WriteAllText($inf, \"[autorun]`nicon=autorun\mios.ico`nlabel=$lbl\", [System.Text.Encoding]::ASCII); try{ Set-ItemProperty -Path $inf -Name Attributes -Value ([System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System) -EA SilentlyContinue }catch{}; try{ Set-ItemProperty -Path \"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\DriveIcons\$let\DefaultIcon\" -Name '(default)' -Value $ico -Force -EA SilentlyContinue }catch{} }; Stage-Ico $cd 'MiOS-Cat'; Stage-Ico $rd 'MiOS-Repo'; Stage-Ico $dd 'MiOS-Data'" >nul 2>&1
+if exist "%~dp0resources\autorun\mios-stage-icons.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
 )
 
 :: 14. SINGLE-PASS FLASH WRITE: Copy all compiled AIO images to target drive D: in one go!
@@ -1238,41 +1242,45 @@ if errorlevel 8 (
 )
 
 if exist "%aio_stage%\PortableApps" (
-    echo Writing PortableApps suite to USB (%drivepath%:\PortableApps)...
+    echo Writing PortableApps suite to USB [%drivepath%:\PortableApps]...
     mkdir "%drivepath%:\PortableApps" >nul 2>&1
     robocopy "%aio_stage%\PortableApps" "%drivepath%:\PortableApps" /E /R:2 /W:2 /MT:32
     if errorlevel 8 (
         echo [FATAL ERROR] Robocopy failed to write PortableApps to %drivepath%:\PortableApps!
         exit /b 1
     )
+    echo Debloating PortableApps suite to MiOS specifications...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$keep = @('7-ZipPortable', 'AOMEIPartitionAssistantPortable', 'CrystalDiskInfoPortable', 'CrystalDiskMarkPortable', 'HWiNFOPortable', 'Notepad++Portable', 'Rufus', 'WizTree', 'SnappyDriverInstallerOrigin', 'SDIO', 'PortableApps.com'); $targets = @('%drivepath%:\PortableApps', '%aio_stage%\PortableApps'); foreach ($t in $targets) { if (Test-Path -LiteralPath $t) { Get-ChildItem -LiteralPath $t -Directory | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } }" >nul 2>&1
+    echo Applying MiOSTheme branding to PortableApps Menu...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Drawing; foreach ($b in @('%drivepath%:\PortableApps', '%aio_stage%\PortableApps')) { if (Test-Path -LiteralPath $b) { $dataDir = Join-Path $b 'PortableApps.com\Data'; if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Force -Path $dataDir | Out-Null }; $picPath = Join-Path $dataDir 'PersonalPicture.png'; $bmpA = New-Object System.Drawing.Bitmap 48, 48; $gA = [System.Drawing.Graphics]::FromImage($bmpA); $gA.SmoothingMode = 'AntiAlias'; $gA.Clear([System.Drawing.Color]::FromArgb(15, 23, 42)); $pts = @([System.Drawing.PointF]::new(24, 10), [System.Drawing.PointF]::new(34, 15), [System.Drawing.PointF]::new(34, 25), [System.Drawing.PointF]::new(24, 35), [System.Drawing.PointF]::new(14, 25), [System.Drawing.PointF]::new(14, 15)); $bS = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(243, 92, 21)); $gA.FillPolygon($bS, $pts); $bS.Dispose(); $bC = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White); $gA.FillRectangle($bC, 22, 16, 4, 13); $gA.FillRectangle($bC, 17, 21, 14, 4); $bC.Dispose(); $gA.Dispose(); $bmpA.Save($picPath, [System.Drawing.Imaging.ImageFormat]::Png); $bmpA.Dispose(); $td = Join-Path $b 'PortableApps.com\App\Graphics\Themes\MiOSTheme'; New-Item -ItemType Directory -Force -Path $td | Out-Null; Set-Content (Join-Path $td 'PATheme.ini') '[PortableApps.comTheme]`nPortableApps.comThemeVersion=2.0`nPortableApps.comThemeType=Simple`n`n[ThemeDetails]`nName=MiOSTheme`nVersion=2.0`nAuthor=MiOS Automated System`n`n[ButtonApplications]`nFontColor=FFFFFF`nIconTransparentColor=000000`nDividerColor=F35C15`n`n[ButtonFolders]`nFontColor=FFFFFF`nFontColorWhite=FFFFFF`n`n[DriveSpace]`nFontColor=E7DFD3`nFontShadowColor=14112E`nStretchImage=true`n`n[SearchBox]`nFontColor=FFFFFF`nBackgroundColor=1E293B`nBorderColor=F35C15`n`n[Menu]`nLayout=modern`nChrome=custom`nMatte=none`nBackground=none`nDefaultBackgroundColor=Black'; $bmp = New-Object System.Drawing.Bitmap 540, 600; $g = [System.Drawing.Graphics]::FromImage($bmp); $g.Clear([System.Drawing.Color]::FromArgb(15, 23, 42)); $topB = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30, 41, 59)); $g.FillRectangle($topB, 0, 0, 540, 60); $topB.Dispose(); $accP = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(243, 92, 21), 4); $g.DrawLine($accP, 0, 60, 540, 60); $accP.Dispose(); $sideB = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(24, 32, 47)); $g.FillRectangle($sideB, 360, 61, 180, 499); $sideB.Dispose(); $footB = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(15, 23, 42)); $g.FillRectangle($footB, 0, 560, 540, 40); $footB.Dispose(); $footP = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(243, 92, 21), 2); $g.DrawLine($footP, 0, 560, 540, 560); $footP.Dispose(); $fontH = New-Object System.Drawing.Font('Segoe UI', 11, [System.Drawing.FontStyle]::Bold); $g.DrawString('MiOS RESCUE SUITE', $fontH, [System.Drawing.Brushes]::White, 12, 20); $fontH.Dispose(); $bmp.Save((Join-Path $td 'chrome.png'), [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose(); $mi = Join-Path $b 'PortableApps.com\Data\PortableAppsMenu.ini'; if (Test-Path $mi) { $lines = [System.IO.File]::ReadAllLines($mi, [System.Text.Encoding]::Unicode); $newL = @(); $hasT = $false; foreach ($l in $lines) { if ($l.Trim().StartsWith('Theme=')) { $newL += 'Theme=MiOSTheme'; $hasT = $true } else { $newL += $l } }; if (-not $hasT) { $newL = @('[Theme]', 'Theme=MiOSTheme') + $newL }; [System.IO.File]::WriteAllLines($mi, $newL, [System.Text.Encoding]::Unicode) } } }" >nul 2>&1
 )
 
 if exist "%aio_stage%\MiOS-PE" (
-    echo Writing MiOS-PE rescue directory to USB (%drivepath%:\MiOS-PE)...
+    echo Writing MiOS-PE rescue directory to USB [%drivepath%:\MiOS-PE]...
     mkdir "%drivepath%:\MiOS-PE" >nul 2>&1
     robocopy "%aio_stage%\MiOS-PE" "%drivepath%:\MiOS-PE" /E /R:2 /W:2 /MT:32 >nul
 )
 
 if exist "%aio_stage%\Documents" (
-    echo Writing Documents vault to USB (%drivepath%:\Documents)...
+    echo Writing Documents vault to USB [%drivepath%:\Documents]...
     mkdir "%drivepath%:\Documents" >nul 2>&1
     robocopy "%aio_stage%\Documents" "%drivepath%:\Documents" /E /R:2 /W:2 /MT:32 >nul
 )
 
 :: 15. Finalize SSOT Branding & Start.exe launcher
 echo Finalizing SSOT MiOS drive icons and autorun metadata across target partitions...
-if exist "%maindir%\resources\autorun\mios-stage-icons.ps1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%maindir%\resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
-) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$cd='%drivepath%'; $rd='%repodrive%'; $dd='%datadrive%'; Add-Type -AssemblyName System.Drawing -EA SilentlyContinue; function New-Ico($p, $lbl) { try { $s=256; $bmp=New-Object System.Drawing.Bitmap $s,$s; $g=[System.Drawing.Graphics]::FromImage($bmp); $g.SmoothingMode='AntiAlias'; $bg=[System.Drawing.Color]::FromArgb(40,34,98); $fg=[System.Drawing.Color]::FromArgb(231,223,211); $accent=[System.Drawing.Color]::FromArgb(243,92,21); $shade=[System.Drawing.Color]::FromArgb(20,17,49); $g.Clear($bg); $cx=$s/2.0; $cy=$s/2.2; $r=$s*0.36; $hH=$r*0.55; $hW=$r*0.866; $vTop=[System.Drawing.PointF]::new($cx,$cy-$hH*1.10); $vTopR=[System.Drawing.PointF]::new($cx+$hW,$cy-$hH*0.55); $vBotR=[System.Drawing.PointF]::new($cx+$hW,$cy+$hH*0.55); $vBot=[System.Drawing.PointF]::new($cx,$cy+$hH*1.10); $vBotL=[System.Drawing.PointF]::new($cx-$hW,$cy+$hH*0.55); $vTopL=[System.Drawing.PointF]::new($cx-$hW,$cy-$hH*0.55); $vMid=[System.Drawing.PointF]::new($cx,$cy); $bT=New-Object System.Drawing.SolidBrush($accent); $bL=New-Object System.Drawing.SolidBrush($fg); $bR=New-Object System.Drawing.SolidBrush($shade); $g.FillPolygon($bT,@($vTop,$vTopR,$vMid,$vTopL)); $g.FillPolygon($bL,@($vTopL,$vMid,$vBot,$vBotL)); $g.FillPolygon($bR,@($vTopR,$vBotR,$vBot,$vMid)); $hP=New-Object System.Drawing.Pen($bg,4); for($i=1;$i -le 2;$i++){ $t=$i/3.0; $a=[System.Drawing.PointF]::new($vTopL.X+($vMid.X-$vTopL.X)*$t,$vTopL.Y+($vMid.Y-$vTopL.Y)*$t); $b=[System.Drawing.PointF]::new($vBotL.X+($vBot.X-$vBotL.X)*$t,$vBotL.Y+($vBot.Y-$vBotL.Y)*$t); $g.DrawLine($hP,$a,$b); $a2=[System.Drawing.PointF]::new($vTopR.X+($vMid.X-$vTopR.X)*$t,$vTopR.Y+($vMid.Y-$vTopR.Y)*$t); $b2=[System.Drawing.PointF]::new($vBotR.X+($vBot.X-$vBotR.X)*$t,$vBotR.Y+($vBot.Y-$vBotR.Y)*$t); $g.DrawLine($hP,$a2,$b2) }; $eP=New-Object System.Drawing.Pen($bg,6); $g.DrawPolygon($eP,@($vTop,$vTopR,$vBotR,$vBot,$vBotL,$vTopL)); $g.DrawLine($eP,$vMid,$vTop); $g.DrawLine($eP,$vMid,$vBot); $g.DrawLine($eP,$vMid,$vTopL); $g.DrawLine($eP,$vMid,$vTopR); if($lbl){ $fL=New-Object System.Drawing.Font('Consolas',15,[System.Drawing.FontStyle]::Bold); $sf=New-Object System.Drawing.StringFormat; $sf.Alignment=[System.Drawing.StringAlignment]::Center; $sf.LineAlignment=[System.Drawing.StringAlignment]::Center; $g.DrawString($lbl.ToUpper(),$fL,[System.Drawing.Brushes]::LightSkyBlue,(New-Object System.Drawing.RectangleF 0,205,256,45),$sf) }; $dir=[System.IO.Path]::GetDirectoryName($p); if(-not (Test-Path $dir)){ New-Item -ItemType Directory -Force -Path $dir|Out-Null }; $fs=New-Object System.IO.FileStream($p,[System.IO.FileMode]::Create); [System.Drawing.Icon]::FromHandle($bmp.GetHicon()).Save($fs); $fs.Close() } catch{} }; function Stage-Ico($let,$lbl){ if(-not $let -or $let -eq '_'){ return }; $r=\"$($let.Trim(':')):\"; if(-not (Test-Path $r)){ return }; $a=Join-Path $r 'autorun'; $ico=Join-Path $a 'mios.ico'; New-Ico $ico $lbl; $inf=Join-Path $r 'autorun.inf'; if(Test-Path $inf){ try{ Set-ItemProperty -Path $inf -Name Attributes -Value Normal -EA SilentlyContinue }catch{} }; [System.IO.File]::WriteAllText($inf, \"[autorun]`nicon=autorun\mios.ico`nlabel=$lbl\", [System.Text.Encoding]::ASCII); try{ Set-ItemProperty -Path $inf -Name Attributes -Value ([System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System) -EA SilentlyContinue }catch{}; try{ Set-ItemProperty -Path \"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\DriveIcons\$let\DefaultIcon\" -Name '(default)' -Value $ico -Force -EA SilentlyContinue }catch{} }; Stage-Ico $cd 'MiOS-Cat'; Stage-Ico $rd 'MiOS-Repo'; Stage-Ico $dd 'MiOS-Data'" >nul 2>&1
+if exist "%~dp0resources\autorun\mios-stage-icons.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
 )
 
-powershell -NoProfile -Command "Set-Content -Path '%temp%\launcher.cs' -Value 'using System; using System.Diagnostics; using System.IO; class Launcher { static void Main() { string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @\"PortableApps\PortableApps.com\PortableAppsPlatform.exe\"); if (File.Exists(path)) { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); } } }'" >nul 2>&1
+echo using System; using System.Diagnostics; using System.IO; class Launcher { static void Main() { string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PortableApps\\PortableApps.com\\PortableAppsPlatform.exe"); if (File.Exists(path)) { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); } } } > "%temp%\launcher.cs"
 
 if exist "%drivepath%:\Start.exe" attrib -r -h -s "%drivepath%:\Start.exe" >nul 2>&1
 if exist "%drivepath%:\Start.exe" del /f /q /a "%drivepath%:\Start.exe" >nul 2>&1
 
-if exist "%drivepath%:\autorun\mios.ico" (
+if exist "%drivepath%:\autorun\mios-v2.ico" (
+    C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%drivepath%:\autorun\mios-v2.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
+) else if exist "%drivepath%:\autorun\mios.ico" (
     C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%drivepath%:\autorun\mios.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
 )
 del "%temp%\launcher.cs" /Q >nul 2>&1
@@ -1283,7 +1291,7 @@ echo.
 echo ==========================================================
 echo     MiOS-Cat ALL-IN-ONE USB FLASHING SUCCESSFULLY COMPLETED
 echo ==========================================================
-echo All images were compiled on localhost SSD & written in one pass.
+echo All images were compiled on localhost SSD and written in one pass.
 echo Target drive %drivepath%: is now ready to boot!
 echo ==========================================================
 if not "%NONINTERACTIVE%"=="1" pause
@@ -1473,5 +1481,6 @@ if errorlevel 1 ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 failed! & exit /b 1 )
 exit /b 0
 
 :ensure_live_monitor
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$mon = 'c:\mios-bootstrap\cat\autounattend\Monitor-MiOSFlash.ps1'; if (Test-Path $mon) { $p = Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*Monitor-MiOSFlash*' }; if (-not $p) { schtasks /create /tn ShowMonitorUI /tr \"powershell.exe -NoExit -ExecutionPolicy Bypass -File `\"$mon`\" -WorkDir M:\MiOS\medicat_stage\" /sc ONCE /st 00:00 /it /f >nul 2>&1; schtasks /run /tn ShowMonitorUI >nul 2>&1; Start-Process powershell -ArgumentList \"-NoExit -ExecutionPolicy Bypass -File `\"$mon`\" -WorkDir M:\MiOS\medicat_stage\" -WindowStyle Normal -ErrorAction SilentlyContinue } }" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$py = 'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe'; $mon = 'C:\mios-bootstrap\cat\autounattend\mios_monitor.py'; if (Test-Path $mon) { Start-Process -FilePath $py -ArgumentList $mon -WindowStyle Normal -ErrorAction SilentlyContinue }" >nul 2>&1
 exit /b 0
+

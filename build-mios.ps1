@@ -7958,15 +7958,17 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
         $_launcherCs = Join-Path $env:TEMP ('mios-launch-' + [guid]::NewGuid().Guid.Substring(0,8) + '.cs')
         try {
             Set-Content -LiteralPath $_launcherCs -Value $launcherCs -Encoding UTF8
+            $_win32Ico = "C:\MiOS\usr\share\mios\branding\mios-v2.ico"
             $_cscArgs = @(
                 '/nologo',
                 '/target:winexe',                # subsystem:Windows -- no console host
                 '/optimize+',
                 '/reference:System.Drawing.dll',
                 '/reference:System.Windows.Forms.dll',
+                (if (Test-Path $_win32Ico) { "/win32icon:$_win32Ico" }),
                 ('/out:' + $miosLauncherExe),
                 $_launcherCs
-            )
+            ) | Where-Object { $_ }
             $_cscOut = & $_csc @_cscArgs 2>&1
             if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $miosLauncherExe)) {
                 Log-Ok "MiOS native .exe launcher compiled via csc.exe: $miosLauncherExe (subsystem:Windows -- zero pre-flash)"
