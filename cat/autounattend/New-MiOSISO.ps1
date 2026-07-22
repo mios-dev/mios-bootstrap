@@ -502,6 +502,32 @@ function Set-MiOSIdentityOffline {
                 if (Test-Path $src) { Copy-Item $src (Join-Path $sysCur $k) -Force -EA SilentlyContinue }
             }
             Write-Host "    overwrote system default cursors in Windows\Cursors\ (OEM native cursor retention on Shutdown/Logon)" -ForegroundColor Green
+
+            # Register the scheme in HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Control Panel\Schemes + Cursors\Default
+            $swHive = Join-Path $Mount 'Windows\System32\config\SOFTWARE'
+            if (Test-Path $swHive) {
+                & reg.exe load 'HKLM\MIOS_CUR_SW' $swHive 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    try {
+                        $schVal = "%SystemRoot%\Cursors\Bibata-Modern-Classic\Pointer.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Help.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Working.ani,%SystemRoot%\Cursors\Bibata-Modern-Classic\Busy.ani,%SystemRoot%\Cursors\Bibata-Modern-Classic\Cross.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Text.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Unavail.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Vert.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Horiz.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Dyna1.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Dyna2.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Move.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Up.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Link.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Pin.cur,%SystemRoot%\Cursors\Bibata-Modern-Classic\Person.cur"
+                        & reg.exe add "HKLM\MIOS_CUR_SW\Microsoft\Windows\CurrentVersion\Control Panel\Schemes" /v "Bibata-Modern-Classic" /t REG_EXPAND_SZ /d $schVal /f 2>&1 | Out-Null
+                        $cRoles = @{
+                            'Arrow'='Pointer.cur'; 'Help'='Help.cur'; 'AppStarting'='Working.ani'; 'Wait'='Busy.ani';
+                            'Crosshair'='Cross.cur'; 'IBeam'='Text.cur'; 'No'='Unavail.cur'; 'SizeNS'='Vert.cur';
+                            'SizeWE'='Horiz.cur'; 'SizeNWSE'='Dyna1.cur'; 'SizeNESW'='Dyna2.cur'; 'SizeAll'='Move.cur';
+                            'UpArrow'='Up.cur'; 'Hand'='Link.cur'; 'Pin'='Pin.cur'; 'Person'='Person.cur'
+                        }
+                        foreach ($rName in $cRoles.Keys) {
+                            $rPath = "%SystemRoot%\Cursors\Bibata-Modern-Classic\$($cRoles[$rName])"
+                            & reg.exe add "HKLM\MIOS_CUR_SW\Microsoft\Windows\CurrentVersion\Control Panel\Cursors\Default" /v $rName /t REG_EXPAND_SZ /d $rPath /f 2>&1 | Out-Null
+                        }
+                        Write-Host "    registered Bibata-Modern-Classic in HKLM Control Panel\Schemes & Cursors\Default" -ForegroundColor Green
+                    } finally {
+                        [gc]::Collect()
+                        & reg.exe unload 'HKLM\MIOS_CUR_SW' 2>&1 | Out-Null
+                    }
+                }
+            }
         } else { Write-Host "    [!] Bibata: no cursor set found in archive (got $($allCur.Count) .cur/.ani files) -- cursor scheme skipped" -ForegroundColor Yellow }
     } catch { Write-Host "    [!] Bibata cursor stage skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
 
