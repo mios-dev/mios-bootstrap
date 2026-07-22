@@ -9,7 +9,7 @@ set "maindir=%CD%"
 net session >nul 2>&1
 if %errorlevel% neq 0 (
     if "%NONINTERACTIVE%"=="1" (
-        echo [FAIL] Administrator privileges required for non-interactive execution!
+        echo FAIL: Administrator privileges required for non-interactive execution!
         exit /b 1
     )
     echo Requesting administrator privileges...
@@ -89,14 +89,14 @@ if not "%NONINTERACTIVE%"=="1" (
         )
         cd /d "%maindir%"
     ) else (
-        echo [OFFLINE] Skipping self-update check.
+        echo OFFLINE: Skipping self-update check.
     )
 )
 
 :: Call Preflight Checks
 call :run_preflight_checks
 if %errorlevel% neq 0 (
-    echo [FAIL] Preflight checks failed! Exiting...
+    echo FAIL: Preflight checks failed! Exiting...
     if not "%NONINTERACTIVE%"=="1" pause
     exit /b 1
 )
@@ -477,7 +477,7 @@ set /p "confirm=Fetch the mios-bootstrap repo now and build locally? (Y/N): "
 if /i not "%confirm%"=="Y" goto sub_build
 powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }"
 if not "%errorlevel%"=="0" (
-    echo [OFFLINE] Internet is unreachable and no offline payload is present.
+    echo OFFLINE: Internet is unreachable and no offline payload is present.
     echo           Stage this USB on a connected PC first, then retry offline.
     pause
     goto sub_build
@@ -487,7 +487,7 @@ echo Fetching mios-bootstrap into C:\mios-bootstrap ...
 :: it here since the repo is exactly what's missing). git first, else GitHub zip.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $root='C:\mios-bootstrap'; $drv=Join-Path $root 'build-mios.ps1'; if (-not (Test-Path $drv)) { if (Get-Command git -ErrorAction SilentlyContinue) { git clone --depth 1 'https://github.com/mios-dev/mios-bootstrap.git' $root | Out-Null }; if (-not (Test-Path $drv)) { [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $zip=Join-Path $env:TEMP 'mios-bootstrap.zip'; $tmp=Join-Path $env:TEMP ('mios-bs-'+[guid]::NewGuid().ToString('N').Substring(0,8)); Invoke-WebRequest -Uri 'https://codeload.github.com/mios-dev/mios-bootstrap/zip/refs/heads/main' -OutFile $zip -UseBasicParsing; Expand-Archive -Path $zip -DestinationPath $tmp -Force; $inner=Get-ChildItem $tmp -Directory | Select-Object -First 1; if ($inner) { New-Item -ItemType Directory -Force -Path $root | Out-Null; Copy-Item (Join-Path $inner.FullName '*') $root -Recurse -Force }; Remove-Item $zip,$tmp -Recurse -Force -ErrorAction SilentlyContinue } }; if (Test-Path $drv) { exit 0 } else { exit 3 }"
 if not "%errorlevel%"=="0" (
-    echo [ERR ] Could not fetch mios-bootstrap. Check connectivity / proxy and retry.
+    echo ERR : Could not fetch mios-bootstrap. Check connectivity / proxy and retry.
     pause
     goto sub_build
 )
@@ -543,7 +543,7 @@ set "prov_ps="
 if exist "%~dp0autounattend\Invoke-MiOSProvision.ps1" set "prov_ps=%~dp0autounattend\Invoke-MiOSProvision.ps1"
 if "%prov_ps%"=="" if exist "C:\mios-bootstrap\cat\autounattend\Invoke-MiOSProvision.ps1" set "prov_ps=C:\mios-bootstrap\cat\autounattend\Invoke-MiOSProvision.ps1"
 if "%prov_ps%"=="" (
-    echo [INFO] Invoke-MiOSProvision.ps1 not found - stage the USB payload first.
+    echo INFO: Invoke-MiOSProvision.ps1 not found - stage the USB payload first.
     pause
     goto sub_deploy
 )
@@ -567,7 +567,7 @@ set "dep_ps="
 if exist "%~dp0autounattend\Deploy-MiOSXbox.ps1" set "dep_ps=%~dp0autounattend\Deploy-MiOSXbox.ps1"
 if "%dep_ps%"=="" if exist "C:\mios-bootstrap\cat\autounattend\Deploy-MiOSXbox.ps1" set "dep_ps=C:\mios-bootstrap\cat\autounattend\Deploy-MiOSXbox.ps1"
 if "%dep_ps%"=="" (
-    echo [INFO] Deploy-MiOSXbox.ps1 not found - stage the USB payload first.
+    echo INFO: Deploy-MiOSXbox.ps1 not found - stage the USB payload first.
     pause
     goto sub_deploy
 )
@@ -592,7 +592,7 @@ set /p "confirm=Check for and pull updates now? (Y/N): "
 if /i not "%confirm%"=="Y" goto menu
 powershell -NoProfile -Command "try { if ([System.Net.Dns]::GetHostAddresses('github.com')) { exit 0 } else { exit 1 } } catch { exit 1 }"
 if not "%errorlevel%"=="0" (
-    echo [OFFLINE] Internet unreachable - cannot pull updates right now.
+    echo OFFLINE: Internet unreachable - cannot pull updates right now.
     pause
     goto menu
 )
@@ -674,7 +674,7 @@ set "docs_dir="
 if exist "%~dp0autounattend\docs" set "docs_dir=%~dp0autounattend\docs"
 if "%docs_dir%"=="" if exist "C:\mios-bootstrap\cat\autounattend\docs" set "docs_dir=C:\mios-bootstrap\cat\autounattend\docs"
 if "%docs_dir%"=="" (
-    echo [INFO] Local docs not found; opening the online project instead...
+    echo INFO: Local docs not found; opening the online project instead...
     start "" "https://github.com/mios-dev/mios-bootstrap"
     goto sub_manual
 )
@@ -878,7 +878,7 @@ set "log_file=C:\Windows\Temp\mios-cat-install.log"
 echo [START] MiOS-Cat Flash Execution Started at %DATE% %TIME% > "%log_file%"
 
 if not exist "%drivepath%:\" (
-    echo [ERROR] Target drive %drivepath%: was not found! | tee -a "%log_file%" 2>nul
+    echo ERROR: Target drive %drivepath%: was not found! | tee -a "%log_file%" 2>nul
     echo Please insert your USB drive and ensure it is mounted as %drivepath%:\
     if not "%NONINTERACTIVE%"=="1" pause
     goto menu
@@ -895,8 +895,8 @@ echo Checking Ventoy files...
 if not exist "%stage_dir%\Ventoy2Disk" call :resolve_ventoy_latest
 if not exist "%stage_dir%\Ventoy2Disk" if not defined ventoy_ver (
     echo.
-    echo [FAIL] Could not resolve a Ventoy version: no network to reach GitHub, no
-    echo        build-recorded pin in [cat].ventoy_version, and no Ventoy staged.
+    echo FAIL: Could not resolve a Ventoy version: no network to reach GitHub, no
+    echo        build-recorded pin in cat:.ventoy_version, and no Ventoy staged.
     exit /b 1
 )
 if not exist "%stage_dir%\Ventoy2Disk" (
@@ -906,7 +906,7 @@ if not exist "%stage_dir%\Ventoy2Disk" (
     for /d %%V in ("%stage_dir%\ventoy-*") do ren "%%V" Ventoy2Disk
     del "%stage_dir%\ventoy.zip" /Q >nul 2>&1
     if not exist "%stage_dir%\Ventoy2Disk\Ventoy2Disk.exe" (
-        echo [FAIL] Ventoy %ventoy_ver% download/extract failed -- no Ventoy2Disk.exe present.
+        echo FAIL: Ventoy %ventoy_ver% download/extract failed -- no Ventoy2Disk.exe present.
         exit /b 1
     )
 )
@@ -944,7 +944,7 @@ if "%download_needed%"=="1" (
     echo Pulling/Resuming core Medicat files 23 GB from CDN to %file%...
     curl.exe -C - -e "https://installer.medicatusb.com" -L "https://cat.tcbl.dev/MediCat.USB.v21.12.7z" -o "%file%" -#
 ) else (
-    echo [OK] Core Medicat archive found and complete at %file%
+    echo OK: Core Medicat archive found and complete at %file%
 )
 
 :: 6b. Extract WIM payload & PortableApps suite to Localhost AIO Stage
@@ -956,7 +956,7 @@ set "fedora_ver=44"
 set "fedora_build=-1.7"
 set "fedora_file=M:\Fedora-Server-dvd-x86_64-%fedora_ver%%fedora_build%.iso"
 if exist "%fedora_file%" (
-    echo [OK] Fedora Server DVD found at "%fedora_file%"
+    echo OK: Fedora Server DVD found at "%fedora_file%"
 ) else (
     echo Pulling FULL Fedora %fedora_ver% Server DVD ~2.5 GB...
     curl.exe -C - -L "https://download.fedoraproject.org/pub/fedora/linux/releases/%fedora_ver%/Server/x86_64/iso/Fedora-Server-dvd-x86_64-%fedora_ver%%fedora_build%.iso" -o "%fedora_file%" -#
@@ -985,7 +985,7 @@ if not exist "%sysrescue_local%" (
     curl.exe -C - -L --connect-timeout 10 --retry 3 "https://downloads.sourceforge.net/project/systemrescuecd/sysresccd-x86/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_local%" -#
 )
 if not exist "%sysrescue_local%" (
-    echo [FATAL ERROR] SystemRescue ISO download failed! & exit /b 1
+    echo FATAL ERROR: SystemRescue ISO download failed! & exit /b 1
 )
 
 :: 7. Perform Localhost Offline DISM Servicing on MiOS_PE.wim (Zero USB mounting!)
@@ -997,7 +997,7 @@ if not exist "%wim_path%" (
 )
 
 if not exist "%wim_path%" (
-    echo [FATAL ERROR] Required WIM image file not found at %wim_path%!
+    echo FATAL ERROR: Required WIM image file not found at %wim_path%!
     exit /b 1
 )
 
@@ -1014,20 +1014,20 @@ mkdir "%stage_dir%\mount" >nul 2>&1
 echo Mounting WIM image on Localhost SSD (%stage_dir%\mount)...
 dism /Mount-Image /ImageFile:"%wim_path%" /Index:1 /MountDir:"%stage_dir%\mount"
 if %errorlevel% neq 0 (
-    echo [WARN] DISM mount failed, retrying after DISM cleanup...
+    echo WARN: DISM mount failed, retrying after DISM cleanup...
     dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
     dism /Cleanup-Wim >nul 2>&1
     ping localhost -n 4 >nul
     dism /Mount-Image /ImageFile:"%wim_path%" /Index:1 /MountDir:"%stage_dir%\mount"
 )
 if %errorlevel% neq 0 (
-    echo [FATAL ERROR] DISM failed to mount %wim_path% with exit code %errorlevel%!
+    echo FATAL ERROR: DISM failed to mount %wim_path% with exit code %errorlevel%!
     dism /Cleanup-Wim >nul 2>&1
     exit /b %errorlevel%
 )
 
 if "%bake_drivers%"=="Enabled" (
-    echo [DRIVER BAKE] Exporting build-host drivers for WinPE injection...
+    echo DRIVER BAKE: Exporting build-host drivers for WinPE injection...
     mkdir "%stage_dir%\hostdrivers" >nul 2>&1
     dism /Online /Export-Driver /Destination:"%stage_dir%\hostdrivers"
     if %errorlevel% neq 0 (
@@ -1117,7 +1117,7 @@ if %errorlevel% neq 0 (
     dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Commit
 )
 if %errorlevel% neq 0 (
-    echo [FATAL ERROR] Failed to unmount and commit Localhost WIM image!
+    echo FATAL ERROR: Failed to unmount and commit Localhost WIM image!
     dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
     dism /Cleanup-Wim >nul 2>&1
     exit /b 1
@@ -1153,15 +1153,15 @@ if exist "%live_chat_iso_src%" (
 echo.
 echo Checking AIO compiled images verification gate...
 if not exist "%aio_stage%\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim" (
-    echo [FATAL ERROR] AIO verification failed: MiOS_PE.wim missing from stage! & exit /b 1
+    echo FATAL ERROR: AIO verification failed: MiOS_PE.wim missing from stage! & exit /b 1
 )
 if "%build_xbox%"=="Enabled" (
     if not exist "%aio_stage%\Live_Operating_Systems\MiOS-Xbox.iso" (
-        echo [FATAL ERROR] AIO verification failed: MiOS-Xbox.iso missing from stage! & exit /b 1
+        echo FATAL ERROR: AIO verification failed: MiOS-Xbox.iso missing from stage! & exit /b 1
     )
 )
 if not exist "%aio_stage%\Live_Operating_Systems\SystemRescue\SystemRescue.iso" (
-    echo [FATAL ERROR] AIO verification failed: SystemRescue.iso missing from stage! & exit /b 1
+    echo FATAL ERROR: AIO verification failed: SystemRescue.iso missing from stage! & exit /b 1
 )
 echo [AIO SUCCESS] All images 100%% compiled, serviced, and verified on Localhost SSD!
 
@@ -1265,16 +1265,16 @@ echo ==========================================================
 mkdir "%drivepath%:\Live_Operating_Systems" >nul 2>&1
 robocopy "%aio_stage%\Live_Operating_Systems" "%drivepath%:\Live_Operating_Systems" /E /R:2 /W:2 /MT:32
 if errorlevel 8 (
-    echo [FATAL ERROR] Robocopy failed to write AIO images to %drivepath%:\Live_Operating_Systems!
+    echo FATAL ERROR: Robocopy failed to write AIO images to %drivepath%:\Live_Operating_Systems!
     exit /b 1
 )
 
 if exist "%aio_stage%\PortableApps" (
-    echo Writing PortableApps suite to USB [%drivepath%:\PortableApps]...
+    echo Writing PortableApps suite to USB %drivepath%:\PortableApps:...
     mkdir "%drivepath%:\PortableApps" >nul 2>&1
     robocopy "%aio_stage%\PortableApps" "%drivepath%:\PortableApps" /E /R:2 /W:2 /MT:32
     if errorlevel 8 (
-        echo [FATAL ERROR] Robocopy failed to write PortableApps to %drivepath%:\PortableApps!
+        echo FATAL ERROR: Robocopy failed to write PortableApps to %drivepath%:\PortableApps!
         exit /b 1
     )
     echo Debloating PortableApps suite to MiOS specifications...
@@ -1284,13 +1284,13 @@ if exist "%aio_stage%\PortableApps" (
 )
 
 if exist "%aio_stage%\MiOS-PE" (
-    echo Writing MiOS-PE rescue directory to USB [%drivepath%:\MiOS-PE]...
+    echo Writing MiOS-PE rescue directory to USB %drivepath%:\MiOS-PE:...
     mkdir "%drivepath%:\MiOS-PE" >nul 2>&1
     robocopy "%aio_stage%\MiOS-PE" "%drivepath%:\MiOS-PE" /E /R:2 /W:2 /MT:32 >nul
 )
 
 if exist "%aio_stage%\Documents" (
-    echo Writing Documents vault to USB [%drivepath%:\Documents]...
+    echo Writing Documents vault to USB %drivepath%:\Documents:...
     mkdir "%drivepath%:\Documents" >nul 2>&1
     robocopy "%aio_stage%\Documents" "%drivepath%:\Documents" /E /R:2 /W:2 /MT:32 >nul
 )
@@ -1334,7 +1334,7 @@ echo ==========================================================
 :: 1. Admin privilege check
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [FAIL] Administrator privileges required. Please run this script as Admin.
+    echo FAIL: Administrator privileges required. Please run this script as Admin.
     exit /b 1
 )
 echo [PASS] Administrator privileges verified.
@@ -1343,7 +1343,7 @@ echo [PASS] Administrator privileges verified.
 powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { if ($d.IsBoot -or $d.IsSystem) { exit 2 } }; exit 0"
 set "disk_check=%errorlevel%"
 if %disk_check% equ 2 (
-    echo [FAIL] Target drive %drivepath%: is the Windows System/Boot drive! Formatting OS drive is blocked.
+    echo FAIL: Target drive %drivepath%: is the Windows System/Boot drive! Formatting OS drive is blocked.
     echo        Please specify a non-boot target drive letter.
     exit /b 1
 )
@@ -1353,21 +1353,21 @@ echo [PASS] Target drive %drivepath%: safety check completed.
 if not exist "%file%" (
     powershell -NoProfile -Command "$cacheDrive = Split-Path -Path '%file%' -Qualifier; $v = Get-Volume -DriveLetter $cacheDrive.Trim(':') -ErrorAction SilentlyContinue; if ($v -and $v.SizeRemaining -lt 25GB) { exit 1 }; exit 0"
     if errorlevel 1 (
-        echo [FAIL] Insufficient disk space on cache drive to download Medicat - 25GB required.
+        echo FAIL: Insufficient disk space on cache drive to download Medicat - 25GB required.
         exit /b 1
     )
-    echo [PASS] Cache drive storage space verified.
+    echo PASS: Cache drive storage space verified.
 )
 
 :: 4. Dependency checks (git, curl)
 where git >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [FAIL] Git is missing from system PATH.
+    echo FAIL: Git is missing from system PATH.
     exit /b 1
 )
 where curl >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [FAIL] Curl is missing from system PATH.
+    echo FAIL: Curl is missing from system PATH.
     exit /b 1
 )
 echo [PASS] System dependencies (git, curl) verified.
@@ -1378,11 +1378,11 @@ exit /b 0
 :check_drive_ready
 if not exist "%drivepath%:\CdUsb.Y" (
     echo.
-    echo [WARNING] USB drive %drivepath%: is temporarily busy or disconnected.
+    echo WARNING: USB drive %drivepath%: is temporarily busy or disconnected.
     echo Waiting 3 seconds for link remount...
     ping localhost -n 4 >nul
     if not exist "%drivepath%:\CdUsb.Y" (
-        echo [ERROR] USB drive %drivepath%: is missing.
+        echo ERROR: USB drive %drivepath%: is missing.
         echo Please ensure the USB drive is plugged in correctly.
         if not "%NONINTERACTIVE%"=="1" pause
     )
@@ -1479,7 +1479,7 @@ goto :eof
 :update_repo
 :: %1 = repo path, %2 = display name
 if not exist "%~1\.git" (
-    echo [SKIP] %~2 is not a git checkout at %~1
+    echo SKIP: %~2 is not a git checkout at %~1
     goto :eof
 )
 echo Updating %~2 at %~1 ...
