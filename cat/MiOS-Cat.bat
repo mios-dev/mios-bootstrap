@@ -956,20 +956,19 @@ echo Extracting Mini_Windows WIM and PortableApps suite from core archive to Loc
 set "fedora_ver=44"
 set "fedora_build=-1.7"
 set "fedora_file=M:\Fedora-Server-dvd-x86_64-%fedora_ver%%fedora_build%.iso"
-if exist "%fedora_file%" echo [OK] Fedora Server DVD found at %fedora_file%
-if exist "%fedora_file%" goto fedora_dvd_ok
-echo Pulling FULL Fedora %fedora_ver% Server DVD ~2.5 GB...
-curl.exe -C - -L "https://download.fedoraproject.org/pub/fedora/linux/releases/%fedora_ver%/Server/x86_64/iso/Fedora-Server-dvd-x86_64-%fedora_ver%%fedora_build%.iso" -o "%fedora_file%" -#
-set "fedora_sz=0"
-if exist "%fedora_file%" for %%A in ("%fedora_file%") do set "fedora_sz=%%~zA"
-if not "%fedora_sz:~9,1%"=="" goto fedora_dvd_ok
-echo [FATAL ERROR] Fedora DVD download failed! & exit /b 1
-:fedora_dvd_ok
+if exist "%fedora_file%" (
+    echo [OK] Fedora Server DVD found at "%fedora_file%"
+) else (
+    echo Pulling FULL Fedora %fedora_ver% Server DVD ~2.5 GB...
+    curl.exe -C - -L "https://download.fedoraproject.org/pub/fedora/linux/releases/%fedora_ver%/Server/x86_64/iso/Fedora-Server-dvd-x86_64-%fedora_ver%%fedora_build%.iso" -o "%fedora_file%" -#
+)
 copy "%fedora_file%" "%aio_stage%\Live_Operating_Systems\Fedora-Server.iso" /Y >nul
 
 :: 6d. Ensure SystemRescue Arch Linux ISO is staged with LATEST upstream version
 set "sysrescue_ver=13.01"
-for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "try { $r=(Invoke-WebRequest -Uri 'https://www.system-rescue.org/Download/' -UseBasicParsing -TimeoutSec 6 -Headers @{'User-Agent'='MiOS-Cat'}).Content; if ($r -match 'systemrescue-([0-9]+\.[0-9]+)-amd64\.iso') { $Matches[1] } else { '13.01' } } catch { '13.01' }"`) do set "sysrescue_ver=%%i"
+powershell -NoProfile -Command "try { $r=(Invoke-WebRequest -Uri 'https://www.system-rescue.org/Download/' -UseBasicParsing -TimeoutSec 6 -Headers @{'User-Agent'='MiOS-Cat'}).Content; if ($r -match 'systemrescue-([0-9]+\.[0-9]+)-amd64\.iso') { Set-Content -LiteralPath '$env:TEMP\sysrescue_ver.txt' -Value $Matches[1] } } catch {}" >nul 2>&1
+if exist "%TEMP%\sysrescue_ver.txt" set /p sysrescue_ver=<"%TEMP%\sysrescue_ver.txt"
+if exist "%TEMP%\sysrescue_ver.txt" del "%TEMP%\sysrescue_ver.txt" /q >nul 2>&1
 set "sysrescue_local=%aio_stage%\Live_Operating_Systems\SystemRescue\SystemRescue.iso"
 set "sysrescue_cache=M:\systemrescue-%sysrescue_ver%-amd64.iso"
 if exist "%sysrescue_cache%" (
@@ -1030,9 +1029,17 @@ if "%bake_drivers%"=="Enabled" (
     echo [DRIVER BAKE] Exporting build-host drivers for WinPE injection...
     mkdir "%stage_dir%\hostdrivers" >nul 2>&1
     dism /Online /Export-Driver /Destination:"%stage_dir%\hostdrivers"
-    if %errorlevel% neq 0 ( echo [FATAL ERROR] DISM Export-Driver failed! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b %errorlevel% )
+    if %errorlevel% neq 0 (
+        echo FATAL ERROR: DISM Export-Driver failed!
+        dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
+        exit /b %errorlevel%
+    )
     dism /Image:"%stage_dir%\mount" /Add-Driver /Driver:"%stage_dir%\hostdrivers" /Recurse /ForceUnsigned
-    if %errorlevel% neq 0 ( echo [FATAL ERROR] DISM Add-Driver failed! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b %errorlevel% )
+    if %errorlevel% neq 0 (
+        echo FATAL ERROR: DISM Add-Driver failed!
+        dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
+        exit /b %errorlevel%
+    )
     rmdir /s /q "%stage_dir%\hostdrivers" >nul 2>&1
 )
 
@@ -1041,7 +1048,11 @@ set "wallpaper_src="
 if exist "%maindir%\resources\theme\uefi\background.jpg" set "wallpaper_src=%maindir%\resources\theme\uefi\background.jpg"
 if "%wallpaper_src%"=="" if exist "%~dp0..\resources\theme\uefi\background.jpg" set "wallpaper_src=%~dp0..\resources\theme\uefi\background.jpg"
 if "%wallpaper_src%"=="" if exist "D:\ventoy\theme\uefi\background.jpg" set "wallpaper_src=D:\ventoy\theme\uefi\background.jpg"
-if "%wallpaper_src%"=="" ( echo [FATAL ERROR] background.jpg missing! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
+if "%wallpaper_src%"=="" (
+    echo FATAL ERROR: background.jpg missing!
+    dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
+    exit /b 1
+)
 
 takeown /f "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /a >nul 2>&1
 icacls "%stage_dir%\mount\Windows\Web\Wallpaper\Windows\img0.jpg" /grant administrators:F >nul 2>&1
@@ -1054,15 +1065,28 @@ set "font_src="
 if exist "C:\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" set "font_src=C:\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf"
 if "%font_src%"=="" if exist "%maindir%\resources\fonts\GeistMonoNerdFontMono-Regular.otf" set "font_src=%maindir%\resources\fonts\GeistMonoNerdFontMono-Regular.otf"
 if "%font_src%"=="" if exist "%~dp0..\resources\fonts\GeistMonoNerdFontMono-Regular.otf" set "font_src=%~dp0..\resources\fonts\GeistMonoNerdFontMono-Regular.otf"
-if "%font_src%"=="" ( echo [FATAL ERROR] GeistMono font missing! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
+if "%font_src%"=="" (
+    echo FATAL ERROR: GeistMono font missing!
+    dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
+    exit /b 1
+)
 copy "%font_src%" "%stage_dir%\mount\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" /Y >nul
 
 reg unload HKEY_USERS\pe-default >nul 2>&1
 reg unload HKEY_USERS\pe-software >nul 2>&1
 reg load HKEY_USERS\pe-default "%stage_dir%\mount\Windows\System32\config\DEFAULT" >nul 2>&1
-if %errorlevel% neq 0 ( echo [FATAL ERROR] Failed to load DEFAULT hive! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
+if %errorlevel% neq 0 (
+    echo FATAL ERROR: Failed to load DEFAULT hive!
+    dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
+    exit /b 1
+)
 reg load HKEY_USERS\pe-software "%stage_dir%\mount\Windows\System32\config\SOFTWARE" >nul 2>&1
-if %errorlevel% neq 0 ( echo [FATAL ERROR] Failed to load SOFTWARE hive! & reg unload HKEY_USERS\pe-default >nul 2>&1 & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
+if %errorlevel% neq 0 (
+    echo FATAL ERROR: Failed to load SOFTWARE hive!
+    reg unload HKEY_USERS\pe-default >nul 2>&1
+    dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
+    exit /b 1
+)
 
 reg add "HKEY_USERS\pe-software\Microsoft\Windows NT\CurrentVersion\Fonts" /v "GeistMono Nerd Font Mono Regular (TrueType)" /t REG_SZ /d "GeistMonoNerdFontMono-Regular.otf" /f >nul
 reg add "HKEY_USERS\pe-default\Console" /v "ColorTable00" /t REG_DWORD /d 6431272 /f >nul
@@ -1102,7 +1126,10 @@ if exist "%stage_dir%\mount" rmdir "%stage_dir%\mount" /S /Q >nul 2>&1
 echo Exporting and compressing Localhost MiOS_PE.wim...
 set "trim_path=%aio_stage%\Live_Operating_Systems\Mini_Windows\MiOS_PE.wim.trim"
 dism /Export-Image /SourceImageFile:"%wim_path%" /SourceIndex:1 /DestinationImageFile:"%trim_path%" /Compress:max
-if %errorlevel% neq 0 ( echo [FATAL ERROR] DISM Export-Image failed! & exit /b %errorlevel% )
+if %errorlevel% neq 0 (
+    echo FATAL ERROR: DISM Export-Image failed!
+    exit /b %errorlevel%
+)
 del "%wim_path%" /Q >nul 2>&1
 move "%trim_path%" "%wim_path%" >nul
 
