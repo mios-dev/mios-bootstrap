@@ -976,7 +976,7 @@ if exist "%sysrescue_cache%" (
     copy "%sysrescue_cache%" "%sysrescue_local%" /Y >nul 2>&1
 )
 if not exist "%sysrescue_local%" (
-    echo Pulling SystemRescue %sysrescue_ver% (LATEST upstream release)...
+    echo Pulling SystemRescue %sysrescue_ver% - LATEST upstream release...
     curl.exe -C - -L --connect-timeout 10 --retry 3 "https://fastly-cdn.system-rescue.org/releases/%sysrescue_ver%/systemrescue-%sysrescue_ver%-amd64.iso" -o "%sysrescue_cache%" -#
     if exist "%sysrescue_cache%" copy "%sysrescue_cache%" "%sysrescue_local%" /Y >nul 2>&1
 )
