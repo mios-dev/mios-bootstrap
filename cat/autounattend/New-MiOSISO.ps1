@@ -982,16 +982,18 @@ function Invoke-MiOSImageServicing {
     # All non-fatal.
     for ($mAttempt = 1; $mAttempt -le 4; $mAttempt++) {
         foreach ($m in @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue)) {
-            if ($m.ImagePath -eq $wim -or $m.MountPath -eq $mount) {
+            if ($m.ImagePath -eq $wim -or $m.MountPath -eq $mount -or $m.MountPath -like '*MountUUP*') {
                 try { Dismount-WindowsImage -Path $m.MountPath -Discard -ErrorAction Stop | Out-Null }
                 catch { Write-Host "    stale mount at $($m.MountPath) ($($_.Exception.Message.Split([Environment]::NewLine)[0])) -- forcing" -ForegroundColor Yellow }
             }
         }
+        if (Test-Path "M:\MountUUP") { try { Dismount-WindowsImage -Path "M:\MountUUP" -Discard -ErrorAction SilentlyContinue | Out-Null } catch {} }
         if (Test-Path $mount) { try { Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null } catch {} }
         try { & dism.exe /Cleanup-Mountpoints 2>&1 | Out-Null } catch {}
+        try { & dism.exe /Cleanup-Wim 2>&1 | Out-Null } catch {}
         try { Clear-WindowsCorruptMountPoint -ErrorAction SilentlyContinue | Out-Null } catch {}
         if (Test-Path $mount) { try { Remove-Item $mount -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
-        $staleLeft = @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.ImagePath -eq $wim -or $_.MountPath -eq $mount })
+        $staleLeft = @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue | Where-Object { $_.ImagePath -eq $wim -or $_.MountPath -eq $mount -or $_.MountPath -like '*MountUUP*' })
         if ($staleLeft.Count -eq 0 -and -not (Test-Path $mount)) { break }
         Start-Sleep -Seconds 2
     }
