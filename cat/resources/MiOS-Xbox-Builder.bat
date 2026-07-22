@@ -21,7 +21,7 @@ if not exist "%TOM_PATH%" (
     echo.
     echo [INFO] Sourced SSOT not found at C:\mios-bootstrap\mios.toml
     echo Pulling MiOS bootstrap live from GitHub...
-    powershell -Command "Invoke-WebRequest -Uri 'https://github.com/mios-dev/mios-bootstrap/archive/refs/heads/main.zip' -OutFile 'mios-bootstrap.zip'"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri 'https://github.com/mios-dev/mios-bootstrap/archive/refs/heads/main.zip' -OutFile 'mios-bootstrap.zip' -UseBasicParsing -Headers @{'User-Agent'='MiOS-Cat'}"
     powershell -Command "Expand-Archive -Path 'mios-bootstrap.zip' -DestinationPath 'C:\' -Force"
     move "C:\mios-bootstrap-main" "C:\mios-bootstrap" >nul 2>&1
     del mios-bootstrap.zip /Q

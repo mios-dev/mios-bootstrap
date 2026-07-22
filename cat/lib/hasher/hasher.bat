@@ -42,7 +42,7 @@ echo.as always feel free to ask for help in the discord.
 pause
 :start
 cls
-powershell -c "Invoke-WebRequest -Uri 'http://cdn.medicatusb.xyz/files/hasher/hashes.bat' -OutFile './hashes.bat'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri 'http://cdn.medicatusb.xyz/files/hasher/hashes.bat' -OutFile './hashes.bat' -UseBasicParsing -Headers @{'User-Agent'='MiOS-Cat'}"
 call hashes.bat
 del hashes.bat /Q
 REM -- OPENS A FILE BOX

@@ -111,8 +111,8 @@ if not exist bin\7z.exe (
         if exist "C:\Program Files\7-Zip\7z.dll" copy "C:\Program Files\7-Zip\7z.dll" bin\7z.dll >nul 2>&1
     ) else (
         echo Downloading 7z helper...
-        curl -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.exe" -o ./bin/7z.exe
-        curl -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll" -o ./bin/7z.dll
+        curl.exe -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.exe" -o ./bin/7z.exe 2>nul || powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.exe' -OutFile './bin/7z.exe' -UseBasicParsing -Headers @{'User-Agent'='MiOS-Cat'}" >nul 2>&1
+        curl.exe -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll" -o ./bin/7z.dll 2>nul || powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll' -OutFile './bin/7z.dll' -UseBasicParsing -Headers @{'User-Agent'='MiOS-Cat'}" >nul 2>&1
     )
 )
 
