@@ -47,13 +47,15 @@ param(
     [string]$SourceIso,
     [string]$OutIso,
     [string]$TomlPath,
-    [string]$MergedPreset = (Join-Path $PSScriptRoot 'MiOS-Xbox-Merged.xml'),
+    [string]$MergedPreset = '',
     [string]$WorkDir,
     [switch]$SkipServicing,
     [switch]$Esd,
     [string]$Edition
 )
 $ErrorActionPreference = 'Stop'
+if (-not $PSScriptRoot) { $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition }
+if (-not $MergedPreset) { $MergedPreset = Join-Path $PSScriptRoot 'MiOS-Xbox-Merged.xml' }
 . (Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1')
 
 function Invoke-MiOSLiveMonitorAuto {
@@ -1409,7 +1411,7 @@ function Build-MiOSBootableIso {
     # cmd-level redirection to a log so PowerShell sees ONLY the exit code -- no
     # spurious error record. Check the code; surface the log tail only on failure.
     $ocLog = "$OutIso.oscdimg.log"
-    $cl = '"{0}" -m -o -u2 -udfver102 "-l{1}" "{2}" "{3}" "{4}" > "{5}" 2>&1' -f $oscdimg, $Label, $bootdata, $MediaRoot, $OutIso, $ocLog
+    $cl = '"{0}" -m -o -u2 -udfver102 "-l{1}" {2} "{3}" "{4}" > "{5}" 2>&1' -f $oscdimg, $Label, $bootdata, $MediaRoot, $OutIso, $ocLog
     & cmd.exe /c $cl
     if ($LASTEXITCODE -ne 0) {
         Get-Content $ocLog -Tail 12 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
