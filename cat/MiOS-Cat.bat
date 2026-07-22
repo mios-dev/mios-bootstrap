@@ -1057,11 +1057,20 @@ reg add "HKEY_USERS\pe-default\Console\%%SystemRoot%%_System32_cmd.exe" /v "Face
 reg add "HKEY_USERS\pe-default\Console\%%SystemRoot%%_System32_cmd.exe" /v "FontSize" /t REG_DWORD /d 1048576 /f >nul
 reg add "HKEY_USERS\pe-default\Console\%%SystemRoot%%_System32_cmd.exe" /v "FontFamily" /t REG_DWORD /d 54 /f >nul
 
-reg unload HKEY_USERS\pe-default >nul 2>&1
-reg unload HKEY_USERS\pe-software >nul 2>&1
+reg unload HKEY_USERS\pe-default /f >nul 2>&1
+reg unload HKEY_USERS\pe-software /f >nul 2>&1
+powershell -NoProfile -Command "[System.GC]::Collect(); [System.GC]::WaitForPendingFinalizers()" >nul 2>&1
+ping localhost -n 3 >nul
 
 echo Committing changes and unmounting Localhost WIM image...
 dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Commit
+if %errorlevel% neq 0 (
+    echo Retrying WIM unmount commit...
+    ping localhost -n 4 >nul
+    reg unload HKEY_USERS\pe-default /f >nul 2>&1
+    reg unload HKEY_USERS\pe-software /f >nul 2>&1
+    dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Commit
+)
 if %errorlevel% neq 0 (
     echo [FATAL ERROR] Failed to unmount and commit Localhost WIM image!
     dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1
@@ -1162,6 +1171,9 @@ echo Extracting payload to %drivepath%: (-mmt=on)...
 "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ %SURGICAL_LIST% -mmt=on -aoa -y >nul
 
 :: 13. Apply custom MiOS templates, PortableApps & shadow-config brain
+attrib -r -h -s "%drivepath%:\autorun.inf" >nul 2>&1
+attrib -r -h -s "%drivepath%:\autorun\*" /S /D >nul 2>&1
+attrib -r -h -s "%drivepath%:\ventoy\*" /S /D >nul 2>&1
 xcopy "%maindir%\resources\ventoy" "%drivepath%:\ventoy\" /E /I /H /Y /Q >nul
 xcopy "%maindir%\resources\theme" "%drivepath%:\ventoy\theme\" /E /I /H /Y /Q >nul
 mkdir "%drivepath%:\autorun" >nul 2>&1
@@ -1240,6 +1252,9 @@ if exist "%maindir%\resources\autorun\mios-stage-icons.ps1" (
 )
 
 powershell -NoProfile -Command "Set-Content -Path '%temp%\launcher.cs' -Value 'using System; using System.Diagnostics; using System.IO; class Launcher { static void Main() { string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @\"PortableApps\PortableApps.com\PortableAppsPlatform.exe\"); if (File.Exists(path)) { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); } } }'" >nul 2>&1
+
+if exist "%drivepath%:\Start.exe" attrib -r -h -s "%drivepath%:\Start.exe" >nul 2>&1
+if exist "%drivepath%:\Start.exe" del /f /q /a "%drivepath%:\Start.exe" >nul 2>&1
 
 if exist "%drivepath%:\autorun\mios.ico" (
     C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%drivepath%:\autorun\mios.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1

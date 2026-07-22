@@ -111,6 +111,7 @@ function Stage-PartitionIcon {
 
     $autorunDir = Join-Path $driveRoot "autorun"
     $icoPath    = Join-Path $autorunDir "mios.ico"
+    if (Test-Path $icoPath) { try { Set-ItemProperty -Path $icoPath -Name Attributes -Value Normal -ErrorAction SilentlyContinue } catch {} }
     New-MiOSDriveIcon -Path $icoPath -LabelText $Label
 
     # autorun.inf on drive root

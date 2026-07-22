@@ -1287,6 +1287,10 @@ function Invoke-MiOSImageServicing {
             $dismountSuccess = $false
             for ($attempt = 1; $attempt -le 3; $attempt++) {
                 try {
+                    [System.GC]::Collect()
+                    [System.GC]::WaitForPendingFinalizers()
+                    & reg.exe unload 'HKLM\MIOS_RSYS' /f 2>&1 | Out-Null
+                    & reg.exe unload 'HKLM\MIOS_RSW' /f 2>&1 | Out-Null
                     Dismount-WindowsImage -Path $mount -Save -ErrorAction Stop | Out-Null
                     $dismountSuccess = $true
                     break
