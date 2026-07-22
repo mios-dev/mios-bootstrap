@@ -1291,7 +1291,13 @@ function Invoke-MiOSImageServicing {
                     [System.GC]::WaitForPendingFinalizers()
                     & reg.exe unload 'HKLM\MIOS_RSYS' 2>&1 | Out-Null
                     & reg.exe unload 'HKLM\MIOS_RSW' 2>&1 | Out-Null
-                    Dismount-WindowsImage -Path $mount -Save -ErrorAction Stop | Out-Null
+                    $mountClean = $mount.TrimEnd('\')
+                    & dism.exe /Unmount-Image /MountDir:"$mountClean" /Commit 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        $dismountSuccess = $true
+                        break
+                    }
+                    Dismount-WindowsImage -Path $mountClean -Save -ErrorAction Stop | Out-Null
                     $dismountSuccess = $true
                     break
                 } catch {
