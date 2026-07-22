@@ -207,10 +207,11 @@ Create-ModernIcon "help" {
 }
 
 # -----------------------------------------------------------------------------
-# 2. GENERATE HIGH-DPI DISTINCT APP ICONS FOR ALL MIOS TOOLS
+# 2. GENERATE HIGH-DPI DISTINCT APP ICONS FOR ALL MIOS & PORTABLE TOOLS
 # -----------------------------------------------------------------------------
 
 function Build-MiOSAppIcon($appDir, $appName, $drawCode) {
+    if (-not (Test-Path $appDir)) { return }
     $infoDir = Join-Path $appDir "App\AppInfo"
     mkdir $infoDir -ErrorAction SilentlyContinue | Out-Null
     
@@ -340,6 +341,232 @@ Build-MiOSAppIcon (Join-Path $paBase "SoftwareLister") "SoftwareLister" {
     $g.FillRectangle($bLine, 22, 28, 14, 3)
     $bLine.Dispose()
 }
+
+# CrystalDiskInfo: Glowing Amber HDD/SSD Health Badge
+Build-MiOSAppIcon (Join-Path $paBase "CrystalDiskInfoPortable") "CrystalDiskInfoPortable" {
+    param($g, $sz)
+    $rect = New-Object System.Drawing.Rectangle 2, 2, ($sz-4), ($sz-4)
+    $brush = New-GradientBrush $rect ([System.Drawing.Color]::FromArgb(180, 83, 9)) ([System.Drawing.Color]::FromArgb(15, 23, 42)) 45
+    $g.FillEllipse($brush, $rect)
+    $brush.Dispose()
+    
+    $penGlow = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(245, 158, 11), 3)
+    $g.DrawEllipse($penGlow, $rect)
+    $penGlow.Dispose()
+    
+    $bHdd = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(254, 243, 199))
+    $g.FillRectangle($bHdd, 10, 14, 28, 20)
+    $bHdd.Dispose()
+    
+    $bLight = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(16, 185, 129))
+    $g.FillEllipse($bLight, 14, 22, 5, 5)
+    $bLight.Dispose()
+}
+
+# CrystalDiskMark: Glowing Emerald Benchmark Tachometer Badge
+Build-MiOSAppIcon (Join-Path $paBase "CrystalDiskMarkPortable") "CrystalDiskMarkPortable" {
+    param($g, $sz)
+    $rect = New-Object System.Drawing.Rectangle 2, 2, ($sz-4), ($sz-4)
+    $brush = New-GradientBrush $rect ([System.Drawing.Color]::FromArgb(6, 78, 59)) ([System.Drawing.Color]::FromArgb(15, 23, 42)) 45
+    $g.FillEllipse($brush, $rect)
+    $brush.Dispose()
+    
+    $penGlow = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(16, 185, 129), 3)
+    $g.DrawEllipse($penGlow, $rect)
+    $penGlow.Dispose()
+    
+    $pGauge = New-Object System.Drawing.Pen([System.Drawing.Color]::White, 3)
+    $g.DrawArc($pGauge, 10, 10, 28, 28, 140, 260)
+    $pGauge.Dispose()
+    
+    $pNeedle = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(239, 68, 68), 3)
+    $g.DrawLine($pNeedle, 24, 24, 34, 14)
+    $pNeedle.Dispose()
+}
+
+# HWiNFO: Glowing Cyan Microchip Hardware Sensor Badge
+Build-MiOSAppIcon (Join-Path $paBase "HWiNFO") "HWiNFO" {
+    param($g, $sz)
+    $rect = New-Object System.Drawing.Rectangle 2, 2, ($sz-4), ($sz-4)
+    $brush = New-GradientBrush $rect ([System.Drawing.Color]::FromArgb(14, 116, 144)) ([System.Drawing.Color]::FromArgb(15, 23, 42)) 45
+    $g.FillEllipse($brush, $rect)
+    $brush.Dispose()
+    
+    $penGlow = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(6, 182, 212), 3)
+    $g.DrawEllipse($penGlow, $rect)
+    $penGlow.Dispose()
+    
+    $bChip = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+    $g.FillRectangle($bChip, 14, 14, 20, 20)
+    $bChip.Dispose()
+    
+    $bCenter = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(15, 23, 42))
+    $g.FillRectangle($bCenter, 18, 18, 12, 12)
+    $bCenter.Dispose()
+}
+
+# Notepad++: Glowing Green Code Pencil Badge
+Build-MiOSAppIcon (Join-Path $paBase "Notepad++Portable") "Notepad++Portable" {
+    param($g, $sz)
+    $rect = New-Object System.Drawing.Rectangle 2, 2, ($sz-4), ($sz-4)
+    $brush = New-GradientBrush $rect ([System.Drawing.Color]::FromArgb(21, 128, 61)) ([System.Drawing.Color]::FromArgb(15, 23, 42)) 45
+    $g.FillEllipse($brush, $rect)
+    $brush.Dispose()
+    
+    $penGlow = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(34, 197, 94), 3)
+    $g.DrawEllipse($penGlow, $rect)
+    $penGlow.Dispose()
+    
+    $bPage = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+    $g.FillRectangle($bPage, 14, 10, 20, 28)
+    $bPage.Dispose()
+    
+    $pPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(243, 92, 21), 3)
+    $g.DrawLine($pPen, 10, 34, 30, 14)
+    $pPen.Dispose()
+}
+
+# 7-Zip: Glowing Yellow Archive Zipper Badge
+Build-MiOSAppIcon (Join-Path $paBase "7-ZipPortable") "7-ZipPortable" {
+    param($g, $sz)
+    $rect = New-Object System.Drawing.Rectangle 2, 2, ($sz-4), ($sz-4)
+    $brush = New-GradientBrush $rect ([System.Drawing.Color]::FromArgb(161, 98, 7)) ([System.Drawing.Color]::FromArgb(15, 23, 42)) 45
+    $g.FillEllipse($brush, $rect)
+    $brush.Dispose()
+    
+    $penGlow = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(234, 179, 8), 3)
+    $g.DrawEllipse($penGlow, $rect)
+    $penGlow.Dispose()
+    
+    $font = New-Object System.Drawing.Font('Segoe UI', 18, [System.Drawing.FontStyle]::Bold)
+    $bWhite = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+    $g.DrawString('7z', $font, $bWhite, 9, 6)
+    $font.Dispose()
+    $bWhite.Dispose()
+}
+
+# Snappy Driver Installer: Glowing Blue Driver Gear Suite Icon
+Build-MiOSAppIcon (Join-Path $paBase "SnappyDriverInstaller") "SnappyDriverInstaller" {
+    param($g, $sz)
+    $rect = New-Object System.Drawing.Rectangle 2, 2, ($sz-4), ($sz-4)
+    $brush = New-GradientBrush $rect ([System.Drawing.Color]::FromArgb(29, 78, 216)) ([System.Drawing.Color]::FromArgb(15, 23, 42)) 45
+    $g.FillEllipse($brush, $rect)
+    $brush.Dispose()
+    $penGlow = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(59, 130, 246), 3)
+    $g.DrawEllipse($penGlow, $rect)
+    $penGlow.Dispose()
+
+    # Gear outer ring
+    $pGear = New-Object System.Drawing.Pen([System.Drawing.Color]::White, 3)
+    $g.DrawEllipse($pGear, [int]($sz*0.28), [int]($sz*0.28), [int]($sz*0.44), [int]($sz*0.44))
+    $pGear.Dispose()
+
+    # 4 gear teeth
+    $bTooth = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+    $half = $sz / 2
+    $tw = [int]($sz * 0.10); $th = [int]($sz * 0.18)
+    $g.FillRectangle($bTooth, [int]($half - $tw/2), [int]($sz*0.07), $tw, $th)
+    $g.FillRectangle($bTooth, [int]($half - $tw/2), [int]($sz*0.75), $tw, $th)
+    $g.FillRectangle($bTooth, [int]($sz*0.07), [int]($half - $tw/2), $th, $tw)
+    $g.FillRectangle($bTooth, [int]($sz*0.75), [int]($half - $tw/2), $th, $tw)
+    $bTooth.Dispose()
+
+    # Orange lightning bolt (drivers = power)
+    $boltPts = @(
+        [System.Drawing.PointF]::new($half + 3, [int]($sz*0.22)),
+        [System.Drawing.PointF]::new($half - 4, [int]($sz*0.50)),
+        [System.Drawing.PointF]::new($half + 2, [int]($sz*0.50)),
+        [System.Drawing.PointF]::new($half - 3, [int]($sz*0.78)),
+        [System.Drawing.PointF]::new($half + 6, [int]($sz*0.46)),
+        [System.Drawing.PointF]::new($half + 0, [int]($sz*0.46))
+    )
+    $bBolt = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(253, 224, 71))
+    $g.FillPolygon($bBolt, $boltPts)
+    $bBolt.Dispose()
+}
+
+# ------------------------------------------------------------------
+# SDIO: Write full proper appinfo.ini so PortableApps platform
+# discovers and lists Snappy Driver Installer Origin correctly
+# ------------------------------------------------------------------
+$sdioDir  = Join-Path $paBase "SnappyDriverInstaller"
+$sdioInfo = Join-Path $sdioDir "App\AppInfo"
+if (Test-Path $sdioDir) {
+    mkdir $sdioInfo -ErrorAction SilentlyContinue | Out-Null
+
+    # Determine actual launcher exe (prefer x64 R739, fall back to auto)
+    $sdioExe = "SDIO_x64_R739.exe"
+    if (-not (Test-Path (Join-Path $sdioDir $sdioExe))) { $sdioExe = "SDIO_auto.exe" }
+    if (-not (Test-Path (Join-Path $sdioDir $sdioExe))) { $sdioExe = "SDIO_auto.bat" }
+
+    $sdioAppInfo = @"
+[Format]
+Type=PortableApps.comFormat
+Version=3.8
+
+[Details]
+Name=Snappy Driver Installer Origin
+AppID=SnappyDriverInstaller
+Publisher=SamLab
+Homepage=https://www.snappy-driver-installer.org/
+Category=Utilities
+Description=Universal Offline Driver Installer & Update Suite - MiOS Bundled
+Language=Multilingual
+
+[License]
+Shareable=true
+OpenSource=true
+Freeware=true
+CommercialUse=true
+
+[Version]
+PackageVersion=7.39.0.0
+DisplayVersion=R739
+
+[Control]
+Icons=1
+Start=$sdioExe
+
+[SpecialPaths]
+Logs=logs
+"@
+    [System.IO.File]::WriteAllText((Join-Path $sdioInfo "appinfo.ini"), $sdioAppInfo, [System.Text.Encoding]::UTF8)
+
+    # Generate icon for SDIO using same Build-MiOSAppIcon pipeline
+    Build-MiOSAppIcon $sdioDir "SnappyDriverInstaller" {
+        param($g, $sz)
+        $rect  = New-Object System.Drawing.Rectangle 2, 2, ($sz-4), ($sz-4)
+        $brush = New-GradientBrush $rect ([System.Drawing.Color]::FromArgb(15, 23, 42)) ([System.Drawing.Color]::FromArgb(29, 78, 216)) 45
+        $g.FillEllipse($brush, $rect); $brush.Dispose()
+
+        $penGlow = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(56, 189, 248), 3)
+        $g.DrawEllipse($penGlow, $rect); $penGlow.Dispose()
+
+        $pGear = New-Object System.Drawing.Pen([System.Drawing.Color]::White, 3)
+        $g.DrawEllipse($pGear, [int]($sz*0.28), [int]($sz*0.28), [int]($sz*0.44), [int]($sz*0.44))
+        $pGear.Dispose()
+
+        $bTooth = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+        $half = $sz / 2; $tw = [int]($sz*0.10); $th = [int]($sz*0.18)
+        $g.FillRectangle($bTooth, [int]($half - $tw/2), [int]($sz*0.07), $tw, $th)
+        $g.FillRectangle($bTooth, [int]($half - $tw/2), [int]($sz*0.75), $tw, $th)
+        $g.FillRectangle($bTooth, [int]($sz*0.07), [int]($half - $tw/2), $th, $tw)
+        $g.FillRectangle($bTooth, [int]($sz*0.75), [int]($half - $tw/2), $th, $tw)
+        $bTooth.Dispose()
+
+        $boltPts = @(
+            [System.Drawing.PointF]::new($half+3,  [int]($sz*0.22)),
+            [System.Drawing.PointF]::new($half-4,  [int]($sz*0.50)),
+            [System.Drawing.PointF]::new($half+2,  [int]($sz*0.50)),
+            [System.Drawing.PointF]::new($half-3,  [int]($sz*0.78)),
+            [System.Drawing.PointF]::new($half+6,  [int]($sz*0.46)),
+            [System.Drawing.PointF]::new($half+0,  [int]($sz*0.46))
+        )
+        $bBolt = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(253, 224, 71))
+        $g.FillPolygon($bBolt, $boltPts); $bBolt.Dispose()
+    }
+}
+
 
 # -----------------------------------------------------------------------------
 # 3. GENERATE CHROME & LOGO ASSETS
@@ -492,26 +719,46 @@ DefaultBackgroundColor=Dark
 "@
 [System.IO.File]::WriteAllText((Join-Path $paThemeDir "PATheme.ini"), $paThemeIni, [System.Text.Encoding]::UTF8)
 
-$menuIniPath = Join-Path $dataDir "settings\PortableAppsMenu.ini"
-if (Test-Path $menuIniPath) {
-    $lines = [System.IO.File]::ReadAllLines($menuIniPath, [System.Text.Encoding]::Unicode)
-    $newL = @()
-    foreach ($l in $lines) {
-        $t = $l.Trim()
-        if ($t.StartsWith("Theme=")) {
-            $newL += "Theme=MiOSTheme"
-        } elseif ($t.StartsWith("ThemeColor=")) {
-            $newL += "ThemeColor=Orange"
-        } elseif ($t -eq "[AppsFavorite]") {
-            $newL += $l
-            $newL += "miosinstaller\miosinstaller.exe=1"
-            $newL += "miosmonitor\miosmonitor.exe=1"
-            $newL += "miossystemrescue\miossystemrescue.exe=1"
-            $newL += "softwarelister\softwarelister.exe=1"
-        } else {
-            $newL += $l
-        }
+# ------------------------------------------------------------------
+# Write settings/PortableAppsMenu.ini (crash-proof Custom theme mode)
+# ------------------------------------------------------------------
+# CRITICAL: PortableApps reads settings INI as UTF-16 LE (Unicode). Writing
+# as UTF-8 causes the platform to silently ignore the file and fall back to
+# the built-in default blue theme.
+# ThemeColor=Custom uses the three CustomColor* keys and avoids the -1
+# list index crash that occurs with ThemeColor=Dark/Light/Orange when the
+# platform's options list can't find the preset by name.
+$menuSettingsDir = Join-Path $dataDir "settings"
+mkdir $menuSettingsDir -ErrorAction SilentlyContinue | Out-Null
+$menuIniPath = Join-Path $menuSettingsDir "PortableAppsMenu.ini"
+
+$menuSettingsLines = @(
+    '[PortableApps.comMenu]',
+    'Theme=MiOSTheme',
+    'ThemeColor=Custom',
+    'CustomColorBackground=282262',
+    'CustomColorForeground=E7DFD3',
+    'CustomColorAccent=F35C15'
+)
+# MUST be Unicode (UTF-16 LE with BOM) -- PortableApps Platform requirement
+[System.IO.File]::WriteAllLines($menuIniPath, $menuSettingsLines, [System.Text.Encoding]::Unicode)
+
+# Patch the MAIN PortableAppsMenu.ini to match (fixes any pre-existing ThemeColor=Dark/Orange)
+$mainMenuIni = Join-Path $dataDir "PortableAppsMenu.ini"
+if (Test-Path $mainMenuIni) {
+    $mainContent = [System.IO.File]::ReadAllText($mainMenuIni, [System.Text.Encoding]::UTF8)
+    $mainContent = $mainContent -replace 'ThemeColor=(Dark|Light|Orange)\b', 'ThemeColor=Custom'
+    # Strip any stale ThemeCustomColor key (old name, causes ambiguity)
+    $mainContent = $mainContent -replace 'ThemeCustomColor=[^\r\n]+\r?\n', ''
+    # Inject CustomColor* keys after ThemeColor=Custom if not already present
+    if ($mainContent -notmatch 'CustomColorBackground') {
+        $inject = "ThemeColor=Custom`r`nCustomColorBackground=282262`r`nCustomColorForeground=E7DFD3`r`nCustomColorAccent=F35C15"
+        $mainContent = $mainContent -replace 'ThemeColor=Custom', $inject
     }
-    [System.IO.File]::WriteAllLines($menuIniPath, $newL, [System.Text.Encoding]::Unicode)
+    [System.IO.File]::WriteAllText($mainMenuIni, $mainContent, [System.Text.Encoding]::UTF8)
+    Write-Host "[PA-Theme] Main PortableAppsMenu.ini ThemeColor aligned to Custom."
 }
+
+Write-Host "[PA-Theme] MiOS PortableApps theme applied. Options crash-proof: ThemeColor=Custom."
+
 

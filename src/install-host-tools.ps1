@@ -97,6 +97,11 @@ function Install-MiosWindowsTools {
             $pkgBinMap[$_parts[0].Trim()] = $_parts[1].Trim()
         }
     }
+    $wgUserLinks = "$env:LOCALAPPDATA\Microsoft\WinGet\Links"
+    $wgSysLinks  = "$env:ProgramFiles\WinGet\Links"
+    if ((Test-Path $wgUserLinks) -and ($env:PATH -notlike "*$wgUserLinks*")) { $env:PATH = "$wgUserLinks;$env:PATH" }
+    if ((Test-Path $wgSysLinks)  -and ($env:PATH -notlike "*$wgSysLinks*"))  { $env:PATH = "$wgSysLinks;$env:PATH" }
+
     $installed = 0
     $skipped   = 0
     $failed    = 0

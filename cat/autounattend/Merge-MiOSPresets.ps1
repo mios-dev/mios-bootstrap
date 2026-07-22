@@ -56,9 +56,7 @@
 [CmdletBinding()]
 param(
     [string[]]$InputPresets = @(
-        (Join-Path $PSScriptRoot 'presets\xbox-minimal-ultra-plus.xml'),   # BASE (canonical) -- must be first
-        (Join-Path $PSScriptRoot 'presets\autosave-7eb3e01a.xml'),
-        (Join-Path $PSScriptRoot 'presets\autosave-e8a2b9d1.xml')
+        (Join-Path $PSScriptRoot 'presets\mios-xbox.xml')   # Canonical MiOS-Xbox preset
     ),
     [string]$OutputPreset
 )
