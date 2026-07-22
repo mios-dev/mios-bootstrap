@@ -2,7 +2,7 @@
     "control":[
         { "VTOY_DEFAULT_MENU_MODE": "0" },
         { "VTOY_TREE_VIEW_MENU_STYLE": "1" },
-        { "VTOY_DEFAULT_SEARCH_ROOT": "/" },
+        { "VTOY_DEFAULT_SEARCH_ROOT": "/Live_Operating_Systems" },
         { "VTOY_WIN11_BYPASS_CHECK": "1" },
         { "VTOY_LINUX_REMOUNT": "1" },
         { "VTOY_SECONDARY_BOOT_MENU": "1" }
@@ -29,15 +29,25 @@
         "ventoy_color": "#F35C15"
     },
     "menu_alias": [
-        { "image": "/MiOS-PE/MiOS_PE.wim", "alias": "MiOS-PE Mini Windows (Rescue & Recovery Suite)" },
-        { "image": "/Live_Operating_Systems/MiOS-Live-Chat.iso", "alias": "MiOS Live-Chat AI (Ephemeral Live System)" },
-        { "image": "/Live_Operating_Systems/Fedora-Server.iso", "alias": "Deploy MiOS Linux (Fedora Server + MiOS Overlay)" },
+        { "image": "/Live_Operating_Systems/Fedora-Server.iso", "alias": "Deploy MiOS Linux (Fedora Server + MiOS Sovereign Overlay)" },
+        { "image": "/Fedora-Server.iso", "alias": "Deploy MiOS Linux (Fedora Server + MiOS Sovereign Overlay)" },
         { "image": "/Live_Operating_Systems/MiOS-Xbox.iso", "alias": "Deploy MiOS-Xbox (Windows Gaming Edition - CompactOS)" },
-        { "image": "/Live_Operating_Systems/Mini_Windows/MiOS_PE.wim", "alias": "MiOS-PE Mini Windows (Live Rescue & Imaging Environment)" },
-        { "image": "/Live_Operating_Systems/Mini_Windows/10.Win10PE.wim", "alias": "MiOS-PE Windows 10 Live Environment (Mini Windows)" },
-        { "image": "/Live_Operating_Systems/Mini_Windows/11.Win11PE.wim", "alias": "MiOS-PE Windows 11 Live Environment (Mini Windows)" },
-        { "image": "/Live_Operating_Systems/MiOS_PE.wim", "alias": "MiOS-PE Mini Windows (Live Environment)" },
-        { "image": "/Live_Operating_Systems/SystemRescue/SystemRescue.iso", "alias": "SystemRescue Arch Linux (Diagnostics & Disk Tools)" }
+        { "image": "/MiOS-Xbox.iso", "alias": "Deploy MiOS-Xbox (Windows Gaming Edition - CompactOS)" },
+        { "image": "/Live_Operating_Systems/Mini_Windows/MiOS_PE.wim", "alias": "MiOS-PE Mini Windows (Live Rescue & DISM Imaging Suite)" },
+        { "image": "/Mini_Windows/MiOS_PE.wim", "alias": "MiOS-PE Mini Windows (Live Rescue & DISM Imaging Suite)" },
+        { "image": "/MiOS_PE.wim", "alias": "MiOS-PE Mini Windows (Live Rescue & DISM Imaging Suite)" },
+        { "image": "/Live_Operating_Systems/SystemRescue/SystemRescue.iso", "alias": "SystemRescue Arch Linux (Diagnostics & Disk Tools)" },
+        { "image": "/SystemRescue/SystemRescue.iso", "alias": "SystemRescue Arch Linux (Diagnostics & Disk Tools)" }
+    ],
+    "menu_tip": [
+        { "image": "/Live_Operating_Systems/Fedora-Server.iso", "tip": "Deploy MiOS Linux -- Bare-Metal Fedora Server + MiOS Sovereign FHS Overlay & Local AI Engine" },
+        { "image": "/Fedora-Server.iso", "tip": "Deploy MiOS Linux -- Bare-Metal Fedora Server + MiOS Sovereign FHS Overlay & Local AI Engine" },
+        { "image": "/Live_Operating_Systems/MiOS-Xbox.iso", "tip": "Deploy MiOS-Xbox -- Windows 11 Gaming Edition with CompactOS Compression & Debloated Gaming Stack" },
+        { "image": "/MiOS-Xbox.iso", "tip": "Deploy MiOS-Xbox -- Windows 11 Gaming Edition with CompactOS Compression & Debloated Gaming Stack" },
+        { "image": "/Live_Operating_Systems/Mini_Windows/MiOS_PE.wim", "tip": "MiOS-PE Live Mini-Windows PE Desktop -- Automated DISM Deployment, Imaging & Rescue Suite" },
+        { "image": "/Mini_Windows/MiOS_PE.wim", "tip": "MiOS-PE Live Mini-Windows PE Desktop -- Automated DISM Deployment, Imaging & Rescue Suite" },
+        { "image": "/Live_Operating_Systems/SystemRescue/SystemRescue.iso", "tip": "SystemRescue Arch Linux -- Bare-Metal Hardware Diagnostics, Disk Partitioning & File Recovery" },
+        { "image": "/SystemRescue/SystemRescue.iso", "tip": "SystemRescue Arch Linux -- Bare-Metal Hardware Diagnostics, Disk Partitioning & File Recovery" }
     ],
     "menu_class": [
         { "key": "MiOS-PE", "class": "windows" },
@@ -67,6 +77,10 @@
     "kickstart":[
         {
             "image": "/Live_Operating_Systems/Fedora-Server.iso",
+            "template": "/ventoy/mios-kickstart.cfg"
+        },
+        {
+            "image": "/Fedora-Server.iso",
             "template": "/ventoy/mios-kickstart.cfg"
         }
     ]
