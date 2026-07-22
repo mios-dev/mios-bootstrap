@@ -162,7 +162,8 @@ function Draw {
     $start = $null
     $sm = [regex]::Match($joined, 'starting.*?\bat\b\s+\w*\s*(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}:\d{2})')
     if ($sm.Success) { try { $start = [datetime]::Parse($sm.Groups[1].Value) } catch {} }
-    if (-not $start) { $start = try { (Get-Item $LogPath).CreationTime } catch { $now } }
+    if (-not $start) { if (Test-Path $LogPath) { try { $start = (Get-Item $LogPath -ErrorAction SilentlyContinue).CreationTime } catch {} } }
+    if (-not $start) { $start = $now }
     $elapsed = $now - $start
     $eta = if ($pct -gt 3 -and -not $done) { $secs = $elapsed.TotalSeconds; $rem = ($secs / ($pct/100.0)) - $secs; [TimeSpan]::FromSeconds([math]::Max(0,$rem)) } else { $null }
     $sp = $spin[$Frame % $spin.Length]
@@ -254,11 +255,11 @@ function Draw {
     [void]$sb.AppendLine("  $rule")
 
     if ($done) {
-        if ($ok) { [void]$sb.AppendLine("  " + (C $suc (B '  ✔  MiOS-Cat USB ready — boot it, then pick "Chat with MiOS AI".'))) }
-        else     { [void]$sb.AppendLine("  " + (C $pal.error (B '  ✖  Flash failed — see LIVE LOG above / the full log file.'))) }
+        if ($ok) { [void]$sb.AppendLine("  " + (C $suc (B '  [+] MiOS-Cat USB ready - boot it, then pick "Chat with MiOS AI".'))) }
+        else     { [void]$sb.AppendLine("  " + (C $pal.error (B '  [!] Flash failed - see LIVE LOG above / the full log file.'))) }
     } else {
         $dots = '.' * (($Frame % 4))
-        [void]$sb.AppendLine("  " + (C $mu ("  $sp forging your MiOS-Cat USB$dots   (close this window anytime — the flash keeps running)")))
+        [void]$sb.AppendLine("  " + (C $mu ("  $sp forging your MiOS-Cat USB$dots   (close this window anytime - the flash keeps running)")))
     }
     return @{ text = $sb.ToString(); done = $done }
 }
