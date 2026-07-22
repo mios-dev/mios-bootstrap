@@ -20,6 +20,7 @@ if %errorlevel% neq 0 (
     )
     exit /b
 )
+call :ensure_live_monitor
 :: Resolve dynamic configuration from mios.toml (SSOT).
 :: The launcher lives at <repo>\cat\, so the repo-local SSOT (which also travels
 :: with the MiOS-Repo USB) is one level up; fall back to the canonical MiOS SSOT
@@ -1469,4 +1470,8 @@ if not exist "%xbox_builder_script%" ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 
 
 powershell.exe -ExecutionPolicy Bypass -File "%xbox_builder_script%" -TomlPath "%temp%\mios_run.toml" -OutIso "%aio_stage%\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%stage_dir%\isobuild_live" -SkipWsl -SkipPrereqs
 if errorlevel 1 ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 failed! & exit /b 1 )
+exit /b 0
+
+:ensure_live_monitor
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$mon = 'c:\mios-bootstrap\cat\autounattend\Monitor-MiOSFlash.ps1'; if (Test-Path $mon) { $p = Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*Monitor-MiOSFlash*' }; if (-not $p) { schtasks /create /tn ShowMonitorUI /tr \"powershell.exe -NoExit -ExecutionPolicy Bypass -File `\"$mon`\" -WorkDir M:\MiOS\medicat_stage\" /sc ONCE /st 00:00 /it /f >nul 2>&1; schtasks /run /tn ShowMonitorUI >nul 2>&1; Start-Process powershell -ArgumentList \"-NoExit -ExecutionPolicy Bypass -File `\"$mon`\" -WorkDir M:\MiOS\medicat_stage\" -WindowStyle Normal -ErrorAction SilentlyContinue } }" >nul 2>&1
 exit /b 0
