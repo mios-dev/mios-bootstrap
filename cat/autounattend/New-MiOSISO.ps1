@@ -499,7 +499,13 @@ function Set-MiOSIdentityOffline {
             }
             foreach ($k in $cMap.Keys) {
                 $src = Join-Path $curDst $cMap[$k]
-                if (Test-Path $src) { Copy-Item $src (Join-Path $sysCur $k) -Force -EA SilentlyContinue }
+                $dst = Join-Path $sysCur $k
+                if (Test-Path $src) {
+                    try {
+                        if (Test-Path $dst) { Set-ItemProperty -Path $dst -Name IsReadOnly -Value $false -Force -EA SilentlyContinue }
+                        Copy-Item $src $dst -Force -EA SilentlyContinue
+                    } catch { }
+                }
             }
             Write-Host "    overwrote system default cursors in Windows\Cursors\ (OEM native cursor retention on Shutdown/Logon)" -ForegroundColor Green
 
