@@ -1160,7 +1160,7 @@ cd /d "%maindir%"
 
 echo Waiting 5s for partition remount...
 ping localhost -n 6 >nul
-format %drivepath%: /FS:%filesystem% /A:64K /X /Q /V:%partition_label% /Y >nul
+powershell -NoProfile -Command "Format-Volume -DriveLetter %drivepath% -FileSystem %filesystem% -AllocationUnitSize 65536 -NewFileSystemLabel '%partition_label%' -Confirm:$false -Force | Out-Null" >nul 2>&1
 
 echo Creating secure offline repository partition (%repo_label%)...
 powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ('%mios_make_data%' -eq '1') { $rp = New-Partition -DiskNumber $d.Number -Size %mios_repo_gb%GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%data_label%' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null } }" >nul 2>&1
