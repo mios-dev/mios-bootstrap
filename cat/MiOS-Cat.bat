@@ -8,6 +8,10 @@ set "maindir=%CD%"
 :: scheduled task launch already-elevated and pass straight through this gate.
 net session >nul 2>&1
 if %errorlevel% neq 0 (
+    if "%NONINTERACTIVE%"=="1" (
+        echo [FAIL] Administrator privileges required for non-interactive execution!
+        exit /b 1
+    )
     echo Requesting administrator privileges...
     if "%~1"=="" (
         powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
@@ -73,9 +77,6 @@ if not "%NONINTERACTIVE%"=="1" (
             for /f "usebackq tokens=*" %%a in (`git status -uno 2^>nul ^| findstr /C:"behind"`) do (
                 echo Updates detected in MiOS repository. Pulling latest version...
                 git pull >nul 2>&1
-                echo Restarting script from updated checkout...
-                start "" cmd.exe /c "%~f0" %*
-                exit /b 0
             )
         )
         cd /d "C:\mios-bootstrap" >nul 2>&1
@@ -84,9 +85,6 @@ if not "%NONINTERACTIVE%"=="1" (
             for /f "usebackq tokens=*" %%a in (`git status -uno 2^>nul ^| findstr /C:"behind"`) do (
                 echo Updates detected in mios-bootstrap repository. Pulling latest version...
                 git pull >nul 2>&1
-                echo Restarting script from updated checkout...
-                start "" cmd.exe /c "%~f0" %*
-                exit /b 0
             )
         )
         cd /d "%maindir%"
@@ -1131,10 +1129,12 @@ del "%flash_marker%" /q >nul 2>&1
 echo [INFO] Starting MiOS-Cat USB flash operations... > "%flash_log%"
 
 echo Spawning live graphical MiOS Flash Monitor...
-if exist "C:\mios-bootstrap\installation\Monitor-MiosFlash.ps1" (
-    start "MiOS Flash Monitor" powershell -NoProfile -ExecutionPolicy Bypass -Command "powershell -NoProfile -ExecutionPolicy Bypass -File 'C:\mios-bootstrap\installation\Monitor-MiosFlash.ps1' -LogPath '%flash_log%' -MarkerPath '%flash_marker%'"
-) else if exist "%maindir%\resources\autorun\Monitor-MiosFlash.ps1" (
-    start "MiOS Flash Monitor" powershell -NoProfile -ExecutionPolicy Bypass -Command "powershell -NoProfile -ExecutionPolicy Bypass -File '%maindir%\resources\autorun\Monitor-MiosFlash.ps1' -LogPath '%flash_log%' -MarkerPath '%flash_marker%'"
+tasklist /fi "WINDOWTITLE eq MiOS Flash Monitor*" 2>nul | find /i "powershell" >nul || (
+    if exist "C:\mios-bootstrap\installation\Monitor-MiosFlash.ps1" (
+        start "MiOS Flash Monitor" powershell -NoProfile -ExecutionPolicy Bypass -File "C:\mios-bootstrap\installation\Monitor-MiosFlash.ps1" -LogPath "%flash_log%" -MarkerPath "%flash_marker%"
+    ) else if exist "%maindir%\resources\autorun\Monitor-MiosFlash.ps1" (
+        start "MiOS Flash Monitor" powershell -NoProfile -ExecutionPolicy Bypass -File "%maindir%\resources\autorun\Monitor-MiosFlash.ps1" -LogPath "%flash_log%" -MarkerPath "%flash_marker%"
+    )
 )
 
 :: 11. Format & Initialize Target USB Drive
