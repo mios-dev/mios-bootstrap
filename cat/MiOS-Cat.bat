@@ -1050,6 +1050,8 @@ if "%font_src%"=="" if exist "%~dp0..\resources\fonts\GeistMonoNerdFontMono-Regu
 if "%font_src%"=="" ( echo [FATAL ERROR] GeistMono font missing! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
 copy "%font_src%" "%stage_dir%\mount\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" /Y >nul
 
+reg unload HKEY_USERS\pe-default >nul 2>&1
+reg unload HKEY_USERS\pe-software >nul 2>&1
 reg load HKEY_USERS\pe-default "%stage_dir%\mount\Windows\System32\config\DEFAULT" >nul 2>&1
 if %errorlevel% neq 0 ( echo [FATAL ERROR] Failed to load DEFAULT hive! & dism /Unmount-Image /MountDir:"%stage_dir%\mount" /Discard >nul 2>&1 & exit /b 1 )
 reg load HKEY_USERS\pe-software "%stage_dir%\mount\Windows\System32\config\SOFTWARE" >nul 2>&1
