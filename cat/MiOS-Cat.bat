@@ -1303,12 +1303,11 @@ if %errorlevel% neq 0 (
 echo [PASS] Administrator privileges verified.
 
 :: 2. Target Disk Safety Check (Ensure D: is not an internal drive)
-powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { if ($d.BusType -eq 'SATA' -or $d.BusType -eq 'NVMe') { exit 2 } }; exit 0"
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { if ($d.IsBoot -or $d.IsSystem) { exit 2 } }; exit 0"
 set "disk_check=%errorlevel%"
 if %disk_check% equ 2 (
-    echo [FAIL] Target drive %drivepath%: is detected as an internal drive - SATA or NVMe.
-    echo        To prevent data loss, formatting internal drives is restricted.
-    echo        Please specify a USB/Removable target drive letter.
+    echo [FAIL] Target drive %drivepath%: is the Windows System/Boot drive! Formatting OS drive is blocked.
+    echo        Please specify a non-boot target drive letter.
     exit /b 1
 )
 echo [PASS] Target drive %drivepath%: safety check completed.
