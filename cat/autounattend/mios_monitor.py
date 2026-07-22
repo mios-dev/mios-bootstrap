@@ -39,6 +39,18 @@ if not os.path.exists(TOML_PATH):
             TOML_PATH = candidate
             break
 
+def parse_ssot_version(path):
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            match = re.search(r'mios_version\s*=\s*["\']([^"\']+)["\']', content)
+            if match:
+                return match.group(1)
+        except Exception:
+            pass
+    return "0.3.0"
+
 def parse_toml_colors(path):
     colors = {
         'bg': '#282262',
@@ -67,6 +79,7 @@ def parse_toml_colors(path):
             pass
     return colors
 
+MIOS_VERSION = parse_ssot_version(TOML_PATH)
 PAL = parse_toml_colors(TOML_PATH)
 
 STAGES = [
@@ -88,11 +101,13 @@ SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 # 2. Dynamic Telemetry & Log Resolver
 # -----------------------------------------------------------------------------
 def get_active_log():
-    task_logs = glob.glob(r"C:\Users\Administrator\.gemini\antigravity-ide\brain\dba6616d-053d-43cd-b86d-a98f223952b8\.system_generated\tasks\task-*.log")
+    task_logs = glob.glob(r"C:\Users\Administrator\.gemini\antigravity-ide\brain\*\.system_generated\tasks\task-*.log")
+    task_logs += glob.glob(r"C:\Windows\Temp\mios-cat-*.log")
+    task_logs += glob.glob(r"M:\medicat_stage\isobuild_live\logs\*.log")
     valid_logs = []
     for path in task_logs:
         try:
-            if os.path.getsize(path) > 500:
+            if os.path.getsize(path) > 200:
                 valid_logs.append((os.path.getmtime(path), path))
         except Exception:
             pass
@@ -252,7 +267,7 @@ def render_dashboard(step_counter):
 
     # 1. Header Panel
     hdr_text = Text()
-    hdr_text.append("M i O S   v2026.07   --   S S O T   L I V E   F L A S H   M O N I T O R", style=f"bold {PAL['warning']}")
+    hdr_text.append(f"M i O S   v{MIOS_VERSION}   --   S S O T   L I V E   F L A S H   M O N I T O R", style=f"bold {PAL['warning']}")
     hdr_text.append("\nDedicated AIO Operating System -- Real-Time Cross-Platform Telemetry Stream", style=f"{PAL['muted']}")
     layout["header"].update(Panel(hdr_text, style=f"{PAL['accent']}"))
 
@@ -293,11 +308,13 @@ def render_dashboard(step_counter):
 
     layout["right"].update(Panel(right_table, title="[bold]PIPELINE STAGES STATUS[/bold]", border_style=PAL['accent']))
 
-    # 4. Bottom Streaming Log Panel (Filtered Buffer: Excludes Raw Progress Lines)
+    # 4. Bottom Streaming Log Panel (Filtered Buffer: Excludes Raw Progress Lines & Stale Archive Dumps)
     filtered_logs = []
     for l in log_lines:
         clean_l = re.sub(r'\x1b\[[0-9;]*m', '', l).strip()
         if not clean_l or re.match(r'^\d+(\.\d+)?%$', clean_l) or re.match(r'^\[?[\=\-\#]+\s*\d+(\.\d+)?%\s*[\=\-\#]*\]?$', clean_l):
+            continue
+        if re.search(r'var\\lib\\mios\\(artifacts|snapshots)\\', clean_l, re.IGNORECASE):
             continue
         filtered_logs.append(clean_l)
 
