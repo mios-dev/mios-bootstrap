@@ -1301,15 +1301,23 @@ if exist "%~dp0resources\autorun\mios-stage-icons.ps1" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
 )
 
+set "ico_file="
+if exist "%drivepath%:\autorun\icon.ico" set "ico_file=%drivepath%:\autorun\icon.ico"
+if "%ico_file%"=="" if exist "%drivepath%:\autorun\mios-v2.ico" set "ico_file=%drivepath%:\autorun\mios-v2.ico"
+if "%ico_file%"=="" if exist "%drivepath%:\autorun\mios.ico" set "ico_file=%drivepath%:\autorun\mios.ico"
+if "%ico_file%"=="" if exist "%maindir%\resources\icon.ico" (
+    copy "%maindir%\resources\icon.ico" "%drivepath%:\autorun\icon.ico" /Y >nul 2>&1
+    copy "%maindir%\resources\icon.ico" "%drivepath%:\icon.ico" /Y >nul 2>&1
+    set "ico_file=%drivepath%:\autorun\icon.ico"
+)
+
 echo using System; using System.Diagnostics; using System.IO; class Launcher { static void Main() { string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PortableApps\\PortableApps.com\\PortableAppsPlatform.exe"); if (File.Exists(path)) { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); } } } > "%temp%\launcher.cs"
 
 if exist "%drivepath%:\Start.exe" attrib -r -h -s "%drivepath%:\Start.exe" >nul 2>&1
 if exist "%drivepath%:\Start.exe" del /f /q /a "%drivepath%:\Start.exe" >nul 2>&1
 
-if exist "%drivepath%:\autorun\mios-v2.ico" (
-    C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%drivepath%:\autorun\mios-v2.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
-) else if exist "%drivepath%:\autorun\mios.ico" (
-    C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%drivepath%:\autorun\mios.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
+if not "%ico_file%"=="" (
+    C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%ico_file%" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
 )
 del "%temp%\launcher.cs" /Q >nul 2>&1
 
