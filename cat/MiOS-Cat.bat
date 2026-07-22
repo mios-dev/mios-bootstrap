@@ -1216,7 +1216,7 @@ echo Creating secure offline repository partition (%repo_label%)...
 powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% | Get-Disk; if ('%mios_make_data%' -eq '1') { $rp = New-Partition -DiskNumber $d.Number -Size %mios_repo_gb%GB -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null }; $dp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($dp) { Format-Volume -Partition $dp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%data_label%' -Confirm:$false | Out-Null } } else { $rp = New-Partition -DiskNumber $d.Number -UseMaximumSize -AssignDriveLetter -ErrorAction SilentlyContinue; if ($rp) { Format-Volume -Partition $rp -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel '%repo_label%' -Confirm:$false | Out-Null } }" >nul 2>&1
 
 :: 12. Multithreaded extraction of Medicat payload
-set "SURGICAL_LIST=System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/*"
+set "SURGICAL_LIST=System/* CdUsb.Y Start.exe PortableApps/PortableApps.com/* PortableApps/7-ZipPortable/* PortableApps/AOMEIPartitionAssistantPortable/* PortableApps/CrystalDiskInfoPortable/* PortableApps/CrystalDiskMarkPortable/* PortableApps/HWiNFOPortable/* PortableApps/Notepad++Portable/* PortableApps/Rufus/* PortableApps/WizTree/* PortableApps/SnappyDriverInstaller/* PortableApps/SnappyDriverInstallerOrigin/* PortableApps/SDIO/* PortableApps/SDIO_*/* PortableApps/SDI_*/* PortableApps/SDI/* Programs/7-Zip_x64/* Programs/Bootice/* Programs/DiskGeniusLite/* Programs/Everything_x64/* Programs/WizTree/* Programs/HDSentinel/* Programs/Sysinternals/* Programs/ventoy/* Programs/SDIO/* Programs/SnappyDriverInstaller/* Programs/SnappyDriverInstallerOrigin/*"
 echo Extracting payload to %drivepath%: (-mmt=on)...
 "%maindir%\bin\7z.exe" x "%file%" -o%drivepath%:\ %SURGICAL_LIST% -mmt=on -aoa -y >nul
 
@@ -1255,6 +1255,15 @@ copy "%~f0" "%repodrive%:\MiOS-Cat.bat" /Y >nul 2>&1
 echo Staging MiOS drive icons and autorun.inf across all partitions...
 if exist "%~dp0resources\autorun\mios-stage-icons.ps1" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
+)
+
+if exist "%drivepath%:\PortableApps" (
+    echo Debloating PortableApps suite to MiOS specifications...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$keep = @('7-ZipPortable', 'AOMEIPartitionAssistantPortable', 'CrystalDiskInfoPortable', 'CrystalDiskMarkPortable', 'HWiNFOPortable', 'Notepad++Portable', 'Rufus', 'WizTree', 'SnappyDriverInstaller', 'SnappyDriverInstallerOrigin', 'SDIO', 'SDIO_x64', 'SDI_x64', 'SDI', 'PortableApps.com', 'MiOSInstaller', 'MiOSMonitor', 'MiOSSystemRescue', 'SoftwareLister'); $targets = @('%drivepath%:\PortableApps', '%aio_stage%\PortableApps'); foreach ($t in $targets) { if (Test-Path -LiteralPath $t) { Get-ChildItem -LiteralPath $t -Directory | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } }" >nul 2>&1
+    echo Applying MiOSTheme branding to PortableApps Menu...
+    if exist "%~dp0resources\autorun\apply-mios-pa-theme.ps1" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0resources\autorun\apply-mios-pa-theme.ps1" -TargetDrive "%drivepath%" >nul 2>&1
+    )
 )
 
 :: 14. SINGLE-PASS FLASH WRITE: Copy all compiled AIO images to target drive D: in one go!
