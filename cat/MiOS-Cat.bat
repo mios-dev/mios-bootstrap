@@ -1219,20 +1219,19 @@ if exist "%aio_stage%\Documents" (
     robocopy "%aio_stage%\Documents" "%drivepath%:\Documents" /E /R:2 /W:2 /MT:32 >nul
 )
 
-:: 15. Finalize Branding & Start.exe launcher
-attrib -r -h -s "%drivepath%:\autorun.inf" >nul 2>&1
-(
-echo [Autorun]
-echo Icon=icon.ico
-echo Label=MiOS-Cat
-) > "%drivepath%:\autorun.inf"
-copy "%maindir%\icon.ico" "%drivepath%:\icon.ico" /Y >nul
-attrib +h +s "%drivepath%:\autorun.inf" >nul 2>&1
-attrib +h +s "%drivepath%:\icon.ico" >nul 2>&1
+:: 15. Finalize SSOT Branding & Start.exe launcher
+echo Finalizing SSOT MiOS drive icons and autorun metadata across target partitions...
+if exist "%maindir%\resources\autorun\mios-stage-icons.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%maindir%\resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$cd='%drivepath%'; $rd='%repodrive%'; $dd='%datadrive%'; Add-Type -AssemblyName System.Drawing -EA SilentlyContinue; function New-Ico($p, $lbl) { try { $s=256; $bmp=New-Object System.Drawing.Bitmap $s,$s; $g=[System.Drawing.Graphics]::FromImage($bmp); $g.SmoothingMode='AntiAlias'; $bg=[System.Drawing.Color]::FromArgb(40,34,98); $fg=[System.Drawing.Color]::FromArgb(231,223,211); $accent=[System.Drawing.Color]::FromArgb(243,92,21); $shade=[System.Drawing.Color]::FromArgb(20,17,49); $g.Clear($bg); $cx=$s/2.0; $cy=$s/2.2; $r=$s*0.36; $hH=$r*0.55; $hW=$r*0.866; $vTop=[System.Drawing.PointF]::new($cx,$cy-$hH*1.10); $vTopR=[System.Drawing.PointF]::new($cx+$hW,$cy-$hH*0.55); $vBotR=[System.Drawing.PointF]::new($cx+$hW,$cy+$hH*0.55); $vBot=[System.Drawing.PointF]::new($cx,$cy+$hH*1.10); $vBotL=[System.Drawing.PointF]::new($cx-$hW,$cy+$hH*0.55); $vTopL=[System.Drawing.PointF]::new($cx-$hW,$cy-$hH*0.55); $vMid=[System.Drawing.PointF]::new($cx,$cy); $bT=New-Object System.Drawing.SolidBrush($accent); $bL=New-Object System.Drawing.SolidBrush($fg); $bR=New-Object System.Drawing.SolidBrush($shade); $g.FillPolygon($bT,@($vTop,$vTopR,$vMid,$vTopL)); $g.FillPolygon($bL,@($vTopL,$vMid,$vBot,$vBotL)); $g.FillPolygon($bR,@($vTopR,$vBotR,$vBot,$vMid)); $hP=New-Object System.Drawing.Pen($bg,4); for($i=1;$i -le 2;$i++){ $t=$i/3.0; $a=[System.Drawing.PointF]::new($vTopL.X+($vMid.X-$vTopL.X)*$t,$vTopL.Y+($vMid.Y-$vTopL.Y)*$t); $b=[System.Drawing.PointF]::new($vBotL.X+($vBot.X-$vBotL.X)*$t,$vBotL.Y+($vBot.Y-$vBotL.Y)*$t); $g.DrawLine($hP,$a,$b); $a2=[System.Drawing.PointF]::new($vTopR.X+($vMid.X-$vTopR.X)*$t,$vTopR.Y+($vMid.Y-$vTopR.Y)*$t); $b2=[System.Drawing.PointF]::new($vBotR.X+($vBot.X-$vBotR.X)*$t,$vBotR.Y+($vBot.Y-$vBotR.Y)*$t); $g.DrawLine($hP,$a2,$b2) }; $eP=New-Object System.Drawing.Pen($bg,6); $g.DrawPolygon($eP,@($vTop,$vTopR,$vBotR,$vBot,$vBotL,$vTopL)); $g.DrawLine($eP,$vMid,$vTop); $g.DrawLine($eP,$vMid,$vBot); $g.DrawLine($eP,$vMid,$vTopL); $g.DrawLine($eP,$vMid,$vTopR); if($lbl){ $fL=New-Object System.Drawing.Font('Consolas',15,[System.Drawing.FontStyle]::Bold); $sf=New-Object System.Drawing.StringFormat; $sf.Alignment=[System.Drawing.StringAlignment]::Center; $sf.LineAlignment=[System.Drawing.StringAlignment]::Center; $g.DrawString($lbl.ToUpper(),$fL,[System.Drawing.Brushes]::LightSkyBlue,(New-Object System.Drawing.RectangleF 0,205,256,45),$sf) }; $dir=[System.IO.Path]::GetDirectoryName($p); if(-not (Test-Path $dir)){ New-Item -ItemType Directory -Force -Path $dir|Out-Null }; $fs=New-Object System.IO.FileStream($p,[System.IO.FileMode]::Create); [System.Drawing.Icon]::FromHandle($bmp.GetHicon()).Save($fs); $fs.Close() } catch{} }; function Stage-Ico($let,$lbl){ if(-not $let -or $let -eq '_'){ return }; $r=\"$($let.Trim(':')):\"; if(-not (Test-Path $r)){ return }; $a=Join-Path $r 'autorun'; $ico=Join-Path $a 'mios.ico'; New-Ico $ico $lbl; $inf=Join-Path $r 'autorun.inf'; if(Test-Path $inf){ try{ Set-ItemProperty -Path $inf -Name Attributes -Value Normal -EA SilentlyContinue }catch{} }; [System.IO.File]::WriteAllText($inf, \"[autorun]`nicon=autorun\mios.ico`nlabel=$lbl\", [System.Text.Encoding]::ASCII); try{ Set-ItemProperty -Path $inf -Name Attributes -Value ([System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System) -EA SilentlyContinue }catch{}; try{ Set-ItemProperty -Path \"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\DriveIcons\$let\DefaultIcon\" -Name '(default)' -Value $ico -Force -EA SilentlyContinue }catch{} }; Stage-Ico $cd 'MiOS-Cat'; Stage-Ico $rd 'MiOS-Repo'; Stage-Ico $dd 'MiOS-Data'" >nul 2>&1
+)
 
 powershell -NoProfile -Command "Set-Content -Path '%temp%\launcher.cs' -Value 'using System; using System.Diagnostics; using System.IO; class Launcher { static void Main() { string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @\"PortableApps\PortableApps.com\PortableAppsPlatform.exe\"); if (File.Exists(path)) { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); } } }'" >nul 2>&1
 
-C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%maindir%\icon.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
+if exist "%drivepath%:\autorun\mios.ico" (
+    C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /win32icon:"%drivepath%:\autorun\mios.ico" /out:"%drivepath%:\Start.exe" "%temp%\launcher.cs" >nul 2>&1
+)
 del "%temp%\launcher.cs" /Q >nul 2>&1
 
 echo.
