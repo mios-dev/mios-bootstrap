@@ -330,6 +330,7 @@ function New-MiOSHostServiceCommands {
         $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f || exit 0')
         $cmds.Add('netsh advfirewall firewall set rule group="remote desktop" new enable=Yes || exit 0')
         $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f || exit 0')
+        $cmds.Add('netsh advfirewall firewall add rule name="OpenSSH Server (sshd)" dir=in action=allow protocol=TCP localport=22 || exit 0')
     }
     # 4) Register MiOS-Host as an ONSTART task under mios-sudo (ONSTART fires in
     #    Session 0 at boot, before any logon; schtasks grants the batch-logon right).
