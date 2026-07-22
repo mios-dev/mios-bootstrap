@@ -1268,36 +1268,191 @@
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>139</Order>
-            <CommandLine>cmd /c reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT"</CommandLine>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v HideIcons /t REG_DWORD /d 1 /f</CommandLine>
             <Description>MiOS global user preferences</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>140</Order>
-            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v HideFileExt /t REG_DWORD /d 0 /f</CommandLine>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarDa /t REG_DWORD /d 0 /f</CommandLine>
             <Description>MiOS global user preferences</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>141</Order>
-            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v Hidden /t REG_DWORD /d 1 /f</CommandLine>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarMn /t REG_DWORD /d 0 /f</CommandLine>
             <Description>MiOS global user preferences</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>142</Order>
-            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarAl /t REG_DWORD /d 0 /f</CommandLine>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v ShowTaskViewButton /t REG_DWORD /d 1 /f</CommandLine>
             <Description>MiOS global user preferences</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>143</Order>
-            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Search" /v SearchboxTaskbarMode /t REG_DWORD /d 0 /f</CommandLine>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{645FF040-5081-101B-9F08-00AA002F954E}" /t REG_DWORD /d 1 /f</CommandLine>
             <Description>MiOS global user preferences</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>144</Order>
-            <CommandLine>cmd /c reg unload "HKU\MiOSDefault"</CommandLine>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" /t REG_DWORD /d 1 /f</CommandLine>
             <Description>MiOS global user preferences</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>145</Order>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>146</Order>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}" /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>147</Order>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{5399E694-EFE5-4B4C-B358-2A29D3157B06}" /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>148</Order>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowSettings /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>149</Order>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowFileExplorer /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>150</Order>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowNetwork /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>151</Order>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowUserFiles /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>152</Order>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowDownloads /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>153</Order>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowDocuments /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>154</Order>
+            <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband" /v Favorites /t REG_BINARY /d "" /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>155</Order>
+            <CommandLine>cmd /c reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT"</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>156</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v HideFileExt /t REG_DWORD /d 0 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>157</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v Hidden /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>158</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarAl /t REG_DWORD /d 0 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>159</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Search" /v SearchboxTaskbarMode /t REG_DWORD /d 0 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>160</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v HideIcons /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>161</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarDa /t REG_DWORD /d 0 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>162</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarMn /t REG_DWORD /d 0 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>163</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v ShowTaskViewButton /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>164</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{645FF040-5081-101B-9F08-00AA002F954E}" /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>165</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>166</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>167</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}" /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>168</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{5399E694-EFE5-4B4C-B358-2A29D3157B06}" /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>169</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowSettings /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>170</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowFileExplorer /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>171</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowNetwork /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>172</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowUserFiles /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>173</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowDownloads /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>174</Order>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Start" /v Start_ShowDocuments /t REG_DWORD /d 1 /f</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>175</Order>
+            <CommandLine>cmd /c reg unload "HKU\MiOSDefault"</CommandLine>
+            <Description>MiOS global user preferences</Description>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>176</Order>
             <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"</CommandLine>
             <Description>MiOS bootstrap (nested irm|iex)</Description>
             <RequiresUserInput>true</RequiresUserInput>

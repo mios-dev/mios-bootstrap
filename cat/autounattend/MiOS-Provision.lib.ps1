@@ -169,14 +169,31 @@ function New-MiOSGlobalPrefCommands {
     $d = [ordered]@{
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|HideFileExt|REG_DWORD'  = (Get-Toml $Toml 'autounattend.preferences.hide_file_ext' '0')
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|Hidden|REG_DWORD'       = (Get-Toml $Toml 'autounattend.preferences.show_hidden' '1')
-        'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarAl|REG_DWORD'    = (Get-Toml $Toml 'autounattend.preferences.taskbar_align' '1')
-        'Software\Microsoft\Windows\CurrentVersion\Search|SearchboxTaskbarMode|REG_DWORD'    = (Get-Toml $Toml 'autounattend.preferences.taskbar_search' '0')
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarAl|REG_DWORD'    = (Get-Toml $Toml 'autounattend.preferences.taskbar_align' '0')
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|HideIcons|REG_DWORD'    = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarDa|REG_DWORD'    = '0'
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarMn|REG_DWORD'    = '0'
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|ShowTaskViewButton|REG_DWORD' = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Search|SearchboxTaskbarMode|REG_DWORD'    = '0'
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel|{645FF040-5081-101B-9F08-00AA002F954E}|REG_DWORD' = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel|{20D04FE0-3AEA-1069-A2D8-08002B30309D}|REG_DWORD' = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel|{59031a47-3f72-44a7-89c5-5595fe6b30ee}|REG_DWORD' = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel|{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}|REG_DWORD' = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel|{5399E694-EFE5-4B4C-B358-2A29D3157B06}|REG_DWORD' = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Start|Start_ShowSettings|REG_DWORD'       = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Start|Start_ShowFileExplorer|REG_DWORD'   = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Start|Start_ShowNetwork|REG_DWORD'        = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Start|Start_ShowUserFiles|REG_DWORD'      = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Start|Start_ShowDownloads|REG_DWORD'      = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Start|Start_ShowDocuments|REG_DWORD'      = '1'
     }
     $cmds = New-Object System.Collections.Generic.List[string]
     foreach ($k in $d.Keys) { $p = $k -split '\|'; $cmds.Add(('reg add "HKCU\{0}" /v {1} /t {2} /d {3} /f' -f $p[0],$p[1],$p[2],$d[$k])) }
     $cmds.Add('reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT"')
     foreach ($k in $d.Keys) { $p = $k -split '\|'; $cmds.Add(('reg add "HKU\MiOSDefault\{0}" /v {1} /t {2} /d {3} /f' -f $p[0],$p[1],$p[2],$d[$k])) }
     $cmds.Add('reg unload "HKU\MiOSDefault"')
+    $cmds.Add('reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband" /v Favorites /t REG_BINARY /d "" /f')
+    $cmds.Add('reg add "HKLM\SOFTWARE\Microsoft\PolicyManager\current\device\Start" /v ConfigureStartPins /t REG_SZ /d "{\"pinnedList\":[]}" /f')
     return $cmds
 }
 
