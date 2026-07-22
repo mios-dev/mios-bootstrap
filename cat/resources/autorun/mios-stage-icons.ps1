@@ -1,4 +1,5 @@
-# Powershell runtime helper to generate & stage MiOS drive icons across MiOS-Cat USB partitions.
+# AI-hint: Generates canonical SSOT isometric 3D cube drive icons and autorun.inf metadata across MiOS-Cat target USB partitions at runtime.
+# AI-related: /usr/share/mios/ventoy/autorun/mios-stage-icons.ps1, /usr/share/mios/mios.toml, MiOS-Cat.bat, build-mios.ps1
 param(
     [string]$CatDrive = "D",
     [string]$RepoDrive = "",
