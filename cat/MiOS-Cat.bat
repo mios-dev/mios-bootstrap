@@ -1178,6 +1178,11 @@ echo Staging shadow-config brain to %repo_label% (%repodrive%:)...
 if exist "%toml_path%" copy "%toml_path%" "%repodrive%:\mios.toml" /Y >nul 2>&1
 copy "%~f0" "%repodrive%:\MiOS-Cat.bat" /Y >nul 2>&1
 
+echo Staging MiOS drive icons and autorun.inf to partitions...
+if exist "%maindir%\resources\autorun\mios-stage-icons.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%maindir%\resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
+)
+
 :: 14. SINGLE-PASS FLASH WRITE: Copy all compiled AIO images to target drive D: in one go!
 echo.
 echo ==========================================================
