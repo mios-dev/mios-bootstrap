@@ -194,7 +194,7 @@ if not "%monitor_enabled%"=="false" if not "%show_live_monitor%"=="false" (
     set "py_exe=python.exe"
     if exist "%LOCALAPPDATA%\Programs\Python\Python314\python.exe" set "py_exe=%LOCALAPPDATA%\Programs\Python\Python314\python.exe"
     if not "!mon_py!"=="" (
-        start "MiOS Monitor" "!py_exe!" "!mon_py!"
+        start "MiOS Monitor" "%py_exe%" "!mon_py!"
     )
 )
 endlocal
@@ -495,7 +495,7 @@ echo Spawning live graphical MiOS Flash Monitor...
 if exist "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" (
     set "py_exe=python.exe"
     if exist "%LOCALAPPDATA%\Programs\Python\Python314\python.exe" set "py_exe=%LOCALAPPDATA%\Programs\Python\Python314\python.exe"
-    start "MiOS Monitor" "!py_exe!" "C:\MiOS\usr\libexec\mios\MiOS-Mon.py"
+    start "MiOS Monitor" "%py_exe%" "C:\MiOS\usr\libexec\mios\MiOS-Mon.py"
 )
 :skip_monitor
 
@@ -846,7 +846,7 @@ if /i "%MIOS_HEADLESS%"=="1" exit /b 0
 if exist "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" (
     set "py_exe=python.exe"
     if exist "%LOCALAPPDATA%\Programs\Python\Python314\python.exe" set "py_exe=%LOCALAPPDATA%\Programs\Python\Python314\python.exe"
-    start "MiOS Monitor" "!py_exe!" "C:\MiOS\usr\libexec\mios\MiOS-Mon.py"
+    start "MiOS Monitor" "%py_exe%" "C:\MiOS\usr\libexec\mios\MiOS-Mon.py"
 )
 exit /b 0
 
