@@ -141,8 +141,14 @@ function New-MiOSAutounattendXml {
         $accounts = @(@{ name = $u; display_name = (Get-Toml $Toml 'identity.fullname' 'MiOS User'); group = 'Administrators'; password = $u })
     }
 
+    # svc_user (default mios-sudo) IS the renamed built-in Administrator (RID-500), created by the
+    # specialize rename -- NOT as a LocalAccount here, or the duplicate collides. It is the AutoLogon
+    # + provisioning identity (SSOT, no hardcode).
+    $svcUser = Get-Toml $Toml 'autounattend.service.svc_user' 'mios-sudo'
+
     $localAccountsXml = New-Object System.Text.StringBuilder
     foreach ($a in $accounts) {
+        if ([string]$a.name -eq $svcUser) { continue }
         $name  = [Security.SecurityElement]::Escape([string]$a.name)
         # Strip stylistic 'quoted-word' emphasis from a display name so an SSOT value
         # like "'MiOS' User" renders clean on the logon screen (-> "MiOS User"), without
@@ -166,10 +172,17 @@ function New-MiOSAutounattendXml {
 "@)
     }
 
-    # First (admin) account drives AutoLogon so FirstLogonCommands run unattended.
-    $first   = $accounts[0]
-    $firstPw = ConvertTo-UnattendPassword -Pw ([string]$first.password) -Obfuscate:$ObfuscatePasswords
-    $firstName = [Security.SecurityElement]::Escape([string]$first.name)
+    # AutoLogon runs FirstLogon + provisioning as SSOT autounattend.autologon_user (default = svc_user
+    # 'mios-sudo', the renamed built-in Administrator) -- NEVER a stray 'user'/accounts[0]. RID-500 is
+    # renamed + passworded in specialize (before oobeSystem), so AutoLogon into it resolves. The
+    # password is the ONE SSOT chain used everywhere (specialize / SetupComplete __SVCPW__ / schtasks /rp
+    # / AutoLogon): autounattend.service.svc_password else identity.default_password. No hardcode.
+    $alUser  = Get-Toml $Toml 'autounattend.autologon_user' ''
+    if (-not $alUser) { $alUser = $svcUser }
+    $alPwRaw = Get-Toml $Toml 'autounattend.service.svc_password' ''
+    if (-not $alPwRaw) { $alPwRaw = Get-Toml $Toml 'identity.default_password' 'user' }
+    $firstPw   = ConvertTo-UnattendPassword -Pw ([string]$alPwRaw) -Obfuscate:$ObfuscatePasswords
+    $firstName = [Security.SecurityElement]::Escape([string]$alUser)
 
     # --- FirstLogonCommands (USER context): per-user Linux-like layout, then the
     #     nested MiOS irm|iex bootstrap. Layout MUST run here (not specialize) so

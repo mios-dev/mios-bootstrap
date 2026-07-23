@@ -1248,6 +1248,11 @@ mios-guacd              = true
 # ----------------------------------------------------------------------------
 [autounattend]
 computer_name = "MIOS"
+# Account that AutoLogon signs into to run OOBE FirstLogon + MiOS provisioning. Empty -> the renamed
+# built-in Administrator [autounattend.service].svc_user ("mios-sudo"), so setup runs AS mios-sudo
+# BEFORE any desktop -- never a stray interactive "user". (Operator-defined; the setup admin is
+# released/re-secured post-setup.)
+autologon_user = ""
 # UUP Dump source acquisition (T-137). Target the DEV channel -- it carries the
 # newest feature IDs (Xbox Full Screen Experience) before they reach Retail.
 uup_channel    = "dev"           # dev | beta | releasepreview | retail  (maps to WU ring)
