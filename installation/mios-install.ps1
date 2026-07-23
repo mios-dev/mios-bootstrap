@@ -143,13 +143,14 @@ function Resolve-Target {
     $r = @{ Kind='ps'; Exe=$null; Args=@(); Env=@{}; NeedsAdmin=$false; Notes=@(); Platform='windows'; Drive='D:' }
     switch ($Target) {
         { $_ -in 'live','flash','cat' } {
-            $r.Kind='bat'; $r.Exe=$script:CatBat; $r.Args=@('stage') + $Passthrough; $r.NeedsAdmin=$true
+            $r.Kind='bat'; $r.NeedsAdmin=$true
+            $r.Exe=Join-Path $PSScriptRoot 'MiOS-Cat.bat'
             if ($Unattended) { $r.Env['NONINTERACTIVE']='1' }
             $d = Get-MiosSsotValue -Section 'cat' -Key 'drivepath'
             if ($d) { $r.Drive = "$($d):" }
         }
         { $_ -in 'monitor','dashboard','applet','tui' } {
-            $r.Kind='ps'
+            $r.Kind='py'
             $r.Exe=Resolve-MiosMonitorScript
             $r.Args=$Passthrough
             $r.NeedsAdmin=$false
@@ -184,7 +185,7 @@ if (-not $catalog.Contains($Target)) {
 }
 
 $entry = $catalog[$Target]
-if ($entry.special -eq 'configure') {
+if ($entry.Contains('special') -and $entry['special'] -eq 'configure') {
     Start-Process 'http://localhost:8640/configure'
     exit 0
 }
@@ -195,10 +196,17 @@ if (-not (Confirm-MiosProceed -Entry $entry -Unattended $Unattended -Drive 'D:')
 $plan = Resolve-Target -Target $Target -Type $Type -Stage $Stage -Unattended $Unattended -Passthrough $Passthrough
 if ($plan.NeedsAdmin) { Invoke-MiosSelfElevate -ArgList $PSBoundParameters.Values }
 
-if ($plan.Kind -eq 'ps' -and $plan.Exe -like '*MiOS-Monitor.ps1') {
+if ($plan.Kind -eq 'ps') {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $plan.Exe @($plan.Args)
     exit $LASTEXITCODE
 }
+
+if ($plan.Kind -eq 'py') {
+    & python $plan.Exe @($plan.Args)
+    exit $LASTEXITCODE
+}
+
+
 
 if ($Plan.Kind -eq 'bat') {
     Write-MiosLine 'info' "Launching MiOS-Cat.bat stage"
