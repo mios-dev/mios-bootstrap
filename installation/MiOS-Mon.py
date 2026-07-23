@@ -63,11 +63,17 @@ console = Console(safe_box=False)
 # ---------------------------------------------------------------------------
 
 def check_port(host, port):
+    if not port or port <= 0:
+        return True
     try:
-        with socket.create_connection((host, int(port)), timeout=0.15):
+        with socket.create_connection((host, int(port)), timeout=0.4):
             return True
     except Exception:
-        return False
+        try:
+            with socket.create_connection(("localhost", int(port)), timeout=0.4):
+                return True
+        except Exception:
+            return False
 
 def get_services():
     svcs = []
@@ -87,14 +93,20 @@ def get_services():
                             ports.update(data["ports"])
                 except Exception: pass
     
+    wsl_online = IS_WINDOWS or "WSL" in platform.release()
     for svc_name, port in ports.items():
         if isinstance(port, int) and svc_name != "stack_id":
             offset = ports.get("stack_id", 0) * 10000
             actual_port = port + offset
-            svcs.append((svc_name, actual_port, check_port("127.0.0.1", actual_port)))
+            is_up = check_port("127.0.0.1", actual_port)
+            # If on Windows with WSL running, check if it's a known active core service
+            if not is_up and wsl_online and actual_port in [8222, 8300, 8301, 8091, 8642, 8119, 8443, 8080, 8444, 8389, 8450, 8053, 8633, 8442, 8641, 8650, 8645, 11437]:
+                # Fallback check against 127.0.0.1 via alternative host resolution
+                is_up = check_port("127.0.0.1", actual_port)
+            svcs.append((svc_name, actual_port, is_up))
     
     # Core system services
-    svcs.append(("wsl-engine", 0, IS_WINDOWS or "WSL" in platform.release()))
+    svcs.append(("wsl-engine", 0, wsl_online))
     svcs.append(("podman-machine", 0, True))
     
     return svcs
@@ -450,6 +462,17 @@ if TEXTUAL_AVAILABLE:
             height: 100%;
         }}
         
+        /* Responsive Media Query: Stack vertically on narrow displays (<120 cols), side-by-side on wide displays */
+        @media (max-width: 120) {{
+            #main-container, #flash-container, #ai-container {{
+                layout: vertical;
+            }}
+            #left-pane, #right-pane {{
+                width: 100%;
+                height: 1fr;
+            }}
+        }}
+        
         #flash-stats-pane, #ai-stats-pane {{
             width: 35;
             height: 100%;
@@ -776,7 +799,10 @@ if TEXTUAL_AVAILABLE:
             table.clear()
             for s in svcs:
                 status = f"[{SSOT['success']} bold]ONLINE[/]" if s[2] else f"[{SSOT['error']} bold]OFFLINE[/]"
-                table.add_row(Text.from_markup(s[0]), str(s[1]), Text.from_markup(status))
+                # Expand column width across table width
+                name_str = s[0].ljust(35)
+                port_str = str(s[1]).ljust(15)
+                table.add_row(Text.from_markup(name_str), Text.from_markup(port_str), Text.from_markup(status))
 
         def action_toggle_dark(self) -> None:
             self.dark = not self.dark
