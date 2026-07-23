@@ -188,10 +188,17 @@ if not exist "%drivepath%:\" (
 )
 
 :: Full visible monitor defaults to ON (SSOT cat.monitor_enabled = true / show_live_monitor = true)
+setlocal enabledelayedexpansion
 if not "%monitor_enabled%"=="false" if not "%show_live_monitor%"=="false" (
     echo Launching live interactive monitor on user desktop...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "C:\mios-bootstrap\installation\MiOS-Monitor.ps1" -Mode Applet >nul 2>&1
+    set "mon_py="
+    if exist "%~dp0..\..\MiOS\usr\libexec\mios\MiOS-Mon.py" set "mon_py=%~dp0..\..\MiOS\usr\libexec\mios\MiOS-Mon.py"
+    if "!mon_py!"=="" if exist "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" set "mon_py=C:\MiOS\usr\libexec\mios\MiOS-Mon.py"
+    if not "!mon_py!"=="" (
+        start "MiOS Monitor" python "!mon_py!"
+    )
 )
+endlocal
 
 :: 4. Download Ventoy bootloader -- newest upstream GLOBALLY
 echo Checking Ventoy files...

@@ -161,7 +161,7 @@ function Ensure-MiosRepo {
 }
 
 function Resolve-MiosMonitorScript {
-    @((Join-Path $PSScriptRoot 'MiOS-Monitor.ps1'), 'C:\mios-bootstrap\installation\MiOS-Monitor.ps1') |
+    @((Join-Path (Split-Path $script:Root -Parent) 'MiOS\usr\libexec\mios\MiOS-Mon.py'), 'C:\MiOS\usr\libexec\mios\MiOS-Mon.py') |
         Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 }
 
@@ -177,6 +177,6 @@ function Start-MiosMonitor {
     
     # Single-console, in-process execution: render live monitor directly without background windows
     $env:MIOS_MONITOR_RUNNING = '1'
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $mon -Once
+    & python $mon
     return $null
 }
