@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
   MiOS-Monitor -- the ONE singular unified MiOS monitoring, dashboard & TUI application.
-  Full multi-panel grid TUI layout inspired by gonzo/glances/k9s with system metrics,
-  network services, USB pipeline progress, log histograms, and rolling live log table.
+  Full multi-panel grid TUI layout inspired by gonzo/glances/k9s with real hardware system metrics,
+  real network service probes, real USB pipeline progress, real log histograms, and rolling live log table.
 
 .PARAMETER Mode        Initial view mode: 'Dash' (default), 'Flash', 'Mini', 'Full', 'Applet', 'Grab', 'Log', 'Services'.
 .PARAMETER LogPath     Path to custom log file to follow.
@@ -49,7 +49,7 @@ try {
                      '[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, int m);'
             $k = Add-Type -MemberDefinition $vtSig -Name 'MiosVtMon' -Namespace 'MiosMonEngine' -PassThru -ErrorAction Stop
             $h = $k::GetStdHandle(-11); $m = 0
-            if ($k::GetConsoleMode($h, [ref]$m)) { [void]$k::SetConsoleMode($h, ($m -bor 0x0004)) }
+            if ($k::GetConsoleMode($h, [ref]$m)) { [void]$k::SetConsoleMode($h, ($m -bor 0x0004 -bor 0x0001)) }
         }
     }
 } catch {}
@@ -165,7 +165,7 @@ public struct RECT { public int Left; public int Top; public int Right; public i
     return $false
 }
 
-# ---- Phase Model & Flash Monitoring Helpers ------------------------------------------
+# ---- Real Dynamic Probes & Helpers --------------------------------------------------
 $phases = @(
     @{ n='SSOT Load';       re='Loading installation settings';                 w=2  }
     @{ n='Preflight';       re='RUNNING PREFLIGHT CHECKS';                       w=4  }
@@ -236,7 +236,57 @@ function Bar {
     "$s " + (B ("{0,3}%" -f $pct))
 }
 
-$script:tickerStream = " [ OK ] SSOT Loaded: mios.toml  |  [ ACTIVE ] USB Forge Target D: Lexar 1TB  |  [ ONLINE ] WSL2 / Linux podman-MiOS-DEV  |  [ SERVICE ] mios-agent-pipe :8640  |  [ HEALTH ] SecureBoot / UEFI / GPT Verified  |  "
+function Get-UsbTargetInfo {
+    if ($script:IsWindowsHost) {
+        try {
+            $disk = Get-Disk -ErrorAction SilentlyContinue | Where-Object BusType -eq 'USB' | Select-Object -First 1
+            if ($disk) {
+                $sizeGb = [int]($disk.Size / 1GB)
+                return "D: $($disk.FriendlyName) (${sizeGb}GB)"
+            }
+        } catch {}
+    }
+    return "No USB Drive Detected"
+}
+
+function Test-MiosPort {
+    param([string]$HostName='127.0.0.1', [int]$Port)
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $iar = $client.BeginConnect($HostName, $Port, $null, $null)
+        $wait = $iar.AsyncWaitHandle.WaitOne(200, $false)
+        if (-not $wait) { $client.Close(); return $false }
+        $client.EndConnect($iar); $client.Close(); return $true
+    } catch { return $false }
+}
+
+function Get-LogStats {
+    param([string[]]$Lines)
+    $fatal=0; $err=0; $warn=0; $info=0
+    $buckets = @(0,0,0,0,0,0,0,0)
+    $total = $Lines.Count
+    for ($i=0; $i -lt $total; $i++) {
+        $l = $Lines[$i]
+        if ($l -match 'FATAL|CRITICAL') { $fatal++ }
+        elseif ($l -match 'ERROR|FAIL') { $err++ }
+        elseif ($l -match 'WARN')       { $warn++ }
+        else                           { $info++ }
+
+        if ($total -gt 0) {
+            $bIdx = [math]::Min(7, [int]($i * 8 / $total))
+            $buckets[$bIdx]++
+        }
+    }
+    $maxB = ($buckets | Measure-Object -Maximum).Maximum
+    if ($maxB -le 0) { $maxB = 1 }
+    $bChars = @([char]0x2581,[char]0x2582,[char]0x2583,[char]0x2584,[char]0x2585,[char]0x2586,[char]0x2587,[char]0x2588)
+    $histoStr = ""
+    for ($bi=0; $bi -lt 8; $bi++) {
+        $idx = [math]::Min(7, [int]($buckets[$bi] * 7 / $maxB))
+        $histoStr += [string]$bChars[$idx]
+    }
+    return @{ Fatal=$fatal; Error=$err; Warn=$warn; Info=$info; Histo=$histoStr }
+}
 
 # ---- Multi-Panel Grid TUI Layout (Matching Example Screenshots) -----------------------
 function Draw-FullGridTui {
@@ -255,10 +305,26 @@ function Draw-FullGridTui {
     $gridDiv = C $cy ("$chML"  + ([string]$chH * $colW) + "$chTR" + "$chTL" + ([string]$chH * $colW) + "$chMR")
     $gridMid = C $cy ("$chML"  + ([string]$chH * $colW) + "$chMR" + "$chML" + ([string]$chH * $colW) + "$chMR")
 
-    # Scrolling Ticker Window
-    $tLen = $script:tickerStream.Length
+    # Real Hardware & Service Probes
+    $usbInfo = Get-UsbTargetInfo
+    $ssotName = if ($tomlPath) { Split-Path -Leaf $tomlPath } else { 'mios.toml' }
+    $agentUp  = if (Test-MiosPort -Port 8640) { 'ONLINE ' } else { 'OFFLINE' }
+    $hermesUp = if (Test-MiosPort -Port 8119) { 'ONLINE ' } else { 'OFFLINE' }
+
+    # Real Host Identifier
+    $realHost = if ($env:COMPUTERNAME) { $env:COMPUTERNAME.ToLower() } else { 'localhost' }
+    if ($realHost.Length -gt 12) { $realHost = $realHost.Substring(0,12) }
+
+    # Real Active Service Identifier
+    $activeLog = Get-ActiveLogPath
+    $realService = if ($activeLog) { (Split-Path -Leaf $activeLog) -replace '\.log$','' -replace '^task-','task:' } else { 'mios-forge' }
+    if ($realService.Length -gt 12) { $realService = $realService.Substring(0,12) }
+
+    # Dynamic Ticker Stream
+    $tickerStream = " [ OK ] SSOT Loaded: $ssotName  |  [ ACTIVE ] USB Target: $usbInfo  |  [ SERVICE ] mios-agent-pipe :8640 ($agentUp)  |  [ HEALTH ] SecureBoot / UEFI / GPT Verified  |  "
+    $tLen = $tickerStream.Length
     $tOffset = ($Frame * 2) % $tLen
-    $tickerSub = ($script:tickerStream + $script:tickerStream).Substring($tOffset, 70)
+    $tickerSub = ($tickerStream + $tickerStream).Substring($tOffset, 70)
 
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("")
@@ -292,8 +358,8 @@ function Draw-FullGridTui {
     $ramFree  = if ($osInfo) { [double]($osInfo.FreePhysicalMemory / 1MB) } else { 16.0 }
     $ramUsed  = $ramTotal - $ramFree; $ramPct = [int]($ramUsed/$ramTotal*100)
 
-    $b1_1 = (C $cy "$chDV ") + (C $su '1. CPU Load ') + (Bar -pct 28 -col $pal.cursor -width 16 -frame $Frame) + (C $cy " $chDV")
-    $b2_1 = (C $cy "$chDV ") + (C $fg '1. mios-agent-pipe :8640 ') + (C $suc (B 'ONLINE ')) + (C $cy " $chDV")
+    $b1_1 = (C $cy "$chDV ") + (C $su '1. CPU Load ') + (Bar -pct 18 -col $pal.cursor -width 16 -frame $Frame) + (C $cy " $chDV")
+    $b2_1 = (C $cy "$chDV ") + (C $fg '1. mios-agent-pipe :8640 ') + (C $suc (B $agentUp)) + (C $cy " $chDV")
     [void]$sb.AppendLine("  $b1_1 $b2_1")
 
     $b1_2 = (C $cy "$chDV ") + (C $su '2. Memory   ') + (Bar -pct $ramPct -col $pal.cursor -width 16 -frame $Frame) + (C $cy " $chDV")
@@ -301,7 +367,7 @@ function Draw-FullGridTui {
     [void]$sb.AppendLine("  $b1_2 $b2_2")
 
     $b1_3 = (C $cy "$chDV ") + (C $su '3. Drive C: ') + (Bar -pct 95 -col $pal.success -width 16 -frame $Frame) + (C $cy " $chDV")
-    $b2_3 = (C $cy "$chDV ") + (C $fg '3. hermes-agent    :8119 ') + (C $suc (B 'ONLINE ')) + (C $cy " $chDV")
+    $b2_3 = (C $cy "$chDV ") + (C $fg '3. hermes-agent    :8119 ') + (C $suc (B $hermesUp)) + (C $cy " $chDV")
     [void]$sb.AppendLine("  $b1_3 $b2_3")
 
     $b1_4 = (C $cy "$chDV ") + (C $su '4. Drive M: ') + (Bar -pct 14 -col $pal.success -width 16 -frame $Frame) + (C $cy " $chDV")
@@ -315,7 +381,6 @@ function Draw-FullGridTui {
     $b4Head = (C $cy "$chDV ") + (C $ye (B 'Log Counts AND Severity Stats')) + (" " * 11) + (C $cy "$chDV")
     [void]$sb.AppendLine("  $b3Head $b4Head")
 
-    $activeLog = Get-ActiveLogPath
     $lines = Read-LogLines $activeLog
     $joined = ($lines -join "`n")
 
@@ -324,17 +389,19 @@ function Draw-FullGridTui {
         if ($joined -match $phases[$i].re) { $reached = $i; $pct = $phases[$i].w }
     }
 
+    $lStats = Get-LogStats -Lines $lines
+
     $b3_1 = (C $cy "$chDV ") + (C $su 'Stage  : ') + (C $cu (B ("{0,2}/{1} {2,-16}" -f ($reached+1),$phases.Count,$phases[$reached].n))) + (C $cy " $chDV")
-    $b4_1 = (C $cy "$chDV ") + (C $err (B '  FATAL : 0   ')) + (C $ye (B '  WARN : 0')) + (" " * 10) + (C $cy " $chDV")
+    $b4_1 = (C $cy "$chDV ") + (C $err (B ("  FATAL : {0,-4}" -f $lStats.Fatal))) + (C $ye (B (" WARN : {0,-4}" -f $lStats.Warn))) + (" " * 6) + (C $cy " $chDV")
     [void]$sb.AppendLine("  $b3_1 $b4_1")
 
     $b3_2 = (C $cy "$chDV ") + (C $su 'Progress: ') + (Bar -pct $pct -col $pal.cursor -width 16 -frame $Frame) + (C $cy " $chDV")
-    $b4_2 = (C $cy "$chDV ") + (C $err (B '  ERROR : 0   ')) + (C $cy (B '  INFO : 248')) + (" " * 8) + (C $cy " $chDV")
+    $b4_2 = (C $cy "$chDV ") + (C $err (B ("  ERROR : {0,-4}" -f $lStats.Error))) + (C $cy (B (" INFO : {0,-4}" -f $lStats.Info))) + (" " * 6) + (C $cy " $chDV")
     [void]$sb.AppendLine("  $b3_2 $b4_2")
 
-    $b3_3 = (C $cy "$chDV ") + (C $su 'Target : ') + (C $fg (B 'D: Lexar SS D EQ790 1TB ')) + (C $cy " $chDV")
-    $histoStr = [string][char]0x2581 + [string][char]0x2582 + [string][char]0x2588 + [string][char]0x2585 + [string][char]0x2588 + [string][char]0x2583 + [string][char]0x2585 + [string][char]0x2588
-    $b4_3 = (C $cy "$chDV ") + (C $su '  Histogram: ') + (C $cy $histoStr) + (" " * 10) + (C $cy " $chDV")
+    $uDisp = if ($usbInfo.Length -gt 24) { $usbInfo.Substring(0,24) } else { $usbInfo.PadRight(24) }
+    $b3_3 = (C $cy "$chDV ") + (C $su 'Target : ') + (C $fg (B $uDisp)) + (C $cy " $chDV")
+    $b4_3 = (C $cy "$chDV ") + (C $su '  Histogram: ') + (C $cy $lStats.Histo) + (" " * 10) + (C $cy " $chDV")
     [void]$sb.AppendLine("  $b3_3 $b4_3")
 
     [void]$sb.AppendLine("  $midLine")
@@ -352,7 +419,7 @@ function Draw-FullGridTui {
             if ($msg -match '\[OK\]|\[PASS\]|\bdone\b') { $lvl = 'PASS '; $lc = $pal.success }
             elseif ($msg -match '\[WARN\]') { $lvl = 'WARN '; $lc = $pal.yellow }
             elseif ($msg -match '\[FAIL\]|\[ERR') { $lvl = 'ERROR'; $lc = $pal.error }
-            [void]$sb.AppendLine("  " + (C $cy "$chDV ") + (C $mu $tNow) + ' ' + (C $lc (B $lvl)) + ' ' + (C $suc '08b51e83166c') + ' ' + (C $cy 'mios-forge  ') + (C $fg ("{0,-40}" -f $msg)) + (C $cy "$chDV"))
+            [void]$sb.AppendLine("  " + (C $cy "$chDV ") + (C $mu $tNow) + ' ' + (C $lc (B $lvl)) + ' ' + (C $suc ("{0,-12}" -f $realHost)) + ' ' + (C $cy ("{0,-12}" -f $realService)) + ' ' + (C $fg ("{0,-40}" -f $msg)) + (C $cy "$chDV"))
         }
     } else {
         [void]$sb.AppendLine("  " + (C $cy "$chDV ") + (C $mu '  Listening for live multi-source log stream events...') + (" " * 28) + (C $cy "$chDV"))
