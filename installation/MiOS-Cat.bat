@@ -472,7 +472,8 @@ if "%build_xbox%"=="Enabled" (
 if not exist "%aio_stage%\Live_Operating_Systems\SystemRescue\SystemRescue.iso" (
     echo FATAL ERROR: AIO verification failed: SystemRescue.iso missing from stage! & exit /b 1
 )
-echo [AIO SUCCESS] All images 100%% compiled, serviced, and verified on Localhost SSD!
+echo [AIO] All required images are PRESENT on localhost SSD (existence-checked only).
+echo [AIO] NOTE: image CONTENT / provisioning is NOT asserted here -- boot or mount-inspect to verify the bake actually applied (logs can lie).
 
 echo.
 echo ==========================================================
