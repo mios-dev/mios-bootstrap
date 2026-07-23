@@ -462,17 +462,6 @@ if TEXTUAL_AVAILABLE:
             height: 100%;
         }}
         
-        /* Responsive Media Query: Stack vertically on narrow displays (<120 cols), side-by-side on wide displays */
-        @media (max-width: 120) {{
-            #main-container, #flash-container, #ai-container {{
-                layout: vertical;
-            }}
-            #left-pane, #right-pane {{
-                width: 100%;
-                height: 1fr;
-            }}
-        }}
-        
         #flash-stats-pane, #ai-stats-pane {{
             width: 35;
             height: 100%;
@@ -841,6 +830,32 @@ if TEXTUAL_AVAILABLE:
                 name_str = s[0].ljust(35)
                 port_str = str(s[1]).ljust(15)
                 table.add_row(Text.from_markup(name_str), Text.from_markup(port_str), Text.from_markup(status))
+
+        def on_resize(self, event) -> None:
+            try:
+                main_c = self.query_one("#main-container")
+                flash_c = self.query_one("#flash-container")
+                ai_c = self.query_one("#ai-container")
+                left_p = self.query_one("#left-pane")
+                right_p = self.query_one("#right-pane")
+                
+                if event.size.width < 120:
+                    main_c.styles.layout = "vertical"
+                    flash_c.styles.layout = "vertical"
+                    ai_c.styles.layout = "vertical"
+                    left_p.styles.width = "100%"
+                    left_p.styles.height = "1fr"
+                    right_p.styles.width = "100%"
+                    right_p.styles.height = "1fr"
+                else:
+                    main_c.styles.layout = "horizontal"
+                    flash_c.styles.layout = "horizontal"
+                    ai_c.styles.layout = "horizontal"
+                    left_p.styles.width = "1fr"
+                    left_p.styles.height = "100%"
+                    right_p.styles.width = "1fr"
+                    right_p.styles.height = "100%"
+            except Exception: pass
 
         def action_toggle_dark(self) -> None:
             self.dark = not self.dark
