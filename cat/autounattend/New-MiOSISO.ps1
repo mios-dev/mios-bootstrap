@@ -58,22 +58,6 @@ if (-not $PSScriptRoot) { $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCom
 if (-not $MergedPreset) { $MergedPreset = Join-Path $PSScriptRoot 'MiOS-Xbox-Merged.xml' }
 . (Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1')
 
-function Invoke-MiOSLiveMonitorAuto {
-    try {
-        $monScript = 'C:\mios-bootstrap\installation\MiOS-Monitor.ps1'
-        if (-not (Test-Path $monScript)) { $monScript = Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'installation\MiOS-Monitor.ps1' }
-        if (Test-Path $monScript) {
-            $existing = Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*MiOS-Monitor*' }
-            if (-not $existing) {
-                Write-Host "[MONITOR] Spawning live interactive desktop monitor window..." -ForegroundColor Cyan
-                schtasks /create /tn ShowMonitorUI /tr "powershell.exe -NoExit -ExecutionPolicy Bypass -File `"$monScript`"" /sc ONCE /st 00:00 /it /f *>$null
-                schtasks /run /tn ShowMonitorUI *>$null
-                Start-Process powershell -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$monScript`"" -WindowStyle Normal -ErrorAction SilentlyContinue
-            }
-        }
-    } catch {}
-}
-Invoke-MiOSLiveMonitorAuto
 
 function Assert-Elevated {
     $id = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
