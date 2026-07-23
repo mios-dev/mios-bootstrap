@@ -6,7 +6,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Dash','Flash','Mini','Full','Applet','Grab','Log','Services','Tui')]
-    [string]$Mode = 'Dash',
+    [string]$Mode = 'Tui',
     [string]$LogPath = '',
     [string]$MarkerPath = '',
     [switch]$Once,
