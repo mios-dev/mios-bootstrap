@@ -1183,9 +1183,9 @@ if /i "%MIOS_UNIFIED%"=="1" goto skip_monitor
 if /i "%MIOS_HEADLESS%"=="1" goto skip_monitor
 
 echo Spawning live graphical MiOS Flash Monitor...
-tasklist /fi "WINDOWTITLE eq MiOS Flash Monitor*" 2>nul | find /i "powershell" >nul || (
+tasklist /fi "WINDOWTITLE eq MiOS-Monitor*" 2>nul | find /i "powershell" >nul || (
     if exist "C:\mios-bootstrap\installation\MiOS-Monitor.ps1" (
-        start "MiOS Flash Monitor" powershell -NoProfile -ExecutionPolicy Bypass -File "C:\mios-bootstrap\installation\MiOS-Monitor.ps1" -Mode Flash -LogPath "%flash_log%" -MarkerPath "%flash_marker%"
+        start "MiOS-Monitor" powershell -NoProfile -ExecutionPolicy Bypass -File "C:\mios-bootstrap\installation\MiOS-Monitor.ps1" -Mode Flash -LogPath "%flash_log%" -MarkerPath "%flash_marker%"
     )
 )
 :skip_monitor
@@ -1531,6 +1531,13 @@ if errorlevel 1 ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 failed! & exit /b 1 )
 exit /b 0
 
 :ensure_live_monitor
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$py = 'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe'; $mon = 'C:\mios-bootstrap\cat\autounattend\mios_monitor.py'; if (Test-Path $mon) { Start-Process -FilePath $py -ArgumentList $mon -WindowStyle Normal -ErrorAction SilentlyContinue }" >nul 2>&1
+if /i "%MIOS_NO_MONITOR%"=="1" exit /b 0
+if /i "%MIOS_UNIFIED%"=="1" exit /b 0
+if /i "%MIOS_HEADLESS%"=="1" exit /b 0
+tasklist /fi "WINDOWTITLE eq MiOS-Monitor*" 2>nul | find /i "powershell" >nul || (
+    if exist "C:\mios-bootstrap\installation\MiOS-Monitor.ps1" (
+        start "MiOS-Monitor" powershell -NoProfile -ExecutionPolicy Bypass -File "C:\mios-bootstrap\installation\MiOS-Monitor.ps1" -Mode Flash -LogPath "%flash_log%" -MarkerPath "%flash_marker%"
+    )
+)
 exit /b 0
 
