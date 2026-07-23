@@ -66,11 +66,11 @@ def check_port(host, port):
     if not port or port <= 0:
         return True
     try:
-        with socket.create_connection((host, int(port)), timeout=0.4):
+        with socket.create_connection((host, int(port)), timeout=0.03):
             return True
     except Exception:
         try:
-            with socket.create_connection(("localhost", int(port)), timeout=0.4):
+            with socket.create_connection(("localhost", int(port)), timeout=0.03):
                 return True
         except Exception:
             return False
@@ -592,14 +592,14 @@ if TEXTUAL_AVAILABLE:
             
             self.cpu_history = [0.0] * 60
             self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
-            self.set_interval(2.0, self.update_services)
+            self.set_interval(2.0, self.async_update_services)
             
             self.tailing = True
             self.log_thread = threading.Thread(target=self.tail_all_logs, daemon=True)
             self.log_thread.start()
             
-            self.update_telemetry()
-            self.update_services()
+            # Non-blocking async initial populate
+            threading.Thread(target=self.update_services, daemon=True).start()
 
         def update_titles(self):
             ms = int(self.refresh_interval * 1000)
@@ -820,16 +820,22 @@ if TEXTUAL_AVAILABLE:
                 self.query_one("#flash-stats", Static).update("\n".join(flash_lines))
             except Exception: pass
 
+        def async_update_services(self):
+            threading.Thread(target=self.update_services, daemon=True).start()
+
         def update_services(self):
             svcs = get_services()
-            table = self.query_one("#svc-table", DataTable)
-            table.clear()
-            for s in svcs:
-                status = f"[{SSOT['success']} bold]ONLINE[/]" if s[2] else f"[{SSOT['error']} bold]OFFLINE[/]"
-                # Expand column width across table width
-                name_str = s[0].ljust(35)
-                port_str = str(s[1]).ljust(15)
-                table.add_row(Text.from_markup(name_str), Text.from_markup(port_str), Text.from_markup(status))
+            try:
+                table = self.query_one("#svc-table", DataTable)
+                def apply_updates():
+                    table.clear()
+                    for s in svcs:
+                        status = f"[{SSOT['success']} bold]ONLINE[/]" if s[2] else f"[{SSOT['error']} bold]OFFLINE[/]"
+                        name_str = s[0].ljust(35)
+                        port_str = str(s[1]).ljust(15)
+                        table.add_row(Text.from_markup(name_str), Text.from_markup(port_str), Text.from_markup(status))
+                self.call_from_thread(apply_updates)
+            except Exception: pass
 
         def on_resize(self, event) -> None:
             try:
