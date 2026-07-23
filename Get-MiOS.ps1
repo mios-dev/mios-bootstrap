@@ -4640,7 +4640,21 @@ function mios-mini {
     }
 }
 
+function mios-mon {
+    $py = if (Test-Path "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe") { "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" } else { "python.exe" }
+    $mon = if (Test-Path "C:\MiOS\usr\libexec\mios\MiOS-Mon.py") { "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" } else { "C:\mios-bootstrap\installation\MiOS-Mon.py" }
+    & $py $mon @Args
+}
+
+function mios-monitor {
+    mios-mon @Args
+}
+
 function mios-dash {
+    $py = if (Test-Path "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe") { "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" } else { "python.exe" }
+    $mon = if (Test-Path "C:\MiOS\usr\libexec\mios\MiOS-Mon.py") { "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" } else { "C:\mios-bootstrap\installation\MiOS-Mon.py" }
+    & $py $mon --dash @Args
+}
     # FULL MiOS dashboard -- ASCII banner + fastfetch (full width,
     # no compact frame trim) + MiOS-DEV service status + extended
     # sys specs. "the invoked 'mios dash'
@@ -4742,7 +4756,7 @@ function mios-help {
 # Anything that isn't a known verb is routed to Hermes-Agent at
 # MIOS_AI_ENDPOINT as a chat completion, so `mios how do I bootc switch`
 # works from any PowerShell terminal without a separate `ask` verb.
-`$Script:MiosKnownVerbs = @('build','update','pull','config','ai','dev','dash','mini','help','code','xbox','virt','vfio','tune','summary','profile','assess','iommu','theme','user')
+`$Script:MiosKnownVerbs = @('build','update','pull','config','ai','dev','dash','mini','help','code','xbox','virt','vfio','tune','summary','profile','assess','iommu','theme','user','mon','monitor')
 
 function mios {
     [CmdletBinding()]
