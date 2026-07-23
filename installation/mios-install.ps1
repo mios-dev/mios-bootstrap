@@ -68,6 +68,22 @@ function Get-MiosCatalog {
             what = 'Opens the MiOS Portal at http://localhost:8640/configure to edit mios.toml.'
             produces = 'Live SSOT configurator.'
             cost = 'instant'; needs = 'MiOS Portal on :8640 or offline configurator.' }
+        'provision' = @{ title = 'Provision MiOS-Xbox on a target'; platform='windows'; needsAdmin=$true; destructive=$false
+            what = 'Runs Invoke-MiOSProvision.ps1 using the SSOT configuration.'
+            produces = 'Provisioned MiOS-Xbox.'
+            cost = '10-20 min'; needs = 'Administrator.' }
+        'test-vm' = @{ title = 'Deploy / test MiOS-Xbox VM (Hyper-V)'; platform='windows'; needsAdmin=$true; destructive=$false
+            what = 'Runs Deploy-MiOSXbox.ps1 to create and boot a Hyper-V test VM.'
+            produces = 'MiOS-Xbox Hyper-V VM.'
+            cost = '2-5 min'; needs = 'Hyper-V + Administrator.' }
+        'update' = @{ title = 'Update MiOS (pull latest)'; platform='windows'; needsAdmin=$false; destructive=$false; special='update'
+            what = 'Pulls the latest MiOS and mios-bootstrap from their remotes.'
+            produces = 'Updated repositories.'
+            cost = '1-2 min'; needs = 'Internet connection.' }
+        'repos' = @{ title = 'Repository Tools (open repos)'; platform='windows'; needsAdmin=$false; destructive=$false; special='repos'
+            what = 'Opens the repository directories in Explorer.'
+            produces = 'Explorer windows.'
+            cost = 'instant'; needs = 'Explorer.' }
     }
 }
 
@@ -145,7 +161,7 @@ function Resolve-Target {
         { $_ -in 'live','flash','cat' } {
             $r.Kind='bat'; $r.NeedsAdmin=$true
             $r.Exe=Join-Path $PSScriptRoot 'MiOS-Cat.bat'
-            $r.Args=@('stage') + $Passthrough
+            $r.Args=$Passthrough
             if ($Unattended) { $r.Env['NONINTERACTIVE']='1' }
             $d = Get-MiosSsotValue -Section 'cat' -Key 'drivepath'
             if ($d) { $r.Drive = "$($d):" }
@@ -156,6 +172,12 @@ function Resolve-Target {
             $r.Args=$Passthrough
             $r.NeedsAdmin=$false
         }
+        'provision' {
+            $r.Exe=(Join-Path $script:AutoDir 'Invoke-MiOSProvision.ps1'); $r.Args=@('-TomlPath', $ssot) + $Passthrough
+        }
+        'test-vm' {
+            $r.Exe=(Join-Path $script:AutoDir 'Deploy-MiOSXbox.ps1'); $r.Args=$Passthrough
+        }
         'xbox' {
             $r.Exe=(Join-Path $script:AutoDir 'Build-MiOSXboxISO.ps1'); $r.Args=@('-TomlPath', $ssot) + $Passthrough
         }
@@ -165,6 +187,12 @@ function Resolve-Target {
         'build' { $r.Exe=$script:BuildPs; $r.NeedsAdmin=$true; $r.Args=@('-Unattended') + $Passthrough }
         'configure' {
             $r.Kind='special'; $r.Special='configure'
+        }
+        'update' {
+            $r.Kind='special'; $r.Special='update'
+        }
+        'repos' {
+            $r.Kind='special'; $r.Special='repos'
         }
         default  { throw "unknown target '$Target'." }
     }
@@ -186,9 +214,35 @@ if (-not $catalog.Contains($Target)) {
 }
 
 $entry = $catalog[$Target]
-if ($entry.Contains('special') -and $entry['special'] -eq 'configure') {
-    Start-Process 'http://localhost:8640/configure'
-    exit 0
+if ($entry.Contains('special')) {
+    if ($entry['special'] -eq 'configure') {
+        Start-Process 'http://localhost:8640/configure'
+        exit 0
+    }
+    if ($entry['special'] -eq 'repos') {
+        Write-MiosLine 'info' 'Opening repository directories in Explorer...'
+        $miosRepo = Join-Path (Split-Path $script:Root -Parent) 'MiOS'
+        if (Test-Path $miosRepo) { Start-Process explorer.exe $miosRepo }
+        Start-Process explorer.exe $script:Root
+        exit 0
+    }
+    if ($entry['special'] -eq 'update') {
+        Write-MiosLine 'info' 'Checking for and pulling updates for MiOS and mios-bootstrap...'
+        try {
+            if ([System.Net.Dns]::GetHostAddresses('github.com')) {
+                $miosRepo = Join-Path (Split-Path $script:Root -Parent) 'MiOS'
+                if (Test-Path $miosRepo) {
+                    cd $miosRepo; git fetch; git pull
+                }
+                cd $script:Root; git fetch; git pull
+                Write-MiosLine 'pass' 'Update check complete.'
+                exit 0
+            }
+        } catch {
+            Write-MiosLine 'err' 'OFFLINE: Internet unreachable - cannot pull updates right now.'
+            exit 1
+        }
+    }
 }
 
 Show-MiosTargetBrief -Target $Target -Entry $entry -Type $Type -Stage $Stage
