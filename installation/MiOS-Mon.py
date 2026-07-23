@@ -683,17 +683,43 @@ if TEXTUAL_AVAILABLE:
                 except Exception: pass
 
             def stream_flash_log():
-                log_path = r"C:\Windows\Temp\mios-cat-flash.log" if IS_WINDOWS else "/tmp/mios-cat-flash.log"
-                if not os.path.exists(log_path):
-                    if flash_log_box: self.call_from_thread(flash_log_box.write, f"[{SSOT['subtle']}]Waiting for flash process to start (no log file found)...[/]")
-                    while not os.path.exists(log_path) and self.tailing:
-                        time.sleep(1)
+                candidates = [
+                    os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "mios-cat-flash.log"),
+                    os.path.join(os.environ.get("LOCALAPPDATA", r"C:\Windows\Temp"), "Temp", "mios-cat-flash.log"),
+                    r"C:\Windows\Temp\mios-cat-flash.log",
+                    r"C:\Users\Administrator\AppData\Local\Temp\mios-cat-flash.log",
+                    "/tmp/mios-cat-flash.log"
+                ]
+                log_path = None
+                for c in candidates:
+                    if os.path.exists(c):
+                        log_path = c
+                        break
                 
-                if not self.tailing: return
+                if not log_path:
+                    if flash_log_box: self.call_from_thread(flash_log_box.write, f"[{SSOT['subtle']}]Waiting for flash process to start (searching temp logs)...[/]")
+                    while self.tailing and not log_path:
+                        for c in candidates:
+                            if os.path.exists(c):
+                                log_path = c
+                                break
+                        if not log_path:
+                            time.sleep(1)
+                
+                if not self.tailing or not log_path: return
 
                 try:
+                    if flash_log_box: self.call_from_thread(flash_log_box.write, f"[{SSOT['success']}]Found active flash log at: {log_path}[/]")
                     with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        f.seek(0, 2)  # Skip to end
+                        # Initial dump of recent lines
+                        lines = f.readlines()
+                        for line in lines[-50:]:
+                            line = line.strip()
+                            if line and flash_log_box:
+                                self.call_from_thread(flash_log_box.write, line)
+                        
+                        f.seek(0, 2)  # Skip to end for streaming
+                        self.last_flash_log_time = time.time()
                         while self.tailing:
                             line = f.readline()
                             if not line:
@@ -701,6 +727,7 @@ if TEXTUAL_AVAILABLE:
                                 continue
                             line = line.strip()
                             if not line: continue
+                            self.last_flash_log_time = time.time()
                             if flash_log_box: self.call_from_thread(flash_log_box.write, line)
                 except Exception: pass
 
@@ -782,13 +809,24 @@ if TEXTUAL_AVAILABLE:
                 self.query_one("#ai-stats", Static).update("\n".join(ai_lines))
                 
                 # Update Flash Stats
+                last_log_t = getattr(self, 'last_flash_log_time', None)
+                if last_log_t:
+                    elapsed = int(time.time() - last_log_t)
+                    if elapsed < 15:
+                        status_str = f"[{SSOT['success']} bold]FLASHING IN PROGRESS (Active)[/]"
+                    elif elapsed < 60:
+                        status_str = f"[{SSOT['warning']} bold]FLASHING IDLE ({elapsed}s since log)[/]"
+                    else:
+                        status_str = f"[{SSOT['subtle']}]FINISHED / INACTIVE ({elapsed}s ago)[/]"
+                else:
+                    status_str = f"[{SSOT['subtle']}]Waiting for log stream...[/]"
+
                 flash_lines = [
                     f"[{SSOT['accent']} bold]MiOS-Cat USB Builder[/]",
                     f"[{SSOT['subtle']}]Target Drive:[/] {get_usb_drive_info()}",
-                    f"[{SSOT['subtle']}]Status:[/] Ready.",
+                    f"[{SSOT['subtle']}]Status:[/] {status_str}",
                     "",
-                    "Track the real-time compilation and imaging",
-                    "of the MiOS-Cat offline vault in the log stream ->"
+                    "Real-time compilation & imaging logs stream ->"
                 ]
                 self.query_one("#flash-stats", Static).update("\n".join(flash_lines))
             except Exception: pass
