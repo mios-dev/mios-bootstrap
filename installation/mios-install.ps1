@@ -145,6 +145,7 @@ function Resolve-Target {
         { $_ -in 'live','flash','cat' } {
             $r.Kind='bat'; $r.NeedsAdmin=$true
             $r.Exe=Join-Path $PSScriptRoot 'MiOS-Cat.bat'
+            $r.Args=@('stage') + $Passthrough
             if ($Unattended) { $r.Env['NONINTERACTIVE']='1' }
             $d = Get-MiosSsotValue -Section 'cat' -Key 'drivepath'
             if ($d) { $r.Drive = "$($d):" }

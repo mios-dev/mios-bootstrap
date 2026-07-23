@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 title MiOS-Cat Dedicated USB Installer
 cd /d %~dp0
 set "maindir=%CD%"
@@ -149,7 +149,7 @@ if /i "%~1"=="update"    goto sub_update
 if /i "%~1"=="config"    goto sub_config
 if /i "%~1"=="manual"    goto sub_manual
 if /i "%~1"=="help"      goto sub_manual
-goto quickstart
+goto start_install
 
 :menu
 cls
@@ -871,7 +871,10 @@ if not "%NONINTERACTIVE%"=="1" set /p "confirm=Are you sure you want to format %
 if /i "%confirm%"=="y" set "confirm=Y"
 if /i "%confirm%"=="yes" set "confirm=Y"
 if /i "%confirm%"=="1" set "confirm=Y"
-if not "%confirm%"=="Y" goto menu
+if not "%confirm%"=="Y" (
+    echo Installation cancelled.
+    exit /b 1
+)
 
 :: Ensure target drive exists
 set "log_file=C:\Windows\Temp\mios-cat-install.log"
@@ -881,7 +884,7 @@ if not exist "%drivepath%:\" (
     echo ERROR: Target drive %drivepath%: was not found! | tee -a "%log_file%" 2>nul
     echo Please insert your USB drive and ensure it is mounted as %drivepath%:\
     if not "%NONINTERACTIVE%"=="1" pause
-    goto menu
+    exit /b 1
 )
 
 :: Full visible monitor defaults to ON (SSOT cat.monitor_enabled = true / show_live_monitor = true)
