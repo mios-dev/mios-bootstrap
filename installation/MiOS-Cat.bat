@@ -493,10 +493,8 @@ if /i "%MIOS_UNIFIED%"=="1" goto skip_monitor
 if /i "%MIOS_HEADLESS%"=="1" goto skip_monitor
 
 echo Spawning live graphical MiOS Flash Monitor...
-tasklist /fi "WINDOWTITLE eq MiOS Monitor*" 2>nul | find /i "python" >nul || (
-    if exist "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" (
-        start "MiOS Monitor" python "C:\MiOS\usr\libexec\mios\MiOS-Mon.py"
-    )
+if exist "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" (
+    start "MiOS Monitor" python "C:\MiOS\usr\libexec\mios\MiOS-Mon.py"
 )
 :skip_monitor
 
@@ -844,10 +842,8 @@ exit /b 0
 if /i "%MIOS_NO_MONITOR%"=="1" exit /b 0
 if /i "%MIOS_UNIFIED%"=="1" exit /b 0
 if /i "%MIOS_HEADLESS%"=="1" exit /b 0
-tasklist /fi "WINDOWTITLE eq MiOS Monitor*" 2>nul | find /i "python" >nul || (
-    if exist "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" (
-        start "MiOS Monitor" python "C:\MiOS\usr\libexec\mios\MiOS-Mon.py"
-    )
+if exist "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" (
+    start "MiOS Monitor" python "C:\MiOS\usr\libexec\mios\MiOS-Mon.py"
 )
 exit /b 0
 
