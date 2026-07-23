@@ -138,18 +138,31 @@ function Get-MiosMonitorPaths {
     @{ Log = (Join-Path $dir 'mios-cat-flash.log'); Marker = (Join-Path $dir 'mios-cat-flash.marker'); Dir = $dir }
 }
 function Resolve-MiosMonitorScript {
-    @((Join-Path $PSScriptRoot 'Monitor-MiosFlash.ps1'), 'C:\mios-bootstrap\installation\Monitor-MiosFlash.ps1') |
+    @((Join-Path $PSScriptRoot 'MiOS-Monitor.ps1'), 'C:\mios-bootstrap\installation\MiOS-Monitor.ps1') |
         Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 }
 function Start-MiosMonitor {
     param([string]$LogPath, [string]$MarkerPath, [string]$Title = 'MiOS-Cat')
-    if ("$($env:MIOS_NO_MONITOR)".ToLower() -in @('1','true','yes','on')) { return $null }
+    if ("$($env:MIOS_NO_MONITOR)".ToLower() -in @('1','true','yes','on') -or
+        "$($env:MIOS_UNIFIED)".ToLower() -in @('1','true','yes','on') -or
+        "$($env:MIOS_HEADLESS)".ToLower() -in @('1','true','yes','on') -or
+        "$($env:MIOS_MONITOR_RUNNING)".ToLower() -in @('1','true','yes','on')) { return $null }
+
+    # Single-window check: prevent spawning duplicate monitor windows if one is already active
+    try {
+        $existing = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.MainWindowTitle -like '*MiOS*Monitor*' -or $_.MainWindowTitle -like '*MiOS-Cat*'
+        }
+        if ($existing) { return $null }
+    } catch {}
+
     $mon = Resolve-MiosMonitorScript
     if (-not $mon) { return $null }
     $a = @('-NoProfile','-ExecutionPolicy','Bypass','-File', $mon)
     if ($LogPath)    { $a += @('-LogPath', $LogPath) }
     if ($MarkerPath) { $a += @('-MarkerPath', $MarkerPath) }
     try {
+        $env:MIOS_MONITOR_RUNNING = '1'
         if (Get-Command wt.exe -ErrorAction SilentlyContinue) {
             # foreground Windows Terminal tab (single-token title -- a spaced title mis-parses in wt)
             Start-Process wt.exe -ArgumentList (@('new-tab','--title', ($Title -replace '\s','-'), 'pwsh') + $a) -ErrorAction Stop
@@ -158,6 +171,16 @@ function Start-MiosMonitor {
             Start-Process $exe -ArgumentList $a -ErrorAction Stop
         }
     } catch {}
+}
+
+function Get-MiosBackgroundInstaller {
+    [CmdletBinding()] param([string]$Hint = 'mios-install')
+    $clean = $Hint -replace '^.*[\\/]', '' -replace '\.exe$', ''
+    return Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessName -match [regex]::Escape($clean) -or
+        $_.MainWindowTitle -match [regex]::Escape($clean) -or
+        ($_.CommandLine -and $_.CommandLine -match [regex]::Escape($clean))
+    }
 }
 
 function Install-MiosRust {

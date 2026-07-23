@@ -92,7 +92,20 @@ function Get-MiosCatalog {
             what = 'Opens the MiOS Portal at http://localhost:8640/configure -- the ONE web surface where you edit mios.toml (the SSOT). Changes save to your user layer and project to every MiOS surface. Falls back to the MiOS-DEV launcher, then the offline configurator HTML, if the Portal is not up.'
             produces = 'The live SSOT configurator (or the offline mios.html).'
             cost = 'instant'; needs = 'The MiOS Portal (agent-pipe) on :8640, the MiOS-DEV builder, or an offline configurator.' }
+        'applet' = @{ title = 'Launch framed lightweight monitor applet (grab background windows)'; platform='windows'; needsAdmin=$false; destructive=$false; special='applet'
+            what = 'Spawns or attaches the framed lightweight monitor applet to grab onto background or invisible installer/building windows and display live progress.'
+            produces = 'Framed lightweight monitor applet UI.'
+            cost = 'instant'; needs = 'Active background installer log or window.' }
     }
+}
+
+function Invoke-MiosApplet {
+    param([string]$Hint = 'mios-install')
+    $mon = Resolve-MiosMonitorScript
+    if (-not $mon) { Write-MiosLine 'err' 'Monitor script not found.'; return 1 }
+    Write-MiosLine 'info' 'Launching framed lightweight applet (grabbing background installer windows)...'
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $mon -Grab -Framed -TargetHint $Hint
+    return $LASTEXITCODE
 }
 
 # ============================================================================
@@ -323,6 +336,10 @@ while ($i -lt $argv.Count) {
         '^--stage=(.+)$'          { $Stage = $matches[1]; $i++; continue }
         '^--dry-run$'             { $DryRun = $true; $i++; continue }
         '^--unattended$'          { $Unattended = $true; $i++; continue }
+        '^--unified$'             { $env:MIOS_UNIFIED = '1'; $env:MIOS_NO_MONITOR = '1'; $Unattended = $true; $i++; continue }
+        '^--headless$'            { $env:MIOS_HEADLESS = '1'; $env:MIOS_NO_MONITOR = '1'; $Unattended = $true; $i++; continue }
+        '^--background$'          { $env:MIOS_HEADLESS = '1'; $env:MIOS_NO_MONITOR = '1'; $Unattended = $true; $i++; continue }
+        '^(?:--applet|--grab)$'   { $Target = 'applet'; $i++; continue }
         '^--monitor$'             { $env:MIOS_MONITOR = '1'; $env:MIOS_NO_MONITOR = $null; $script:ForceMonitor = $true; $i++; continue }
         '^--no-monitor$'          { $env:MIOS_NO_MONITOR = '1'; $i++; continue }
         '^--$'                    { if ($i+1 -lt $argv.Count) { $Passthrough += @($argv[($i+1)..($argv.Count-1)]) }; $i = $argv.Count; continue }
@@ -351,8 +368,9 @@ $entry = $catalog[$Target]
 if (-not $script:FromMenu) { Show-MiosLogo }
 Show-MiosTargetBrief -Target $Target -Entry $entry -Type $Type -Stage $Stage
 
-# 'configure' opens the unified Portal/configurator instead of running a build pipeline.
+# 'configure' opens the unified Portal/configurator; 'applet' opens framed monitor grabber applet.
 if ($entry.special -eq 'configure') { exit (Invoke-MiosConfigure) }
+if ($entry.special -eq 'applet')    { exit (Invoke-MiosApplet) }
 
 try {
     $plan = Resolve-Target -Target $Target -Type $Type -Stage $Stage -Unattended $Unattended -Passthrough $Passthrough

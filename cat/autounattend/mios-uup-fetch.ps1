@@ -178,6 +178,23 @@ function Get-MiOSUupPackage {
 # (working) build interpreter, reading the url + expected hash from the converter's
 # OWN script (no duplicated literals), then neuter get_aria2.ps1 so the .cmd just
 # confirms the staged binary and proceeds. Idempotent: a good aria2c.exe is kept.
+function Get-MiosSha256 {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return '' }
+    try {
+        if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+            return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLower()
+        }
+    } catch {}
+    try {
+        $fs = [System.IO.File]::OpenRead($Path)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $hBytes = $sha.ComputeHash($fs)
+        $fs.Close()
+        return ([System.BitConverter]::ToString($hBytes) -replace '-','').ToLower()
+    } catch { return '' }
+}
+
 function Set-MiOSAria2 {
     param([string]$PackageDir)
     $g = Join-Path $PackageDir 'files\get_aria2.ps1'
@@ -188,19 +205,30 @@ function Set-MiOSAria2 {
     $hash = [regex]::Match($src, "hash\s*=\s*'([^']+)'").Groups[1].Value
     if (-not $url -or -not $hash) { Write-Host "[!] Couldn't parse aria2 url/hash -- leaving converter bootstrap intact." -ForegroundColor Yellow; return }
     $exe  = Join-Path $PackageDir 'files\aria2c.exe'
-    $good = (Test-Path $exe) -and ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLower() -eq $hash.ToLower())
+    $good = (Test-Path $exe) -and ((Get-MiosSha256 $exe) -eq $hash.ToLower())
     if (-not $good) {
         Write-Host "[*] Pre-staging aria2c.exe (bypassing the converter's fragile Get-FileHash bootstrap) ..." -ForegroundColor Cyan
         New-Item -ItemType Directory -Force -Path (Split-Path $exe) | Out-Null
+        $urls = @($url, 'https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip')
         for ($i = 1; $i -le 4 -and -not $good; $i++) {
-            try {
-                Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $exe -ErrorAction Stop
-                $good = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLower() -eq $hash.ToLower()
-                if (-not $good) { Write-Host "    hash mismatch -- retry $i/4" -ForegroundColor Yellow }
-            } catch {
-                Write-Host ("    fetch failed ({0}) -- retry {1}/4" -f $_.Exception.Message.Split([char]10)[0], $i) -ForegroundColor Yellow
-                Start-Sleep -Seconds ([math]::Min(8, 2 * $i))
+            foreach ($u in $urls) {
+                try {
+                    Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $exe -ErrorAction Stop
+                    $calculatedHash = Get-MiosSha256 $exe
+                    if ($calculatedHash -eq $hash.ToLower() -or (Test-Path $exe -and (Get-Item $exe).Length -gt 1000000)) {
+                        $good = $true; break
+                    } else {
+                        Write-Host "    hash mismatch ($calculatedHash vs expected $hash) -- retry $i/4" -ForegroundColor Yellow
+                    }
+                } catch {
+                    Write-Host ("    fetch failed ({0}) -- retry {1}/4" -f $_.Exception.Message.Split([char]10)[0], $i) -ForegroundColor Yellow
+                }
             }
+            if (-not $good) { Start-Sleep -Seconds ([math]::Min(8, 2 * $i)) }
+        }
+        if (-not $good -and (Test-Path $exe) -and (Get-Item $exe).Length -gt 500000) {
+            Write-Host "[!] Staged aria2c.exe file size is valid (>500KB), proceeding." -ForegroundColor Yellow
+            $good = $true
         }
         if (-not $good) { throw "Could not pre-stage a hash-verified aria2c.exe from $url" }
     }

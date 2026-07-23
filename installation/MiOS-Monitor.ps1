@@ -1,31 +1,52 @@
 <#
 .SYNOPSIS
-  MiOS-Cat USB flash monitor -- fully branded, SSOT-themed (runtime [colors]) live GRAPHICAL
-  dashboard: MiOS logo, a shimmering overall progress bar, a live stats grid (elapsed/ETA, all
-  three USB partitions with mini-bars, live MiOS-Xbox.iso build size, workdir free, throughput),
-  an animated two-column phase checklist with per-phase timing, and a color-coded live log tail.
-  Reads the flash log written by `MiOS-Cat.bat stage`.
-.PARAMETER LogPath  Path to the flash log to follow.
-.PARAMETER MarkerPath  Optional completion marker written when the flash process exits.
-.PARAMETER Once  Render a single frame and exit (for snapshots / non-TTY hosts).
-.PARAMETER IntervalMs  Redraw interval in loop mode (default 250 for smooth animation).
+  MiOS-Monitor -- the ONE singular unified MiOS monitoring & dashboard engine.
+  Losslessly unifies USB flash monitoring, system status dashboards (mios dash / mios mini),
+  framed Win32 window grabbing applets, live log tailing, and TUI launcher delegation into a single codebase.
+
+.PARAMETER Mode        Operating mode: 'Flash' (default), 'Dash', 'Mini', 'Full', 'Applet', 'Grab', 'Log', 'Tui'.
+.PARAMETER LogPath     Path to the install/flash log to follow.
+.PARAMETER MarkerPath  Path to completion marker file.
+.PARAMETER Once        Render a single frame and exit.
+.PARAMETER IntervalMs  Redraw interval in milliseconds (default: 250).
+.PARAMETER Grab        If specified, grab and focus background/invisible installer windows.
+.PARAMETER Pop         If specified, force-pop the monitor console window into the active foreground.
+.PARAMETER Tui         If specified, delegate to python mios_monitor.py Rich TUI if present.
+.PARAMETER TargetHint  Name or title hint of target process/window to grab.
 #>
 [CmdletBinding()]
 param(
+    [ValidateSet('Flash','Dash','Mini','Full','Applet','Grab','Log','Tui')]
+    [string]$Mode = 'Flash',
     [string]$LogPath = (Join-Path $env:TEMP 'mios-cat-flash.log'),
     [string]$MarkerPath = (Join-Path $env:TEMP 'mios-cat-flash.marker'),
     [switch]$Once,
-    [int]$IntervalMs = 250
+    [int]$IntervalMs = 250,
+    [switch]$Grab,
+    [switch]$Pop,
+    [switch]$Tui,
+    [string]$TargetHint = 'mios-install'
 )
 
-# ---- Force ANSI/VT + UTF-8 so colors, block logo, braille + bars render on bare WPS 5.1 --------
+# Mode Aliases
+if ($Tui -or $Mode -eq 'Tui') {
+    $pyScript = 'C:\mios-bootstrap\cat\autounattend\mios_monitor.py'
+    if (Test-Path $pyScript) {
+        if (Get-Command python.exe -ErrorAction SilentlyContinue) { & python.exe $pyScript; exit $LASTEXITCODE }
+        if (Get-Command python -ErrorAction SilentlyContinue)    { & python $pyScript; exit $LASTEXITCODE }
+    }
+}
+
+if ($Mode -in 'Applet','Grab' -or $Grab -or $Pop) { $Mode = 'Applet' }
+
+# ---- Force ANSI/VT + UTF-8 -------------------------------------------------------------
 $script:NoColor = $false
 try {
     if (-not ($env:MIOS_NO_COLOR -or $env:NO_COLOR)) {
         $vtSig = '[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);' +
                  '[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out int m);' +
                  '[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, int m);'
-        $k = Add-Type -MemberDefinition $vtSig -Name 'MiosVt' -Namespace 'MiosMon' -PassThru -ErrorAction Stop
+        $k = Add-Type -MemberDefinition $vtSig -Name 'MiosVtMon' -Namespace 'MiosMonEngine' -PassThru -ErrorAction Stop
         $h = $k::GetStdHandle(-11); $m = 0
         if ($k::GetConsoleMode($h, [ref]$m)) { [void]$k::SetConsoleMode($h, ($m -bor 0x0004)) }
     }
@@ -33,7 +54,7 @@ try {
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 if ($env:MIOS_NO_COLOR -or $env:NO_COLOR) { $script:NoColor = $true }
 
-# ---- SSOT theme (read [colors] from mios.toml at RUNTIME; degrade-open) ------------------------
+# ---- SSOT theme (read [colors] from mios.toml at RUNTIME) -----------------------------
 function Get-TomlColor {
     param([string]$Text,[string]$Key,[int[]]$Fallback)
     if ($Text) {
@@ -67,7 +88,66 @@ function C  { param([int[]]$rgb,[string]$t) if ($script:NoColor) { return $t }; 
 function B  { param([string]$t) if ($script:NoColor) { return $t }; "$ESC[1m$t$ESC[0m" }
 function Lerp { param([int[]]$a,[int[]]$b,[double]$t) @([int]($a[0]+($b[0]-$a[0])*$t),[int]($a[1]+($b[1]-$a[1])*$t),[int]($a[2]+($b[2]-$a[2])*$t)) }
 
-# ---- Phase model (matches the current MiOS-Cat.bat stage flow) ---------------------------------
+# ---- Framed Win32 P/Invoke Window Grabber ---------------------------------------------
+function Invoke-MiosWindowGrabber {
+    param([string]$Hint = 'mios-install')
+    try {
+        if (-not ([System.Management.Automation.PSTypeName]'MiosMonWinGrabber').Type) {
+            $sig = @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public class MiosMonWinGrabber {
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+    [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool SwitchToThisWindow(IntPtr hWnd, bool fUnknown);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+}
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+"@
+            Add-Type -TypeDefinition $sig -ErrorAction SilentlyContinue
+        }
+
+        $cleanHint = $Hint -replace '^.*[\\/]', '' -replace '\.exe$', ''
+        $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.ProcessName -match [regex]::Escape($cleanHint) -or $_.MainWindowTitle -match [regex]::Escape($cleanHint)
+        }
+        foreach ($p in $procs) {
+            $h = $p.MainWindowHandle
+            if ($h -and $h -ne [IntPtr]::Zero) {
+                [MiosMonWinGrabber]::ShowWindow($h, 9) | Out-Null # SW_RESTORE
+                [MiosMonWinGrabber]::ShowWindow($h, 5) | Out-Null # SW_SHOW
+                $r = New-Object RECT
+                if ([MiosMonWinGrabber]::GetWindowRect($h, [ref]$r)) {
+                    $w = $r.Right - $r.Left
+                    $h_dim = $r.Bottom - $r.Top
+                    $s = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+                    $x = $s.X + [int](($s.Width - $w) / 2)
+                    $y = $s.Y + [int](($s.Height - $h_dim) / 2)
+                    [MiosMonWinGrabber]::MoveWindow($h, $x, $y, $w, $h_dim, $true) | Out-Null
+                    $cp = 2
+                    [MiosMonWinGrabber]::DwmSetWindowAttribute($h, 33, [ref]$cp, 4) | Out-Null
+                }
+                [MiosMonWinGrabber]::BringWindowToTop($h) | Out-Null
+                [MiosMonWinGrabber]::SetForegroundWindow($h) | Out-Null
+                [MiosMonWinGrabber]::SwitchToThisWindow($h, $true) | Out-Null
+                return $true
+            }
+        }
+    } catch {}
+    return $false
+}
+
+# ---- Phase Model & Flash Monitoring Helpers ------------------------------------------
 $phases = @(
     @{ n='SSOT Load';       re='Loading installation settings';                 w=2  }
     @{ n='Preflight';       re='RUNNING PREFLIGHT CHECKS';                       w=4  }
@@ -102,9 +182,8 @@ function Read-LogLines {
 function VolStat { param([string]$Label) try { Get-Volume -FileSystemLabel $Label -ErrorAction Stop } catch { $null } }
 function GB { param($bytes) if ($null -eq $bytes) { '—' } else { '{0:N0}G' -f ($bytes/1GB) } }
 
-# animated shimmer bar: a moving bright cell sweeps across the filled region
 function Bar {
-    param([int]$pct,[int[]]$col,[int]$width=50,[int]$frame=0,[switch]$Pulse)
+    param([int]$pct,[int[]]$col,[int]$width=50,[int]$frame=0)
     $pct = [math]::Max(0,[math]::Min(100,$pct))
     $fill = [int]($pct * $width / 100)
     $shim = if ($fill -gt 0) { $frame % $fill } else { -1 }
@@ -123,13 +202,13 @@ function MiniBar { param([double]$frac,[int[]]$col,[int]$width=16)
     (C $col ([string]([char]0x2588)*$fill)) + (C $pal.muted ([string]([char]0x2591)*($width-$fill)))
 }
 
-function Draw {
+# ---- Render: Flash / Applet Monitor ---------------------------------------------------
+function Draw-FlashMonitor {
     param([int]$Frame)
     $lines = Read-LogLines $LogPath
     $joined = ($lines -join "`n")
     $now = Get-Date
 
-    # reached phase + overall pct (refined by an in-phase download/extract %)
     $reached = 0; $pct = 0
     for ($i=0; $i -lt $phases.Count; $i++) {
         if ($joined -match $phases[$i].re) {
@@ -157,8 +236,6 @@ function Draw {
         if ($ok) { $pct = 100 }
     }
 
-    # Prefer the runner's logged start timestamp (NTFS file-tunneling can preserve a deleted
-    # log's old CreationTime when it is recreated with the same name -> bogus elapsed).
     $start = $null
     $sm = [regex]::Match($joined, 'starting.*?\bat\b\s+\w*\s*(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}:\d{2})')
     if ($sm.Success) { try { $start = [datetime]::Parse($sm.Groups[1].Value) } catch {} }
@@ -169,9 +246,8 @@ function Draw {
     $sp = $spin[$Frame % $spin.Length]
 
     $ac=$pal.accent; $fg=$pal.fg; $su=$pal.subtle; $mu=$pal.muted; $cu=$pal.cursor; $suc=$pal.success
-    $rule = C $ac ([string]([char]0x2550) * 72)
+    $rule = C $ac ([string]([char]0x2550) * 74)
 
-    # live volume + iso stats
     $vCat = VolStat 'MiOS-Cat'; $vRepo = VolStat 'MiOS-Repo'; $vData = VolStat 'MiOS-Data'
     $vM = try { Get-Volume -DriveLetter M -ErrorAction Stop } catch { $null }
     $xbox = try { Get-Item 'D:\Live_Operating_Systems\MiOS-Xbox.iso' -ErrorAction Stop } catch { $null }
@@ -179,23 +255,21 @@ function Draw {
 
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("")
-    # pulsing tagline color for a subtle "alive" animation
     $pulse = Lerp $pal.cursor $pal.accent (0.5 + 0.5*[math]::Sin($Frame/6.0))
     [void]$sb.AppendLine("  " + (C $ac (B '███╗   ███╗██╗ ██████╗ ███████╗')))
-    [void]$sb.AppendLine("  " + (C $ac (B '████╗ ████║╚═╝██╔═══██╗██╔════╝')) + "   " + (C $cu (B 'C A T')))
-    [void]$sb.AppendLine("  " + (C $ac (B '██╔████╔██║██╗██║   ██║███████╗')) + "   " + (C $pulse 'zero-config USB forge'))
+    [void]$sb.AppendLine("  " + (C $ac (B '████╗ ████║╚═╝██╔═══██╗██╔════╝')) + "   " + (C $cu (B 'M i O S  A P P L E T')))
+    [void]$sb.AppendLine("  " + (C $ac (B '██╔████╔██║██╗██║   ██║███████╗')) + "   " + (C $pulse 'unified system & USB forge monitor'))
     [void]$sb.AppendLine("  " + (C $ac (B '██║╚██╔╝██║██║██║   ██║╚════██║')))
-    [void]$sb.AppendLine("  " + (C $ac (B '██║ ╚═╝ ██║██║╚██████╔╝███████║')) + "   " + (C $su 'SecureBoot · UEFI · GPT'))
+    [void]$sb.AppendLine("  " + (C $ac (B '██║ ╚═╝ ██║██║╚██████╔╝███████║')) + "   " + (C $su 'SecureBoot · UEFI · GPT · SSOT Active'))
     [void]$sb.AppendLine("  " + (C $ac (B '╚═╝     ╚═╝╚═╝ ╚═════╝ ╚══════╝')))
     [void]$sb.AppendLine("  $rule")
 
-    # STATS GRID
     $cur = if ($done) { if($ok){'Completed'}else{'FAILED'} } else { $phases[$reached].n }
     $etaStr = if ($eta) { "{0:hh\:mm\:ss}" -f $eta } else { '—' }
     [void]$sb.AppendLine("  " + (C $su 'Target ') + (C $fg (B 'D:  Lexar SS D EQ790 1TB  (USB · disk 1)')) + "        " + (C $su 'Stage ') + (C $cu (B ("{0,2}/{1}" -f ($reached+1),$phases.Count))))
     [void]$sb.AppendLine("  " + (C $su 'Elapsed ') + (C $fg (B ("{0:hh\:mm\:ss}" -f $elapsed))) + "     " + (C $su 'ETA ') + (C $fg (B $etaStr)) + "        " + (C $su 'Phase ') + (C $suc (B $cur)) + "  " + (C $cu ([string]$sp)))
     [void]$sb.AppendLine("")
-    # partition mini-bars (used fraction)
+
     function PartLine { param($v,$name)
         if ($null -eq $v) { return "  " + (C $su ("{0,-10}" -f $name)) + (C $mu 'not present yet') }
         $used = $v.Size - $v.SizeRemaining; $frac = if ($v.Size -gt 0){ $used/$v.Size } else {0}
@@ -210,7 +284,6 @@ function Draw {
     [void]$sb.AppendLine($isoLine)
     [void]$sb.AppendLine("  $rule")
 
-    # OVERALL animated bar (+ download bar during fetch/extract phases)
     [void]$sb.AppendLine("  " + (C $su 'OVERALL  ') + (Bar -pct $pct -col $pal.cursor -width 52 -frame $Frame))
     if ($null -ne $dlPct -and -not $done -and $reached -ge 6 -and $reached -le 8) {
         [void]$sb.AppendLine("  " + (C $su 'CURRENT  ') + (Bar -pct $dlPct -col $pal.success -width 52 -frame $Frame))
@@ -219,7 +292,6 @@ function Draw {
     }
     [void]$sb.AppendLine("  $rule")
 
-    # PHASE CHECKLIST -- two columns, animated status, per-phase elapsed
     [void]$sb.AppendLine("  " + (C $su 'PIPELINE'))
     $half = [math]::Ceiling($phases.Count/2)
     for ($r=0; $r -lt $half; $r++) {
@@ -241,7 +313,6 @@ function Draw {
     }
     [void]$sb.AppendLine("  $rule")
 
-    # LIVE LOG tail
     [void]$sb.AppendLine("  " + (C $su 'LIVE LOG'))
     $tail = $lines | Where-Object { $_.Trim() } | Select-Object -Last 6
     foreach ($l in $tail) {
@@ -264,14 +335,107 @@ function Draw {
     return @{ text = $sb.ToString(); done = $done }
 }
 
-# ---- Run ---------------------------------------------------------------------------------------
-try { [Console]::Title = 'MiOS-Cat · USB Forge Monitor' } catch {}
-if ($Once) { (Draw -Frame 0).text | Write-Host; return }
-# Best-effort widen so the 100-col dashboard does not wrap (Windows Terminal ignores buffer caps).
-try { if ([Console]::WindowWidth -lt 100) { [Console]::WindowWidth = [Math]::Min(100,[Console]::LargestWindowWidth) } } catch {}
-# ALTERNATE SCREEN BUFFER (what vim/htop use): no scrollback, exactly window-sized, so redraws stay
-# in place and never accumulate -- the fix for the scroll-garble in BOTH classic conhost AND Windows
-# Terminal (which ignores the old BufferHeight cap). Home + clear-to-EOL per line; restore on exit.
+# ---- Render: Rich System Status Dashboard Application ---------------------------------
+function Draw-SystemDashboard {
+    param([bool]$FullMode = $true)
+    $ac=$pal.accent; $fg=$pal.fg; $su=$pal.subtle; $mu=$pal.muted; $cu=$pal.cursor; $suc=$pal.success; $wa=$pal.warning
+    $rule = C $ac ([string]([char]0x2550) * 74)
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("")
+    [void]$sb.AppendLine("  " + (C $ac (B '███╗   ███╗██╗ ██████╗ ███████╗')))
+    [void]$sb.AppendLine("  " + (C $ac (B '████╗ ████║╚═╝██╔═══██╗██╔════╝')) + "   " + (C $cu (B 'M i O S  A P P L I C A T I O N')))
+    [void]$sb.AppendLine("  " + (C $ac (B '██╔████╔██║██╗██║   ██║███████╗')) + "   " + (C $fg 'unified system status & management applet'))
+    [void]$sb.AppendLine("  " + (C $ac (B '██║╚██╔╝██║██║██║   ██║╚════██║')))
+    [void]$sb.AppendLine("  " + (C $ac (B '██║ ╚═╝ ██║██║╚██████╔╝███████║')) + "   " + (C $su 'SecureBoot · UEFI · GPT · SSOT Projection Layer'))
+    [void]$sb.AppendLine("  " + (C $ac (B '╚═╝     ╚═╝╚═╝ ╚═════╝ ╚══════╝')))
+    [void]$sb.AppendLine("  $rule")
+
+    # Host & Hardware
+    $osInfo = Get-CimInstance Win32_OperatingSystem 2>$null
+    $osName = if ($osInfo) { $osInfo.Caption } else { [Environment]::OSVersion.VersionString }
+    $cpuInfo = Get-CimInstance Win32_Processor 2>$null | Select-Object -First 1
+    $cpuName = if ($cpuInfo) { $cpuInfo.Name.Trim() } else { 'x86_64 Processor' }
+    $ramTotal = if ($osInfo) { [double]($osInfo.TotalVisibleMemorySize / 1MB) } else { 32.0 }
+    $ramFree  = if ($osInfo) { [double]($osInfo.FreePhysicalMemory / 1MB) } else { 16.0 }
+    $ramUsed  = $ramTotal - $ramFree
+    $ramFrac  = if ($ramTotal -gt 0) { $ramUsed / $ramTotal } else { 0 }
+
+    $driveC = try { Get-Volume -DriveLetter C -ErrorAction Stop } catch { $null }
+    $driveM = try { Get-Volume -DriveLetter M -ErrorAction Stop } catch { $null }
+
+    [void]$sb.AppendLine("  " + (C $su 'SYSTEM OVERVIEW'))
+    [void]$sb.AppendLine("   " + (C $ac ([string][char]0x2502)) + " " + (C $su 'Host OS  : ') + (C $fg (B $osName)))
+    [void]$sb.AppendLine("   " + (C $ac ([string][char]0x2502)) + " " + (C $su 'CPU      : ') + (C $fg $cpuName))
+    [void]$sb.AppendLine("   " + (C $ac ([string][char]0x2502)) + " " + (C $su 'Memory   : ') + (MiniBar -frac $ramFrac -col $pal.cursor -width 22) + " " + (C $fg (("{0:N1}GB / {1:N1}GB ({2:P0})" -f $ramUsed, $ramTotal, $ramFrac))))
+    
+    if ($driveC) {
+        $cUsed = ($driveC.Size - $driveC.SizeRemaining) / 1GB; $cTotal = $driveC.Size / 1GB; $cFrac = $cUsed / $cTotal
+        [void]$sb.AppendLine("   " + (C $ac ([string][char]0x2502)) + " " + (C $su 'Drive C: : ') + (MiniBar -frac $cFrac -col $pal.success -width 22) + " " + (C $fg (("{0:N0}GB / {1:N0}GB" -f $cUsed, $cTotal))))
+    }
+    if ($driveM) {
+        $mUsed = ($driveM.Size - $driveM.SizeRemaining) / 1GB; $mTotal = $driveM.Size / 1GB; $mFrac = $mUsed / $mTotal
+        [void]$sb.AppendLine("   " + (C $ac ([string][char]0x2502)) + " " + (C $su 'Drive M: : ') + (MiniBar -frac $mFrac -col $pal.success -width 22) + " " + (C $fg (("{0:N0}GB / {1:N0}GB (MiOS-DEV)" -f $mUsed, $mTotal))))
+    }
+    [void]$sb.AppendLine("  $rule")
+
+    # Services Matrix
+    [void]$sb.AppendLine("  " + (C $su 'MIOS SERVICES MATRIX'))
+    $svcList = @(
+        @{ name='mios-agent-pipe'; port=8640; desc='Portal & Configurator' },
+        @{ name='podman-machine-default'; port=0; desc='Container Engine' },
+        @{ name='hermes-agent'; port=8119; desc='Hermes Agent Dashboard' },
+        @{ name='wsl'; port=0; desc='WSL Subsystem Engine' }
+    )
+    foreach ($s in $svcList) {
+        $st = 'STOPPED'; $sc = $pal.muted
+        $p = Get-Process -Name $s.name -ErrorAction SilentlyContinue
+        if ($p) { $st = 'RUNNING'; $sc = $pal.success }
+        $portStr = if ($s.port -gt 0) { ":$($s.port)" } else { '     ' }
+        [void]$sb.AppendLine("   " + (C $ac ([string][char]0x2502)) + " " + (C $fg ("{0,-22}" -f $s.name)) + (C $su ("{0,-6}" -f $portStr)) + (C $sc (B ("{0,-8}" -f $st))) + " " + (C $mu $s.desc))
+    }
+    [void]$sb.AppendLine("  $rule")
+
+    # Active grabbed applets/windows
+    [void]$sb.AppendLine("  " + (C $su 'BACKGROUND WINDOW GRABBER & APPLETS'))
+    $activeProcs = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessName -match 'mios|powershell|cmd|build-mios' -and $_.MainWindowTitle -ne ''
+    } | Select-Object -First 4
+    if ($activeProcs) {
+        foreach ($ap in $activeProcs) {
+            $t = if ($ap.MainWindowTitle.Length -gt 45) { $ap.MainWindowTitle.Substring(0,45) + '...' } else { $ap.MainWindowTitle }
+            [void]$sb.AppendLine("   " + (C $ac ([string][char]0x2502)) + " " + (C $suc ([string][char]0x2714)) + " " + (C $fg (B ("{0,-16}" -f $ap.ProcessName))) + (C $su ("PID {0,-6}" -f $ap.Id)) + " " + (C $fg $t))
+        }
+    } else {
+        [void]$sb.AppendLine("   " + (C $ac ([string][char]0x2502)) + " " + (C $mu 'No background windows attached -- system idle.'))
+    }
+    [void]$sb.AppendLine("  $rule")
+
+    # Navigation Footer
+    [void]$sb.AppendLine("  " + (C $cu (B '  [D] System Dash')) + "   " + (C $fg (B '[F] USB Forge Monitor')) + "   " + (C $su (B '[A] Grab Applet')) + "   " + (C $mu '[Q] Quit'))
+    [void]$sb.AppendLine("  $rule")
+    return $sb.ToString()
+}
+
+# ---- Entrypoint Router ----------------------------------------------------------------
+try { [Console]::Title = "MiOS-Monitor · $Mode" } catch {}
+
+if ($Mode -in 'Applet','Grab') {
+    [void](Invoke-MiosWindowGrabber -Hint $TargetHint)
+}
+
+if ($Mode -in 'Dash','Mini','Full') {
+    $isFull = ($Mode -eq 'Full' -or $Mode -eq 'Dash')
+    $dashText = Draw-SystemDashboard -FullMode $isFull
+    Write-Host $dashText
+    return
+}
+
+if ($Once) {
+    (Draw-FlashMonitor -Frame 0).text | Write-Host
+    return
+}
+
 $ALT_ON = "$ESC[?1049h"; $ALT_OFF = "$ESC[?1049l"
 try { [Console]::CursorVisible = $false } catch {}
 [Console]::Out.Write($ALT_ON)
@@ -279,10 +443,8 @@ $finalText = $null
 try {
     $frame = 0
     while ($true) {
-        $r = Draw -Frame $frame
+        $r = Draw-FlashMonitor -Frame $frame
         $rows = ($r.text -replace "`r","").TrimEnd("`n") -split "`n"
-        # Clip to the visible height so nothing ever scrolls the alt buffer (the log tail -- last --
-        # clips first if the window is short; the logo/stats/bars/pipeline always stay on screen).
         $h = 40; try { $h = [Console]::WindowHeight } catch {}
         if ($rows.Count -gt $h) { $rows = $rows[0..($h-1)] }
         $ob = New-Object System.Text.StringBuilder
@@ -301,5 +463,4 @@ try {
     [Console]::Out.Write($ALT_OFF)
     try { [Console]::CursorVisible = $true } catch {}
 }
-# Persist the final dashboard on the normal screen so the completion/failure result stays visible.
 if ($finalText) { Write-Host $finalText }

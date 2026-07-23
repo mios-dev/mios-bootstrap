@@ -887,7 +887,7 @@ if not exist "%drivepath%:\" (
 :: Full visible monitor defaults to ON (SSOT cat.monitor_enabled = true / show_live_monitor = true)
 if not "%monitor_enabled%"=="false" if not "%show_live_monitor%"=="false" (
     echo Launching live interactive monitor on user desktop...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Launch-Interactive-Monitor.ps1" >nul 2>&1
+    powershell -NoProfile -ExecutionPolicy Bypass -File "C:\mios-bootstrap\installation\MiOS-Monitor.ps1" -Mode Applet >nul 2>&1
 )
 
 :: 4. Download Ventoy bootloader -- newest upstream GLOBALLY
@@ -1178,14 +1178,17 @@ set "flash_marker=%TEMP%\mios-cat-flash.marker"
 del "%flash_marker%" /q >nul 2>&1
 echo [INFO] Starting MiOS-Cat USB flash operations... > "%flash_log%"
 
+if /i "%MIOS_NO_MONITOR%"=="1" goto skip_monitor
+if /i "%MIOS_UNIFIED%"=="1" goto skip_monitor
+if /i "%MIOS_HEADLESS%"=="1" goto skip_monitor
+
 echo Spawning live graphical MiOS Flash Monitor...
 tasklist /fi "WINDOWTITLE eq MiOS Flash Monitor*" 2>nul | find /i "powershell" >nul || (
-    if exist "C:\mios-bootstrap\installation\Monitor-MiosFlash.ps1" (
-        start "MiOS Flash Monitor" powershell -NoProfile -ExecutionPolicy Bypass -File "C:\mios-bootstrap\installation\Monitor-MiosFlash.ps1" -LogPath "%flash_log%" -MarkerPath "%flash_marker%"
-    ) else if exist "%maindir%\resources\autorun\Monitor-MiosFlash.ps1" (
-        start "MiOS Flash Monitor" powershell -NoProfile -ExecutionPolicy Bypass -File "%maindir%\resources\autorun\Monitor-MiosFlash.ps1" -LogPath "%flash_log%" -MarkerPath "%flash_marker%"
+    if exist "C:\mios-bootstrap\installation\MiOS-Monitor.ps1" (
+        start "MiOS Flash Monitor" powershell -NoProfile -ExecutionPolicy Bypass -File "C:\mios-bootstrap\installation\MiOS-Monitor.ps1" -Mode Flash -LogPath "%flash_log%" -MarkerPath "%flash_marker%"
     )
 )
+:skip_monitor
 
 :: 11. Format & Initialize Target USB Drive
 echo Formatting and merging all USB partitions back to a single disk letter (%drivepath%:)...
