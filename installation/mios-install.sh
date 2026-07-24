@@ -407,6 +407,23 @@ case "$TARGET" in
         die "unknown target '${TARGET}'. Valid targets: live xbox fedora bootc oci seed flash build update config (run with --help)" ;;
 esac
 
+resolve_target_prereqs() {
+    local target="$1"
+    log_info "Resolving prerequisites for target '${target}'..."
+    case "$target" in
+        fedora|bootc|live|flash|build|update)
+            if command -v dnf >/dev/null 2>&1; then
+                for pkg in git curl podman; do
+                    if ! rpm -q "$pkg" >/dev/null 2>&1; then
+                        log_info "Target prerequisite missing: ${pkg}"
+                        (( DRY_RUN )) || sudo dnf install -y "$pkg" || true
+                    fi
+                done
+            fi
+            ;;
+    esac
+}
+
 # ============================================================================
 # Windows-only targets: print guidance, execute nothing.
 # ============================================================================
@@ -452,6 +469,8 @@ if (( REQUIRES_ROOT )); then
     # mios_self_elevate (mios-common) no-ops if already root, else exec's sudo -E.
     mios_self_elevate "$0" "${ORIG_ARGS[@]}"
 fi
+
+resolve_target_prereqs "$TARGET"
 
 # ============================================================================
 # Apply env, launch. exec = process replacement, exit code mirrors the
