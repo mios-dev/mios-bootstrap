@@ -37,6 +37,8 @@ This repo is the **interactive installer and user-editable layer** of MiOS. It o
 
 The division of labor is the whole-system contract: `mios.git` defines *what the OS is* (baked into the immutable image); `mios-bootstrap.git` defines *how an operator gets onto it and tunes it* (the installer + the user overlay that wins at resolution time).
 
+> **Law 15 — DOUBLE-REPO-TRIPLE-CHECK (spans both repos):** before ANY change, **double-check BOTH repos** — `mios.git` (`C:\MiOS`, the system/OCI image source) **and** `mios-bootstrap.git` (this repo, the installer/user-overlay) — for current state, the shared cross-repo SSOT (`mios.toml`, the `userenv` twins, `[ports]`/`[colors]`), duplication, and the other agent's in-flight work; then **triple-check everything** (re-read the target, re-verify the assumption, render/parse/test the result) **before acting**. Measure thrice, cut once — **then code**. A surface mirrored across both repos MUST be updated in both. Canonical registry: `mios.git usr/share/mios/mios.toml [laws]` id 15.
+
 ## Entry points
 
 ```powershell
