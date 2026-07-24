@@ -58,6 +58,11 @@ try {
   $label  = GS 'cat.sysrescue' 'ar_source_label' ''
   if (-not $label) { $label = $PartitionLabel }
   if (-not $label) { $label = 'MiOS-Cat' }
+  # Passphrase gating the superuser-only "Wipe MiOS" GRUB entry. GRUB word-splits the
+  # `password` line, so strip anything that would break parsing (keep alnum . _ -).
+  $wipePass = GS 'cat.sysrescue' 'wipe_passphrase' 'mios'
+  $wipePass = ($wipePass -replace '[^\w.\-]', '')
+  if (-not $wipePass) { $wipePass = 'mios' }
 
   # --- (1) render the deployed grub.cfg boot options from the checked-in defaults ----------
   # SAFETY: ar_suffixes SPLITS the autorun paths so they can never cross -- the SSH boot entries
@@ -68,13 +73,25 @@ try {
   $grub = "${TargetDrive}:\ventoy\sysrescue_grub.cfg"
   if (Test-Path -LiteralPath $grub) {
     $c = Get-Content -Raw -LiteralPath $grub
+    $c = $c -replace 'password rescue mios', ("password rescue " + $wipePass)   # BEFORE rootpass=mios
     $c = $c -replace 'rootpass=mios', ("rootpass=" + $pass)
     $c = $c -replace 'by-label/MiOS-Cat', ("by-label/" + $label)
     if (-not $nofw)   { $c = $c -replace ' nofirewall','' }
     if (-not $rootlg) { $c = $c -replace 'rootpass=[^\s]+\s*','' }
     Set-Content -LiteralPath $grub -Value $c -Encoding ASCII
-    Note "grub.cfg rendered (root login, pass=<ssot>, nofirewall=$nofw, ar_source label=$label; wipe gated on autorun9)."
+    Note "grub.cfg rendered (root login, pass=<ssot>, nofirewall=$nofw, label=$label; Wipe MiOS gated by superuser passphrase on autorun9)."
   } else { Note "deployed grub.cfg not found at $grub -- skipped (Ventoy config may not be staged)." }
+
+  # --- (1b) render the SYSLINUX (BIOS/legacy) SystemRescue boot config the same way --------
+  $syslinux = "${TargetDrive}:\ventoy\sysrescue_syslinux.cfg"
+  if (Test-Path -LiteralPath $syslinux) {
+    $s = Get-Content -Raw -LiteralPath $syslinux
+    $s = $s -replace 'rootpass=mios', ("rootpass=" + $pass)
+    $s = $s -replace 'by-label/MiOS-Cat', ("by-label/" + $label)
+    if (-not $nofw) { $s = $s -replace ' nofirewall','' }
+    Set-Content -LiteralPath $syslinux -Value $s -Encoding ASCII
+    Note "syslinux.cfg (BIOS path) rendered (pass=<ssot>, nofirewall=$nofw, label=$label)."
+  }
 
   # --- (2) emit the runtime SSOT env the autorun0 firstboot script sources -----------------
   # Written to the PARTITION ROOT (beside autorun0), so 01-sysrescue-firstboot.sh finds it via

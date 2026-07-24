@@ -1670,6 +1670,7 @@ root_login        = true
 nofirewall        = true          # REQUIRED: default SystemRescue firewall blocks inbound sshd
 ar_source_label   = "MiOS-Cat"    # Ventoy data-partition label the autorun scanner mounts
 connection_header = true          # print live IP + hardware banner on every boot AND every login
+wipe_passphrase   = "mios"        # generic default passphrase gating the "Wipe MiOS" GRUB menu entry
 
 [security.luks]
 enabled = false
