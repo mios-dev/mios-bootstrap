@@ -414,13 +414,13 @@ exit 0
 
     $cmd = Join-Path $PackageDir 'uup_download_windows.cmd'
     Write-Host "[*] Running UUP converter (aria2 fetch + build ISO) -- this is long ..." -ForegroundColor Cyan
-    # Pre-flight: the converter chain (uup_download_windows.cmd -> convert-UUP.cmd) must BOTH
-    # exist in the package dir. A missing convert-UUP.cmd surfaces mid-run as the cryptic
-    # "'convert-UUP.cmd' is not recognized" -- fail fast + clear (re-fetch, don't guess).
-    foreach ($need in 'uup_download_windows.cmd','convert-UUP.cmd') {
-        if (-not (Test-Path -LiteralPath (Join-Path $PackageDir $need))) {
-            throw "UUP package incomplete: '$need' missing under $PackageDir -- re-run the UUP fetch before converting."
-        }
+    # Pre-flight: only uup_download_windows.cmd must exist after extraction -- it is the
+    # entry point the get.php package ships. NOTE: convert-UUP.cmd is NOT in the package;
+    # uup_download_windows.cmd DOWNLOADS it (its first aria2 pass fetches the converter),
+    # so requiring it here wrongly fails every clean/fresh fetch. The direct-convert
+    # fallback below guards convert-UUP.cmd's presence AFTER the download instead.
+    if (-not (Test-Path -LiteralPath (Join-Path $PackageDir 'uup_download_windows.cmd'))) {
+        throw "UUP package incomplete: 'uup_download_windows.cmd' missing under $PackageDir -- re-run the UUP fetch."
     }
     Push-Location $PackageDir
     # The converter's .cmd spawns Windows PowerShell 5.1 (files\get_aria2.ps1). Under a
