@@ -382,7 +382,39 @@ function Invoke-MiOSUupConvert {
     if ($exitCode -ne 0) { throw "uup_download_windows.cmd failed (exit $exitCode)" }
     $iso = Get-ChildItem -Path $PackageDir -Filter '*.ISO' -File -ErrorAction SilentlyContinue |
            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $iso) { throw "Converter produced no .ISO under $PackageDir" }
+    if (-not $iso) {
+        # uup_download_windows.cmd's convert-trigger is NON-INTERACTIVE-HOSTILE:
+        #   if EXIST convert-UUP.cmd goto :START_CONVERT
+        #   pause            <- a headless run reads EOF here and falls through
+        #   goto :EOF        <- exiting 0 with NO conversion -> the "no .ISO" below
+        # So the download can succeed while the convert is silently skipped. If
+        # convert-UUP.cmd is present, drive it DIRECTLY (ConvertConfig has
+        # AutoStart=1 / AutoExit=1 so it runs autonomously) with CWD pinned to the
+        # package dir and its output CAPTURED to mios-convert.log -- this both
+        # bypasses the pause-skip AND surfaces the real reason if it still fails.
+        $cvt = Join-Path $PackageDir 'convert-UUP.cmd'
+        if (Test-Path -LiteralPath $cvt) {
+            Write-Host "[*] No ISO after the download step -- driving convert-UUP.cmd directly (headless-safe) ..." -ForegroundColor Yellow
+            $cvtLog = Join-Path $PackageDir 'mios-convert.log'
+            $cp = New-Object System.Diagnostics.ProcessStartInfo
+            $cp.FileName = "cmd.exe"
+            $cp.Arguments = "/c `"$cvt`""
+            $cp.UseShellExecute = $false
+            $cp.WorkingDirectory = $PackageDir
+            $cp.RedirectStandardOutput = $true
+            $cp.RedirectStandardError = $true
+            $cproc = [System.Diagnostics.Process]::Start($cp)
+            $cOut = $cproc.StandardOutput.ReadToEndAsync()
+            $cErr = $cproc.StandardError.ReadToEndAsync()
+            $cproc.WaitForExit()
+            Set-Content -LiteralPath $cvtLog -Encoding UTF8 -Value (
+                $cOut.Result + "`n===== STDERR =====`n" + $cErr.Result)
+            Write-Host ("[*] convert-UUP.cmd exit={0}; captured -> {1}" -f $cproc.ExitCode, $cvtLog) -ForegroundColor DarkGray
+            $iso = Get-ChildItem -Path $PackageDir -Filter '*.ISO' -File -ErrorAction SilentlyContinue |
+                   Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        }
+    }
+    if (-not $iso) { throw "Converter produced no .ISO under $PackageDir (see $PackageDir\mios-convert.log for the converter's own output)" }
     return $iso.FullName
 }
 
