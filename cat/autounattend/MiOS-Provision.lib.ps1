@@ -174,7 +174,7 @@ function New-MiOSGlobalPrefCommands {
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarDa|REG_DWORD'    = '0'
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarMn|REG_DWORD'    = '0'
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|ShowTaskViewButton|REG_DWORD' = '1'
-        'Software\Microsoft\Windows\CurrentVersion\Search|SearchboxTaskbarMode|REG_DWORD'    = '0'
+        'Software\Microsoft\Windows\CurrentVersion\Search|SearchboxTaskbarMode|REG_DWORD'    = (Get-Toml $Toml 'autounattend.preferences.searchbox_mode' '1')
         'Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel|{645FF040-5081-101B-9F08-00AA002F954E}|REG_DWORD' = '1'
         'Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel|{20D04FE0-3AEA-1069-A2D8-08002B30309D}|REG_DWORD' = '1'
         'Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel|{59031a47-3f72-44a7-89c5-5595fe6b30ee}|REG_DWORD' = '1'
