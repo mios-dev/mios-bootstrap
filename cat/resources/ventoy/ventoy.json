@@ -29,6 +29,8 @@
         "ventoy_color": "#F35C15"
     },
     "menu_alias": [
+        { "image": "/Live_Operating_Systems/MiOS-Live-Chat.iso", "alias": "Chat with MiOS AI (Live RAM System -- Zero Host Install)" },
+        { "image": "/MiOS-Live-Chat.iso", "alias": "Chat with MiOS AI (Live RAM System -- Zero Host Install)" },
         { "image": "/Live_Operating_Systems/Fedora-Server.iso", "alias": "Deploy MiOS Linux (Fedora Server + MiOS Sovereign Overlay)" },
         { "image": "/Fedora-Server.iso", "alias": "Deploy MiOS Linux (Fedora Server + MiOS Sovereign Overlay)" },
         { "image": "/Live_Operating_Systems/MiOS-Xbox.iso", "alias": "Deploy MiOS-Xbox (Windows Gaming Edition - CompactOS)" },
@@ -40,6 +42,8 @@
         { "image": "/SystemRescue/SystemRescue.iso", "alias": "SystemRescue Arch Linux (Diagnostics & Disk Tools)" }
     ],
     "menu_tip": [
+        { "image": "/Live_Operating_Systems/MiOS-Live-Chat.iso", "tip": "Chat with MiOS AI -- boot an ephemeral MiOS + bundled local AI entirely in RAM, zero host install / disk footprint" },
+        { "image": "/MiOS-Live-Chat.iso", "tip": "Chat with MiOS AI -- boot an ephemeral MiOS + bundled local AI entirely in RAM, zero host install / disk footprint" },
         { "image": "/Live_Operating_Systems/Fedora-Server.iso", "tip": "Deploy MiOS Linux -- Bare-Metal Fedora Server + MiOS Sovereign FHS Overlay & Local AI Engine" },
         { "image": "/Fedora-Server.iso", "tip": "Deploy MiOS Linux -- Bare-Metal Fedora Server + MiOS Sovereign FHS Overlay & Local AI Engine" },
         { "image": "/Live_Operating_Systems/MiOS-Xbox.iso", "tip": "Deploy MiOS-Xbox -- Windows 11 Gaming Edition with CompactOS Compression & Debloated Gaming Stack" },
