@@ -1309,6 +1309,14 @@ skip_edge    = false   # KEEP Edge (operator wants it)
 # publisher hash). Everything else the converter would ship is left out entirely.
 # Xbox stack + Store/winget + Defender UI + media codecs (gaming/streaming compat).
 keep_apps    = "Microsoft.WindowsStore Microsoft.StorePurchaseApp Microsoft.DesktopAppInstaller Microsoft.SecHealthUI Microsoft.ScreenSketch Microsoft.WindowsTerminal Microsoft.GamingApp Microsoft.XboxIdentityProvider Microsoft.XboxGamingOverlay Microsoft.XboxGameOverlay Microsoft.XboxSpeechToTextOverlay Microsoft.Xbox.TCUI Microsoft.HEVCVideoExtension Microsoft.VP9VideoExtensions Microsoft.AV1VideoExtension Microsoft.WebMediaExtensions Microsoft.RawImageExtension Microsoft.HEIFImageExtension Microsoft.WebpImageExtension Microsoft.AVCEncoderVideoExtension Microsoft.MPEG2VideoExtension Microsoft.DolbyAudioExtensions"
+# skip_download: regex patterns (over each UUP `out=` filename) the DOWNLOAD-TIME trim in
+# mios-uup-fetch.ps1 drops, so the bloat is never PULLED in the first place. CustomList=1
+# already removes these at install (they are NOT in keep_apps) -- this just stops wasting
+# the bandwidth/disk downloading them. SAFE-ONLY: match only OPTIONAL non-kept consumer
+# Store apps -- NEVER a base OS ESD, a runtime framework (VCLibs / NET.Native /
+# WindowsAppRuntime / UI.Xaml / Store.Engagement), the target's drivers, or anything in
+# keep_apps. Unknown/typo patterns are a harmless no-op (degrade-safe). Edit to taste.
+skip_download = "Microsoft.BingNews Microsoft.BingWeather Microsoft.BingSearch Microsoft.Clipchamp Microsoft.GetHelp Microsoft.Getstarted Microsoft.MicrosoftOfficeHub Microsoft.MixedReality.Portal Microsoft.PowerAutomateDesktop Microsoft.MicrosoftSolitaireCollection Microsoft.Todos Microsoft.YourPhone MicrosoftTeams Microsoft.WindowsFeedbackHub microsoft.windowscommunicationsapps Microsoft.People Microsoft.ZuneMusic Microsoft.ZuneVideo MicrosoftCorporationII.QuickAssist Microsoft.OutlookForWindows Microsoft.Copilot Microsoft.Windows.DevHome"
 computer_name  = ""              # empty -> inherits [identity].hostname
 
 # [autounattend.xbox] -- Xbox Full Screen Experience "out of the box" (T-140).
@@ -1642,3 +1650,35 @@ iso_name           = "MiOS-Live-Chat.iso"
 live_chat_enabled  = "true"                     # .bat-loader alias of `enabled`
 live_chat_iso_name = "MiOS-Live-Chat.iso"       # .bat-loader alias of `iso_name`
 live_chat_iso_src  = "M:\\MiOS-Live-Chat.iso"   # where MiOS-Cat.bat looks for a pre-built ISO
+
+[security.luks]
+enabled = false
+pin = "tpm2"
+pcrs = "7"
+
+[gpu.vendors]
+nvidia = true
+amd = true
+intel = true
+
+[greenboot]
+critical_services = ["agent-pipe", "llm-light", "pgvector"]
+
+[agent_pipe.quality]
+min_length  = 5
+check_json  = true
+check_punt  = true
+check_empty = true
+
+[mini]
+enabled = false
+guest_cpu_percent = 80
+guest_ram_percent = 80
+dgpumode = "vfio-pci"
+
+[mini.mesh]
+enabled = false
+headscale_domain = "mesh.mios.internal"
+vnet_cidr = "10.42.0.0/16"
+swtpm_vtpm = true
+
