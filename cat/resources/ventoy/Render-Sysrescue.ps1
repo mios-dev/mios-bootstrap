@@ -60,32 +60,34 @@ try {
   if (-not $label) { $label = 'MiOS-Cat' }
 
   # --- (1) render the deployed grub.cfg boot options from the checked-in defaults ----------
-  # SAFETY: the SystemRescue SSH boot entries intentionally carry NO ar_source. The file the
-  # autorun scanner would run (\autorun\autorun) is a DESTRUCTIVE whole-disk wipe, so no autorun
-  # is auto-enabled here -- only rootpass + nofirewall (reliable, non-destructive remote access).
+  # SAFETY: ar_suffixes SPLITS the autorun paths so they can never cross -- the SSH boot entries
+  # run autorun0 (the safe firstboot: mios user + connection header), while the destructive
+  # whole-disk WIPE lives on autorun9, reachable ONLY from the explicit "WIPE ALL DISKS" menu
+  # entry. The plain-`autorun` slot is left empty. We render rootpass/nofirewall + the ar_source
+  # partition label from SSOT; the ar_suffixes split is structural (defined in the grub.cfg).
   $grub = "${TargetDrive}:\ventoy\sysrescue_grub.cfg"
   if (Test-Path -LiteralPath $grub) {
     $c = Get-Content -Raw -LiteralPath $grub
     $c = $c -replace 'rootpass=mios', ("rootpass=" + $pass)
+    $c = $c -replace 'by-label/MiOS-Cat', ("by-label/" + $label)
     if (-not $nofw)   { $c = $c -replace ' nofirewall','' }
     if (-not $rootlg) { $c = $c -replace 'rootpass=[^\s]+\s*','' }
     Set-Content -LiteralPath $grub -Value $c -Encoding ASCII
-    Note "grub.cfg rendered (root login, pass=<ssot>, nofirewall=$nofw; no autorun -- wipe stays dormant)."
+    Note "grub.cfg rendered (root login, pass=<ssot>, nofirewall=$nofw, ar_source label=$label; wipe gated on autorun9)."
   } else { Note "deployed grub.cfg not found at $grub -- skipped (Ventoy config may not be staged)." }
 
-  # --- (2) emit the runtime SSOT env the autorun firstboot script sources ------------------
-  $autorunDir = "${TargetDrive}:\autorun"
-  if (Test-Path -LiteralPath $autorunDir) {
-    $hv = if ($header) { '1' } else { '0' }
-    $envLines = @(
-      "# Rendered from mios.toml [cat.sysrescue] SSOT by Render-Sysrescue.ps1. Do not hand-edit.",
-      "MIOS_SR_USER='$user'",
-      "MIOS_SR_PASS='$pass'",
-      "MIOS_SR_HEADER='$hv'"
-    )
-    Set-Content -LiteralPath (Join-Path $autorunDir 'mios-sysrescue.env') -Value $envLines -Encoding ASCII
-    Note "runtime SSOT env -> \autorun\mios-sysrescue.env (user=$user, header=$header)."
-  }
+  # --- (2) emit the runtime SSOT env the autorun0 firstboot script sources -----------------
+  # Written to the PARTITION ROOT (beside autorun0), so 01-sysrescue-firstboot.sh finds it via
+  # dirname($0) when SystemRescue mounts the ar_source device and runs <mount>/autorun0.
+  $hv = if ($header) { '1' } else { '0' }
+  $envLines = @(
+    "# Rendered from mios.toml [cat.sysrescue] SSOT by Render-Sysrescue.ps1. Do not hand-edit.",
+    "MIOS_SR_USER='$user'",
+    "MIOS_SR_PASS='$pass'",
+    "MIOS_SR_HEADER='$hv'"
+  )
+  Set-Content -LiteralPath "${TargetDrive}:\mios-sysrescue.env" -Value $envLines -Encoding ASCII
+  Note "runtime SSOT env -> \mios-sysrescue.env at partition root (user=$user, header=$header)."
 } catch {
   Note ("non-fatal: " + $_.Exception.Message.Split([Environment]::NewLine)[0] + " -- grub.cfg defaults stand (SSH still enabled).")
 }

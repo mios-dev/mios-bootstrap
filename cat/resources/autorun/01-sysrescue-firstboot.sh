@@ -12,9 +12,10 @@ echo "[MiOS SystemRescue Firstboot] Enabling SSH + remote access + live connecti
 #     (1) mios-sysrescue.env rendered at flash time by Render-Sysrescue.ps1 (build-time SSOT),
 #     (2) a flashed mios.toml parsed live (runtime SSOT), (3) safe defaults.
 MIOS_USER="mios"; MIOS_PASS="mios"; ROOT_PASS="mios"; MIOS_HEADER=1
-# (1) rendered env -- search alongside this script + the usual autorun/boot mounts.
-for _env in "$(dirname "$0")/mios-sysrescue.env" /run/archiso/bootmnt/autorun/mios-sysrescue.env \
-            /mnt/*/autorun/mios-sysrescue.env /root/mios-sysrescue.env; do
+# (1) rendered env -- beside autorun0 at the ar_source partition root (dirname $0), then the
+#     usual auto-mount points as fallbacks.
+for _env in "$(dirname "$0")/mios-sysrescue.env" /mnt/*/mios-sysrescue.env \
+            /run/archiso/bootmnt/mios-sysrescue.env /root/mios-sysrescue.env; do
     if [ -r "$_env" ]; then . "$_env" 2>/dev/null || true; break; fi
 done
 [ -n "${MIOS_SR_USER:-}" ]   && MIOS_USER="$MIOS_SR_USER"

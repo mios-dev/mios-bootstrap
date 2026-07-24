@@ -551,9 +551,13 @@ xcopy "%res_dir%\ventoy" "%drivepath%:\ventoy\" /E /I /H /Y /Q >nul
 xcopy "%res_dir%\theme" "%drivepath%:\ventoy\theme\" /E /I /H /Y /Q >nul
 mkdir "%drivepath%:\autorun" >nul 2>&1
 if exist "%res_dir%\autorun" xcopy "%res_dir%\autorun" "%drivepath%:\autorun\" /E /I /H /Y /Q >nul
-copy "%res_dir%\autorun.sh" "%drivepath%:\autorun.sh" /Y >nul
-copy "%res_dir%\autorun.sh" "%drivepath%:\autorun\autorun.sh" /Y >nul
-copy "%res_dir%\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
+:: SystemRescue autorun triggers at the PARTITION ROOT (where ar_source=/dev/disk/by-label/MiOS-Cat
+:: scans). ar_suffixes keeps the two paths from EVER crossing: the SSH boot runs autorun0 (safe
+:: firstboot -- creates the mios user + prints the live IP/hardware connection header); the explicit
+:: "WIPE ALL DISKS" menu entry runs autorun9 (destructive, gated). The plain-`autorun` slot is left
+:: INTENTIONALLY EMPTY so no boot path can silently trigger the whole-disk wipe.
+copy "%res_dir%\autorun\01-sysrescue-firstboot.sh" "%drivepath%:\autorun0" /Y >nul
+copy "%res_dir%\autorun.sh" "%drivepath%:\autorun9" /Y >nul
 copy "%res_dir%\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 :: SSOT: project mios.toml [cat.sysrescue] onto the deployed SystemRescue boot config
 :: (rootpass + nofirewall = reliable, non-destructive remote access), rendered at flash time.

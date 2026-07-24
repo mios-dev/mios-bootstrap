@@ -36,6 +36,21 @@ else
     exit 1
 fi
 
+# --- FINAL SAFETY GATE ------------------------------------------------------------------
+# This script is autorun9 -- it runs ONLY when the operator deliberately picks the
+# "!!! WIPE ALL DISKS + Deploy MiOS" menu entry (ar_suffixes=9). It is NEVER on the SSH /
+# default boot path (that runs autorun0 = the firstboot). Give a last visible abort window
+# on the console before destroying anything; powering the machine off now aborts cleanly.
+echo ""
+echo "###############################################################"
+echo "#   WARNING: ABOUT TO WIPE EVERY DISK EXCEPT THE BOOT USB      #"
+echo "#   Boot USB (KEPT): $usb_disk"
+echo "#   Every OTHER disk on this machine will be ZEROED.           #"
+echo "#   POWER OFF NOW to abort.                                    #"
+echo "###############################################################"
+for _s in $(seq 15 -1 1); do printf "\r   Wiping all other disks in %2d s -- power off to abort... " "$_s"; sleep 1; done
+echo ""
+
 # 2. Iterate and wipe all other disks
 echo "Scanning for local disks..."
 for disk in $(lsblk -dno NAME,TYPE | grep disk | awk '{print "/dev/"$1}'); do
