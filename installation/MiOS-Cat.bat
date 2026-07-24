@@ -555,6 +555,11 @@ copy "%res_dir%\autorun.sh" "%drivepath%:\autorun.sh" /Y >nul
 copy "%res_dir%\autorun.sh" "%drivepath%:\autorun\autorun.sh" /Y >nul
 copy "%res_dir%\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
 copy "%res_dir%\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
+:: SSOT: project mios.toml [cat.sysrescue] onto the deployed SystemRescue boot config
+:: (rootpass + nofirewall = reliable, non-destructive remote access), rendered at flash time.
+if exist "%~dp0..\cat\resources\ventoy\Render-Sysrescue.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\cat\resources\ventoy\Render-Sysrescue.ps1" -TargetDrive "%drivepath%" -TomlPath "%toml_path%" -PartitionLabel "%partition_label%" >nul 2>&1
+)
 
 for /f "usebackq tokens=1,2 delims=," %%a in (`powershell -NoProfile -Command "$rp=(Get-Volume -FileSystemLabel '%repo_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; $dp=(Get-Volume -FileSystemLabel '%data_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; if (-not $rp) { $rp='_' }; if (-not $dp) { $dp='_' }; Write-Output ($rp + ',' + $dp)"`) do (
     set "repodrive=%%a"

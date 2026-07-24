@@ -1651,6 +1651,26 @@ live_chat_enabled  = "true"                     # .bat-loader alias of `enabled`
 live_chat_iso_name = "MiOS-Live-Chat.iso"       # .bat-loader alias of `iso_name`
 live_chat_iso_src  = "M:\\MiOS-Live-Chat.iso"   # where MiOS-Cat.bat looks for a pre-built ISO
 
+# ----------------------------------------------------------------------------
+# [cat.sysrescue] -- SystemRescue (Arch) live rescue: SSH + remote access, defined
+# ONCE here and PROJECTED to every surface: rendered at build/flash time into the
+# Ventoy grub.cfg boot options (Render-Sysrescue.ps1) AND read at RUNTIME by the
+# autorun firstboot script (01-sysrescue-firstboot.sh) off the flashed mios.toml.
+# `password` empty -> the ONE first-boot cred [identity].default_password (same
+# chain as [autounattend.service].svc_password). nofirewall is MANDATORY for inbound
+# SSH: SystemRescue's default iptables/ip6tables block EVERY incoming connection incl.
+# sshd -- omitting it is why remote access never worked. ar_source_label = the Ventoy
+# data-partition volume label the autorun scanner mounts to find the firstboot script.
+# ----------------------------------------------------------------------------
+[cat.sysrescue]
+enable            = true
+username          = "mios"
+password          = ""            # empty -> [identity].default_password (one SSOT cred)
+root_login        = true
+nofirewall        = true          # REQUIRED: default SystemRescue firewall blocks inbound sshd
+ar_source_label   = "MiOS-Cat"    # Ventoy data-partition label the autorun scanner mounts
+connection_header = true          # print live IP + hardware banner on every boot AND every login
+
 [security.luks]
 enabled = false
 pin = "tpm2"
