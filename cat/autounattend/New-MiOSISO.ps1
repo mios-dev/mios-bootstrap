@@ -108,7 +108,12 @@ function Expand-MiOSIso {
 function Get-MiOSMergedRemovals {
     param([string]$PresetPath, $Toml)
     $out = [pscustomobject]@{ Capabilities = @(); Features = @(); EnableFeatures = @(); Appx = @(); NtliteOnly = 0 }
-    if (-not (Test-Path $PresetPath)) { Write-Host "[!] Merged preset not found: $PresetPath (servicing skipped)" -ForegroundColor Yellow; return $out }
+    # DEBLOAT IS MANDATORY on every MiOS-Xbox build (Day-0/N) -- FAIL CLOSED. A missing
+    # merged preset previously "skipped servicing" and shipped a fully BLOATED image that
+    # still exited GREEN. Never again: if the debloat preset is absent, the build ERRORS.
+    if (-not (Test-Path $PresetPath)) {
+        throw "[New-MiOSISO] DEBLOAT PRESET MISSING: $PresetPath -- the merged debloat preset is REQUIRED for every MiOS-Xbox build (Day-0/N). Run Merge-MiOSPresets first. Refusing to ship a non-debloated image."
+    }
     [xml]$xml = Get-Content -LiteralPath $PresetPath -Raw
     $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
     $ns.AddNamespace('n', 'urn:schemas-nliteos-com:pn.v1')
@@ -160,6 +165,15 @@ function Get-MiOSMergedRemovals {
     $out.EnableFeatures = @($en   | Select-Object -Unique)
     $out.Appx           = @($capp | Select-Object -Unique)
     $out.NtliteOnly     = $ccnt
+    # DEBLOAT IS MANDATORY (Day-0/N) -- FAIL CLOSED on an empty/broken preset too. A valid
+    # merged preset MUST yield real DISM-actionable removals (capabilities + features +
+    # appx). Zero means the preset parsed empty (bad merge / namespace mismatch) and the
+    # servicing would be a NO-OP that ships a bloated image GREEN. Error instead.
+    $_actionable = @($out.Capabilities).Count + @($out.Features).Count + @($out.Appx).Count
+    if ($_actionable -lt 1) {
+        throw "[New-MiOSISO] DEBLOAT PRESET EMPTY: $PresetPath parsed to 0 DISM-actionable removals (caps=$(@($out.Capabilities).Count) feat=$(@($out.Features).Count) appx=$(@($out.Appx).Count); ntlite-residue=$($out.NtliteOnly)). The debloat would be a no-op -- refusing to ship a non-debloated image. Regenerate the merged preset (Merge-MiOSPresets)."
+    }
+    Write-Host ("[+] Debloat set: {0} capabilities, {1} features, {2} appx (+{3} NTLite-only CBS residue) -- MANDATORY servicing will apply these." -f @($out.Capabilities).Count, @($out.Features).Count, @($out.Appx).Count, $out.NtliteOnly) -ForegroundColor Green
     return $out
 }
 
