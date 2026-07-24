@@ -372,6 +372,21 @@ resolve_seed() {
 --stage/--unattended have no mapping here -- the script has no stage flags and (per source) no interactive prompts, so it already runs unattended. mios.toml on THIS checkout: ${toml}"
 }
 
+resolve_config() {
+    local port
+    port="$(mios_ssot_value 'ports.agent_pipe' '8640')"
+    local url="http://localhost:${port}/configure"
+    log_info "Opening MiOS Configurator at ${url} ..."
+    if command -v xdg-open >/dev/null 2>&1; then
+        CMD=(xdg-open "$url")
+    elif command -v python3 >/dev/null 2>&1; then
+        CMD=(python3 -m webbrowser "$url")
+    else
+        log_warn "No browser launcher found -- open ${url} manually."
+        CMD=(true)
+    fi
+}
+
 # ============================================================================
 # Dispatch
 # ============================================================================
@@ -385,10 +400,11 @@ case "$TARGET" in
     seed)   resolve_seed ;;
     build)  resolve_build ;;
     update) resolve_update ;;
+    config|configure) resolve_config ;;
     default|Default|offlinesync|OfflineSync|buildxboxiso|BuildXboxISO|flashusb|FlashUSB)
         die "'${TARGET}' is a Get-MiOS.ps1 -Action value, not a mios-install target. mios-install only runs AFTER Get-MiOS.ps1 has already cloned this repo locally -- it does not re-wrap Get-MiOS.ps1's bootstrap/offline-sync actions (installation/README.md, 'Out of scope')." ;;
     *)
-        die "unknown target '${TARGET}'. Valid targets: live xbox fedora bootc oci seed flash build update (run with --help)" ;;
+        die "unknown target '${TARGET}'. Valid targets: live xbox fedora bootc oci seed flash build update config (run with --help)" ;;
 esac
 
 # ============================================================================

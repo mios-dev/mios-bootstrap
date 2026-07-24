@@ -65,9 +65,9 @@ function Get-MiosCatalog {
             produces = 'All MiOS deployment artifacts.'
             cost = '45-90 min'; needs = 'WSL2 + podman + Administrator.' }
         'configure' = @{ title = 'Open the MiOS Portal / configurator (edit SSOT)'; platform='windows'; needsAdmin=$false; destructive=$false; special='configure'
-            what = 'Opens the MiOS Portal at http://localhost:8640/configure to edit mios.toml.'
+            what = 'Opens the MiOS Portal at http://localhost:<ports.agent_pipe>/configure to edit mios.toml.'
             produces = 'Live SSOT configurator.'
-            cost = 'instant'; needs = 'MiOS Portal on :8640 or offline configurator.' }
+            cost = 'instant'; needs = 'MiOS Portal on SSOT agent_pipe port or offline configurator.' }
         'provision' = @{ title = 'Provision MiOS-Xbox on a target'; platform='windows'; needsAdmin=$true; destructive=$false
             what = 'Runs Invoke-MiOSProvision.ps1 using the SSOT configuration.'
             produces = 'Provisioned MiOS-Xbox.'
@@ -215,10 +215,9 @@ if (-not $catalog.Contains($Target)) {
 
 $entry = $catalog[$Target]
 if ($entry.Contains('special')) {
-    if ($entry['special'] -eq 'configure') {
-        Start-Process 'http://localhost:8640/configure'
+        $port = Get-MiosTomlValue -Section 'ports' -Key 'agent_pipe' -Default '8640'
+        Start-Process "http://localhost:${port}/configure"
         exit 0
-    }
     if ($entry['special'] -eq 'repos') {
         Write-MiosLine 'info' 'Opening repository directories in Explorer...'
         $miosRepo = Join-Path (Split-Path $script:Root -Parent) 'MiOS'
