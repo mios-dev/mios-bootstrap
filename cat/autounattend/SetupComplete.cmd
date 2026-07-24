@@ -11,6 +11,11 @@ rem ============================================================================
 set "LOG=%WINDIR%\Temp\mios-setupcomplete.log"
 echo [MiOS] SetupComplete start %DATE% %TIME%>>"%LOG%"
 
+rem --- PRE-CREATE SYSTEMPROFILE DESKTOP DIRS: prevent "systemprofile\desktop is not accessible" modal (T-280) ---
+echo [MiOS] pre-creating systemprofile desktop directories %DATE% %TIME%>>"%LOG%"
+mkdir "%WINDIR%\System32\config\systemprofile\Desktop" >nul 2>&1
+mkdir "%WINDIR%\SysWOW64\config\systemprofile\Desktop" >nul 2>&1
+
 rem --- NATIVE BITLOCKER DISABLE: prevent Win11 24H2 automatic drive encryption ---
 echo [MiOS] disabling BitLocker automatic encryption %DATE% %TIME%>>"%LOG%"
 reg add "HKLM\SYSTEM\CurrentControlSet\Control\BitLocker" /v PreventDeviceEncryption /t REG_DWORD /d 1 /f >>"%LOG%" 2>&1

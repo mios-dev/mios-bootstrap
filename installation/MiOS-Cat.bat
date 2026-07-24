@@ -555,11 +555,11 @@ if "%datadrive%"=="_" set "datadrive=%repodrive%"
 if "%repodrive%"=="" set "repodrive=%drivepath%"
 if "%datadrive%"=="" set "datadrive=%repodrive%"
 
-echo Staging offline repositories to the %data_label% vault (%datadrive%:)...
-mkdir "%datadrive%:\repos\mios-bootstrap" >nul 2>&1
-robocopy "C:\mios-bootstrap" "%datadrive%:\repos\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 /MT:32 >nul
-mkdir "%datadrive%:\repos\MiOS" >nul 2>&1
-robocopy "C:\MiOS" "%datadrive%:\repos\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 /MT:32 >nul
+echo Staging offline repositories to the %repo_label% vault (%repodrive%:)...
+mkdir "%repodrive%:\repos\mios-bootstrap" >nul 2>&1
+robocopy "C:\mios-bootstrap" "%repodrive%:\repos\mios-bootstrap" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 /MT:32 >nul
+mkdir "%repodrive%:\repos\MiOS" >nul 2>&1
+robocopy "C:\MiOS" "%repodrive%:\repos\MiOS" /E /XD .npm node_modules build cache isobuild isobuild2 /R:2 /W:2 /MT:32 >nul
 
 echo Staging shadow-config brain to %repo_label% (%repodrive%:)...
 if exist "%toml_path%" copy "%toml_path%" "%repodrive%:\mios.toml" /Y >nul 2>&1
