@@ -85,7 +85,9 @@ function Resolve-MiOSUupBuild {
     #     Microsoft's WU backend returns HTTP 500 / NO_UPDATE_FOUND / rate-limits under
     #     load and between flights. Try it, but never let it be the only source.
     try {
-        $upd = Invoke-UupApi "$API/fetchupd.php?arch=$Arch&ring=$Ring&flight=Mainline" -Retries 3
+        # NB: `&flight=Mainline` makes fetchupd.php return HTTP 500 (invalid flight token);
+        # bare `?arch=&ring=` returns 200 (or 429 rate-limit, which Invoke-UupApi backs off).
+        $upd = Invoke-UupApi "$API/fetchupd.php?arch=$Arch&ring=$Ring" -Retries 6
         $r   = $upd.response
         if ($r -and $r.updateArray -and @($r.updateArray).Count -ge 1) {
             $sel   = @($r.updateArray)[0]
@@ -102,19 +104,40 @@ function Resolve-MiOSUupBuild {
     #     the Dev/25H2 26xxx range. Robust when the live scan is down (this is exactly
     #     what the Linux builder falls back to).
     if (-not $uuid) {
-        Write-Host "[*] Falling back to the UUP catalog (listid.php) ..." -ForegroundColor Cyan
-        $lst = Invoke-UupApi "$API/listid.php?search=Windows%2011&sortByDate=1"
-        # listid.php returns response.builds as a UUID-keyed OBJECT (not an array):
-        # {"<uuid>":{arch,build,title,...},...}. Enumerate its property VALUES.
+        Write-Host "[*] fetchupd empty -- resolving the newest $Ring build from the UUP catalog (listid.php) ..." -ForegroundColor Cyan
+        # listid.php is the RELIABLE source (returns 200 even when the WU live-scan is down)
+        # and it DOES carry the latest Insider/Dev flights. response.builds is a UUID-keyed
+        # OBJECT: {"<uuid>":{arch,build,title,...},...} -- enumerate its property VALUES.
+        $lst    = Invoke-UupApi "$API/listid.php?search=Windows%2011&sortByDate=1"
         $bnode  = $lst.response.builds
         $builds = if ($bnode -is [System.Array]) { @($bnode) } else { @($bnode.PSObject.Properties.Value) }
-        $cand = @($builds | Where-Object { $_.arch -eq $Arch -and ("$($_.title)" -match 'version 24H2|version 25H2|Feature Update') })
-        # Prefer active stable 26100 / 26200 builds whose packages are guaranteed present on WU CDN
-        $pref = @($cand | Where-Object { "$($_.build)" -match '^26100|^26200' })
-        $pick = if ($pref.Count) { $pref[0] } elseif ($cand.Count) { $cand[0] } else { $null }
-        if (-not $pick) { throw "No $Ring/Insider Feature Update build found via fetchupd OR listid (arch=$Arch)." }
+        # Windows 11 CLIENT buildable bases only (exclude Server + non-buildable deltas).
+        $cand = @($builds | Where-Object { $_.arch -eq $Arch -and "$($_.title)" -match 'Windows 11' -and "$($_.title)" -notmatch 'Server' })
+        $byBuildDesc = { [int64]((("$($_.build)") -split '\.')[0] -replace '\D','') }
+        # The newest Insider Preview (rs_prerelease) build IS the latest Dev flight -- prefer it
+        # for the Dev/Insider ring; a stable Feature Update (26xxx) is the last resort.
+        $devlike = @($cand | Where-Object { "$($_.title)" -match 'Insider Preview|rs_prerelease' } | Sort-Object $byBuildDesc -Descending)
+        $stable  = @($cand | Where-Object { "$($_.title)" -match 'Feature Update|version 2[0-9]H2' } | Sort-Object $byBuildDesc -Descending)
+        $ordered = if ($Ring -match 'Dev|WIF|WIS|Insider') { @($devlike) + @($stable) } else { @($stable) + @($devlike) }
+        # Pick the NEWEST whose requested edition is actually populated -- that guarantees the
+        # UUP packages still exist on the WU CDN (very-fresh or aged-out Dev flights can be
+        # cataloged but un-downloadable). Probe the top few, newest-first.
+        $pick = $null
+        foreach ($b in @($ordered | Select-Object -First 6)) {
+            try {
+                $eds  = Invoke-UupApi "$API/listeditions.php?id=$($b.uuid)&lang=$Lang" -Retries 2
+                $have = @($eds.response.editionFancyNames.PSObject.Properties.Name)
+                if ($have.Count -and ($have | Where-Object { $_ -ieq $Edition })) { $pick = $b; break }
+            } catch { }
+        }
+        if (-not $pick) { $pick = @($ordered)[0] }
+        if (-not $pick) { throw "No $Ring Windows 11 build found via fetchupd OR listid (arch=$Arch; catalog=$($builds.Count) entries)." }
         $uuid = $pick.uuid; $build = $pick.build; $title = $pick.title
-        Write-Host "    listid -> build=$build uuid=$uuid ($title)" -ForegroundColor DarkGray
+        if ("$title" -match 'Insider Preview|rs_prerelease') {
+            Write-Host "    listid -> LATEST DEV build=$build uuid=$uuid ($title)" -ForegroundColor Green
+        } else {
+            Write-Host "[!] listid -> STABLE fallback build=$build ($title) -- no downloadable Dev flight right now; this is NOT the latest Dev." -ForegroundColor Yellow
+        }
     }
     # Confirm the requested edition/lang are actually populated for this build (non-fatal).
     try {
