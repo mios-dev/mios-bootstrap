@@ -3,6 +3,16 @@ title MiOS-Cat Dedicated USB Installer
 cd /d %~dp0
 set "maindir=%CD%"
 
+:: Resource assets (Ventoy config+theme, autorun, fonts, CdUsb, icon) live under <repo>\cat\resources
+:: -- NOT under the launcher dir. maindir is the launcher dir (installation\), so %maindir%\resources
+:: pointed at installation\resources\ which DOES NOT EXIST: the flash printed "File not found - ventoy"
+:: / "File not found - theme" and deployed an EMPTY \ventoy\ (no menu, no injection, no branding) --
+:: the exact reason a flashed stick booted as a bare Ventoy. Resolve the REAL resources root relative
+:: to THIS script (CWD-independent), with fallbacks for alternate layouts. (flash-log B6 fix.)
+set "res_dir=%~dp0..\cat\resources"
+if not exist "%res_dir%\ventoy\ventoy.json" set "res_dir=%maindir%\resources"
+if not exist "%res_dir%\ventoy\ventoy.json" set "res_dir=%~dp0resources"
+
 :: Self-elevate so a plain double-click on factory-fresh Windows just works (UAC
 :: prompt) instead of failing the Administrator preflight. Get-MiOS / the
 :: scheduled task launch already-elevated and pass straight through this gate.
@@ -355,7 +365,7 @@ if "%bake_drivers%"=="Enabled" (
 
 echo Injecting custom wallpaper, Geist Mono font, and Console colors into WIM...
 set "wallpaper_src="
-if exist "%maindir%\resources\theme\uefi\background.jpg" set "wallpaper_src=%maindir%\resources\theme\uefi\background.jpg"
+if exist "%res_dir%\theme\uefi\background.jpg" set "wallpaper_src=%res_dir%\theme\uefi\background.jpg"
 if "%wallpaper_src%"=="" if exist "%~dp0..\resources\theme\uefi\background.jpg" set "wallpaper_src=%~dp0..\resources\theme\uefi\background.jpg"
 if "%wallpaper_src%"=="" if exist "D:\ventoy\theme\uefi\background.jpg" set "wallpaper_src=D:\ventoy\theme\uefi\background.jpg"
 if "%wallpaper_src%"=="" (
@@ -373,7 +383,7 @@ copy "%wallpaper_src%" "%stage_dir%\mount\Windows\Web\Screen\img100.jpg" /Y >nul
 
 set "font_src="
 if exist "C:\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf" set "font_src=C:\Windows\Fonts\GeistMonoNerdFontMono-Regular.otf"
-if "%font_src%"=="" if exist "%maindir%\resources\fonts\GeistMonoNerdFontMono-Regular.otf" set "font_src=%maindir%\resources\fonts\GeistMonoNerdFontMono-Regular.otf"
+if "%font_src%"=="" if exist "%res_dir%\fonts\GeistMonoNerdFontMono-Regular.otf" set "font_src=%res_dir%\fonts\GeistMonoNerdFontMono-Regular.otf"
 if "%font_src%"=="" if exist "%~dp0..\resources\fonts\GeistMonoNerdFontMono-Regular.otf" set "font_src=%~dp0..\resources\fonts\GeistMonoNerdFontMono-Regular.otf"
 if "%font_src%"=="" (
     echo FATAL ERROR: GeistMono font missing!
@@ -537,14 +547,14 @@ echo Extracting payload to %drivepath%: (-mmt=on)...
 attrib -r -h -s "%drivepath%:\autorun.inf" >nul 2>&1
 attrib -r -h -s "%drivepath%:\autorun\*" /S /D >nul 2>&1
 attrib -r -h -s "%drivepath%:\ventoy\*" /S /D >nul 2>&1
-xcopy "%maindir%\resources\ventoy" "%drivepath%:\ventoy\" /E /I /H /Y /Q >nul
-xcopy "%maindir%\resources\theme" "%drivepath%:\ventoy\theme\" /E /I /H /Y /Q >nul
+xcopy "%res_dir%\ventoy" "%drivepath%:\ventoy\" /E /I /H /Y /Q >nul
+xcopy "%res_dir%\theme" "%drivepath%:\ventoy\theme\" /E /I /H /Y /Q >nul
 mkdir "%drivepath%:\autorun" >nul 2>&1
-if exist "%maindir%\resources\autorun" xcopy "%maindir%\resources\autorun" "%drivepath%:\autorun\" /E /I /H /Y /Q >nul
-copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun.sh" /Y >nul
-copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun.sh" /Y >nul
-copy "%maindir%\resources\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
-copy "%maindir%\resources\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
+if exist "%res_dir%\autorun" xcopy "%res_dir%\autorun" "%drivepath%:\autorun\" /E /I /H /Y /Q >nul
+copy "%res_dir%\autorun.sh" "%drivepath%:\autorun.sh" /Y >nul
+copy "%res_dir%\autorun.sh" "%drivepath%:\autorun\autorun.sh" /Y >nul
+copy "%res_dir%\autorun.sh" "%drivepath%:\autorun\autorun" /Y >nul
+copy "%res_dir%\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 
 for /f "usebackq tokens=1,2 delims=," %%a in (`powershell -NoProfile -Command "$rp=(Get-Volume -FileSystemLabel '%repo_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; $dp=(Get-Volume -FileSystemLabel '%data_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; if (-not $rp) { $rp='_' }; if (-not $dp) { $dp='_' }; Write-Output ($rp + ',' + $dp)"`) do (
     set "repodrive=%%a"
@@ -629,9 +639,9 @@ set "ico_file="
 if exist "%drivepath%:\autorun\icon.ico" set "ico_file=%drivepath%:\autorun\icon.ico"
 if "%ico_file%"=="" if exist "%drivepath%:\autorun\mios-v2.ico" set "ico_file=%drivepath%:\autorun\mios-v2.ico"
 if "%ico_file%"=="" if exist "%drivepath%:\autorun\mios.ico" set "ico_file=%drivepath%:\autorun\mios.ico"
-if "%ico_file%"=="" if exist "%maindir%\resources\icon.ico" (
-    copy "%maindir%\resources\icon.ico" "%drivepath%:\autorun\icon.ico" /Y >nul 2>&1
-    copy "%maindir%\resources\icon.ico" "%drivepath%:\icon.ico" /Y >nul 2>&1
+if "%ico_file%"=="" if exist "%res_dir%\icon.ico" (
+    copy "%res_dir%\icon.ico" "%drivepath%:\autorun\icon.ico" /Y >nul 2>&1
+    copy "%res_dir%\icon.ico" "%drivepath%:\icon.ico" /Y >nul 2>&1
     set "ico_file=%drivepath%:\autorun\icon.ico"
 )
 

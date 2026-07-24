@@ -83,15 +83,5 @@
             "image": "/Fedora-Server.iso",
             "template": "/ventoy/mios-kickstart.cfg"
         }
-    ],
-    "auto_install":[
-        {
-            "image": "/Live_Operating_Systems/MiOS-Xbox.iso",
-            "template": "/ventoy/mios-xbox-autounattend.xml"
-        },
-        {
-            "image": "/MiOS-Xbox.iso",
-            "template": "/ventoy/mios-xbox-autounattend.xml"
-        }
     ]
 }
