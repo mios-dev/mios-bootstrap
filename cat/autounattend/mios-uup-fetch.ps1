@@ -323,7 +323,7 @@ function Invoke-MiOSUupConvert {
             ResetBase  = (& $b 'autounattend.uup_convert.reset_base'  'true')
             Cleanup    = (& $b 'autounattend.uup_convert.reset_base'  'true')   # cleanup pairs with resetbase
             NetFx3     = (& $b 'autounattend.uup_convert.netfx3'      'false')
-            SkipEdge   = (& $b 'autounattend.uup_convert.skip_edge'   'false')
+            SkipEdge   = (& $b 'autounattend.uup_convert.skip_edge'   'true')   # MiOS removes Edge anyway; skip integrating it (and don't download it -- see the trim below)
             wim2esd    = $(if ($Esd) { '1' } else { '0' })
             CustomList = $(if ($native)  { '1' } else { '0' })   # [Store_Apps]: only keep_apps
             AddDrivers = $(if ($drivers) { '1' } else { '0' })   # bake host drivers this pass
@@ -351,6 +351,67 @@ function Invoke-MiOSUupConvert {
     }
     if ($drivers) { Export-MiOSHostDrivers -PackageDir $PackageDir }
     Set-MiOSAria2 -PackageDir $PackageDir
+
+    # --- MiOS UUP TRIM: don't even PULL the bloat the debloat pass removes anyway -----
+    # The converter downloads the FULL UUP set, then MiOS debloats -- wasteful. Skip the
+    # clearly-optional packages at DOWNLOAD time so the base image is lean from the start.
+    # Skip-patterns (regex over each aria2 `out=` filename) come from SSOT
+    # [autounattend.uup_convert].skip_download; the default drops the Edge browser wim
+    # (safe: SkipEdge=1 means convert never integrates Edge, so it isn't needed). The
+    # operator can add app / language / FoD patterns to skip more (e.g. non-en-us
+    # LanguageFeatures, consumer Store apps NOT in keep_apps). SAFETY: only ever list
+    # OPTIONAL packages -- never a base OS ESD, a runtime framework, or the target's
+    # drivers. Degrade-open: any failure here leaves the download UNFILTERED.
+    try {
+        $skipEdge = ((& $b 'autounattend.uup_convert.skip_edge' 'true') -eq '1')
+        $pat = @((Get-Toml $Toml 'autounattend.uup_convert.skip_download' '') -split '[\s,]+' | Where-Object { $_ })
+        if ($skipEdge) { $pat += 'Edge\.wim' }          # provably safe with SkipEdge=1
+        $pat = @($pat | Select-Object -Unique)
+        if ($pat.Count) {
+            Set-Content -LiteralPath (Join-Path $PackageDir 'files\mios-skip-patterns.txt') -Value $pat -Encoding ASCII
+            $trimBody = @'
+param([string]$ListPath)
+$ErrorActionPreference = 'SilentlyContinue'
+try {
+  $pf  = Join-Path $PSScriptRoot 'mios-skip-patterns.txt'
+  $pat = @(Get-Content -LiteralPath $pf | Where-Object { $_ -and $_ -notmatch '^\s*#' })
+  if (-not $pat.Count -or -not (Test-Path -LiteralPath $ListPath)) { exit 0 }
+  $rx = [regex]::new(($pat -join '|'), 'IgnoreCase')
+  $lines = Get-Content -LiteralPath $ListPath
+  $out = New-Object System.Collections.ArrayList; $blk = New-Object System.Collections.ArrayList
+  $drop = $false; $n = 0
+  foreach ($ln in $lines) {
+    if ($ln -match '^\S' -and $ln -match '://') {
+      if ($blk.Count) { if ($drop) { $n++ } else { [void]$out.AddRange($blk) } }
+      $blk.Clear(); $drop = $false; [void]$blk.Add($ln)
+    } elseif ($blk.Count) {
+      [void]$blk.Add($ln)
+      if ($ln -match '^\s*out=(.+)$' -and $rx.IsMatch($Matches[1].Trim())) { $drop = $true }
+    } else { [void]$out.Add($ln) }
+  }
+  if ($blk.Count) { if ($drop) { $n++ } else { [void]$out.AddRange($blk) } }
+  if ($n -gt 0) { Set-Content -LiteralPath $ListPath -Value $out -Encoding ASCII; Write-Host "[mios-trim] skipped $n bloat package(s) from the UUP download" }
+} catch { Write-Host "[mios-trim] non-fatal ($($_.Exception.Message)) -- download proceeds unfiltered" }
+exit 0
+'@
+            Set-Content -LiteralPath (Join-Path $PackageDir 'files\mios-trim-aria2.ps1') -Value $trimBody -Encoding UTF8
+            $dcmd = Join-Path $PackageDir 'uup_download_windows.cmd'
+            $dl   = Get-Content -LiteralPath $dcmd
+            if (($dl -join "`n") -notmatch 'mios-trim-aria2') {
+                $patched = New-Object System.Collections.ArrayList
+                foreach ($ln in $dl) {
+                    if ($ln -match '^\s*"%aria2%".*-i"%aria2Script%"') {
+                        [void]$patched.Add('powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0files\mios-trim-aria2.ps1" "%aria2Script%"')
+                    }
+                    [void]$patched.Add($ln)
+                }
+                Set-Content -LiteralPath $dcmd -Value $patched -Encoding ASCII
+                Write-Host ("[*] UUP trim armed ({0} pattern(s)) -- bloat skipped at DOWNLOAD, not just debloated later." -f $pat.Count) -ForegroundColor DarkGray
+            }
+        }
+    } catch { Write-Host "[!] UUP trim setup non-fatal ($($_.Exception.Message)) -- proceeding with the full download." -ForegroundColor Yellow }
+    # ---------------------------------------------------------------------------------
+
     $cmd = Join-Path $PackageDir 'uup_download_windows.cmd'
     Write-Host "[*] Running UUP converter (aria2 fetch + build ISO) -- this is long ..." -ForegroundColor Cyan
     # Pre-flight: the converter chain (uup_download_windows.cmd -> convert-UUP.cmd) must BOTH
