@@ -215,9 +215,14 @@ if (-not $catalog.Contains($Target)) {
 
 $entry = $catalog[$Target]
 if ($entry.Contains('special')) {
-        $port = Get-MiosTomlValue -Section 'ports' -Key 'agent_pipe' -Default '8640'
+    if ($entry['special'] -eq 'configure') {
+        # SSOT-resolved configurator port ([ports].agent_pipe); '8640' is only the
+        # last-resort fallback if the TOML can't be read. Get-MiosSsotValue is the
+        # real resolver (mios-common.ps1:30) -- AGY's Get-MiosTomlValue does not exist.
+        $port = Get-MiosSsotValue -Section 'ports' -Key 'agent_pipe' -Default '8640'
         Start-Process "http://localhost:${port}/configure"
         exit 0
+    }
     if ($entry['special'] -eq 'repos') {
         Write-MiosLine 'info' 'Opening repository directories in Explorer...'
         $miosRepo = Join-Path (Split-Path $script:Root -Parent) 'MiOS'
