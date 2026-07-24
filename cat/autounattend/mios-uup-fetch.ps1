@@ -330,6 +330,14 @@ function Invoke-MiOSUupConvert {
     Set-MiOSAria2 -PackageDir $PackageDir
     $cmd = Join-Path $PackageDir 'uup_download_windows.cmd'
     Write-Host "[*] Running UUP converter (aria2 fetch + build ISO) -- this is long ..." -ForegroundColor Cyan
+    # Pre-flight: the converter chain (uup_download_windows.cmd -> convert-UUP.cmd) must BOTH
+    # exist in the package dir. A missing convert-UUP.cmd surfaces mid-run as the cryptic
+    # "'convert-UUP.cmd' is not recognized" -- fail fast + clear (re-fetch, don't guess).
+    foreach ($need in 'uup_download_windows.cmd','convert-UUP.cmd') {
+        if (-not (Test-Path -LiteralPath (Join-Path $PackageDir $need))) {
+            throw "UUP package incomplete: '$need' missing under $PackageDir -- re-run the UUP fetch before converting."
+        }
+    }
     Push-Location $PackageDir
     # The converter's .cmd spawns Windows PowerShell 5.1 (files\get_aria2.ps1). Under a
     # pwsh 7 parent, the inherited PSModulePath points only at PS7's module dirs and
@@ -355,6 +363,14 @@ function Invoke-MiOSUupConvert {
         $pinfo.FileName = "cmd.exe"
         $pinfo.Arguments = "/c `"$cmd`""
         $pinfo.UseShellExecute = $false
+        # CWD FIX (root cause of "'convert-UUP.cmd' is not recognized"): Push-Location above
+        # changes only the PS provider location, NOT the .NET process CWD
+        # ([Environment]::CurrentDirectory) that a UseShellExecute=$false child inherits. So
+        # the child cmd started in a stale dir; when uup_download_windows.cmd's `cd /d "%~dp0"`
+        # could not re-anchor (M: not visible to the child / a UNC %~dp0), its
+        # `call convert-UUP.cmd` resolved against the wrong CWD and failed. Pin the child's
+        # working directory to the package dir explicitly so the whole converter chain resolves.
+        $pinfo.WorkingDirectory = $PackageDir
         $pinfo.RedirectStandardOutput = $false
         $pinfo.RedirectStandardError = $false
         $p = [System.Diagnostics.Process]::Start($pinfo)
