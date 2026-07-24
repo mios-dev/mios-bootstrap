@@ -45,7 +45,10 @@ param(
     [switch]$TestVM,
     [switch]$SkipServicing,
     [bool]$SecureBoot = $true,
-    [string]$Edition
+    # Default to the Xbox edition so this builder applies [editions.mios-xbox]
+    # (gaming debloat, dev channel, posture C, xbox accent, living wallpaper,
+    # autounattend.xbox.enable). Pass -Edition mios for the non-Xbox variant.
+    [string]$Edition = 'mios-xbox'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -138,6 +141,10 @@ Write-Host ''
 $isoArgs = @{ TomlPath = $TomlPath }
 if ($mode -eq 'local') { $isoArgs.SourceIso = $localBase }
 if ($SkipServicing)    { $isoArgs.SkipMerge = $true }
+# Pass the edition through so New-MiOSISO applies the [editions.$Edition] overrides
+# (Apply-MiosEdition). Without this the Xbox ISO silently used BASE config -- no
+# gaming debloat, no xbox accent. Both builder candidates now accept -Edition.
+if ($Edition)          { $isoArgs.Edition = $Edition }
 
 $builder = Join-Path $here 'Build-MiOSXboxISO.ps1'
 if (-not (Test-Path $builder)) { $builder = Join-Path $here 'New-MiOSISO.ps1' }
