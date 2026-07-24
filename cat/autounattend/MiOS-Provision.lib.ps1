@@ -170,7 +170,7 @@ function New-MiOSGlobalPrefCommands {
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|HideFileExt|REG_DWORD'  = (Get-Toml $Toml 'autounattend.preferences.hide_file_ext' '0')
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|Hidden|REG_DWORD'       = (Get-Toml $Toml 'autounattend.preferences.show_hidden' '1')
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarAl|REG_DWORD'    = (Get-Toml $Toml 'autounattend.preferences.taskbar_align' '0')
-        'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|HideIcons|REG_DWORD'    = '1'
+        'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|HideIcons|REG_DWORD'    = (Get-Toml $Toml 'autounattend.preferences.hide_desktop_icons' '1')
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarDa|REG_DWORD'    = '0'
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|TaskbarMn|REG_DWORD'    = '0'
         'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced|ShowTaskViewButton|REG_DWORD' = '1'
@@ -194,13 +194,16 @@ function New-MiOSGlobalPrefCommands {
     $cmds.Add('reg unload "HKU\MiOSDefault"')
     $cmds.Add('reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband" /v Favorites /t REG_BINARY /d "" /f')
     $cmds.Add('reg add "HKLM\SOFTWARE\Microsoft\PolicyManager\current\device\Start" /v ConfigureStartPins /t REG_SZ /d "{\"pinnedList\":[]}" /f')
-    # No desktop icons (spec): stop Edge (re)creating its desktop shortcut + remove any
-    # existing one. DisableEdgeDesktopShortcutCreation + the EdgeUpdate policies block
-    # FUTURE creation; the del clears the .lnk Edge's installer drops on Public\Desktop.
-    $cmds.Add('reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v DisableEdgeDesktopShortcutCreation /t REG_DWORD /d 1 /f')
-    $cmds.Add('reg add "HKLM\SOFTWARE\Policies\Microsoft\EdgeUpdate" /v CreateDesktopShortcutDefault /t REG_DWORD /d 0 /f')
-    $cmds.Add('reg add "HKLM\SOFTWARE\Policies\Microsoft\EdgeUpdate" /v RemoveDesktopShortcutDefault /t REG_DWORD /d 1 /f')
-    $cmds.Add('del /f /q "C:\Users\Public\Desktop\Microsoft Edge.lnk" 2>nul')
+    # No desktop icons (SSOT [autounattend.preferences].remove_edge_shortcut, default
+    # true): stop Edge (re)creating its desktop shortcut + remove any existing one.
+    # DisableEdgeDesktopShortcutCreation + the EdgeUpdate policies block FUTURE
+    # creation; the del clears the .lnk Edge's installer drops on Public\Desktop.
+    if ((Get-Toml $Toml 'autounattend.preferences.remove_edge_shortcut' 'true') -match '^(?i:true|1|yes)$') {
+        $cmds.Add('reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v DisableEdgeDesktopShortcutCreation /t REG_DWORD /d 1 /f')
+        $cmds.Add('reg add "HKLM\SOFTWARE\Policies\Microsoft\EdgeUpdate" /v CreateDesktopShortcutDefault /t REG_DWORD /d 0 /f')
+        $cmds.Add('reg add "HKLM\SOFTWARE\Policies\Microsoft\EdgeUpdate" /v RemoveDesktopShortcutDefault /t REG_DWORD /d 1 /f')
+        $cmds.Add('del /f /q "C:\Users\Public\Desktop\Microsoft Edge.lnk" 2>nul')
+    }
     return $cmds
 }
 
