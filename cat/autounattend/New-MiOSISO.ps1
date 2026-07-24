@@ -1510,6 +1510,48 @@ Write-Host "[*] Generating autounattend.xml (SSOT + Xbox FirstLogonCommands) ...
 & (Join-Path $PSScriptRoot 'New-MiOSAutounattend.ps1') -TomlPath $TomlPath -OutXml (Join-Path $media 'autounattend.xml') -Edition $Edition | Out-Null
 Copy-Item (Join-Path $media 'autounattend.xml') (Join-Path $media 'sources\autounattend.xml') -Force -ErrorAction SilentlyContinue
 
+# Stage 3b -- SELF-SUFFICIENT unattend: embed autounattend.xml INSIDE boot.wim so Windows
+# Setup finds it on EVERY boot method with ZERO external infra. An ISO-root autounattend.xml
+# is only found when Setup can enumerate the physical install media -- which FAILS under
+# loopback boot (Ventoy, and some VMs/BIOSes): the media search never surfaces the ISO root,
+# so NOTHING provisions (exactly the bare-Windows install the operator hit on bare metal).
+# WinPE mounts boot.wim as X:\, and %WINDIR%\Panther\unattend.xml (i.e. X:\Windows\Panther\
+# unattend.xml) is the FIRST implicit answer-file location Setup checks -- it is part of the
+# running RAM image, so it needs no media enumeration at all. We write it there AND at the
+# boot.wim root (X:\autounattend.xml) for every index. Result: MiOS-Xbox is fully portable
+# and self-installing from any USB/DVD/VM/Ventoy with no MiOS-Cat or Ventoy plugin present.
+$__auXml   = Join-Path $media 'autounattend.xml'
+$__bootWim = Join-Path $media 'sources\boot.wim'
+if ((Test-Path $__auXml) -and (Test-Path $__bootWim)) {
+    Write-Host "[*] Embedding autounattend.xml INTO boot.wim (self-sufficient, boot-method-independent) ..." -ForegroundColor Cyan
+    try {
+        Get-ChildItem $__bootWim | ForEach-Object { $_.IsReadOnly = $false }
+        $__auMount = Join-Path (Split-Path $media) 'unattendmount'
+        foreach ($__img in (Get-WindowsImage -ImagePath $__bootWim)) {
+            $__bi = $__img.ImageIndex
+            New-Item -ItemType Directory -Force -Path $__auMount -ErrorAction SilentlyContinue | Out-Null
+            Mount-WindowsImage -Path $__auMount -ImagePath $__bootWim -Index $__bi | Out-Null
+            try {
+                Copy-Item $__auXml (Join-Path $__auMount 'autounattend.xml') -Force
+                $__panther = Join-Path $__auMount 'Windows\Panther'
+                New-Item -ItemType Directory -Force -Path $__panther -ErrorAction SilentlyContinue | Out-Null
+                Copy-Item $__auXml (Join-Path $__panther 'unattend.xml') -Force
+                Write-Host "    embedded -> boot.wim index $__bi  (\autounattend.xml + \Windows\Panther\unattend.xml)" -ForegroundColor DarkGray
+                Dismount-WindowsImage -Path $__auMount -Save -ErrorAction Stop | Out-Null
+            } catch {
+                Write-Host "    [!] index $__bi embed failed, discarding: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow
+                try { Dismount-WindowsImage -Path $__auMount -Discard -ErrorAction SilentlyContinue | Out-Null } catch {}
+            }
+            try { Remove-Item $__auMount -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        }
+        Write-Host "[+] autounattend.xml embedded in boot.wim -- the ISO provisions itself on ANY boot (no MiOS/Ventoy infra required)." -ForegroundColor Green
+    } catch {
+        Write-Host "[!] boot.wim unattend embed skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0]) -- ISO-root autounattend.xml still present (native-boot only)." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "[!] Cannot embed unattend into boot.wim (missing '$__bootWim' or '$__auXml') -- relying on ISO-root autounattend.xml only (loopback boot may not provision)." -ForegroundColor Yellow
+}
+
 # Stage 4 -- master the bootable ISO.
 Build-MiOSBootableIso -MediaRoot $media -OutIso $OutIso -Label $label
 
