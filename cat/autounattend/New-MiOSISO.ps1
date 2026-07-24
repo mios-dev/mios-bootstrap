@@ -858,6 +858,16 @@ function Set-MiOSRemoteAccessOffline {
         finally { if ($viso) { try { Dismount-DiskImage -ImagePath $viso -ErrorAction SilentlyContinue | Out-Null } catch {} } }
     }
 
+    # ---- (B3) OFFLINE NIC/WLAN driver pack injection (T-281) --------------------------
+    $netDir = Get-Toml $Toml 'autounattend.remote.net_drivers_dir' (Join-Path $PSScriptRoot '..\drivers\net')
+    if (Test-Path $netDir) {
+        $netInfs = @(Get-ChildItem -Path $netDir -Recurse -Filter *.inf -ErrorAction SilentlyContinue)
+        if ($netInfs.Count -gt 0) {
+            Write-Host "    injecting $($netInfs.Count) NIC/WLAN driver package(s) offline from $netDir ..." -ForegroundColor Cyan
+            try { Add-WindowsDriver -Path $Mount -Driver $netDir -Recurse -ForceUnsigned -ErrorAction SilentlyContinue | Out-Null } catch {}
+        }
+    }
+
     # ---- (C) render mios-remote.cmd (runtime: RDU membership + fw + WinRM + loopback) --
     # Accounts resolve EXACTLY like New-MiOSAutounattendXml: [[accounts]] else [identity].
     $accounts = @($Toml.accounts)
