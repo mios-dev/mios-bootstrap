@@ -194,6 +194,13 @@ function New-MiOSGlobalPrefCommands {
     $cmds.Add('reg unload "HKU\MiOSDefault"')
     $cmds.Add('reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband" /v Favorites /t REG_BINARY /d "" /f')
     $cmds.Add('reg add "HKLM\SOFTWARE\Microsoft\PolicyManager\current\device\Start" /v ConfigureStartPins /t REG_SZ /d "{\"pinnedList\":[]}" /f')
+    # No desktop icons (spec): stop Edge (re)creating its desktop shortcut + remove any
+    # existing one. DisableEdgeDesktopShortcutCreation + the EdgeUpdate policies block
+    # FUTURE creation; the del clears the .lnk Edge's installer drops on Public\Desktop.
+    $cmds.Add('reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v DisableEdgeDesktopShortcutCreation /t REG_DWORD /d 1 /f')
+    $cmds.Add('reg add "HKLM\SOFTWARE\Policies\Microsoft\EdgeUpdate" /v CreateDesktopShortcutDefault /t REG_DWORD /d 0 /f')
+    $cmds.Add('reg add "HKLM\SOFTWARE\Policies\Microsoft\EdgeUpdate" /v RemoveDesktopShortcutDefault /t REG_DWORD /d 1 /f')
+    $cmds.Add('del /f /q "C:\Users\Public\Desktop\Microsoft Edge.lnk" 2>nul')
     return $cmds
 }
 
