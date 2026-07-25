@@ -9941,6 +9941,31 @@ exit 0
     }
     Log-Ok "MiOS AI CLIs installed (claude + gemini available on PATH)"
 
+    # ── Unified mios-home + locale reconcile (single root pass) ──────────────
+    # Every Phase-3 seed step above ran against the LIVE distro, which still
+    # defaults to the bundled `user` (UID 1000) -- /etc/wsl.conf [user]=mios only
+    # takes effect after the shutdown below. So any step that wrote under
+    # /var/home/mios as the default user left files owned by UID 1000, and the
+    # mios user (UID 992) then hits "path ... not owned by the current user" +
+    # oh-my-posh "permission denied" writing ~/.cache. Separately, the
+    # podman-machine-os base ships only `C.utf8` (NOT `C.UTF-8`), so the image's
+    # /etc/locale.conf LANG=C.UTF-8 makes every login emit
+    # `setlocale: cannot change locale`. Reconcile BOTH here, from one root pass,
+    # so the dev VM deploys clean every time. Dev-substrate only -- the bootc
+    # image keeps its own Fedora C.UTF-8 locale.conf and bakes home ownership.
+    Set-Step "Reconciling mios home ownership + locale in $_wslDistroForTerm..."
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        # Plain words only in the bash -c (no double-quotes / parens -- PowerShell
+        # native-arg quoting mangles them passing to wsl.exe; see the dconf note).
+        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c 'chown -R mios:mios /var/home/mios 2>/dev/null || true; echo LANG=C.utf8 > /etc/locale.conf; echo reconcile-done home=mios:mios locale=C.utf8' 2>&1 |
+            ForEach-Object { Write-Log "mios-reconcile: $_" }
+    }
+    Log-Ok "mios home reconciled to mios:mios + dev-VM locale pinned to C.utf8"
+
     # The overlay seed wrote /etc/wsl.conf [user] default=mios so future
     # `wsl -d podman-MiOS-DEV` invocations land in the mios user (not the
     # bundled `user` UID 1000). But /etc/wsl.conf is read at distro
