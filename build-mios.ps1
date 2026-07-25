@@ -3130,7 +3130,19 @@ function New-BuilderDistro([hashtable]$HW) {
 
                     if ($linkOnly) {
                         Log-Warn "podman-recover: removing reparse-point at $p (link, no follow)"
-                        cmd /c "rmdir `"$p`"" 2>&1 | ForEach-Object { Write-Log "podman-recover-rmdir: $_" }
+                        # Tolerate a non-zero rmdir exit: the junction may already be gone
+                        # (dangling target / prior run / race). Under PS7 a native non-zero
+                        # exit THROWS under EAP=Stop, which previously FATAL'd the whole
+                        # install here ("The system cannot find the file specified"). Isolate
+                        # it in an EAP=Continue scope (same guard as the retry-init below) so
+                        # an already-absent link is a no-op, not a fatal.
+                        & {
+                            $ErrorActionPreference = 'Continue'
+                            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                                $PSNativeCommandUseErrorActionPreference = $false
+                            }
+                            cmd /c "rmdir `"$p`"" 2>&1 | ForEach-Object { Write-Log "podman-recover-rmdir: $_" }
+                        }
                     } else {
                         Log-Warn "podman-recover: removing stale podman-machine state at $p"
                         Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue
@@ -3978,7 +3990,15 @@ fi
 # `systemctl enable` on them errors with "transient or generated" -- use
 # `start` instead. Native systemd units (cockpit.socket, mios-cdi-detect,
 # nvidia-cdi-refresh.path) take the standard `enable --now` path.
-NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path mios-ai-firstboot.service)
+#
+# mios-ai-firstboot.service is DELIBERATELY EXCLUDED from this set: it is a
+# long-running oneshot (builds the AI venv + pulls GGUFs) that MUST run on the
+# FIRST CLEAN BOOT, not during the overlay. `enable --now` on it synchronously
+# starts + WAITS for that firstboot, blocking the whole install indefinitely on
+# the transitional system bus ("Transport endpoint is not connected"). It is
+# already enabled the D-Bus-independent way via the .wants symlink above (see
+# "Statically enable mios-ai-firstboot"). Do NOT re-add it here.
+NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path)
 
 # "now to finally fix none of the containers
 # existing or properly launching on boot.. in podman-MiOS-DEV".
@@ -4016,10 +4036,15 @@ $NS systemctl daemon-reload 2>&1 | grep -vE 'created symlink' || true
 # auto-provisioned). enable is the authoritative existence check.
 $NS systemctl daemon-reload 2>/dev/null || true
 for svc in "${NATIVE_SET[@]}"; do
-    if $NS systemctl enable --now "$svc" >/dev/null 2>&1; then
+    # timeout 30: belt-and-suspenders so a single unit that blocks on a
+    # transitional bus can never wedge the whole install (long oneshots like
+    # mios-ai-firstboot must NOT be in NATIVE_SET -- see note above). A unit that
+    # exceeds 30s is treated as a non-fatal skip; its Quadlet Restart= / the
+    # first-boot .wants symlink handle it later.
+    if $NS timeout 30 systemctl enable --now "$svc" >/dev/null 2>&1; then
         echo "[quadlet-overlay] enabled $svc"
     else
-        echo "[quadlet-overlay] skip $svc (enable failed -- unit absent or start error; non-fatal)"
+        echo "[quadlet-overlay] skip $svc (enable failed/timed out -- unit absent or start error; non-fatal)"
     fi
 done
 

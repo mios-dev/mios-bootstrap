@@ -447,7 +447,7 @@ if TEXTUAL_AVAILABLE:
             width: 100%;
         }}
         
-        #main-container, #flash-container, #ai-container {{
+        #main-container, #build-container, #flash-container, #ai-container {{
             height: 1fr;
             width: 100%;
             layout: horizontal;
@@ -462,14 +462,14 @@ if TEXTUAL_AVAILABLE:
             height: 100%;
         }}
         
-        #flash-stats-pane, #ai-stats-pane {{
+        #build-stats-pane, #flash-stats-pane, #ai-stats-pane {{
             width: 35;
             height: 100%;
             border: round {SSOT['accent']};
             content-align: center top;
         }}
-        
-        #flash-log-box, #ai-log-box {{
+
+        #build-log-box, #flash-log-box, #ai-log-box {{
             width: 1fr;
             height: 100%;
             border: round {SSOT['success']};
@@ -554,6 +554,11 @@ if TEXTUAL_AVAILABLE:
                             with Vertical(id="spark-container"):
                                 yield Sparkline(data=[], id="spark-widget")
                             yield RichLog(id="log-box", classes="box", markup=True, wrap=True)
+                with TabPane("MiOS Build", id="tab-build"):
+                    with Horizontal(id="build-container"):
+                        with Vertical(id="build-stats-pane", classes="box"):
+                            yield Static(id="build-stats", markup=True)
+                        yield RichLog(id="build-log-box", classes="box", markup=True, wrap=True)
                 with TabPane("MiOS-Cat Flash", id="tab-flash"):
                     with Horizontal(id="flash-container"):
                         with Vertical(id="flash-stats-pane", classes="box"):
@@ -609,6 +614,9 @@ if TEXTUAL_AVAILABLE:
             self.query_one("#spark-container").border_title = f"CPU Realtime History ({ms}ms interval)"
             self.query_one("#log-box").border_title = "Global System & Container Log Stream (Live)"
             self.query_one("#svc-table", DataTable).border_title = "Core System Services"
+            try:
+                self.query_one("#build-log-box").border_title = "MiOS Build / Install Pipeline (Live)"
+            except Exception: pass
 
         def action_speed_up(self):
             new_val = max(0.1, round(self.refresh_interval - 0.1, 2))
@@ -634,6 +642,10 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 flash_log_box = None
                 ai_log_box = None
+            try:
+                build_log_box = self.query_one("#build-log-box", RichLog)
+            except Exception:
+                build_log_box = None
             
             # Initial log dump so the log panel is filled IMMEDIATELY on open!
             try:
@@ -720,13 +732,84 @@ if TEXTUAL_AVAILABLE:
                             if flash_log_box: self.call_from_thread(flash_log_box.write, line)
                 except Exception: pass
 
+            def _find_build_logs():
+                # The universal monitor surfaces the MiOS install/build pipeline:
+                # build-mios.ps1 writes MIOS_UNIFIED_LOG (mios-install-*.log) +
+                # MIOS_BUILD_LOG (mios-build-*.log); the in-VM mios-build-driver
+                # appends to the same M:\MiOS\logs tree. Discover the newest by
+                # glob so it works whether or not those env vars reach this proc.
+                dirs = [os.environ.get("MIOS_LOG_DIR"),
+                        "M:\\MiOS\\logs", "C:\\MiOS\\logs",
+                        "/mnt/m/MiOS/logs", "/var/log/mios", "/var/lib/mios/logs"]
+                found = [p for p in (os.environ.get("MIOS_UNIFIED_LOG"),
+                                     os.environ.get("MIOS_BUILD_LOG")) if p and os.path.exists(p)]
+                for d in dirs:
+                    if d and os.path.isdir(d):
+                        for pat in ("mios-install-*.log", "mios-build-*.log"):
+                            found += glob.glob(os.path.join(d, pat))
+                found = [p for p in dict.fromkeys(found) if os.path.exists(p)]
+                found.sort(key=os.path.getmtime, reverse=True)
+                return found
+
+            def _bcolor(l):
+                ll = l.lower()
+                if ("[error]" in ll or "traceback" in ll or "exception" in ll
+                        or "exit status 0x" in ll or "panic" in ll
+                        or ("fail:" in ll and "non-fatal" not in ll)):
+                    return f"[{SSOT['error']}]{l}[/]"
+                if "[warn]" in ll or "warning" in ll or "skip" in ll or "non-fatal" in ll:
+                    return f"[{SSOT['warning']}]{l}[/]"
+                if ("handoff" in ll or "build-driver" in ll or "phase " in ll
+                        or "complete" in ll or "provision" in ll or "overlay" in ll or "bootc" in ll):
+                    return f"[{SSOT['success']}]{l}[/]"
+                return l
+
+            def stream_build_log():
+                if not build_log_box:
+                    return
+                log_path = None
+                while self.tailing and not log_path:
+                    logs = _find_build_logs()
+                    if logs:
+                        log_path = logs[0]
+                        break
+                    self.call_from_thread(build_log_box.write,
+                        f"[{SSOT['subtle']}]Waiting for a MiOS install/build to start (M:\\MiOS\\logs)...[/]")
+                    time.sleep(2)
+                if not self.tailing or not log_path:
+                    return
+                self.build_log_path = log_path
+                try:
+                    self.call_from_thread(build_log_box.write,
+                        f"[{SSOT['success']}]Streaming MiOS build/install: {os.path.basename(log_path)}[/]")
+                    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f.readlines()[-80:]:
+                            line = line.strip()
+                            if line:
+                                self.call_from_thread(build_log_box.write, _bcolor(line))
+                        f.seek(0, 2)
+                        self.last_build_log_time = time.time()
+                        while self.tailing:
+                            line = f.readline()
+                            if not line:
+                                time.sleep(0.15)
+                                continue
+                            line = line.rstrip("\n")
+                            if not line.strip():
+                                continue
+                            self.last_build_log_time = time.time()
+                            self.call_from_thread(build_log_box.write, _bcolor(line))
+                except Exception:
+                    pass
+
             # Unbuffered real-time log streaming using stdbuf -oL
             j_cmd = ["stdbuf", "-oL", "journalctl", "-fa", "-n", "0", "--no-pager"]
             if IS_WINDOWS:
                 j_cmd = ["wsl.exe", "-d", "podman-MiOS-DEV", "-u", "root", "--", "stdbuf", "-oL", "journalctl", "-fa", "-n", "0", "--no-pager"]
-            
+
             threading.Thread(target=stream_proc, args=(j_cmd,), daemon=True).start()
             if flash_log_box: threading.Thread(target=stream_flash_log, daemon=True).start()
+            if build_log_box: threading.Thread(target=stream_build_log, daemon=True).start()
 
         def update_telemetry(self):
             cpu, ram, root, m_disk, load = get_telemetry()
@@ -818,6 +901,35 @@ if TEXTUAL_AVAILABLE:
                     "Real-time compilation & imaging logs stream ->"
                 ]
                 self.query_one("#flash-stats", Static).update("\n".join(flash_lines))
+
+                # Update Build / Install Stats (mios-install / mios-build pipeline)
+                last_build_t = getattr(self, "last_build_log_time", None)
+                bpath = getattr(self, "build_log_path", None)
+                phase_str = "-"
+                if bpath and os.path.exists(bpath):
+                    try:
+                        with open(bpath, "r", encoding="utf-8", errors="ignore") as bf:
+                            btail = bf.readlines()[-80:]
+                        steps = [l for l in btail if "step:" in l]
+                        if steps:
+                            phase_str = steps[-1].split("step:", 1)[1].strip()[:38]
+                    except Exception: pass
+                if last_build_t:
+                    el = int(time.time() - last_build_t)
+                    if el < 20: bstat = f"[{SSOT['success']} bold]BUILDING (active)[/]"
+                    elif el < 120: bstat = f"[{SSOT['warning']} bold]IDLE ({el}s since log)[/]"
+                    else: bstat = f"[{SSOT['subtle']}]DONE / INACTIVE ({el}s ago)[/]"
+                else:
+                    bstat = f"[{SSOT['subtle']}]Waiting for build/install...[/]"
+                build_lines = [
+                    f"[{SSOT['accent']} bold]MiOS Build / Install[/]",
+                    f"[{SSOT['subtle']}]Status:[/] {bstat}",
+                    f"[{SSOT['subtle']}]Phase:[/] {phase_str}",
+                    f"[{SSOT['subtle']}]Log:[/] {os.path.basename(bpath) if bpath else '-'}",
+                    "",
+                    "Live install/build pipeline stream ->",
+                ]
+                self.query_one("#build-stats", Static).update("\n".join(build_lines))
             except Exception: pass
 
         def async_update_services(self):
@@ -840,13 +952,15 @@ if TEXTUAL_AVAILABLE:
         def on_resize(self, event) -> None:
             try:
                 main_c = self.query_one("#main-container")
+                build_c = self.query_one("#build-container")
                 flash_c = self.query_one("#flash-container")
                 ai_c = self.query_one("#ai-container")
                 left_p = self.query_one("#left-pane")
                 right_p = self.query_one("#right-pane")
-                
+
                 if event.size.width < 120:
                     main_c.styles.layout = "vertical"
+                    build_c.styles.layout = "vertical"
                     flash_c.styles.layout = "vertical"
                     ai_c.styles.layout = "vertical"
                     left_p.styles.width = "100%"
@@ -855,6 +969,7 @@ if TEXTUAL_AVAILABLE:
                     right_p.styles.height = "1fr"
                 else:
                     main_c.styles.layout = "horizontal"
+                    build_c.styles.layout = "horizontal"
                     flash_c.styles.layout = "horizontal"
                     ai_c.styles.layout = "horizontal"
                     left_p.styles.width = "1fr"
