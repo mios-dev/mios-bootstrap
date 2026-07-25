@@ -1066,8 +1066,19 @@ trigger_mios_install() {
                 log_err "Failed to reset root filesystem to FETCH_HEAD"
                 return 1
             fi
+            # Make / a first-class, SELF-UPDATING git work tree so `git -C / pull` works
+            # on Day-N+ -- "/ IS $ROOT": the deployed root is the SAME git tree the
+            # drift-gate resolves ($ROOT = $(cd automation/.. ) = /), and it pulls its own
+            # updates. `fetch <branch>` + `reset --hard FETCH_HEAD` leaves HEAD on
+            # git-init's default branch with NO upstream, so a bare `git pull` errors
+            # "no tracking information". checkout -B at the CURRENT commit renames/creates
+            # ${DEFAULT_BRANCH} with no working-tree change; the config lines wire its
+            # upstream to origin so `git -C / pull --ff-only` fast-forwards mios.git.
+            git -C / checkout -B "${DEFAULT_BRANCH}" >/dev/null 2>&1 || true
+            git -C / config "branch.${DEFAULT_BRANCH}.remote" origin
+            git -C / config "branch.${DEFAULT_BRANCH}.merge" "refs/heads/${DEFAULT_BRANCH}"
             spin_stop
-            log_ok "MiOS core (mios.git) merged to /"
+            log_ok "MiOS core (mios.git) merged to / (branch ${DEFAULT_BRANCH} tracks origin -- git -C / pull works)"
 
             # 2. Apply MiOS-bootstrap repo overlays. Prefer a LOCALLY-STAGED source
             # (offline install): if BOOTSTRAP_REPO resolves to a filesystem dir that
