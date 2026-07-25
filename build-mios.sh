@@ -77,7 +77,6 @@ DEFAULT_LANG="en_US.UTF-8"
 # [ai].model operator override.
 DEFAULT_AI_MODEL="qwen3.5:2b"
 DEFAULT_AI_EMBED_MODEL="nomic-embed-text"
-DEFAULT_AI_BAKE="qwen3.5:2b,nomic-embed-text"
 
 : "${MIOS_REPO:=https://github.com/mios-dev/mios.git}"
 : "${BOOTSTRAP_REPO:=https://github.com/mios-dev/mios-bootstrap.git}"
@@ -212,10 +211,6 @@ load_profile_defaults() {
     [[ -n "$_ram_pick" ]] && DEFAULT_AI_MODEL="$_ram_pick"
     v="$(toml_get_layered ai model)";          [[ -n "$v" ]] && DEFAULT_AI_MODEL="$v"
     v="$(toml_get_layered ai embed_model)";    [[ -n "$v" ]] && DEFAULT_AI_EMBED_MODEL="$v"
-    # Bake set = chosen model + embed unless the card declares an
-    # explicit [ai].bake_models list.
-    DEFAULT_AI_BAKE="${DEFAULT_AI_MODEL},${DEFAULT_AI_EMBED_MODEL}"
-    v="$(toml_get_layered ai bake_models)";    [[ -n "$v" ]] && DEFAULT_AI_BAKE="$v"
 
     # Legacy .env.mios fallback (deprecated; sourced last so explicit TOML wins).
     local legacy_env; legacy_env="$(dirname "${BASH_SOURCE[0]}")/.env.mios"
@@ -427,7 +422,7 @@ prompt_model() {
     log_info "  1) ${small}  -- low-RAM default (CPU-fit)"
     log_info "  2) ${mid}  -- >= ${mid_gb} GB RAM, auto-promote tier"
     log_info "  3) ${big}  -- >= ${big_gb} GB RAM, big-RAM tier"
-    log_info "  4) custom             -- enter your own ollama model id"
+    log_info "  4) custom             -- enter your own model id"
     local choice; choice="$(prompt_default 'Choice [1-4]' '1')"
     case "$choice" in
         1|"")    echo "$small" ;;
@@ -625,13 +620,12 @@ gather_user_choices() {
     FORGE_ADMIN_USER="$(prompt_default 'Forge admin username (Forgejo)' "${LINUX_USER}")"
     FORGE_ADMIN_EMAIL="$(prompt_default 'Forge admin email' "${LINUX_USER}@${HOSTNAME_VAL}.local")"
 
-    # AI model selection. Drives MIOS_OLLAMA_BAKE_MODELS (build-time)
-    # and MIOS_AI_MODEL / MIOS_AI_EMBED_MODEL in install.env (runtime).
-    # The chosen pair is what mios-ai-firstboot.service confirms on
-    # first boot, so it carries through end-to-end.
+    # AI model selection -> MIOS_AI_MODEL / MIOS_AI_EMBED_MODEL in install.env (runtime).
+    # The chosen pair is what mios-ai-firstboot.service confirms on first boot, so it
+    # carries through end-to-end. Model BAKING is SSOT-driven from mios.toml [ai].bake_models
+    # / [ai.vllm].bake_model (read directly by 38-llamacpp-prep.sh / 38-vllm-prep.sh).
     AI_MODEL_VAL="$(prompt_model "${DEFAULT_AI_MODEL}")"
     AI_EMBED_VAL="$(prompt_default 'AI embedding model' "${DEFAULT_AI_EMBED_MODEL}")"
-    AI_BAKE_LIST="${AI_MODEL_VAL},${AI_EMBED_VAL}"
 
     local hostkind
     hostkind="$(detect_host_kind)"
@@ -744,14 +738,12 @@ MIOS_FORGE_ADMIN_USER="${FORGE_ADMIN_USER:-${LINUX_USER}}"
 MIOS_FORGE_ADMIN_EMAIL="${FORGE_ADMIN_EMAIL:-${LINUX_USER}@${HOSTNAME_VAL}.local}"
 MIOS_FORGE_ADMIN_PASSWORD=""
 
-# AI model selection (Architectural Law 5). MIOS_OLLAMA_BAKE_MODELS is
-# the comma-separated list 37-ollama-prep.sh consumes at build time;
-# MIOS_AI_MODEL / MIOS_AI_EMBED_MODEL are the runtime selection
-# mios-ai-firstboot.service confirms post-deploy. Operators can
-# swap them later via /etc/mios/mios.toml [ai] without rebuilding.
+# AI model selection (Architectural Law 5). MIOS_AI_MODEL / MIOS_AI_EMBED_MODEL are the
+# runtime selection mios-ai-firstboot.service confirms post-deploy. Operators swap them
+# later via /etc/mios/mios.toml [ai] without rebuilding. Model BAKING is SSOT-driven from
+# mios.toml [ai].bake_models / [ai.vllm].bake_model (consumed directly by the prep scripts).
 MIOS_AI_MODEL="${AI_MODEL_VAL:-${DEFAULT_AI_MODEL}}"
 MIOS_AI_EMBED_MODEL="${AI_EMBED_VAL:-${DEFAULT_AI_EMBED_MODEL}}"
-MIOS_OLLAMA_BAKE_MODELS="${AI_BAKE_LIST:-${DEFAULT_AI_BAKE}}"
 EOF
     chmod 0640 "${PROFILE_FILE}"
     log_ok "Profile env written: ${PROFILE_FILE}"
