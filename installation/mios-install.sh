@@ -374,13 +374,17 @@ resolve_seed() {
 
 resolve_config() {
     local port
-    port="$(mios_ssot_value 'ports.agent_pipe' '8640')"
+    port="$(mios_ssot_value ports agent_pipe 8640)"
     local url="http://localhost:${port}/configure"
+    local html_path="${ROOT}/usr/share/mios/configurator/mios.html"
     log_info "Opening MiOS Configurator at ${url} ..."
     if command -v xdg-open >/dev/null 2>&1; then
         CMD=(xdg-open "$url")
     elif command -v python3 >/dev/null 2>&1; then
         CMD=(python3 -m webbrowser "$url")
+    elif [[ -f "$html_path" ]]; then
+        log_warn "No browser launcher found; offline HTML available at ${html_path}"
+        CMD=(echo "Offline configurator HTML: ${html_path}")
     else
         log_warn "No browser launcher found -- open ${url} manually."
         CMD=(true)
@@ -411,9 +415,35 @@ resolve_target_prereqs() {
     local target="$1"
     log_info "Resolving prerequisites for target '${target}'..."
     case "$target" in
-        fedora|bootc|live|flash|build|update)
+        build|fedora|bootc)
             if command -v dnf >/dev/null 2>&1; then
                 for pkg in git curl podman; do
+                    if ! rpm -q "$pkg" >/dev/null 2>&1; then
+                        log_info "Target prerequisite missing: ${pkg}"
+                        (( DRY_RUN )) || sudo dnf install -y "$pkg" || true
+                    fi
+                done
+            fi
+            if ! command -v cargo >/dev/null 2>&1 && ! command -v rustup >/dev/null 2>&1; then
+                log_info "Target prerequisite missing: rustup/cargo for native tools"
+                if (( ! DRY_RUN )) && command -v dnf >/dev/null 2>&1; then
+                    sudo dnf install -y cargo rust || true
+                fi
+            fi
+            ;;
+        live|flash)
+            if command -v dnf >/dev/null 2>&1; then
+                for pkg in git curl podman ventoy; do
+                    if ! rpm -q "$pkg" >/dev/null 2>&1; then
+                        log_info "Target prerequisite missing: ${pkg}"
+                        (( DRY_RUN )) || sudo dnf install -y "$pkg" || true
+                    fi
+                done
+            fi
+            ;;
+        update)
+            if command -v dnf >/dev/null 2>&1; then
+                for pkg in git curl; do
                     if ! rpm -q "$pkg" >/dev/null 2>&1; then
                         log_info "Target prerequisite missing: ${pkg}"
                         (( DRY_RUN )) || sudo dnf install -y "$pkg" || true
