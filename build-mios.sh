@@ -764,6 +764,16 @@ EOF
             log_ok "Profile card seeded from $(basename "$src"): ${PROFILE_CARD}"
         fi
     fi
+
+    # Disable bare-metal/cluster services for FHS overlay installs (folded from the
+    # former C:\MiOS build-mios.sh, where it was dead behind the AGY-106 redirect).
+    if [[ -f "${PROFILE_CARD}" && "${INSTALL_MODE}" == "fhs" ]]; then
+        log_info "Configuring FHS profile: disabling bare-metal/cluster services in $(basename "${PROFILE_CARD}")"
+        local svc
+        for svc in mios-ceph mios-k3s mios-guacamole mios-pxe-hub mios-guacamole-postgres mios-guacd mios-cockpit-link; do
+            sed -i -E "s/^([[:space:]]*${svc}[[:space:]]*=[[:space:]]*)true/\1false/g" "${PROFILE_CARD}"
+        done
+    fi
 }
 
 # ============================================================================
