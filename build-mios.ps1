@@ -3789,7 +3789,7 @@ echo "[quadlet-overlay] root symlinks: /mios.toml, /configurator.html"
 # is empty. Operator-flagged (containers all dead after
 # install).
 #
-# automation/15-render-quadlets.sh walks the four Quadlet search
+# automation/34-render-quadlets.sh walks the four Quadlet search
 # dirs, resolves the placeholders against the layered mios.toml
 # (vendor < host < user) via tools/lib/userenv.sh, and writes the
 # rendered files back in place. The deployed bootc image builds run
@@ -3801,7 +3801,7 @@ echo "[quadlet-overlay] root symlinks: /mios.toml, /configurator.html"
 # resolver) NOR mios-sync-env -- so /etc/mios/install.env was never generated,
 # leaving the AI plane INERT on a fresh install: empty bake_models -> no GGUFs ->
 # mios-llm-light skipped, and unresolved MIOS_PORT_* templates -> agent-pipe 502.
-# Deploy the resolver + generate the bridge HERE so 15-render-quadlets below AND
+# Deploy the resolver + generate the bridge HERE so 34-render-quadlets below AND
 # the firstboot services (EnvironmentFile=/etc/mios/install.env) see resolved
 # values. Both idempotent; LIVE-verified this is the keystone that brought a
 # fresh dev VM's MiOS AI fully operational on the GPU.
@@ -3815,12 +3815,12 @@ if [[ -x /usr/libexec/mios/system-sync-env.sh ]]; then
         echo "[quadlet-overlay] WARN: mios-sync-env exited non-zero (install.env may be stale)"
 fi
 
-if [[ -x /automation/15-render-quadlets.sh ]]; then
-    echo "[quadlet-overlay] rendering Quadlet \${MIOS_*} placeholders via automation/15-render-quadlets.sh"
-    sudo /automation/15-render-quadlets.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
-        echo "[quadlet-overlay] WARN: 15-render-quadlets.sh exited non-zero (Quadlets may still have placeholders)"
+if [[ -x /automation/34-render-quadlets.sh ]]; then
+    echo "[quadlet-overlay] rendering Quadlet \${MIOS_*} placeholders via automation/34-render-quadlets.sh"
+    sudo /automation/34-render-quadlets.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
+        echo "[quadlet-overlay] WARN: 34-render-quadlets.sh exited non-zero (Quadlets may still have placeholders)"
 else
-    echo "[quadlet-overlay] WARN: /automation/15-render-quadlets.sh not found (mios.git overlay incomplete?)"
+    echo "[quadlet-overlay] WARN: /automation/34-render-quadlets.sh not found (mios.git overlay incomplete?)"
 fi
 
 # Realize sysusers + tmpfiles, then reload systemd so the new units
