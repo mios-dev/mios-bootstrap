@@ -9451,7 +9451,10 @@ $miosRepo = $MiosRepoDir
                             if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                 $PSNativeCommandUseErrorActionPreference = $false
                             }
-                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "
+                            # build-mios.ps1 is a CRLF file, so a multi-line `bash -c "..."` string
+                            # carries \r on every line -> wsl bash chokes "$'\r': command not found".
+                            # Strip CR before handing it to bash.
+                            $_remotesScript = ("
                                 sudo flatpak remote-add --system --if-not-exists flathub-beta https://flathub.org/beta-repo/flathub-beta.flatpakrepo 2>/dev/null || true
                                 sudo flatpak remote-add --system --if-not-exists fedora oci+https://registry.fedoraproject.org 2>/dev/null || true
                                 sudo flatpak remote-add --system --if-not-exists gnome-nightly https://nightly.gnome.org/gnome-nightly.flatpakrepo 2>/dev/null || true
@@ -9459,7 +9462,8 @@ $miosRepo = $MiosRepoDir
                                 sudo flatpak update --system --appstream flathub-beta 2>&1 | tail -2 || true
                                 sudo flatpak update --system --appstream fedora 2>&1 | tail -2 || true
                                 sudo flatpak update --system --appstream gnome-nightly 2>&1 | tail -2 || true
-                            " 2>&1 | ForEach-Object { Write-Log "mios-flatpak-remotes: $_" }
+                            ") -replace "`r", ""
+                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c $_remotesScript 2>&1 | ForEach-Object { Write-Log "mios-flatpak-remotes: $_" }
                         }
                         $_fpOk = 0; $_fpFail = 0
                         foreach ($_fpEntry in $_flatpaks) {
