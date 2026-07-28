@@ -787,7 +787,7 @@ if (Test-Path $menuSettingsIni) {
 $mainMenuIni = Join-Path $dataDir "PortableAppsMenu.ini"
 if (Test-Path $mainMenuIni) {
     try {
-        $lines = Get-Content $mainMenuIni -Encoding Unicode -ErrorAction Stop
+        $lines = Get-Content $mainMenuIni -ErrorAction Stop
         $newLines = @()
         foreach ($line in $lines) {
             if ($line -match '^ThemeCustomColor=' -or $line -match '^CustomColor') {
@@ -801,7 +801,7 @@ if (Test-Path $mainMenuIni) {
                 $newLines += $line
             }
         }
-        Set-Content -Path $mainMenuIni -Value $newLines -Encoding Unicode -ErrorAction Stop
+        Set-Content -Path $mainMenuIni -Value $newLines -ErrorAction Stop
         Write-Host "[PA-Theme] Main PortableAppsMenu.ini Theme set to Default (Silver)."
     } catch {
         Write-Host "[PA-Theme] Warning patching PortableAppsMenu.ini: $_"
