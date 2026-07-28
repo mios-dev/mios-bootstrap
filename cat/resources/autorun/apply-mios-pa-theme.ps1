@@ -1,4 +1,5 @@
-$ErrorActionPreference = "SilentlyContinue"
+param([string]$TargetDrive = "D:")
+
 Add-Type -AssemblyName System.Drawing
 
 $drive = ($TargetDrive.TrimEnd('\') + "\")
@@ -598,12 +599,25 @@ $gL.FillRectangle($bCross, 14, 21, 20, 6)
 $bCross.Dispose()
 $gL.Dispose()
 
-$bmpLogo.Save((Join-Path $paThemeDir "logo.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-$bmpLogo.Save((Join-Path $paThemeDir "PersonalPicture.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+$mediCatFlat = Join-Path $paBase "PortableApps.com\MediCatFlat"
+mkdir $mediCatFlat -ErrorAction SilentlyContinue | Out-Null
+mkdir (Join-Path $mediCatFlat "menu_icons") -ErrorAction SilentlyContinue | Out-Null
+Copy-Item (Join-Path $paMenuIcons "*") (Join-Path $mediCatFlat "menu_icons") -Force -ErrorAction SilentlyContinue
+
+$msLogo = New-Object System.IO.MemoryStream
+$bmpLogo.Save($msLogo, [System.Drawing.Imaging.ImageFormat]::Png)
+$logoBytes = $msLogo.ToArray()
+$msLogo.Dispose()
+$bmpLogo.Dispose()
+
 $dataDir = Join-Path $paBase "PortableApps.com\Data"
 mkdir $dataDir -ErrorAction SilentlyContinue | Out-Null
-$bmpLogo.Save((Join-Path $dataDir "PersonalPicture.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-$bmpLogo.Dispose()
+
+[System.IO.File]::WriteAllBytes((Join-Path $paThemeDir "logo.png"), $logoBytes)
+[System.IO.File]::WriteAllBytes((Join-Path $paThemeDir "PersonalPicture.png"), $logoBytes)
+[System.IO.File]::WriteAllBytes((Join-Path $mediCatFlat "logo.png"), $logoBytes)
+[System.IO.File]::WriteAllBytes((Join-Path $mediCatFlat "PersonalPicture.png"), $logoBytes)
+[System.IO.File]::WriteAllBytes((Join-Path $dataDir "PersonalPicture.png"), $logoBytes)
 
 $chromeBmp = New-Object System.Drawing.Bitmap 540, 600
 $g = [System.Drawing.Graphics]::FromImage($chromeBmp)
@@ -679,8 +693,15 @@ $g.DrawLine($pFooterLine, 0, 560, 540, 560)
 $pFooterLine.Dispose()
 
 $g.Dispose()
-$chromeBmp.Save((Join-Path $paThemeDir "chrome.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+
+$msChrome = New-Object System.IO.MemoryStream
+$chromeBmp.Save($msChrome, [System.Drawing.Imaging.ImageFormat]::Png)
+$chromeBytes = $msChrome.ToArray()
+$msChrome.Dispose()
 $chromeBmp.Dispose()
+
+[System.IO.File]::WriteAllBytes((Join-Path $paThemeDir "chrome.png"), $chromeBytes)
+[System.IO.File]::WriteAllBytes((Join-Path $mediCatFlat "chrome.png"), $chromeBytes)
 
 $paThemeIni = @"
 [PortableApps.comTheme]
@@ -718,47 +739,47 @@ Background=none
 DefaultBackgroundColor=Dark
 "@
 [System.IO.File]::WriteAllText((Join-Path $paThemeDir "PATheme.ini"), $paThemeIni, [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText((Join-Path $mediCatFlat "PATheme.ini"), $paThemeIni, [System.Text.Encoding]::UTF8)
 
 # ------------------------------------------------------------------
-# Write settings/PortableAppsMenu.ini (crash-proof Custom theme mode)
+# Write settings/PortableAppsMenu.ini & patch main PortableAppsMenu.ini
 # ------------------------------------------------------------------
-# CRITICAL: PortableApps reads settings INI as UTF-16 LE (Unicode). Writing
-# as UTF-8 causes the platform to silently ignore the file and fall back to
-# the built-in default blue theme.
-# ThemeColor=Custom uses the three CustomColor* keys and avoids the -1
-# list index crash that occurs with ThemeColor=Dark/Light/Orange when the
-# platform's options list can't find the preset by name.
 $menuSettingsDir = Join-Path $dataDir "settings"
 mkdir $menuSettingsDir -ErrorAction SilentlyContinue | Out-Null
 $menuIniPath = Join-Path $menuSettingsDir "PortableAppsMenu.ini"
 
 $menuSettingsLines = @(
     '[PortableApps.comMenu]',
-    'Theme=MiOSTheme',
-    'ThemeColor=Custom',
-    'CustomColorBackground=282262',
-    'CustomColorForeground=E7DFD3',
-    'CustomColorAccent=F35C15'
+    'Theme=MediCatFlat',
+    'ThemeColor=Default'
 )
-# MUST be Unicode (UTF-16 LE with BOM) -- PortableApps Platform requirement
 [System.IO.File]::WriteAllLines($menuIniPath, $menuSettingsLines, [System.Text.Encoding]::Unicode)
 
-# Patch the MAIN PortableAppsMenu.ini to match (fixes any pre-existing ThemeColor=Dark/Orange)
+# Patch the MAIN PortableAppsMenu.ini
 $mainMenuIni = Join-Path $dataDir "PortableAppsMenu.ini"
 if (Test-Path $mainMenuIni) {
-    $mainContent = [System.IO.File]::ReadAllText($mainMenuIni, [System.Text.Encoding]::UTF8)
-    $mainContent = $mainContent -replace 'ThemeColor=(Dark|Light|Orange)\b', 'ThemeColor=Custom'
-    # Strip any stale ThemeCustomColor key (old name, causes ambiguity)
-    $mainContent = $mainContent -replace 'ThemeCustomColor=[^\r\n]+\r?\n', ''
-    # Inject CustomColor* keys after ThemeColor=Custom if not already present
-    if ($mainContent -notmatch 'CustomColorBackground') {
-        $inject = "ThemeColor=Custom`r`nCustomColorBackground=282262`r`nCustomColorForeground=E7DFD3`r`nCustomColorAccent=F35C15"
-        $mainContent = $mainContent -replace 'ThemeColor=Custom', $inject
+    try {
+        $lines = Get-Content $mainMenuIni -Encoding Unicode -ErrorAction Stop
+        $newLines = @()
+        foreach ($line in $lines) {
+            if ($line -match '^ThemeCustomColor=' -or $line -match '^CustomColor') {
+                continue
+            }
+            if ($line -match '^Theme=') {
+                $newLines += 'Theme=MediCatFlat'
+            } elseif ($line -match '^ThemeColor=') {
+                $newLines += 'ThemeColor=Default'
+            } else {
+                $newLines += $line
+            }
+        }
+        Set-Content -Path $mainMenuIni -Value $newLines -Encoding Unicode -ErrorAction Stop
+        Write-Host "[PA-Theme] Main PortableAppsMenu.ini Theme set to MediCatFlat (Default)."
+    } catch {
+        Write-Host "[PA-Theme] Warning patching PortableAppsMenu.ini: $_"
     }
-    [System.IO.File]::WriteAllText($mainMenuIni, $mainContent, [System.Text.Encoding]::UTF8)
-    Write-Host "[PA-Theme] Main PortableAppsMenu.ini ThemeColor aligned to Custom."
 }
 
-Write-Host "[PA-Theme] MiOS PortableApps theme applied. Options crash-proof: ThemeColor=Custom."
+Write-Host "[PA-Theme] MiOS PortableApps theme applied to MediCatFlat."
 
 
