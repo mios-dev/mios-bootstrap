@@ -555,47 +555,70 @@ if TEXTUAL_AVAILABLE:
                 task_dir = r"C:\Users\Administrator\.gemini\antigravity-ide\brain\c114f14b-b8b9-4c8a-92bb-ec36d1d33926\.system_generated\tasks"
                 if os.path.isdir(task_dir):
                     task_logs = glob.glob(os.path.join(task_dir, "*.log"))
-                    task_logs.sort(key=os.path.getmtime, reverse=True)
                     candidates.extend(task_logs)
 
-                found = [c for c in candidates if os.path.exists(c)]
+                found = [c for c in dict.fromkeys(candidates) if os.path.exists(c)]
+                found.sort(key=os.path.getmtime, reverse=True)
                 return found
 
             def stream_flash_log():
                 if not flash_log_box: return
-                log_path = None
-                while self.tailing and not log_path:
+                current_log = None
+                file_obj = None
+                
+                while self.tailing:
                     logs = _find_flash_logs()
-                    if logs:
-                        log_path = logs[0]
-                        break
-                    self.call_from_thread(flash_log_box.write, f"[{SSOT['subtle']}]Waiting for active flash/install log stream...[/]")
-                    time.sleep(2)
+                    if not logs:
+                        time.sleep(1)
+                        continue
+                    
+                    newest_log = logs[0]
+                    if newest_log != current_log:
+                        current_log = newest_log
+                        if file_obj:
+                            try: file_obj.close()
+                            except Exception: pass
+                        try:
+                            self.call_from_thread(flash_log_box.write, f"[{SSOT['success']}]Streaming flash log: {os.path.basename(current_log)}[/]")
+                            file_obj = open(current_log, 'r', encoding='utf-8', errors='ignore')
+                            lines = file_obj.readlines()
+                            for line in lines[-40:]:
+                                line = line.strip()
+                                if line:
+                                    self.call_from_thread(flash_log_box.write, line)
+                            file_obj.seek(0, 2)
+                        except Exception:
+                            file_obj = None
+                            time.sleep(1)
+                            continue
 
-                if not self.tailing or not log_path: return
+                    if not file_obj:
+                        time.sleep(1)
+                        continue
 
-                try:
-                    self.call_from_thread(flash_log_box.write, f"[{SSOT['success']}]Streaming active flash log: {os.path.basename(log_path)}[/]")
-                    with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        lines = f.readlines()
-                        for line in lines[-50:]:
+                    idle_count = 0
+                    while self.tailing and current_log == newest_log:
+                        line = file_obj.readline()
+                        if line:
                             line = line.strip()
                             if line:
+                                self.last_flash_log_time = time.time()
                                 self.call_from_thread(flash_log_box.write, line)
-                        
-                        f.seek(0, 2)
-                        self.last_flash_log_time = time.time()
-                        while self.tailing:
-                            line = f.readline()
-                            if not line:
-                                time.sleep(0.2)
-                                continue
-                            line = line.strip()
-                            if not line: continue
-                            self.last_flash_log_time = time.time()
-                            self.call_from_thread(flash_log_box.write, line)
-                            self.call_from_thread(log_box.write, f"[dim]flash[/] {line}")
-                except Exception: pass
+                                self.call_from_thread(log_box.write, f"[dim]flash[/] {line}")
+                            idle_count = 0
+                        else:
+                            idle_count += 1
+                            time.sleep(0.2)
+                            if idle_count > 10:
+                                idle_count = 0
+                                check_logs = _find_flash_logs()
+                                if check_logs and check_logs[0] != current_log:
+                                    newest_log = check_logs[0]
+                                    break
+                                try:
+                                    if os.path.getsize(current_log) < file_obj.tell():
+                                        file_obj.seek(0)
+                                except Exception: pass
 
             def _find_build_logs():
                 dirs = [os.environ.get("MIOS_LOG_DIR"),
@@ -627,36 +650,63 @@ if TEXTUAL_AVAILABLE:
 
             def stream_build_log():
                 if not build_log_box: return
-                log_path = None
-                while self.tailing and not log_path:
+                current_log = None
+                file_obj = None
+                
+                while self.tailing:
                     logs = _find_build_logs()
-                    if logs:
-                        log_path = logs[0]
-                        break
-                    self.call_from_thread(build_log_box.write, f"[{SSOT['subtle']}]Waiting for MiOS build/install log...[/]")
-                    time.sleep(2)
-                if not self.tailing or not log_path: return
-                self.build_log_path = log_path
-                try:
-                    self.call_from_thread(build_log_box.write, f"[{SSOT['success']}]Streaming MiOS build/install: {os.path.basename(log_path)}[/]")
-                    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-                        for line in f.readlines()[-80:]:
-                            line = line.strip()
-                            if line:
-                                self.call_from_thread(build_log_box.write, _bcolor(line))
-                        f.seek(0, 2)
-                        self.last_build_log_time = time.time()
-                        while self.tailing:
-                            line = f.readline()
-                            if not line:
-                                time.sleep(0.2)
-                                continue
+                    if not logs:
+                        time.sleep(1)
+                        continue
+                    
+                    newest_log = logs[0]
+                    if newest_log != current_log:
+                        current_log = newest_log
+                        self.build_log_path = current_log
+                        if file_obj:
+                            try: file_obj.close()
+                            except Exception: pass
+                        try:
+                            self.call_from_thread(build_log_box.write, f"[{SSOT['success']}]Streaming build log: {os.path.basename(current_log)}[/]")
+                            file_obj = open(current_log, 'r', encoding='utf-8', errors='ignore')
+                            lines = file_obj.readlines()
+                            for line in lines[-40:]:
+                                line = line.strip()
+                                if line:
+                                    self.call_from_thread(build_log_box.write, _bcolor(line))
+                            file_obj.seek(0, 2)
+                        except Exception:
+                            file_obj = None
+                            time.sleep(1)
+                            continue
+
+                    if not file_obj:
+                        time.sleep(1)
+                        continue
+
+                    idle_count = 0
+                    while self.tailing and current_log == newest_log:
+                        line = file_obj.readline()
+                        if line:
                             line = line.rstrip("\n")
-                            if not line.strip(): continue
-                            self.last_build_log_time = time.time()
-                            self.call_from_thread(build_log_box.write, _bcolor(line))
-                            self.call_from_thread(log_box.write, f"[dim]build[/] {_bcolor(line)}")
-                except Exception: pass
+                            if line.strip():
+                                self.last_build_log_time = time.time()
+                                self.call_from_thread(build_log_box.write, _bcolor(line))
+                                self.call_from_thread(log_box.write, f"[dim]build[/] {_bcolor(line)}")
+                            idle_count = 0
+                        else:
+                            idle_count += 1
+                            time.sleep(0.2)
+                            if idle_count > 10:
+                                idle_count = 0
+                                check_logs = _find_build_logs()
+                                if check_logs and check_logs[0] != current_log:
+                                    newest_log = check_logs[0]
+                                    break
+                                try:
+                                    if os.path.getsize(current_log) < file_obj.tell():
+                                        file_obj.seek(0)
+                                except Exception: pass
 
             if flash_log_box: threading.Thread(target=stream_flash_log, daemon=True).start()
             if build_log_box: threading.Thread(target=stream_build_log, daemon=True).start()
