@@ -583,7 +583,7 @@ if TEXTUAL_AVAILABLE:
                             file_obj = open(current_log, 'r', encoding='utf-8', errors='ignore')
                             lines = file_obj.readlines()
                             for line in lines[-40:]:
-                                line = line.strip()
+                                line = line.replace('\x00', '').strip()
                                 if line:
                                     self.call_from_thread(flash_log_box.write, line)
                             file_obj.seek(0, 2)
@@ -600,7 +600,7 @@ if TEXTUAL_AVAILABLE:
                     while self.tailing and current_log == newest_log:
                         line = file_obj.readline()
                         if line:
-                            line = line.strip()
+                            line = line.replace('\x00', '').strip()
                             if line:
                                 self.last_flash_log_time = time.time()
                                 self.call_from_thread(flash_log_box.write, line)

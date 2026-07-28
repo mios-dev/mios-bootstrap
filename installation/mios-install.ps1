@@ -256,7 +256,9 @@ $plan = Resolve-Target -Target $Target -Type $Type -Stage $Stage -Unattended $Un
 if ($plan.NeedsAdmin) { Invoke-MiosSelfElevate -ArgList $PSBoundParameters.Values }
 
 if ($plan.Kind -eq 'ps') {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $plan.Exe @($plan.Args)
+    $logFile = Join-Path $script:Root 'installation\mios-install-live.log'
+    "[START] MiOS Install Execution Started at $(Get-Date)" | Out-File -FilePath $logFile -Encoding utf8 -Force
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $plan.Exe @($plan.Args) 2>&1 | ForEach-Object { Write-Host $_; $_ } | Out-File -FilePath $logFile -Encoding utf8 -Append
     exit $LASTEXITCODE
 }
 
@@ -264,8 +266,6 @@ if ($plan.Kind -eq 'py') {
     & python $plan.Exe @($plan.Args)
     exit $LASTEXITCODE
 }
-
-
 
 if ($Plan.Kind -eq 'bat') {
     Write-MiosLine 'info' "Launching MiOS-Cat.bat stage"
@@ -275,8 +275,10 @@ if ($Plan.Kind -eq 'bat') {
         $envSnapshot[$kv.Key] = [System.Environment]::GetEnvironmentVariable($kv.Key)
         [System.Environment]::SetEnvironmentVariable($kv.Key, $kv.Value)
     }
+    $logFile = 'C:\Windows\Temp\mios-cat-install.log'
+    "[START] MiOS-Cat Flash Execution Started at $(Get-Date)" | Out-File -FilePath $logFile -Encoding utf8 -Force
     try {
-        & cmd.exe /c "`"$($plan.Exe)`"" @($plan.Args)
+        & cmd.exe /c "`"$($plan.Exe)`"" @($plan.Args) 2>&1 | ForEach-Object { Write-Host $_; $_ } | Out-File -FilePath $logFile -Encoding utf8 -Append
         exit $LASTEXITCODE
     } finally {
         foreach ($kv in $envSnapshot.GetEnumerator()) {
