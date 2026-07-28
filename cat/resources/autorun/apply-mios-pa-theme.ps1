@@ -789,6 +789,11 @@ if (Test-Path $mainMenuIni) {
     try {
         $lines = Get-Content $mainMenuIni -ErrorAction Stop
         $newLines = @()
+        $hasAdditional = $false
+        $hasRefresh = $false
+        $hasShowAll = $false
+        $hasCategories = $false
+
         foreach ($line in $lines) {
             if ($line -match '^ThemeCustomColor=' -or $line -match '^CustomColor') {
                 continue
@@ -797,12 +802,42 @@ if (Test-Path $mainMenuIni) {
                 $newLines += 'Theme=Default'
             } elseif ($line -match '^ThemeColor=') {
                 $newLines += 'ThemeColor=Silver'
+            } elseif ($line -match '^AdditionalAppDirectories=') {
+                $newLines += 'AdditionalAppDirectories=..\Programs;..\MiOS-PE;..\System'
+                $hasAdditional = $true
+            } elseif ($line -match '^RefreshOnStartup=') {
+                $newLines += 'RefreshOnStartup=True'
+                $hasRefresh = $true
+            } elseif ($line -match '^ShowAllApps=') {
+                $newLines += 'ShowAllApps=True'
+                $hasShowAll = $true
+            } elseif ($line -match '^UseCategories=') {
+                $newLines += 'UseCategories=True'
+                $hasCategories = $true
             } else {
                 $newLines += $line
+                if ($line -eq '[DisplayOptions]') {
+                    if (-not ($lines -match '^AdditionalAppDirectories=')) {
+                        $newLines += 'AdditionalAppDirectories=..\Programs;..\MiOS-PE;..\System'
+                        $hasAdditional = $true
+                    }
+                    if (-not ($lines -match '^RefreshOnStartup=')) {
+                        $newLines += 'RefreshOnStartup=True'
+                        $hasRefresh = $true
+                    }
+                    if (-not ($lines -match '^ShowAllApps=')) {
+                        $newLines += 'ShowAllApps=True'
+                        $hasShowAll = $true
+                    }
+                    if (-not ($lines -match '^UseCategories=')) {
+                        $newLines += 'UseCategories=True'
+                        $hasCategories = $true
+                    }
+                }
             }
         }
         Set-Content -Path $mainMenuIni -Value $newLines -ErrorAction Stop
-        Write-Host "[PA-Theme] Main PortableAppsMenu.ini Theme set to Default (Silver)."
+        Write-Host "[PA-Theme] Main PortableAppsMenu.ini Theme & DisplayOptions updated."
     } catch {
         Write-Host "[PA-Theme] Warning patching PortableAppsMenu.ini: $_"
     }
