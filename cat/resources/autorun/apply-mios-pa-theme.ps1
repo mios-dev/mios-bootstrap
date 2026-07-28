@@ -709,7 +709,7 @@ PortableApps.comThemeVersion=2.0
 PortableApps.comThemeType=Simple
 
 [ThemeDetails]
-Name=MiOSTheme
+Name=MediCatFlat
 Version=2.0
 Author=MiOS Automated System
 
@@ -735,25 +735,34 @@ BorderColor=F35C15
 [Menu]
 Layout=modern
 Chrome=custom
+Matte=none
 Background=none
-DefaultBackgroundColor=Dark
+DefaultBackgroundColor=Silver
+PinkBackgroundColor=ef81cb
+RedBackgroundColor=7d0003
+OrangeBackgroundColor=fb9f32
+YellowBackgroundColor=f4ee45
+GreenBackgroundColor=9acd3d
+BlueBackgroundColor=63b4fb
+PurpleBackgroundColor=7113bb
+VioletBackgroundColor=c37cfb
+BlackBackgroundColor=343434
+WhiteBackgroundColor=fbfbfb
+GrayBackgroundColor=535353
+SilverBackgroundColor=979797
+BronzeBackgroundColor=a97452
+GoldBackgroundColor=edc518
 "@
 [System.IO.File]::WriteAllText((Join-Path $paThemeDir "PATheme.ini"), $paThemeIni, [System.Text.Encoding]::UTF8)
 [System.IO.File]::WriteAllText((Join-Path $mediCatFlat "PATheme.ini"), $paThemeIni, [System.Text.Encoding]::UTF8)
 
 # ------------------------------------------------------------------
-# Write settings/PortableAppsMenu.ini & patch main PortableAppsMenu.ini
+# Remove stale settings/PortableAppsMenu.ini & patch main PortableAppsMenu.ini
 # ------------------------------------------------------------------
-$menuSettingsDir = Join-Path $dataDir "settings"
-mkdir $menuSettingsDir -ErrorAction SilentlyContinue | Out-Null
-$menuIniPath = Join-Path $menuSettingsDir "PortableAppsMenu.ini"
-
-$menuSettingsLines = @(
-    '[PortableApps.comMenu]',
-    'Theme=MediCatFlat',
-    'ThemeColor=Default'
-)
-[System.IO.File]::WriteAllLines($menuIniPath, $menuSettingsLines, [System.Text.Encoding]::Unicode)
+$menuSettingsIni = Join-Path $dataDir "settings\PortableAppsMenu.ini"
+if (Test-Path $menuSettingsIni) {
+    Remove-Item $menuSettingsIni -Force -ErrorAction SilentlyContinue
+}
 
 # Patch the MAIN PortableAppsMenu.ini
 $mainMenuIni = Join-Path $dataDir "PortableAppsMenu.ini"
@@ -766,15 +775,15 @@ if (Test-Path $mainMenuIni) {
                 continue
             }
             if ($line -match '^Theme=') {
-                $newLines += 'Theme=MediCatFlat'
+                $newLines += 'Theme=Default'
             } elseif ($line -match '^ThemeColor=') {
-                $newLines += 'ThemeColor=Default'
+                $newLines += 'ThemeColor=Silver'
             } else {
                 $newLines += $line
             }
         }
         Set-Content -Path $mainMenuIni -Value $newLines -Encoding Unicode -ErrorAction Stop
-        Write-Host "[PA-Theme] Main PortableAppsMenu.ini Theme set to MediCatFlat (Default)."
+        Write-Host "[PA-Theme] Main PortableAppsMenu.ini Theme set to Default (Silver)."
     } catch {
         Write-Host "[PA-Theme] Warning patching PortableAppsMenu.ini: $_"
     }
