@@ -1409,9 +1409,16 @@ function Invoke-MiOSImageServicing {
     $dismArgs = @("/Export-Image", "/SourceImageFile:$wim", "/SourceIndex:$idx", "/DestinationImageFile:$esdFile", "/Compress:recovery", "/ScratchDir:$dismScratch")
     & dism.exe $dismArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "dism.exe /Export-Image failed with exit code $LASTEXITCODE. install.wim is intact."
+        Write-Host "    [!] /Compress:recovery failed (exit $LASTEXITCODE). Retrying export with /Compress:max..." -ForegroundColor Yellow
+        $dismArgs = @("/Export-Image", "/SourceImageFile:$wim", "/SourceIndex:$idx", "/DestinationImageFile:$esdFile", "/Compress:max", "/ScratchDir:$dismScratch")
+        & dism.exe $dismArgs
     }
-    Remove-Item $wim -Force -ErrorAction SilentlyContinue
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $esdFile)) {
+        Remove-Item $wim -Force -ErrorAction SilentlyContinue
+        Write-Host "[+] Exported and compressed to $esdFile" -ForegroundColor Green
+    } else {
+        Write-Host "[!] Export-Image failed. Retaining uncompressed install.wim ($wim) for ISO mastering -- ISO remains 100% functional." -ForegroundColor Yellow
+    }
 }
 
 # Assemble the bootable dual BIOS/UEFI ISO with oscdimg (UDF; no-prompt UEFI).
