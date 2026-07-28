@@ -552,10 +552,10 @@ if TEXTUAL_AVAILABLE:
                     os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "mios-cat-flash.log"),
                     "/tmp/mios-cat-install.log"
                 ]
-                task_dir = r"C:\Users\Administrator\.gemini\antigravity-ide\brain\c114f14b-b8b9-4c8a-92bb-ec36d1d33926\.system_generated\tasks"
-                if os.path.isdir(task_dir):
-                    task_logs = glob.glob(os.path.join(task_dir, "*.log"))
-                    candidates.extend(task_logs)
+                for d in [r"C:\mios-bootstrap\installation", r"C:\MiOS\logs", r"M:\MiOS\logs"]:
+                    if os.path.isdir(d):
+                        candidates.extend(glob.glob(os.path.join(d, "mios-cat-*.log")))
+                        candidates.extend(glob.glob(os.path.join(d, "flash-*.log")))
 
                 found = [c for c in dict.fromkeys(candidates) if os.path.exists(c)]
                 found.sort(key=os.path.getmtime, reverse=True)
@@ -629,7 +629,7 @@ if TEXTUAL_AVAILABLE:
                                      os.environ.get("MIOS_BUILD_LOG")) if p and os.path.exists(p)]
                 for d in dirs:
                     if d and os.path.isdir(d):
-                        for pat in ("mios-install-*.log", "mios-build-*.log", "*.log"):
+                        for pat in ("mios-install-*.log", "mios-build-*.log", "deploy*.log", "build*.log"):
                             found += glob.glob(os.path.join(d, pat))
                 found = [p for p in dict.fromkeys(found) if os.path.exists(p)]
                 found.sort(key=os.path.getmtime, reverse=True)
