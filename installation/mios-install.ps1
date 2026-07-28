@@ -269,6 +269,18 @@ if ($plan.Kind -eq 'py') {
 
 if ($Plan.Kind -eq 'bat') {
     Write-MiosLine 'info' "Launching MiOS-Cat.bat stage"
-    & cmd.exe /c "`"$($plan.Exe)`"" @($plan.Args)
-    exit $LASTEXITCODE
+    # Apply any env overrides (e.g. NONINTERACTIVE=1) into the current process env.
+    $envSnapshot = @{}
+    foreach ($kv in $plan.Env.GetEnumerator()) {
+        $envSnapshot[$kv.Key] = [System.Environment]::GetEnvironmentVariable($kv.Key)
+        [System.Environment]::SetEnvironmentVariable($kv.Key, $kv.Value)
+    }
+    try {
+        & cmd.exe /c "`"$($plan.Exe)`"" @($plan.Args)
+        exit $LASTEXITCODE
+    } finally {
+        foreach ($kv in $envSnapshot.GetEnumerator()) {
+            [System.Environment]::SetEnvironmentVariable($kv.Key, $kv.Value)
+        }
+    }
 }

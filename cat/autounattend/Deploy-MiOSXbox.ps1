@@ -29,7 +29,7 @@ param(
     [string]$TomlPath = 'C:\mios-bootstrap\mios.toml',
     [switch]$SkipBuild,
     [string]$VMName   = 'MiOS-XBOX-Test',
-    [string]$LogDir   = 'C:\MiOS\logs',
+    [string]$LogDir   = 'M:\MiOS\logs',
     [int]$InstallTimeoutMin = 75,
     [int]$DeployTimeoutMin  = 50
 )
@@ -38,7 +38,7 @@ $dir = 'C:\mios-bootstrap\cat\autounattend'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $logFile = Join-Path $LogDir 'deploy.log'
 $statusF = Join-Path $LogDir 'status.json'
-$isoOut  = 'C:\MiOS\iso\MiOS-Xbox.iso'
+$isoOut  = 'M:\MiOS\iso\MiOS-Xbox.iso'
 $state = [ordered]@{ stage = 'init'; status = 'running'; started = (Get-Date).ToString('o'); iso = $null; vm = $VMName; markers = @{}; selftest = $null; error = $null }
 
 function Save-Status { try { $state.updated = (Get-Date).ToString('o'); ($state | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $statusF -Encoding utf8 } catch {} }
@@ -97,7 +97,7 @@ Log ("guest cred candidates: {0}" -f (($creds | ForEach-Object { $_.u }) -join '
 Stage '2-vm' 'recreate + boot the Hyper-V VM'
 if (-not (Get-Command New-VM -ErrorAction SilentlyContinue)) { Fail "Hyper-V module absent -- Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All (reboot)" }
 Get-VM -Name $VMName -ErrorAction SilentlyContinue | ForEach-Object { if ($_.State -ne 'Off') { Stop-VM $_ -TurnOff -Force -EA SilentlyContinue }; Remove-VM $_ -Force -EA SilentlyContinue }
-$vmDir = 'C:\MiOS\test-vm'; New-Item -ItemType Directory -Force -Path $vmDir | Out-Null
+$vmDir = 'M:\MiOS\test-vm'; New-Item -ItemType Directory -Force -Path $vmDir | Out-Null
 $vhd = Join-Path $vmDir "$VMName.vhdx"; Remove-Item $vhd -Force -EA SilentlyContinue
 try {
     New-VM -Name $VMName -Generation 2 -MemoryStartupBytes 8GB -NewVHDPath $vhd -NewVHDSizeBytes 100GB -Path $vmDir | Out-Null
@@ -149,11 +149,26 @@ function Get-GuestSession {
 }
 $deadline = (Get-Date).AddMinutes($InstallTimeoutMin)
 $sess = $null
+$setupRebooted = $false   # prevents restart loops if VM keeps shutting down
 while ((Get-Date) -lt $deadline -and -not $sess) {
     Start-Sleep -Seconds 30
-    $vm = Get-VM -Name $VMName -EA SilentlyContinue
+    $vmObj = Get-VM -Name $VMName -EA SilentlyContinue
     $sess = Get-GuestSession
-    Log ("waiting for guest... vm={0} heartbeat={1} psdirect={2}" -f $vm.State, $vm.Uptime, [bool]$sess)
+    Log ("waiting for guest... vm={0} heartbeat={1} psdirect={2}" -f $vmObj.State, $vmObj.Uptime, [bool]$sess)
+
+    # Autounattend shuts the VM down after setup completes (instead of rebooting
+    # straight into Windows). Detect vm=Off, flip boot order to HDD, restart once.
+    if (-not $sess -and $vmObj.State -eq 'Off' -and -not $setupRebooted) {
+        Log "VM is Off -- setup-complete shutdown detected. Restarting from VHD..." Yellow
+        try {
+            $hdd = Get-VMHardDiskDrive -VMName $VMName -EA SilentlyContinue | Select-Object -First 1
+            $dvd = Get-VMDvdDrive     -VMName $VMName -EA SilentlyContinue | Select-Object -First 1
+            if ($hdd) { Set-VMFirmware -VMName $VMName -BootOrder (@($hdd) + @($dvd | Where-Object { $_ })) -EA SilentlyContinue }
+            Start-VM -Name $VMName
+            $setupRebooted = $true
+            Log "VM restarted from VHD -- waiting for first Windows boot + MiOS FirstBoot..." Green
+        } catch { Log "WARN post-setup restart failed: $($_.Exception.Message)" Yellow }
+    }
 }
 if (-not $sess) { Fail "guest never became reachable via PowerShell Direct within $InstallTimeoutMin min (install stuck? check via Hyper-V console)" }
 Log "PowerShell Direct connected to guest (creds=$($state.markers.creds))" Green
