@@ -49,6 +49,7 @@ try:
     from textual.widgets import Header, Footer, Static, RichLog, TabbedContent, TabPane, DataTable, Sparkline, Label
     from textual.containers import Grid, Vertical, Horizontal
     from textual.reactive import reactive
+    from textual.theme import Theme
     import psutil
     TEXTUAL_AVAILABLE = True
 except ImportError:
@@ -62,6 +63,10 @@ console = Console(safe_box=False)
 # CORE DATA FETCHING (Shared between Rich and Textual)
 # ---------------------------------------------------------------------------
 
+_SYS_INFO_CACHE = None
+_USB_INFO_CACHE = "Scanning USB..."
+_GIT_STATUS_CACHE = "[dim]Git state loading...[/]"
+
 def check_port(host, port):
     if not port or port <= 0:
         return True
@@ -70,7 +75,7 @@ def check_port(host, port):
             return True
     except Exception:
         try:
-            with socket.create_connection(("localhost", int(port)), timeout=0.03):
+            with socket.create_connection(("127.0.0.1", int(port)), timeout=0.03):
                 return True
         except Exception:
             return False
@@ -99,32 +104,31 @@ def get_services():
             offset = ports.get("stack_id", 0) * 10000
             actual_port = port + offset
             is_up = check_port("127.0.0.1", actual_port)
-            # If on Windows with WSL running, check if it's a known active core service
-            if not is_up and wsl_online and actual_port in [8222, 8300, 8301, 8091, 8642, 8119, 8443, 8080, 8444, 8389, 8450, 8053, 8633, 8442, 8641, 8650, 8645, 11437]:
-                # Fallback check against 127.0.0.1 via alternative host resolution
-                is_up = check_port("127.0.0.1", actual_port)
             svcs.append((svc_name, actual_port, is_up))
     
-    # Core system services
     svcs.append(("wsl-engine", 0, wsl_online))
     svcs.append(("podman-machine", 0, True))
-    
-    return svcs
-    try:
-        cmd = ["wsl", "-d", "podman-MiOS-DEV", "--", "podman", "ps", "--format", "{{.Names}}|{{.Ports}}"] if IS_WINDOWS else ["podman", "ps", "--format", "{{.Names}}|{{.Ports}}"]
-        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=1.0)
-        for line in out.splitlines():
-            parts = line.split("|")
-            if parts and parts[0].strip():
-                name = parts[0].strip()
-                if name.startswith("mios-"): name = name[5:]
-                if not any(s[0] == name for s in svcs):
-                    svcs.append((f"[dim]podman[/] {name}", "-", True))
-    except Exception:
-        pass
     return svcs
 
 def get_sys_info():
+    global _SYS_INFO_CACHE
+    if _SYS_INFO_CACHE is not None:
+        uptime_str = "0h 0m"
+        if not IS_WINDOWS:
+            try:
+                with open("/proc/uptime") as f:
+                    u_sec = float(f.read().split()[0])
+                    uptime_str = f"{int(u_sec // 3600)}h {int((u_sec % 3600) // 60)}m"
+            except: pass
+        else:
+            try:
+                u_sec = time.time() - psutil.boot_time()
+                uptime_str = f"{int(u_sec // 3600)}h {int((u_sec % 3600) // 60)}m"
+            except: pass
+        res = dict(_SYS_INFO_CACHE)
+        res["uptime"] = uptime_str
+        return res
+
     host = platform.node() or 'localhost'
     kernel = platform.release()
     os_name = platform.system()
@@ -140,11 +144,6 @@ def get_sys_info():
                         os_name = line.split("=")[1].strip().strip('"')
         except: pass
         try:
-            with open("/proc/uptime") as f:
-                u_sec = float(f.read().split()[0])
-                uptime_str = f"{int(u_sec // 3600)}h {int((u_sec % 3600) // 60)}m"
-        except: pass
-        try:
             with open("/proc/cpuinfo") as f:
                 for line in f:
                     if line.startswith("model name"):
@@ -154,16 +153,18 @@ def get_sys_info():
     else:
         os_name = "Windows"
         try:
-            out = subprocess.check_output(["wmic", "cpu", "get", "name"], text=True, stderr=subprocess.DEVNULL)
+            cpu_model = os.environ.get("PROCESSOR_IDENTIFIER", "x86/x64 Processor")
+            out = subprocess.check_output(["wmic", "cpu", "get", "name"], text=True, stderr=subprocess.DEVNULL, timeout=1.5)
             lines = [l.strip() for l in out.splitlines() if l.strip()]
             if len(lines) > 1: cpu_model = lines[1]
         except: pass
 
-    return {"os": os_name, "host": host, "kernel": kernel, "user": user, "uptime": uptime_str, "cpu_model": cpu_model}
+    _SYS_INFO_CACHE = {"os": os_name, "host": host, "kernel": kernel, "user": user, "uptime": uptime_str, "cpu_model": cpu_model}
+    return _SYS_INFO_CACHE
 
 def get_telemetry():
     if not TEXTUAL_AVAILABLE: return 0, 0, 0, 0, "0.00"
-    cpu = psutil.cpu_percent()
+    cpu = psutil.cpu_percent(interval=None)
     ram = psutil.virtual_memory().percent
     c_pct = m_pct = 0
     try:
@@ -177,33 +178,59 @@ def get_telemetry():
         except: pass
     return cpu, ram, c_pct, m_pct, load_avg
 
+def _bg_update_usb():
+    global _USB_INFO_CACHE
+    while True:
+        try:
+            if IS_WINDOWS:
+                cmd = ["powershell.exe", "-NoProfile", "-Command", "Get-Disk | Where-Object BusType -eq 'USB' | Select-Object -First 1 -Property Number, FriendlyName, Size | ConvertTo-Json"]
+                out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=3.0)
+                if out.strip():
+                    data = json.loads(out)
+                    if isinstance(data, dict):
+                        size_gb = int(data.get('Size', 0) / (1024**3))
+                        name = data.get('FriendlyName', 'USB Drive')
+                        _USB_INFO_CACHE = f"D: {name} ({size_gb}GB)"
+                    else:
+                        _USB_INFO_CACHE = "D: USB Drive Detected"
+                else:
+                    _USB_INFO_CACHE = "No USB Drive Detected"
+            else:
+                _USB_INFO_CACHE = "USB Monitor (Linux)"
+        except Exception:
+            _USB_INFO_CACHE = "No USB Drive Detected"
+        time.sleep(10)
+
+def _bg_update_git():
+    global _GIT_STATUS_CACHE
+    while True:
+        target_dir = "C:\\MiOS" if IS_WINDOWS else "/mnt/m"
+        if not os.path.isdir(target_dir):
+            target_dir = "C:\\mios-bootstrap"
+        if os.path.isdir(os.path.join(target_dir, ".git")):
+            try:
+                out = subprocess.check_output(["git", "status", "--porcelain", "-b"], cwd=target_dir, text=True, timeout=2.0)
+                lines = out.splitlines()
+                branch = lines[0].replace("##", "").strip() if "##" in lines[0] else lines[0].strip()
+                staged = sum(1 for l in lines[1:] if l[0] not in (" ", "?"))
+                modified = sum(1 for l in lines[1:] if l[:2] != "??" and l[1] != " ")
+                untracked = sum(1 for l in lines[1:] if l[:2] == "?")
+                _GIT_STATUS_CACHE = f"Branch: {branch} | [green]{staged} staged[/] | [yellow]{modified} mod[/] | [dim]{untracked} untracked[/]"
+            except Exception:
+                _GIT_STATUS_CACHE = "[dim]Git state unavailable[/]"
+        else:
+            _GIT_STATUS_CACHE = "[dim]Git repo not found[/]"
+        time.sleep(5)
+
+# Start background async threads for slow I/O
+threading.Thread(target=_bg_update_usb, daemon=True).start()
+threading.Thread(target=_bg_update_git, daemon=True).start()
+
 def get_usb_drive_info():
-    try:
-        cmd = ["powershell.exe", "-NoProfile", "-Command", "Get-Disk | Where-Object BusType -eq 'USB' | Select-Object -First 1 -Property Number, FriendlyName, Size | ConvertTo-Json"]
-        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=2.0)
-        if out.strip():
-            data = json.loads(out)
-            if isinstance(data, dict):
-                size_gb = int(data.get('Size', 0) / (1024**3))
-                name = data.get('FriendlyName', 'USB Drive')
-                return f"D: {name} ({size_gb}GB)"
-    except Exception:
-        pass
-    return "No USB Drive Detected"
+    return _USB_INFO_CACHE
 
 def get_git_tree_status():
-    target_dir = "C:\\MiOS" if IS_WINDOWS else "/mnt/m"
-    if not os.path.isdir(os.path.join(target_dir, ".git")): return "[dim]Git state unavailable[/]"
-    try:
-        out = subprocess.check_output(["git", "status", "--porcelain", "-b"], cwd=target_dir, text=True, timeout=1.0)
-        lines = out.splitlines()
-        branch = lines[0].replace("##", "").strip() if "##" in lines[0] else lines[0].strip()
-        staged = sum(1 for l in lines[1:] if l[0] not in (" ", "?"))
-        modified = sum(1 for l in lines[1:] if l[:2] != "??" and l[1] != " ")
-        untracked = sum(1 for l in lines[1:] if l[:2] == "??")
-        return f"Branch: {branch} | [green]{staged} staged[/] | [yellow]{modified} mod[/] | [dim]{untracked} untracked[/]"
-    except Exception:
-        return "[dim]Git state unavailable[/]"
+    return _GIT_STATUS_CACHE
 
 def get_ascii_logo():
     logo_path = "C:\\MiOS\\usr\\share\\mios\\branding\\mios.txt" if IS_WINDOWS else "/usr/share/mios/branding/mios.txt"
@@ -218,10 +245,6 @@ def run_fastfetch():
         return Text.from_ansi(out)
     except Exception:
         return Text("[dim]fastfetch unavailable[/]")
-
-# ---------------------------------------------------------------------------
-# STATIC SNAPSHOT LAYOUTS (rich)
-# ---------------------------------------------------------------------------
 
 def create_mini_layout():
     sys_info = get_sys_info()
@@ -273,29 +296,6 @@ def create_dash_layout():
 # ---------------------------------------------------------------------------
 
 if TEXTUAL_AVAILABLE:
-    from textual.theme import Theme
-
-    from textual.theme import Theme
-
-    from textual.theme import Theme
-
-    from textual.theme import Theme
-
-    from textual.theme import Theme
-    from textual.widgets import Sparkline
-
-    def make_bar(pct, width=15):
-        pct = max(0.0, min(100.0, float(pct)))
-        filled = int((pct / 100.0) * width)
-        empty = width - filled
-        if pct > 80: color = "red"
-        elif pct > 60: color = "yellow"
-        else: color = "#39ff14"
-        return f"[{color}]{'█' * filled}[/][dim]{'░' * empty}[/]"
-
-    from textual.theme import Theme
-    from textual.widgets import Sparkline
-
     def load_ssot_colors():
         colors = {
             "bg": "#282262",
@@ -308,99 +308,7 @@ if TEXTUAL_AVAILABLE:
             "subtle": "#B7C9D7",
             "surface": "#1E194D"
         }
-        paths = ["C:\\MiOS\\usr\\share\\mios\\mios.toml", "/usr/share/mios/mios.toml", "/etc/mios/mios.toml"]
-        for p in paths:
-            if os.path.exists(p):
-                try:
-                    import tomllib
-                except ImportError:
-                    try: import tomli as tomllib
-                    except ImportError: tomllib = None
-                if tomllib:
-                    try:
-                        with open(p, "rb") as f:
-                            data = tomllib.load(f)
-                            if "colors" in data:
-                                for k, v in data["colors"].items():
-                                    if k in colors and isinstance(v, str):
-                                        colors[k] = v
-                        break
-                    except Exception: pass
-        return colors
-
-    SSOT = load_ssot_colors()
-
-    def make_bar(pct, width=15):
-        pct = max(0.0, min(100.0, float(pct)))
-        filled = int((pct / 100.0) * width)
-        empty = width - filled
-        if pct > 80: color = SSOT['error']
-        elif pct > 60: color = SSOT['warning']
-        else: color = SSOT['success']
-        return f"[{color}]{'█' * filled}[/][dim]{'░' * empty}[/]"
-
-    from textual.theme import Theme
-    from textual.widgets import Sparkline
-
-    def load_ssot_colors():
-        colors = {
-            "bg": "#282262",
-            "fg": "#E7DFD3",
-            "accent": "#1A407F",
-            "success": "#3E7765",
-            "warning": "#F35C15",
-            "error": "#DC271B",
-            "muted": "#948E8E",
-            "subtle": "#B7C9D7",
-            "surface": "#1E194D"
-        }
-        paths = ["C:\\MiOS\\usr\\share\\mios\\mios.toml", "/usr/share/mios/mios.toml", "/etc/mios/mios.toml"]
-        for p in paths:
-            if os.path.exists(p):
-                try:
-                    import tomllib
-                except ImportError:
-                    try: import tomli as tomllib
-                    except ImportError: tomllib = None
-                if tomllib:
-                    try:
-                        with open(p, "rb") as f:
-                            data = tomllib.load(f)
-                            if "colors" in data:
-                                for k, v in data["colors"].items():
-                                    if k in colors and isinstance(v, str):
-                                        colors[k] = v
-                        break
-                    except Exception: pass
-        return colors
-
-    SSOT = load_ssot_colors()
-
-    def make_bar(pct, width=15):
-        pct = max(0.0, min(100.0, float(pct)))
-        filled = int((pct / 100.0) * width)
-        empty = width - filled
-        if pct > 80: color = SSOT['error']
-        elif pct > 60: color = SSOT['warning']
-        else: color = SSOT['success']
-        return f"[{color}]{'█' * filled}[/][dim]{'░' * empty}[/]"
-
-    from textual.theme import Theme
-    from textual.widgets import Sparkline
-
-    def load_ssot_colors():
-        colors = {
-            "bg": "#282262",
-            "fg": "#E7DFD3",
-            "accent": "#1A407F",
-            "success": "#3E7765",
-            "warning": "#F35C15",
-            "error": "#DC271B",
-            "muted": "#948E8E",
-            "subtle": "#B7C9D7",
-            "surface": "#1E194D"
-        }
-        paths = ["C:\\MiOS\\usr\\share\\mios\\mios.toml", "/usr/share/mios/mios.toml", "/etc/mios/mios.toml"]
+        paths = ["C:\\MiOS\\usr\\share\\mios\\mios.toml", "/usr/share/mios/mios.toml", "/etc/mios/mios.toml", "C:\\mios-bootstrap\\mios.toml"]
         for p in paths:
             if os.path.exists(p):
                 try:
@@ -441,18 +349,15 @@ if TEXTUAL_AVAILABLE:
             padding: 0;
             margin: 0;
         }}
-        
         TabbedContent {{
             height: 1fr;
             width: 100%;
         }}
-        
         #main-container, #build-container, #flash-container, #ai-container {{
             height: 1fr;
             width: 100%;
             layout: horizontal;
         }}
-        
         #left-pane {{
             width: 1fr;
             height: 100%;
@@ -461,32 +366,27 @@ if TEXTUAL_AVAILABLE:
             width: 1fr;
             height: 100%;
         }}
-        
         #build-stats-pane, #flash-stats-pane, #ai-stats-pane {{
-            width: 35;
+            width: 38;
             height: 100%;
             border: round {SSOT['accent']};
             content-align: center top;
         }}
-
         #build-log-box, #flash-log-box, #ai-log-box {{
             width: 1fr;
             height: 100%;
             border: round {SSOT['success']};
         }}
-        
         #top-right-bar {{
             height: 6;
             width: 100%;
         }}
-        
         .box {{
             background: {SSOT['surface']};
             color: {SSOT['fg']};
             margin: 0;
             padding: 0 1;
         }}
-        
         #hw-box {{
             height: 2fr;
             border: round {SSOT['subtle']};
@@ -530,12 +430,8 @@ if TEXTUAL_AVAILABLE:
             ("q", "quit", "Quit"),
             ("d", "toggle_dark", "Toggle Dark Mode"),
             ("minus", "speed_up", "Decrease Delay (-)"),
-            ("underscore", "speed_up", "Decrease Delay"),
-            ("kp_minus", "speed_up", "Decrease Delay"),
             ("up", "speed_up", "Decrease Delay"),
             ("plus", "slow_down", "Increase Delay (+)"),
-            ("equal", "slow_down", "Increase Delay"),
-            ("kp_plus", "slow_down", "Increase Delay"),
             ("down", "slow_down", "Increase Delay"),
         ]
 
@@ -589,7 +485,7 @@ if TEXTUAL_AVAILABLE:
             self.register_theme(custom_theme)
             self.theme = "mios-ssot"
             
-            self.refresh_interval = 0.5  # 500ms default
+            self.refresh_interval = 1.0  # Smooth 1s refresh interval
             self.update_titles()
             
             svc_table = self.query_one("#svc-table", DataTable)
@@ -597,29 +493,29 @@ if TEXTUAL_AVAILABLE:
             
             self.cpu_history = [0.0] * 60
             self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
-            self.set_interval(2.0, self.async_update_services)
+            self.set_interval(3.0, self.async_update_services)
             
             self.tailing = True
             self.log_thread = threading.Thread(target=self.tail_all_logs, daemon=True)
             self.log_thread.start()
             
-            # Non-blocking async initial populate
             threading.Thread(target=self.update_services, daemon=True).start()
 
         def update_titles(self):
             ms = int(self.refresh_interval * 1000)
-            self.query_one("#hw-box").border_title = f"Hardware Telemetry (Rate: {ms}ms | [+]Faster [-]Slower)"
+            self.query_one("#hw-box").border_title = f"Hardware Telemetry (Rate: {ms}ms | [+]Slower [-]Faster)"
             self.query_one("#sys-identity").border_title = "System Identity"
             self.query_one("#forge-box").border_title = "Forge Pipeline & Git"
             self.query_one("#spark-container").border_title = f"CPU Realtime History ({ms}ms interval)"
-            self.query_one("#log-box").border_title = "Global System & Container Log Stream (Live)"
+            self.query_one("#log-box").border_title = "Global System & Pipeline Log Stream (Live)"
             self.query_one("#svc-table", DataTable).border_title = "Core System Services"
             try:
                 self.query_one("#build-log-box").border_title = "MiOS Build / Install Pipeline (Live)"
+                self.query_one("#flash-log-box").border_title = "MiOS-Cat USB Flash Stream (Live)"
             except Exception: pass
 
         def action_speed_up(self):
-            new_val = max(0.1, round(self.refresh_interval - 0.1, 2))
+            new_val = max(0.2, round(self.refresh_interval - 0.2, 2))
             self.refresh_interval = new_val
             if hasattr(self, "telemetry_timer"):
                 self.telemetry_timer.stop()
@@ -627,7 +523,7 @@ if TEXTUAL_AVAILABLE:
             self.update_titles()
 
         def action_slow_down(self):
-            new_val = min(5.0, round(self.refresh_interval + 0.1, 2))
+            new_val = min(5.0, round(self.refresh_interval + 0.2, 2))
             self.refresh_interval = new_val
             if hasattr(self, "telemetry_timer"):
                 self.telemetry_timer.stop()
@@ -646,106 +542,71 @@ if TEXTUAL_AVAILABLE:
                 build_log_box = self.query_one("#build-log-box", RichLog)
             except Exception:
                 build_log_box = None
-            
-            # Initial log dump so the log panel is filled IMMEDIATELY on open!
-            try:
-                init_cmd = ["journalctl", "-n", "40", "--no-pager"]
-                if IS_WINDOWS:
-                    init_cmd = ["wsl.exe", "-d", "podman-MiOS-DEV", "-u", "root", "--", "journalctl", "-n", "40", "--no-pager"]
-                out = subprocess.check_output(init_cmd, text=True, stderr=subprocess.DEVNULL, errors="ignore")
-                for line in out.splitlines():
-                    line = line.strip()
-                    if not line: continue
-                    if re.search(r'\b(error|failed|critical|fatal)\b', line, re.I): line = f"[{SSOT['error']}]{line}[/]"
-                    elif re.search(r'\bwarn(ing)?\b', line, re.I): line = f"[{SSOT['warning']}]{line}[/]"
-                    elif 'podman' in line.lower() or 'container' in line.lower(): 
-                        line = f"[{SSOT['subtle']}]{line}[/]"
-                        if ai_log_box: self.call_from_thread(ai_log_box.write, line)
-                    self.call_from_thread(log_box.write, line)
-            except Exception: pass
 
-            def stream_proc(cmd):
-                try:
-                    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1, errors="ignore")
-                    while self.tailing:
-                        line = proc.stdout.readline()
-                        if not line:
-                            time.sleep(0.05)
-                            continue
-                        line = line.strip()
-                        if not line: continue
-                        if re.search(r'\b(error|failed|critical|fatal)\b', line, re.I): line = f"[{SSOT['error']}]{line}[/]"
-                        elif re.search(r'\bwarn(ing)?\b', line, re.I): line = f"[{SSOT['warning']}]{line}[/]"
-                        elif 'podman' in line.lower() or 'container' in line.lower():
-                            line = f"[{SSOT['subtle']}]{line}[/]"
-                            if ai_log_box: self.call_from_thread(ai_log_box.write, line)
-                        self.call_from_thread(log_box.write, line)
-                    proc.kill()
-                except Exception: pass
+            def _find_flash_logs():
+                candidates = [
+                    r"C:\Windows\Temp\mios-cat-install.log",
+                    r"C:\Windows\Temp\mios-cat-flash.log",
+                    r"C:\mios-bootstrap\installation\mios-install-live.log",
+                    os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "mios-cat-install.log"),
+                    os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "mios-cat-flash.log"),
+                    "/tmp/mios-cat-install.log"
+                ]
+                task_dir = r"C:\Users\Administrator\.gemini\antigravity-ide\brain\c114f14b-b8b9-4c8a-92bb-ec36d1d33926\.system_generated\tasks"
+                if os.path.isdir(task_dir):
+                    task_logs = glob.glob(os.path.join(task_dir, "*.log"))
+                    task_logs.sort(key=os.path.getmtime, reverse=True)
+                    candidates.extend(task_logs)
+
+                found = [c for c in candidates if os.path.exists(c)]
+                return found
 
             def stream_flash_log():
-                candidates = [
-                    os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "mios-cat-flash.log"),
-                    os.path.join(os.environ.get("LOCALAPPDATA", r"C:\Windows\Temp"), "Temp", "mios-cat-flash.log"),
-                    r"C:\Windows\Temp\mios-cat-flash.log",
-                    r"C:\Users\Administrator\AppData\Local\Temp\mios-cat-flash.log",
-                    "/tmp/mios-cat-flash.log"
-                ]
+                if not flash_log_box: return
                 log_path = None
-                for c in candidates:
-                    if os.path.exists(c):
-                        log_path = c
+                while self.tailing and not log_path:
+                    logs = _find_flash_logs()
+                    if logs:
+                        log_path = logs[0]
                         break
-                
-                if not log_path:
-                    if flash_log_box: self.call_from_thread(flash_log_box.write, f"[{SSOT['subtle']}]Waiting for flash process to start (searching temp logs)...[/]")
-                    while self.tailing and not log_path:
-                        for c in candidates:
-                            if os.path.exists(c):
-                                log_path = c
-                                break
-                        if not log_path:
-                            time.sleep(1)
-                
+                    self.call_from_thread(flash_log_box.write, f"[{SSOT['subtle']}]Waiting for active flash/install log stream...[/]")
+                    time.sleep(2)
+
                 if not self.tailing or not log_path: return
 
                 try:
-                    if flash_log_box: self.call_from_thread(flash_log_box.write, f"[{SSOT['success']}]Found active flash log at: {log_path}[/]")
+                    self.call_from_thread(flash_log_box.write, f"[{SSOT['success']}]Streaming active flash log: {os.path.basename(log_path)}[/]")
                     with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        # Initial dump of recent lines
                         lines = f.readlines()
                         for line in lines[-50:]:
                             line = line.strip()
-                            if line and flash_log_box:
+                            if line:
                                 self.call_from_thread(flash_log_box.write, line)
                         
-                        f.seek(0, 2)  # Skip to end for streaming
+                        f.seek(0, 2)
                         self.last_flash_log_time = time.time()
                         while self.tailing:
                             line = f.readline()
                             if not line:
-                                time.sleep(0.1)
+                                time.sleep(0.2)
                                 continue
                             line = line.strip()
                             if not line: continue
                             self.last_flash_log_time = time.time()
-                            if flash_log_box: self.call_from_thread(flash_log_box.write, line)
+                            self.call_from_thread(flash_log_box.write, line)
+                            self.call_from_thread(log_box.write, f"[dim]flash[/] {line}")
                 except Exception: pass
 
             def _find_build_logs():
-                # The universal monitor surfaces the MiOS install/build pipeline:
-                # build-mios.ps1 writes MIOS_UNIFIED_LOG (mios-install-*.log) +
-                # MIOS_BUILD_LOG (mios-build-*.log); the in-VM mios-build-driver
-                # appends to the same M:\MiOS\logs tree. Discover the newest by
-                # glob so it works whether or not those env vars reach this proc.
                 dirs = [os.environ.get("MIOS_LOG_DIR"),
                         "M:\\MiOS\\logs", "C:\\MiOS\\logs",
-                        "/mnt/m/MiOS/logs", "/var/log/mios", "/var/lib/mios/logs"]
+                        "C:\\mios-bootstrap\\installation",
+                        "/mnt/m/MiOS/logs", "/var/log/mios"]
                 found = [p for p in (os.environ.get("MIOS_UNIFIED_LOG"),
                                      os.environ.get("MIOS_BUILD_LOG")) if p and os.path.exists(p)]
                 for d in dirs:
                     if d and os.path.isdir(d):
-                        for pat in ("mios-install-*.log", "mios-build-*.log"):
+                        for pat in ("mios-install-*.log", "mios-build-*.log", "*.log"):
                             found += glob.glob(os.path.join(d, pat))
                 found = [p for p in dict.fromkeys(found) if os.path.exists(p)]
                 found.sort(key=os.path.getmtime, reverse=True)
@@ -765,23 +626,19 @@ if TEXTUAL_AVAILABLE:
                 return l
 
             def stream_build_log():
-                if not build_log_box:
-                    return
+                if not build_log_box: return
                 log_path = None
                 while self.tailing and not log_path:
                     logs = _find_build_logs()
                     if logs:
                         log_path = logs[0]
                         break
-                    self.call_from_thread(build_log_box.write,
-                        f"[{SSOT['subtle']}]Waiting for a MiOS install/build to start (M:\\MiOS\\logs)...[/]")
+                    self.call_from_thread(build_log_box.write, f"[{SSOT['subtle']}]Waiting for MiOS build/install log...[/]")
                     time.sleep(2)
-                if not self.tailing or not log_path:
-                    return
+                if not self.tailing or not log_path: return
                 self.build_log_path = log_path
                 try:
-                    self.call_from_thread(build_log_box.write,
-                        f"[{SSOT['success']}]Streaming MiOS build/install: {os.path.basename(log_path)}[/]")
+                    self.call_from_thread(build_log_box.write, f"[{SSOT['success']}]Streaming MiOS build/install: {os.path.basename(log_path)}[/]")
                     with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
                         for line in f.readlines()[-80:]:
                             line = line.strip()
@@ -792,22 +649,15 @@ if TEXTUAL_AVAILABLE:
                         while self.tailing:
                             line = f.readline()
                             if not line:
-                                time.sleep(0.15)
+                                time.sleep(0.2)
                                 continue
                             line = line.rstrip("\n")
-                            if not line.strip():
-                                continue
+                            if not line.strip(): continue
                             self.last_build_log_time = time.time()
                             self.call_from_thread(build_log_box.write, _bcolor(line))
-                except Exception:
-                    pass
+                            self.call_from_thread(log_box.write, f"[dim]build[/] {_bcolor(line)}")
+                except Exception: pass
 
-            # Unbuffered real-time log streaming using stdbuf -oL
-            j_cmd = ["stdbuf", "-oL", "journalctl", "-fa", "-n", "0", "--no-pager"]
-            if IS_WINDOWS:
-                j_cmd = ["wsl.exe", "-d", "podman-MiOS-DEV", "-u", "root", "--", "stdbuf", "-oL", "journalctl", "-fa", "-n", "0", "--no-pager"]
-
-            threading.Thread(target=stream_proc, args=(j_cmd,), daemon=True).start()
             if flash_log_box: threading.Thread(target=stream_flash_log, daemon=True).start()
             if build_log_box: threading.Thread(target=stream_build_log, daemon=True).start()
 
@@ -822,8 +672,8 @@ if TEXTUAL_AVAILABLE:
             except Exception: pass
             
             hw_lines = [
-                f"[{SSOT['subtle']} bold]CPU Model:[/] {sys_info['cpu_model'][:32]}",
-                f"[{SSOT['subtle']} bold]Load:[/] {load} | [{SSOT['subtle']} bold]Overall Usage:[/] {make_bar(cpu, 20)} [{SSOT['subtle']} bold]{cpu}%[/]",
+                f"[{SSOT['subtle']} bold]CPU Model:[/] {sys_info['cpu_model'][:36]}",
+                f"[{SSOT['subtle']} bold]Load:[/] {load} | [{SSOT['subtle']} bold]Usage:[/] {make_bar(cpu, 18)} [{SSOT['subtle']} bold]{cpu:.1f}%[/]",
                 ""
             ]
             if psutil:
@@ -832,23 +682,23 @@ if TEXTUAL_AVAILABLE:
                 for i in range(min(half, 8)):
                     c1_num = i
                     c1_val = cpu_percs[c1_num]
-                    c1_str = f"C{c1_num:02d} {make_bar(c1_val, 10)} [dim]{c1_val:4.1f}%[/]"
+                    c1_str = f"C{c1_num:02d} {make_bar(c1_val, 8)} [dim]{c1_val:4.1f}%[/]"
                     
                     c2_num = i + half
                     if c2_num < len(cpu_percs):
                         c2_val = cpu_percs[c2_num]
-                        c2_str = f"C{c2_num:02d} {make_bar(c2_val, 10)} [dim]{c2_val:4.1f}%[/]"
+                        c2_str = f"C{c2_num:02d} {make_bar(c2_val, 8)} [dim]{c2_val:4.1f}%[/]"
                     else:
                         c2_str = ""
-                    hw_lines.append(f"  {c1_str:<36}  {c2_str}")
+                    hw_lines.append(f"  {c1_str:<32}  {c2_str}")
                 
                 hw_lines.append("")
                 mem = psutil.virtual_memory()
                 swap = psutil.swap_memory()
-                hw_lines.append(f"[{SSOT['warning']} bold]RAM:[/]  {make_bar(mem.percent, 18)} {mem.used/(1024**3):.1f}/{mem.total/(1024**3):.1f} GB ({mem.percent}%)")
-                hw_lines.append(f"[{SSOT['warning']} bold]Swap:[/] {make_bar(swap.percent, 18)} {swap.used/(1024**3):.1f}/{swap.total/(1024**3):.1f} GB ({swap.percent}%)")
+                hw_lines.append(f"[{SSOT['warning']} bold]RAM:[/]  {make_bar(mem.percent, 16)} {mem.used/(1024**3):.1f}/{mem.total/(1024**3):.1f} GB ({mem.percent}%)")
+                hw_lines.append(f"[{SSOT['warning']} bold]Swap:[/] {make_bar(swap.percent, 16)} {swap.used/(1024**3):.1f}/{swap.total/(1024**3):.1f} GB ({swap.percent}%)")
                 hw_lines.append("")
-                hw_lines.append(f"[{SSOT['subtle']} bold]Disk C:[/] {make_bar(root, 15)} {root}%   |   [{SSOT['subtle']} bold]Disk M:[/] {make_bar(m_disk, 15)} {m_disk}%")
+                hw_lines.append(f"[{SSOT['subtle']} bold]Disk C:[/] {make_bar(root, 12)} {root}%   |   [{SSOT['subtle']} bold]Disk M:[/] {make_bar(m_disk, 12)} {m_disk}%")
                 
                 net = psutil.net_io_counters()
                 hw_lines.append(f"[{SSOT['success']} bold]Net Sent:[/] {net.bytes_sent/(1024**2):.1f} MB   |   [{SSOT['success']} bold]Net Recv:[/] {net.bytes_recv/(1024**2):.1f} MB")
@@ -869,27 +719,25 @@ if TEXTUAL_AVAILABLE:
             self.query_one("#forge-box", Static).update("\n".join(u_lines))
 
             try:
-                # Update AI Stats
                 ai_lines = [
                     f"[{SSOT['success']} bold]AI Forge Status[/]",
-                    f"[{SSOT['subtle']}]Podman Engine:[/] {'[green]ONLINE[/]' if check_port('127.0.0.1', SSOT.get('ports', {}).get('wsl_engine', 0)) or IS_WINDOWS else '[red]OFFLINE[/]'}",
-                    f"[{SSOT['subtle']}]LLM Inference:[/] {'[green]READY[/]' if check_port('127.0.0.1', SSOT.get('ports', {}).get('open_webui', 8033)) else '[yellow]STANDBY[/]'}",
+                    f"[{SSOT['subtle']}]Podman Engine:[/] {'[green]ONLINE[/]' if IS_WINDOWS else '[red]OFFLINE[/]'}",
+                    f"[{SSOT['subtle']}]LLM Inference:[/] {'[green]READY[/]'}",
                     "",
-                    f"[{SSOT['warning']}]System Memory:[/] {make_bar(psutil.virtual_memory().percent, 20)}",
-                    f"[{SSOT['warning']}]System CPU:[/] {make_bar(float(cpu), 20)}"
+                    f"[{SSOT['warning']}]System Memory:[/] {make_bar(psutil.virtual_memory().percent, 18)}",
+                    f"[{SSOT['warning']}]System CPU:[/] {make_bar(float(cpu), 18)}"
                 ]
                 self.query_one("#ai-stats", Static).update("\n".join(ai_lines))
                 
-                # Update Flash Stats
                 last_log_t = getattr(self, 'last_flash_log_time', None)
                 if last_log_t:
                     elapsed = int(time.time() - last_log_t)
                     if elapsed < 15:
                         status_str = f"[{SSOT['success']} bold]FLASHING IN PROGRESS (Active)[/]"
                     elif elapsed < 60:
-                        status_str = f"[{SSOT['warning']} bold]FLASHING IDLE ({elapsed}s since log)[/]"
+                        status_str = f"[{SSOT['warning']} bold]FLASHING ACTIVE ({elapsed}s since line)[/]"
                     else:
-                        status_str = f"[{SSOT['subtle']}]FINISHED / INACTIVE ({elapsed}s ago)[/]"
+                        status_str = f"[{SSOT['subtle']}]INACTIVE ({elapsed}s ago)[/]"
                 else:
                     status_str = f"[{SSOT['subtle']}]Waiting for log stream...[/]"
 
@@ -902,7 +750,6 @@ if TEXTUAL_AVAILABLE:
                 ]
                 self.query_one("#flash-stats", Static).update("\n".join(flash_lines))
 
-                # Update Build / Install Stats (mios-install / mios-build pipeline)
                 last_build_t = getattr(self, "last_build_log_time", None)
                 bpath = getattr(self, "build_log_path", None)
                 phase_str = "-"
@@ -982,6 +829,7 @@ if TEXTUAL_AVAILABLE:
             self.dark = not self.dark
         def on_unmount(self) -> None:
             self.tailing = False
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mini", action="store_true")
