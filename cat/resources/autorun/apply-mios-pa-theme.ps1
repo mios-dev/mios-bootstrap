@@ -600,9 +600,13 @@ $bCross.Dispose()
 $gL.Dispose()
 
 $mediCatFlat = Join-Path $paBase "PortableApps.com\MediCatFlat"
+$defaultThemeDir = Join-Path $paGraphics "Themes\Default"
 mkdir $mediCatFlat -ErrorAction SilentlyContinue | Out-Null
+mkdir $defaultThemeDir -ErrorAction SilentlyContinue | Out-Null
 mkdir (Join-Path $mediCatFlat "menu_icons") -ErrorAction SilentlyContinue | Out-Null
+mkdir (Join-Path $defaultThemeDir "menu_icons") -ErrorAction SilentlyContinue | Out-Null
 Copy-Item (Join-Path $paMenuIcons "*") (Join-Path $mediCatFlat "menu_icons") -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $paMenuIcons "*") (Join-Path $defaultThemeDir "menu_icons") -Force -ErrorAction SilentlyContinue
 
 $msLogo = New-Object System.IO.MemoryStream
 $bmpLogo.Save($msLogo, [System.Drawing.Imaging.ImageFormat]::Png)
@@ -617,7 +621,20 @@ mkdir $dataDir -ErrorAction SilentlyContinue | Out-Null
 [System.IO.File]::WriteAllBytes((Join-Path $paThemeDir "PersonalPicture.png"), $logoBytes)
 [System.IO.File]::WriteAllBytes((Join-Path $mediCatFlat "logo.png"), $logoBytes)
 [System.IO.File]::WriteAllBytes((Join-Path $mediCatFlat "PersonalPicture.png"), $logoBytes)
+[System.IO.File]::WriteAllBytes((Join-Path $defaultThemeDir "logo.png"), $logoBytes)
+[System.IO.File]::WriteAllBytes((Join-Path $defaultThemeDir "PersonalPicture.png"), $logoBytes)
 [System.IO.File]::WriteAllBytes((Join-Path $dataDir "PersonalPicture.png"), $logoBytes)
+
+# Sync autorun.inf to Data\autorun.inf.backup (or clean up stale backup) to suppress 'Warning: Autorun Changed' popup
+$autoRunInf = Join-Path $drive "autorun.inf"
+$backupPath = Join-Path $dataDir "autorun.inf.backup"
+if (Test-Path $autoRunInf) {
+    Copy-Item $autoRunInf $backupPath -Force -ErrorAction SilentlyContinue
+} else {
+    if (Test-Path $backupPath) {
+        Remove-Item $backupPath -Force -ErrorAction SilentlyContinue
+    }
+}
 
 $chromeBmp = New-Object System.Drawing.Bitmap 540, 600
 $g = [System.Drawing.Graphics]::FromImage($chromeBmp)
@@ -702,6 +719,7 @@ $chromeBmp.Dispose()
 
 [System.IO.File]::WriteAllBytes((Join-Path $paThemeDir "chrome.png"), $chromeBytes)
 [System.IO.File]::WriteAllBytes((Join-Path $mediCatFlat "chrome.png"), $chromeBytes)
+[System.IO.File]::WriteAllBytes((Join-Path $defaultThemeDir "chrome.png"), $chromeBytes)
 
 $paThemeIni = @"
 [PortableApps.comTheme]
@@ -755,6 +773,7 @@ GoldBackgroundColor=edc518
 "@
 [System.IO.File]::WriteAllText((Join-Path $paThemeDir "PATheme.ini"), $paThemeIni, [System.Text.Encoding]::UTF8)
 [System.IO.File]::WriteAllText((Join-Path $mediCatFlat "PATheme.ini"), $paThemeIni, [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText((Join-Path $defaultThemeDir "PATheme.ini"), $paThemeIni, [System.Text.Encoding]::UTF8)
 
 # ------------------------------------------------------------------
 # Remove stale settings/PortableAppsMenu.ini & patch main PortableAppsMenu.ini
