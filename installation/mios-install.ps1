@@ -278,7 +278,7 @@ if ($Plan.Kind -eq 'bat') {
     $logFile = 'C:\Windows\Temp\mios-cat-install.log'
     "[START] MiOS-Cat Flash Execution Started at $(Get-Date)" | Out-File -FilePath $logFile -Encoding utf8 -Force
     try {
-        & cmd.exe /c "`"$($plan.Exe)`"" @($plan.Args) 2>&1 | ForEach-Object { Write-Host $_; $_ } | Out-File -FilePath $logFile -Encoding utf8 -Append
+        & cmd.exe /c "`"$($plan.Exe)`" >> `"$logFile`" 2>&1"
         exit $LASTEXITCODE
     } finally {
         foreach ($kv in $envSnapshot.GetEnumerator()) {
