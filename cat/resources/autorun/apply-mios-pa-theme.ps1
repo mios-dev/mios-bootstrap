@@ -843,6 +843,26 @@ if (Test-Path $mainMenuIni) {
     }
 }
 
+# Auto-link external program folders (Programs, MiOS-PE, System) into PortableApps directory
+$paDest = Join-Path $targetDrive "PortableApps"
+if (Test-Path $paDest) {
+    foreach ($dirName in @("Programs", "MiOS-PE", "System")) {
+        $srcDir = Join-Path $targetDrive $dirName
+        if (Test-Path $srcDir) {
+            Get-ChildItem -Path $srcDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                $targetPath = $_.FullName
+                $linkPath = Join-Path $paDest $_.Name
+                if (-not (Test-Path $linkPath)) {
+                    try {
+                        New-Item -ItemType Junction -Path $linkPath -Target $targetPath -ErrorAction Stop | Out-Null
+                        Write-Host "[PA-Theme] Linked program: $linkPath -> $targetPath"
+                    } catch {
+                        # Ignore silently
+                    }
+                }
+            }
+        }
+    }
+}
+
 Write-Host "[PA-Theme] MiOS PortableApps theme applied to MediCatFlat."
-
-
