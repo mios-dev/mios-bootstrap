@@ -418,9 +418,12 @@ exit 0
     # crashed run makes the converter's install.wim/winre.wim/boot.wim phases fail with
     # 0xc1420127 "already mounted" / 0xc1420114 "not empty" / 0xc1420117 -> the rebuild reports
     # "Space saved: 0 KiB" and the image is UNDER-serviced (LCU/updates silently NOT applied).
-    # Hard-clean the mount roots BEFORE the converter runs. Best-effort / degrade-open: a mount
-    # held open by another process may need a reboot -- warn loudly rather than under-service.
+    # Hard-clean the mount roots BEFORE the converter runs. Gate: if MountUUP is still
+    # non-empty after all cleanup attempts, throw -- never let the converter run on a locked
+    # mount and silently produce an under-serviced image.
+    $Script:_b1MountLocked = $false
     try {
+        # --- Step 1: DISM dismount all stale mounts --------------------------------
         foreach ($m in @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue)) {
             if ($m.MountPath -like '*MountUUP*' -or $m.MountPath -like '*\UUPs\*' -or ($PackageDir -and $m.MountPath -like "*$PackageDir*")) {
                 Write-Host "    clearing stale converter mount: $($m.MountPath)" -ForegroundColor DarkGray
@@ -429,12 +432,72 @@ exit 0
             }
         }
         try { & dism.exe /Cleanup-Mountpoints 2>&1 | Out-Null } catch {}
-        foreach ($h in @('MIOS_DEFT','MIOS_SOFT','pe-SOFTWARE','pe-SYSTEM')) { try { & reg.exe unload "HKLM\$h" 2>&1 | Out-Null } catch {} }
-        if (Test-Path 'M:\MountUUP') {
-            try { Remove-Item 'M:\MountUUP' -Recurse -Force -ErrorAction Stop }
-            catch { Write-Host "[!] M:\MountUUP is present and LOCKED -- if the converter reports 'already mounted' or 'Space saved: 0 KiB', reboot to release the held hive, then rebuild." -ForegroundColor Yellow }
+
+        # --- Step 2: Unload known + path-scanned hives from HKLM ------------------
+        # Static names first (fast path).
+        foreach ($h in @('MIOS_DEFT','MIOS_SOFT','pe-SOFTWARE','pe-SYSTEM')) {
+            try { & reg.exe unload "HKLM\$h" 2>&1 | Out-Null } catch {}
         }
-    } catch { Write-Host "[!] Pre-converter mount clean non-fatal: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
+        # Scan all HKLM subkeys: if the backing hive file lives under any MountUUP-
+        # rooted path, unload it. This catches converter-spawned hive names we don't
+        # know statically (e.g. UUP_SOFT_<guid>, RandomMount\...).
+        $mountRoots = @('M:\MountUUP','C:\MountUUP')
+        try {
+            $hklmKeys = Get-ChildItem 'HKLM:\' -ErrorAction SilentlyContinue
+            foreach ($k in $hklmKeys) {
+                $hivePath = (Get-ItemProperty -LiteralPath $k.PSPath -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
+                # Also try the raw key name as a hive path (loaded hives often back a file)
+                foreach ($root in $mountRoots) {
+                    if ($hivePath -and $hivePath -like "$root*") {
+                        Write-Host "    unloading hive $($k.PSChildName) (backed by $hivePath)" -ForegroundColor DarkGray
+                        try { & reg.exe unload "HKLM\$($k.PSChildName)" 2>&1 | Out-Null } catch {}
+                        break
+                    }
+                }
+            }
+        } catch {}
+
+        # --- Step 3: Retry DISM dismount + Remove-Item after hive unload ----------
+        foreach ($root in $mountRoots) {
+            if (-not (Test-Path $root)) { continue }
+            # Re-attempt DISM dismount (now that hives are unloaded)
+            foreach ($m in @(Get-WindowsImage -Mounted -ErrorAction SilentlyContinue)) {
+                if ($m.MountPath -like "$root*") {
+                    try { Dismount-WindowsImage -Path $m.MountPath -Discard -ErrorAction Stop | Out-Null } catch {}
+                    try { & dism.exe /Unmount-Image /MountDir:"$($m.MountPath)" /Discard 2>&1 | Out-Null } catch {}
+                }
+            }
+            try { & dism.exe /Cleanup-Mountpoints 2>&1 | Out-Null } catch {}
+            Start-Sleep -Seconds 2   # give the kernel a moment to release handles
+            try {
+                Remove-Item $root -Recurse -Force -ErrorAction Stop
+                Write-Host "    [+] $root cleared." -ForegroundColor DarkGray
+            } catch {
+                # --- Step 4: HARD GATE -- abort rather than under-service ---------
+                # MountUUP is present and non-empty; the converter WILL produce a
+                # "Space saved: 0 KiB" / 0xc1420114 failure and the image will be
+                # silently under-serviced.  Surface the real error and stop.
+                $locked = @(Get-ChildItem $root -Recurse -ErrorAction SilentlyContinue)
+                if ($locked.Count -gt 0) {
+                    $Script:_b1MountLocked = $true
+                    throw ("B1 GATE: $root is LOCKED ($($locked.Count) item(s) still held). " +
+                           "The converter cannot run safely -- it would produce an under-serviced " +
+                           "image (Space saved: 0 KiB / 0xc1420114). " +
+                           "FIX: reboot to release the held registry hive, then re-run. " +
+                           "Locked item sample: $($locked[0].FullName)")
+                }
+                # Directory exists but is already empty -- fine, Remove-Item failed on the
+                # dir itself (e.g. a reparse point); the mount is gone, proceed.
+                Write-Host "    [~] $root present but empty after cleanup -- proceeding." -ForegroundColor DarkGray
+            }
+        }
+    } catch {
+        if ($Script:_b1MountLocked) {
+            # Re-throw the hard gate error -- do NOT swallow it.
+            throw
+        }
+        Write-Host "[!] Pre-converter mount clean non-fatal: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow
+    }
     # Pre-flight: only uup_download_windows.cmd must exist after extraction -- it is the
     # entry point the get.php package ships. NOTE: convert-UUP.cmd is NOT in the package;
     # uup_download_windows.cmd DOWNLOADS it (its first aria2 pass fetches the converter),

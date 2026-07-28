@@ -467,7 +467,11 @@ function Set-MiOSIdentityOffline {
     if ($fontReg.Count) {
         $sw = Join-Path $Mount 'Windows\System32\config\SOFTWARE'; & reg.exe load 'HKLM\MIOS_FNT' $sw 2>&1 | Out-Null
         try { foreach ($fr in $fontReg) { & reg.exe add 'HKLM\MIOS_FNT\Microsoft\Windows NT\CurrentVersion\Fonts' /v $fr.name /t REG_SZ /d $fr.file /f 2>&1 | Out-Null } }
-        finally { [gc]::Collect(); & reg.exe unload 'HKLM\MIOS_FNT' 2>&1 | Out-Null }
+        finally {
+            [gc]::Collect(); [gc]::WaitForPendingFinalizers(); Start-Sleep -Seconds 3
+            & reg.exe unload 'HKLM\MIOS_FNT' 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { [gc]::Collect(); Start-Sleep -Seconds 3; & reg.exe unload 'HKLM\MIOS_FNT' 2>&1 | Out-Null }
+        }
     }
 
     # --- Bibata-Modern-Classic cursor: download, stage the .cur/.ani into the image ---
@@ -554,8 +558,9 @@ function Set-MiOSIdentityOffline {
                         }
                         Write-Host "    registered Bibata-Modern-Classic in HKLM Control Panel\Schemes & Cursors\Default" -ForegroundColor Green
                     } finally {
-                        [gc]::Collect()
+                        [gc]::Collect(); [gc]::WaitForPendingFinalizers(); Start-Sleep -Seconds 3
                         & reg.exe unload 'HKLM\MIOS_CUR_SW' 2>&1 | Out-Null
+                        if ($LASTEXITCODE -ne 0) { [gc]::Collect(); Start-Sleep -Seconds 3; & reg.exe unload 'HKLM\MIOS_CUR_SW' 2>&1 | Out-Null }
                     }
                 }
             }
@@ -749,7 +754,11 @@ function Set-MiOSRemoteAccessOffline {
         & reg.exe add 'HKLM\MIOS_RSYS\ControlSet001\Services\TermService' /v Start /t REG_DWORD /d 2 /f | Out-Null
         if ($doSsh) { foreach ($svc in 'sshd','ssh-agent') { & reg.exe add "HKLM\MIOS_RSYS\ControlSet001\Services\$svc" /v Start /t REG_DWORD /d 2 /f 2>&1 | Out-Null } }
         Write-Host "    RDP listener on (NLA=$nla), TermService/sshd autostart -> offline SYSTEM hive" -ForegroundColor DarkGray
-    } finally { [gc]::Collect(); & reg.exe unload 'HKLM\MIOS_RSYS' | Out-Null }
+    } finally {
+        [gc]::Collect(); [gc]::WaitForPendingFinalizers(); Start-Sleep -Seconds 3
+        & reg.exe unload 'HKLM\MIOS_RSYS' 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { [gc]::Collect(); Start-Sleep -Seconds 3; & reg.exe unload 'HKLM\MIOS_RSYS' 2>&1 | Out-Null }
+    }
 
     $sw = Join-Path $Mount 'Windows\System32\config\SOFTWARE'
     if (Test-Path $sw) {
@@ -758,7 +767,11 @@ function Set-MiOSRemoteAccessOffline {
             try {
                 & reg.exe add 'HKLM\MIOS_RSW\Microsoft\Windows NT\CurrentVersion\Guest\EnhancedSessionMode' /v EnhancedSessionModeAllowed /t REG_DWORD /d 1 /f 2>&1 | Out-Null
                 Write-Host "    Hyper-V Enhanced Session Mode enabled -> offline SOFTWARE hive" -ForegroundColor DarkGray
-            } finally { [gc]::Collect(); & reg.exe unload 'HKLM\MIOS_RSW' 2>&1 | Out-Null }
+            } finally {
+                [gc]::Collect(); [gc]::WaitForPendingFinalizers(); Start-Sleep -Seconds 3
+                & reg.exe unload 'HKLM\MIOS_RSW' 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { [gc]::Collect(); Start-Sleep -Seconds 3; & reg.exe unload 'HKLM\MIOS_RSW' 2>&1 | Out-Null }
+            }
         }
     }
 
