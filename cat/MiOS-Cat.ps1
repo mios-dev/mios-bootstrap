@@ -1,33 +1,61 @@
-# MiOS-Cat.ps1 -- thin compatibility shim (Windows).
-#
-# The canonical Windows implementation is MiOS-Cat.bat. On a factory-fresh
-# Windows box the .bat is the most compatible handle: cmd.exe is always present,
-# it is double-clickable, there is no PowerShell execution-policy gate, and
-# Get-MiOS FlashUSB / the scheduled task / Ventoy autorun all reference
-# MiOS-Cat.bat BY NAME. This .ps1 exists only so `powershell -File MiOS-Cat.ps1
-# <verb>` reaches the SAME flow -- it self-elevates and forwards every argument
-# to MiOS-Cat.bat. (Decision 2026-07-17: keep .bat canonical. Written for
-# Windows PowerShell 5.1 -- the version present on factory-fresh Windows -- with
-# NO pwsh-7 dependency, so `powershell.exe` runs it unchanged.)
+# MiOS-Cat.ps1 -- canonical Windows launcher for MiOS.
+# Implements Law 9 (ONE-CANONICAL-NAME). Dispatches verbs.
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    [string]$Verb = "",
+    
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$VerbArgs
+)
 
 $ErrorActionPreference = "Stop"
 
-# Self-elevate (the .bat preflight requires Administrator; the .bat also
-# self-elevates now, but doing it here avoids a doubled UAC bounce).
+# Self-elevate if not admin
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Host "Re-launching with Administrator privileges..." -ForegroundColor Yellow
-    $relaunch = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"") + $args
+    $relaunch = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", $Verb) + $VerbArgs
     Start-Process powershell.exe -ArgumentList $relaunch -Verb RunAs
     exit
 }
 
-$bat = Join-Path $PSScriptRoot "MiOS-Cat.bat"
-if (-not (Test-Path $bat)) {
-    Write-Error "MiOS-Cat.bat not found beside this shim ($bat) -- cannot forward."
+# Import the shared library
+$libPath = Join-Path $PSScriptRoot "lib\MiOS-Cat.psm1"
+if (-not (Test-Path $libPath)) {
+    Write-Error "Backend library not found at $libPath"
     exit 1
 }
+Import-Module $libPath -Force
 
-# Forward all args to the canonical launcher and mirror its exit code.
-& $bat @args
+if ([string]::IsNullOrWhiteSpace($Verb)) {
+    # Default behavior: interactive menu
+    Show-MiOSCatMenu
+    exit $LASTEXITCODE
+}
+
+switch -Regex ($Verb) {
+    "^(stage)$" {
+        Invoke-MiOSCatStage @VerbArgs
+    }
+    "^(install)$" {
+        Invoke-MiOSCatInstall @VerbArgs
+    }
+    "^(build)$" {
+        Invoke-MiOSCatBuild @VerbArgs
+    }
+    "^(update)$" {
+        Invoke-MiOSCatUpdate @VerbArgs
+    }
+    "^(provision)$" {
+        Invoke-MiOSCatProvision @VerbArgs
+    }
+    "^(manual)$" {
+        Invoke-MiOSCatManual @VerbArgs
+    }
+    default {
+        Write-Error "Unknown verb: $Verb. Valid verbs: stage, install, build, update, provision, manual."
+        exit 1
+    }
+}
 exit $LASTEXITCODE
