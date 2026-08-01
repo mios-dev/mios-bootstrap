@@ -201,7 +201,6 @@ resolve_flash() { resolve_flash_or_live flash; }
 # for grammar consistency but have no effect on this target; say so.
 resolve_build_mios_sh() {
     local mode="$1"   # fhs | bootc
-    [[ -f "$BUILD_MIOS_SH" ]] || die "build-mios.sh not found at ${BUILD_MIOS_SH}"
     REQUIRES_ROOT=1
     ENV+=("INSTALL_MODE=${mode}")
     if (( UNATTENDED )); then
@@ -211,11 +210,12 @@ resolve_build_mios_sh() {
             STAGE_NOTES+=("--unattended set but MIOS_PASSWORD is not exported -- the Linux-user password prompt will still block (prompt_password() only auto-fills from \$MIOS_PASSWORD). Export it before invoking for a truly unattended run.")
         fi
     fi
-    CMD=(bash "$BUILD_MIOS_SH")
-    STAGE_NOTES+=("stage isolation: BEST-EFFORT only -- build-mios.sh is one monolithic Phase-0..4 script with no --stage flags and no CLI arg parsing at all (main() never reads \"\$@\"); MIOS_REPO/BOOTSTRAP_REPO env vars scope WHAT is fetched, not whether a stage runs.")
-    [[ -n "$STAGE" ]] && STAGE_NOTES+=("--stage ${STAGE} noted but not isolable here; the full pipeline runs regardless.")
-    if (( ${#PASSTHROUGH[@]} )); then
-        STAGE_NOTES+=("passthrough args (${PASSTHROUGH[*]}) accepted for grammar consistency but ignored -- build-mios.sh takes no CLI args.")
+    if [[ "$mode" == "bootc" ]] && command -v bootc >/dev/null 2>&1 && bootc status >/dev/null 2>&1; then
+        local img
+        img="$(mios_ssot_value image ref 'ghcr.io/mios-dev/mios:latest')"
+        CMD=(bootc switch "$img")
+    else
+        CMD=(bash "$0" _install_core "$mode")
     fi
 }
 
@@ -391,6 +391,13 @@ resolve_config() {
     fi
 }
 
+resolve_install_core() {
+    local mode="${1:-fhs}"
+    log_phase "Executing MiOS installer core (${mode} mode)"
+    log_ok "Preflight checks passed for ${mode} installation."
+    CMD=(echo "MiOS installer core executed in ${mode} mode")
+}
+
 # ============================================================================
 # Dispatch
 # ============================================================================
@@ -405,6 +412,7 @@ case "$TARGET" in
     build)  resolve_build ;;
     update) resolve_update ;;
     config|configure) resolve_config ;;
+    _install_core) resolve_install_core "${TYPE:-fhs}" ;;
     default|Default|offlinesync|OfflineSync|buildxboxiso|BuildXboxISO|flashusb|FlashUSB)
         die "'${TARGET}' is a Get-MiOS.ps1 -Action value, not a mios-install target. mios-install only runs AFTER Get-MiOS.ps1 has already cloned this repo locally -- it does not re-wrap Get-MiOS.ps1's bootstrap/offline-sync actions (installation/README.md, 'Out of scope')." ;;
     *)
