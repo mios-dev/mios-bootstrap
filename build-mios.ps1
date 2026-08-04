@@ -85,6 +85,14 @@ function Disable-ConsoleQuickEdit {
 }
 Disable-ConsoleQuickEdit
 
+# Import MiOS.Build sub-modules
+$buildModuleDir = Join-Path $PSScriptRoot 'automation\lib\MiOS.Build'
+if (Test-Path $buildModuleDir) {
+    Get-ChildItem -Path $buildModuleDir -Filter '*.psm1' -ErrorAction SilentlyContinue | ForEach-Object {
+        Import-Module $_.FullName -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ── mios.toml layered-overlay reader (mirrors Get-MiOS.ps1's helper) ─────────
 # mios.toml is THE global dotfile (per feedback_mios_toml_html_global_dotfile).
 # Every tunable -- terminal dims, retry delays, dev VM image tag, distro
@@ -1895,7 +1903,7 @@ function Read-Line([string]$Prompt, [string]$Default = "") {
 
 function Read-Model([string]$Default = "qwen3.5:2b") {
     # AI model menu prompt -- feature parity with build-mios.sh's
-    # prompt_model. Drives MIOS_OLLAMA_BAKE_MODELS at build time and
+    # prompt_model. Drives MIOS_LLAMACPP_BAKE_MODELS at build time and
     # MIOS_AI_MODEL in install.env at runtime. Same auto-accept
     # semantics as the rest of the Phase-6 prompts. The lineup is
     # sourced from mios.toml [ai.host_thresholds] (the RAM-tier table)
@@ -2644,10 +2652,7 @@ function Get-PodmanMachineOsImage {
 
     # ── Step 4: cache-hit short-circuit ───────────────────────────────
     if (Test-Path $localPath) {
-        $stream = [System.IO.File]::OpenRead($localPath)
-        $sha256 = [System.Security.Cryptography.SHA256]::Create()
-        $existingHash = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "").ToLower()
-        $stream.Close()
+        $existingHash = (Get-FileHash -Path $localPath -Algorithm SHA256).Hash.ToLower()
         if ($existingHash -eq $expectedDigest) {
             Log-Ok "Reusing cached machine-os layer: $localPath"
             return $localPath
@@ -2700,10 +2705,7 @@ function Get-PodmanMachineOsImage {
 
     # ── Step 6: SHA256 verify ─────────────────────────────────────────
     Set-Step "Verifying machine-os layer SHA256"
-    $stream = [System.IO.File]::OpenRead($tmpPath)
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    $actualHash = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "").ToLower()
-    $stream.Close()
+    $actualHash = (Get-FileHash -Path $tmpPath -Algorithm SHA256).Hash.ToLower()
     if ($actualHash -ne $expectedDigest) {
         Remove-Item $tmpPath -Force -ErrorAction SilentlyContinue
         throw "machine-os layer SHA256 mismatch: expected $expectedDigest, got $actualHash"
@@ -3782,9 +3784,9 @@ echo "[quadlet-overlay] root symlinks: /mios.toml, /configurator.html"
 # /etc/containers/systemd/*.container ship raw `${VAR:-default}`
 # placeholders (Image=, PublishPort=, User=, Group=, Network=, ...);
 # systemd's Quadlet generator does NOT expand them, so podman gets
-# the literal string `${MIOS_PORT_LOCALAI` (split on the `:` of
-# `:-8080`) and dies with:
-#     Error: cannot parse "${MIOS_PORT_LOCALAI" as an IP address
+# the literal string `${MIOS_PORT_LLM_LIGHT` (split on the `:` of
+# `:-8450`) and dies with:
+#     Error: cannot parse "${MIOS_PORT_LLM_LIGHT" as an IP address
 # Every Quadlet stays in `activating auto-restart` and `podman ps`
 # is empty. Operator-flagged (containers all dead after
 # install).
@@ -3796,12 +3798,12 @@ echo "[quadlet-overlay] root symlinks: /mios.toml, /configurator.html"
 # this at image-build time; the dev-VM overlay path does NOT, so
 # we run it here. Idempotent: re-runs against an already-rendered
 # .container are a no-op (envsubst sees no remaining placeholders).
-# install-robustness the dev-VM overlay never ran 36-tools.sh
+# install-robustness the dev-VM overlay never ran 59-tools.sh
 # (which deploys tools/lib/userenv.sh -> /usr/lib/mios/userenv.sh, the env-bridge
 # resolver) NOR mios-sync-env -- so /etc/mios/install.env was never generated,
 # leaving the AI plane INERT on a fresh install: empty bake_models -> no GGUFs ->
 # mios-llm-light skipped, and unresolved MIOS_PORT_* templates -> agent-pipe 502.
-# Deploy the resolver + generate the bridge HERE so 34-render-quadlets below AND
+# Deploy the resolver + generate the bridge HERE so 15-render-quadlets below AND
 # the firstboot services (EnvironmentFile=/etc/mios/install.env) see resolved
 # values. Both idempotent; LIVE-verified this is the keystone that brought a
 # fresh dev VM's MiOS AI fully operational on the GPU.
@@ -4064,9 +4066,8 @@ done
 # Install the operator-facing terminal flatpak so MiOS-DEV mirrors a
 # deployed MiOS host's UX: open Ptyxis on the Windows desktop via WSLg
 # -> default tab spawns into the host shell via flatpak-spawn --host
-# -> the operator types `ollama list`, `mios "..."`, `mios-ollama chat
-# "..."` and hits the Ollama Quadlet on :11434 + LocalAI on :8080
-# directly. Idempotent (--or-update). Also pulls the few other
+# -> the operator types `mios "..."` and hits the local AI plane on
+# :8640 directly. Idempotent (--or-update). Also pulls the few other
 # substrate-class flatpaks (Nautilus, Bazaar, Flatseal) so the
 # emulated MiOS environment carries its file manager and app store.
 # Run the same canonical automation scripts the build pipeline uses,
@@ -4075,62 +4076,26 @@ done
 # (rc != 0 doesn't kill the overlay) and self-skips when the relevant
 # binary already exists.
 #
-# 09-fonts.sh         Geist (Vercel) + Symbols-Only Nerd Font
-# 38-oh-my-posh.sh    Oh-My-Posh static binary -> /usr/bin/oh-my-posh
-# 37-ollama-prep.sh   ollama CLI tarball -> /usr/bin/ollama (build
-#                     pipeline only baked models too; for the dev
-#                     overlay we want the binary only -- the .container
-#                     pulls models on first run)
-echo "[quadlet-overlay] running canonical fetchers (fonts + oh-my-posh + ollama + xrdp Enhanced Session)..."
-for script in /automation/09-fonts.sh \
+# 56-fonts.sh         Geist (Vercel) + Symbols-Only Nerd Font
+# 62-oh-my-posh.sh    Oh-My-Posh static binary -> /usr/bin/oh-my-posh
+echo "[quadlet-overlay] running canonical fetchers (fonts + oh-my-posh + xrdp Enhanced Session)..."
+for script in /automation/56-fonts.sh \
               /automation/35-xrdp-enhanced-session.sh \
-              /automation/38-oh-my-posh.sh; do
+              /automation/62-oh-my-posh.sh; do
     if [[ -x "$script" ]]; then
         echo "[quadlet-overlay] => $script"
-        sudo bash "$script" 2>&1 | grep -vE '^\+ |^\+\+' | tail -5 || true
+        # Stream live (line-buffered), drop only bash -x trace lines -- no `tail`
+        # so long fetchers show continuous progress instead of a silent gap.
+        sudo stdbuf -oL bash "$script" 2>&1 | grep --line-buffered -vE '^\+ |^\+\+' || true
     fi
 done
-
-# ollama CLI: minimal install (binary only, no model bake). The
-# in-build automation/37-ollama-prep.sh starts a transient ollama
-# serve and pulls models -- skip that on the dev overlay; the
-# Ollama Quadlet handles serving + the operator pulls models via
-# `ollama pull <model>` on demand.
-if ! command -v ollama >/dev/null 2>&1; then
-    echo "[quadlet-overlay] fetching ollama CLI binary..."
-    olm_arch="amd64"; [[ "$(uname -m)" == "aarch64" ]] && olm_arch="arm64"
-    olm_tmp="$(mktemp -d)"
-    olm_extract=""
-    if curl -fsSL "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${olm_arch}.tar.zst" \
-            -o "$olm_tmp/ollama.tar.zst" 2>/dev/null \
-            && tar --zstd -xf "$olm_tmp/ollama.tar.zst" -C "$olm_tmp" 2>/dev/null; then
-        olm_extract="$olm_tmp"
-    elif curl -fsSL "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${olm_arch}.tgz" \
-            -o "$olm_tmp/ollama.tgz" 2>/dev/null \
-            && tar -xzf "$olm_tmp/ollama.tgz" -C "$olm_tmp" 2>/dev/null; then
-        olm_extract="$olm_tmp"
-    fi
-    if [[ -n "$olm_extract" ]]; then
-        olm_bin="$(find "$olm_extract" -type f -name ollama -perm -u+x 2>/dev/null | head -1)"
-        if [[ -n "$olm_bin" ]]; then
-            sudo install -m 0755 "$olm_bin" /usr/bin/ollama
-            if [[ -d "$olm_extract/lib/ollama" ]]; then
-                sudo install -d -m 0755 /usr/lib/ollama
-                sudo cp -a "$olm_extract/lib/ollama/." /usr/lib/ollama/
-            fi
-            echo "[quadlet-overlay] ollama installed: $(/usr/bin/ollama --version 2>&1 | head -1)"
-        fi
-    else
-        echo "[quadlet-overlay] WARN: ollama download failed -- /usr/bin/ollama not installed"
-    fi
-    rm -rf "$olm_tmp"
-fi
 
 echo "[quadlet-overlay] installing GNOME Flatpaks for WSLg portal (one-time, ~600MB)..."
 # Flatpak here runs as ROOT (uid 0), but WSLg exports XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir owned
 # by uid 1000 -> dbus refuses ("runtime dir owned by uid 1000, not our uid 0") and spams that on
 # EVERY system-wide install/remote op. Give root its OWN runtime dir + drop the inherited session
-# bus so all `sudo flatpak --system` calls below are quiet + correct.
+# bus so all `sudo flatpak --system` calls below are quiet + correct. sudo propagates XDG_RUNTIME_DIR
+# (that is how the uid-1000 path leaked in), so exporting the root path here reaches the child.
 sudo install -d -m 0700 -o root -g root /run/user/0 2>/dev/null || true
 export XDG_RUNTIME_DIR=/run/user/0
 unset DBUS_SESSION_BUS_ADDRESS 2>/dev/null || true
@@ -4474,17 +4439,23 @@ if [[ -f "$TOML_FILE" ]] && command -v awk >/dev/null 2>&1; then
         fi
         if [[ -z "$installed_via" ]] && command -v dnf >/dev/null 2>&1; then
             echo "[quadlet-overlay] dnf install fallback (rpm-ostree usroverlay -> dnf)..."
+            echo "[quadlet-overlay] installing $PKG_COUNT packages via dnf (streaming live)..."
             sudo rpm-ostree usroverlay 2>&1 | tail -3 || true
+            # Stream live (stdbuf -oL) -- do NOT pipe to `tail`: tail buffers all
+            # output until the (20-40 min) transaction finishes AND masks dnf's
+            # exit code (the `if` would see tail's 0 and mark success on failure).
             # shellcheck disable=SC2086
-            if sudo dnf install -y --skip-unavailable $PKG_LIST 2>&1 | tail -40; then
+            if sudo stdbuf -oL -eL dnf install -y --skip-unavailable $PKG_LIST 2>&1; then
                 installed_via="dnf"
             fi
         fi
         if [[ -z "$installed_via" ]] && command -v dnf5 >/dev/null 2>&1; then
             echo "[quadlet-overlay] dnf5 install fallback..."
+            echo "[quadlet-overlay] installing $PKG_COUNT packages via dnf5 (streaming live)..."
             sudo rpm-ostree usroverlay 2>&1 | tail -3 || true
+            # Stream live; no `tail` (see dnf note above -- buffers + masks exit).
             # shellcheck disable=SC2086
-            if sudo dnf5 install -y --skip-unavailable $PKG_LIST 2>&1 | tail -40; then
+            if sudo stdbuf -oL -eL dnf5 install -y --skip-unavailable $PKG_LIST 2>&1; then
                 installed_via="dnf5"
             fi
         fi
@@ -4589,8 +4560,8 @@ backend:
   base_url: http://localhost:${MIOS_PORT_LLM_LIGHT:-8450}
 auxiliary:
   # LLM Light's OpenAI-compatible surface for compression / summarization /
-  # memory flush. Port 8080 was the legacy LocalAI bind -- after the
-  # LocalAI purge, 8080 is code-server, so the previous default 8080/v1
+  # memory flush. Port 8080 was a legacy inference bind -- after the
+  # retired-lane purge, 8080 is code-server, so the previous default 8080/v1
   # made Hermes 401 against code-server then fall through to its
   # openrouter auto-detect (which also 401'd without an API key).
   base_url: http://localhost:${MIOS_PORT_LLM_LIGHT:-8450}/v1
@@ -4661,7 +4632,7 @@ for svc_pair in \
 done
 
 # Open the MiOS service ports in the dev VM's firewalld. The deployed
-# bootc image runs automation/25-firewall-ports.sh at OCI build time
+# bootc image runs automation/44-firewall-ports.sh at OCI build time
 # (firewall-offline-cmd), but the MiOS-DEV overlay path does NOT go
 # through an image build -- it's provisioned from podman-machine-os
 # (firewalld active, public zone: only ssh/mdns/dhcpv6) and overlaid.
@@ -4669,7 +4640,7 @@ done
 # are unreachable from the WSL-VM-IP, so the Windows-side portproxy
 # (0.0.0.0 -> WSL-VM-IP) hits a closed door (operator-confirmed
 # LAN access dead until firewalld was opened by hand).
-# firewall-cmd (online) here mirrors what 25-firewall-ports.sh bakes
+# firewall-cmd (online) here mirrors what 44-firewall-ports.sh bakes
 # offline. Tolerant: no-op if firewalld isn't running.
 if systemctl is-active --quiet firewalld 2>/dev/null; then
     echo "[quadlet-overlay] opening MiOS service ports in dev VM firewalld"
@@ -4782,7 +4753,7 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     # override-aware); the infra ports (ssh, forgejo-ssh, qdrant grpc/http,
     # hermes-dashboard, metrics) are not operator-tunable [ports] service
     # keys so they carry vendor defaults here. Mirrors the offline
-    # 25-firewall-ports.sh surface baked into the OCI image.
+    # 44-firewall-ports.sh surface baked into the OCI image.
     $_fwServicePorts = [ordered]@{
         forge_http       = 8300
         open_webui       = 8033
@@ -4816,9 +4787,9 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
         mcp              = 8460
     }
     $_fwPortList = [System.Collections.Generic.List[int]]::new()
-    $null = $_fwPortList.Add(22)
+    [void]$_fwPortList.Add(22)
     foreach ($_k in $_fwServicePorts.Keys) {
-        $_fwPortList.Add([int](Get-MiosTomlValue -Section 'ports' -Key $_k -Default $_fwServicePorts[$_k]))
+        [void]$_fwPortList.Add([int](Get-MiosTomlValue -Section 'ports' -Key $_k -Default $_fwServicePorts[$_k]))
     }
     $_fwPortsStr = (($_fwPortList | Sort-Object -Unique) -join ' ')
     $overlayScript = $overlayScript -replace '__MIOS_FIREWALL_PORTS__', $_fwPortsStr
@@ -4942,8 +4913,7 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
     # Run via cmd.exe so 2>&1 merges stderr (podman build progress) into stdout stream.
     # Build args propagate operator selections from the Phase-6 prompts
     # (or layered mios.toml [ai] defaults) into the Containerfile ARGs of
-    # the same name. 37-ollama-prep.sh reads MIOS_OLLAMA_BAKE_MODELS to
-    # decide which model set to bake into /usr/share/ollama/models.
+    # the same name.
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = "cmd.exe"
     $psi.Arguments = ("/c podman build --progress=plain --no-cache " +
@@ -4953,7 +4923,6 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
                       "--build-arg `"MIOS_FLATPAKS=`" " +
                       "--build-arg `"MIOS_AI_MODEL=$AiModel`" " +
                       "--build-arg `"MIOS_AI_EMBED_MODEL=$EmbedModel`" " +
-                      "--build-arg `"MIOS_OLLAMA_BAKE_MODELS=$BakeModels`" " +
                       "-t localhost/mios:latest . 2>&1")
     $psi.WorkingDirectory       = $repoPath
     $psi.RedirectStandardOutput = $true
@@ -7845,41 +7814,49 @@ $endMark
         Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
         Log-Ok "MiOS native launcher staged: $miosLauncher (cols=$_lnchCols rows=$_lnchRows from mios.toml [terminal])"
     }
+    # ── mios-wallpaperd (Rust native living wallpaper + gui-watch daemon) ──
+    $wallpaperd_src = Join-Path $MiosRepoDir 'tools\native\mios-wallpaperd'
+    $wallpaperd_exe = Join-Path $MiosBinDir 'mios-wallpaperd.exe'
+    if (Get-Command cargo -ErrorAction SilentlyContinue) {
+        Log-Info "Compiling mios-wallpaperd via cargo..."
+        $cargoOut = & cargo build --manifest-path "$wallpaperd_src\Cargo.toml" --release 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $builtExe = Join-Path $MiosRepoDir 'tools\native\target\release\mios-wallpaperd.exe'
+            if (Test-Path $builtExe) {
+                Copy-Item -Path $builtExe -Destination $wallpaperd_exe -Force
+                Log-Ok "mios-wallpaperd compiled and staged: $wallpaperd_exe"
+                
+                # Register as a Windows Service
+                $svcName = 'MiOS-Wallpaper-Service'
+                if (-not (Get-Service -Name $svcName -ErrorAction SilentlyContinue)) {
+                    $svcPath = "`"$wallpaperd_exe`""
+                    & sc.exe create $svcName binPath= $svcPath start= auto displayname= "MiOS Wallpaper Service" | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Log-Ok "Registered Windows Service: $svcName"
+                        & sc.exe start $svcName | Out-Null
+                    } else {
+                        Log-Warn "Failed to register Windows Service: $svcName"
+                    }
+                }
+            } else {
+                Log-Warn "cargo build succeeded but mios-wallpaperd.exe not found at $builtExe"
+            }
+        } else {
+            Log-Warn "cargo build for mios-wallpaperd failed: $($cargoOut -join ' ')"
+        }
+    } else {
+        Log-Warn "cargo not found -- skipping compilation of mios-wallpaperd (requires Rust)"
+    }
 
-    # ── mios-gui-watch.ps1 (background daemon for WSLg window auto-resize) ─
-    # months of "GUI windows never render on WSLg"
-    # turned out to be windows rendering at native X11 default sizes
-    # (e.g. 129x113 for xeyes) at arbitrary positions, invisible against
-    # acrylic terminals on a 4K display. mios-gui-watch.ps1 polls
-    # msrdc.exe for new RDP-RAIL windows and force-resizes any tiny
-    # spawn to mios.toml [terminal.gui_min] dims, centered on cursor
-    # monitor. Once "adopted" the window is left alone.
-    $miosGuiWatch = Join-Path $MiosBinDir 'mios-gui-watch.ps1'
-    $_gwSrcCands = @(
-        (Join-Path $MiosRepoDir 'src\mios-gui-watch.ps1'),
-        (Join-Path $MiosBootstrapShadow 'src\mios-gui-watch.ps1')
-    )
-    $_gwSrc = $null
-    foreach ($_c in $_gwSrcCands) { if (Test-Path -LiteralPath $_c) { $_gwSrc = $_c; break } }
-    if ($_gwSrc) {
-        try {
-            $_gwBody = [IO.File]::ReadAllText($_gwSrc, (New-Object System.Text.UTF8Encoding($false)))
-            $_gwBody = $_gwBody -replace '__MIOS_DRIVE__', $_stagingDrive
-            Set-Content -Path $miosGuiWatch -Value $_gwBody -Encoding UTF8
-            Log-Ok "mios-gui-watch staged: $miosGuiWatch (auto-resize WSLg windows to mios.toml [terminal.gui_min])"
-
-            # HKCU Run entry so the daemon launches on every login
-            # (no terminal required). Hidden window via -WindowStyle
-            # Hidden + bypass AMSI scan via -ExecutionPolicy Bypass.
-            $_runKey  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+            # Register MiOS-Autostart (AtLogon trigger, RunLevel Highest, hidden).
+            # NOTE: aa5f216e replaced the enclosing mios-gui-watch `if ($_gwSrc) { try {`
+            # (which defined $_runKey/$_pwsh) with the mios-wallpaperd block above but
+            # left this block orphaned -> re-establish those vars + a standalone try/catch.
+            $_runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
             if (-not (Test-Path $_runKey)) { New-Item -Path $_runKey -Force | Out-Null }
             $_pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
             if (-not $_pwsh) { $_pwsh = "$env:ProgramFiles\PowerShell\7\pwsh.exe" }
-            $_runVal = '"{0}" -NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}"' -f $_pwsh, $miosGuiWatch
-            Set-ItemProperty -Path $_runKey -Name 'MiOS-GuiWatch' -Value $_runVal -Type String -Force
-            Log-Ok "mios-gui-watch autostart registered (HKCU\...\Run\MiOS-GuiWatch)"
-
-            # Register MiOS-Autostart (AtLogon trigger, RunLevel Highest, hidden)
+            try {
             $_autostartEnabled = Get-MiosTomlValue -Section 'bootstrap.autostart' -Key 'enable' -Default $true
             if ($_autostartEnabled -eq 'true') { $_autostartEnabled = $true }
             elseif ($_autostartEnabled -eq 'false') { $_autostartEnabled = $false }
@@ -7946,11 +7923,8 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
                 }
             }
         } catch {
-            Log-Warn "mios-gui-watch / autostart staging failed: $($_.Exception.Message)"
+            Log-Warn "MiOS-Autostart staging failed: $($_.Exception.Message)"
         }
-    } else {
-        Log-Warn "mios-gui-watch.ps1 source not found in repo (probed: $($_gwSrcCands -join ', '))"
-    }
 
     # Compile a tiny native .exe launcher with subsystem:Windows (no
     # console flash + window-centering loop). Source code lives in
@@ -7990,17 +7964,15 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
         $_launcherCs = Join-Path $env:TEMP ('mios-launch-' + [guid]::NewGuid().Guid.Substring(0,8) + '.cs')
         try {
             Set-Content -LiteralPath $_launcherCs -Value $launcherCs -Encoding UTF8
-            $_win32Ico = "C:\MiOS\usr\share\mios\branding\mios-v2.ico"
             $_cscArgs = @(
                 '/nologo',
                 '/target:winexe',                # subsystem:Windows -- no console host
                 '/optimize+',
                 '/reference:System.Drawing.dll',
                 '/reference:System.Windows.Forms.dll',
-                (if (Test-Path $_win32Ico) { "/win32icon:$_win32Ico" }),
                 ('/out:' + $miosLauncherExe),
                 $_launcherCs
-            ) | Where-Object { $_ }
+            )
             $_cscOut = & $_csc @_cscArgs 2>&1
             if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $miosLauncherExe)) {
                 Log-Ok "MiOS native .exe launcher compiled via csc.exe: $miosLauncherExe (subsystem:Windows -- zero pre-flash)"
@@ -8622,11 +8594,6 @@ Start-Phase 0
 $HW = Get-Hardware
 Write-Log "hw: CPU=$($HW.Cpus)  RAM=$($HW.RamGB)GB  Disk=$($HW.DiskGB)GB  GPU=$($HW.GpuName)"
 Write-Log "hw: Base=$($HW.BaseImage)  Model=$($HW.AiModel)"
-if ($HW.GpuName -eq "Unknown" -or $HW.GpuName -match "Microsoft Basic|Microsoft Hyper-V|Remote Display") {
-    Log-Warn "Host GPU driver is missing or basic (detected: '$($HW.GpuName)')."
-    Log-Warn "  -> To enable hardware acceleration inside WSL2/Podman, install official vendor drivers (NVIDIA/AMD/Intel)."
-    Log-Warn "  -> Without vendor drivers, the AI plane will silently degrade to CPU execution."
-}
 $gpuShort = $HW.GpuName -replace 'NVIDIA GeForce ','RTX ' -replace 'NVIDIA Quadro ','Quadro '
 $script:HWInfo    = "Host:$($env:COMPUTERNAME)  RAM:$($HW.RamGB)GB  CPU:$($HW.Cpus)c  GPU:$gpuShort  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')"
 $script:IdentInfo = "Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')  Model:$($HW.AiModel)"
@@ -9533,7 +9500,7 @@ $miosRepo = $MiosRepoDir
                                     Log-Warn "[overlay] flatpak install FAILED both attempts (last exit $($script:_fpRetryRc)): $_fp"
                                     Log-Warn "  diagnostic tail: $_fpTail"
                                     Log-Warn "  full verbose log: $_fpFailLog"
-                                    Log-Warn "  OCI image build (mios build -> automation/40-flatpak-bake.sh) retries at bake time; first-boot service mios-flatpak-install also retries on every host boot."
+                                    Log-Warn "  OCI image build (mios build -> automation/61-flatpak-bake.sh) retries at bake time; first-boot service mios-flatpak-install also retries on every host boot."
                                     $_fpFail++
                                 }
                             }
@@ -9857,7 +9824,7 @@ fi
     }
     Log-Ok "MiOS dconf system-db compiled (adw-gtk3-dark + prefer-dark active for all user-bus sessions)"
 
-    # Bibata-Modern-Classic cursor install. mios.git's automation/10-gnome.sh
+    # Bibata-Modern-Classic cursor install. mios.git's automation/57-gnome.sh
     # bakes Bibata into the bootc OCI image MANDATORILY, but the dev VM
     # (podman-MiOS-DEV = podman-machine-os Fedora 44 + MiOS overlay) doesn't
     # run that automation. Without this overlay step, dconf points at
@@ -10212,25 +10179,25 @@ exit 0
     # the image layer. Larger models stay SELECTABLE -- offered here as
     # an opt-in. This prompt only runs in the interactive local-build
     # path (build-mios.ps1); the Forgejo CI build sources
-    # MIOS_OLLAMA_BAKE_MODELS straight from install.env, so cloud/CI
+    # MIOS_LLAMACPP_BAKE_MODELS straight from install.env, so cloud/CI
     # builds always get just the minimal set. If the operator's chosen
     # default model isn't already in the minimal set, offer to bake it
     # too; declining means it first-boot-pulls instead of bloating the
     # image.
-    $MiosOllamaBakeModels = if ($aiDefaults.BakeModels) { $aiDefaults.BakeModels } else { "$defaultModel,$($aiDefaults.EmbedModel)" }
-    $_bakeList = @($MiosOllamaBakeModels -split ',' | ForEach-Object { $_.Trim() })
+    $MiosBakeModels = if ($aiDefaults.BakeModels) { $aiDefaults.BakeModels } else { "$defaultModel,$($aiDefaults.EmbedModel)" }
+    $_bakeList = @($MiosBakeModels -split ',' | ForEach-Object { $_.Trim() })
     # Make sure the embedding model the operator chose is in the set.
     if ($MiosAiEmbedModel -and ($_bakeList -notcontains $MiosAiEmbedModel)) {
-        $MiosOllamaBakeModels = "$MiosOllamaBakeModels,$MiosAiEmbedModel"
+        $MiosBakeModels = "$MiosBakeModels,$MiosAiEmbedModel"
         $_bakeList += $MiosAiEmbedModel
     }
     if ($MiosAiModel -and ($_bakeList -notcontains $MiosAiModel)) {
         $_ans = Read-Line "Also bake '$MiosAiModel' into the image? (larger image, fully offline) [y/N]" "N"
         if ($_ans -match '^[Yy]') {
-            $MiosOllamaBakeModels = "$MiosOllamaBakeModels,$MiosAiModel"
-            Write-Host "  bake set: $MiosOllamaBakeModels" -ForegroundColor DarkGray
+            $MiosBakeModels = "$MiosBakeModels,$MiosAiModel"
+            Write-Host "  bake set: $MiosBakeModels" -ForegroundColor DarkGray
         } else {
-            Write-Host "  bake set: $MiosOllamaBakeModels (minimal); '$MiosAiModel' first-boot-pulls" -ForegroundColor DarkGray
+            Write-Host "  bake set: $MiosBakeModels (minimal); '$MiosAiModel' first-boot-pulls" -ForegroundColor DarkGray
         }
     }
 
@@ -10247,6 +10214,7 @@ exit 0
     # the shell expand $6/$salt as unbound vars -> "line 3: $6: unbound variable"
     # -> EVERY install.env-sourcing service fails to start (mios-forge-firstboot,
     # sys-env-refresh, podman-mnt-bindings, ...). Single quotes keep the literal.
+    # (crypt hashes + model specs never contain a single quote, so the wrap is safe.)
     $envContent = @"
 MIOS_USER='$MiosUser'
 MIOS_HOSTNAME='$MiosHostname'
@@ -10874,7 +10842,7 @@ if (`$Purge) {
     # hardware-driven default in Get-Hardware.
     $rc = Invoke-WslBuild -Distro $BuilderDistro -BaseImage $HW.BaseImage `
                           -AiModel $MiosAiModel -EmbedModel $MiosAiEmbedModel `
-                          -BakeModels $MiosOllamaBakeModels `
+                          -BakeModels $MiosBakeModels `
                           -MiosUser $MiosUser -MiosHostname $MiosHostname
     if ($rc -eq 0) {
         End-Phase 9
