@@ -117,3 +117,18 @@ Both fetch the repo (git, else GitHub zip) exactly once, then hand into
    *Extending coverage:* add a section name to `PROJECTED` in the tool only after confirming
    canonical ⊇ derived for it (so a projection can never drop a key a consumer reads). Portal keeps
    writing only the user layer; nothing is hand-maintained across three copies any more.
+
+## Repo mirror (Law 15)
+
+`mios.git` is the authority for every surface both repos share. `mios.toml`
+`[bootstrap.sync].mirror_files` names them; `tools/sync-bootstrap.py --check` is
+the drift gate and `--apply` is what CI runs after a green build, so the mirror
+is mechanical rather than a habit someone remembers.
+
+Only listed files are touched. What the two repos legitimately own differently
+is enumerated in `not_mirrored` so the divergence reads as deliberate rather
+than as drift someone forgot to fix: the entry points (`install.sh` redirects to
+`build-mios.sh` here because this repo root IS the system root, while bootstrap
+redirects to `cat/MiOS-Cat.sh`, which exists only there), `mios-common.sh`
+(identical code, richer comments in bootstrap that are not yet harvested), each
+repo's agent instructions, and `.gitignore`.
