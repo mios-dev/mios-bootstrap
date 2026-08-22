@@ -307,7 +307,6 @@ searxng            = 8800     # local privacy-respecting metasearch
 crawl4ai           = 8810    # local crawl engine -- the crawl4ai FastAPI (crawl4ai over Chrome CDP + Camoufox fallback), the crawl4ai member of the mios-webtools pod. LOOPBACK only (127.0.0.1), NOT a published/LAN port.
 firecrawl          = 8820     # self-hosted firecrawl api -- the firecrawl-api member of the mios-webtools pod (Hermes's native web backend; FIRECRAWL_API_URL). LOOPBACK only (127.0.0.1), NOT a published/LAN port. (3002 is firecrawl's own default; free on MiOS -- 3000=forge_http, 3033=open_webui.)
 hermes             = 8720     # Hermes-Agent (canonical /v1; live MiOS agent at /)
-hermes_worker      = 8730     # Hermes-Agent worker instance
 hermes_dashboard   = 8210     # Hermes Dashboard web UI (sessions, skills, stats)
 open_webui         = 8200     # Open WebUI (rich LLM interface at http://localhost:3033)
 # hermes_workspace REMOVED (port 3033 freed) -- use the
@@ -345,14 +344,17 @@ mcp                = 8770    # MCP host server (/mcp + A2A /.well-known; served 
 # expose: which service keys to expose. Default = every key in [ports].
 #   Operator can narrow this list to lock down individual services without
 #   moving the port number itself.
-chrome_cdp         = 8570
-forge_ssh_git      = 8590
+chrome_cdp         = 9222
 guacd              = 8560
 otelcol_otlp       = 8575
 otelcol_ui         = 8580
 pxe_hub_api        = 8585
 redis              = 8565
 
+chrome_cdp_worker = 9223
+stale_fallbacks = []
+# Allocated a key but deliberately not bound to a listener; mirrors main.
+unbound = ["chrome_cdp_worker"]
 [ports.lan_firewall]
 profiles = ["Private", "Domain"]
 expose   = ["forge_http", "open_webui", "hermes", "searxng", "cockpit", "llm_light", "code_server", "guacamole_web"]

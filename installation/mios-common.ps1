@@ -5,7 +5,7 @@
 #   3. Test-MiosAdmin / Invoke-MiosSelfElevate (ONE elevation implementation)
 #   4. Ensure-MiosRepo (git clone / pull when mios-install runs on bare Windows)
 # AI-related: installation\mios-install.ps1, installation\mios-install.sh, cat\MiOS-Cat.bat, mios.toml
-# AI-functions: Enable-MiosVt, Get-MiosPalette, C, B, Rule, Write-MiosLine, Write-MiosKV,
+# AI-functions: Enable-MiosVt, Get-MiosPalette, C, B, Rule, Write-MiosLine, Write-MiosKV
 #   Get-MiosSsotValue, Test-MiosAdmin, Invoke-MiosSelfElevate, Ensure-MiosRepo, Resolve-MiosMonitorScript, Start-MiosMonitor
 
 Set-StrictMode -Version 2.0

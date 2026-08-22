@@ -17,12 +17,12 @@ dispatcher), `cat/MiOS-Cat.bat` (USB flasher/menu hub), `build-mios.ps1` (MiOS-D
 **Linux:** `build-mios.sh` (canonical), `bootstrap.sh`/`install.sh` (redirectors → build-mios.sh).
 
 **Portal + configurator = one app.** The Portal is routes inside the agent-pipe FastAPI
-(`server.py`, `MIOS_PORT_AGENT_PIPE=8640`; `mios-agent-pipe.service`). `mios_pipe/routing/portal.py`
+(`server.py`, `MIOS_PORT_AGENT_PIPE`; `mios-agent-pipe.service`). `mios_pipe/routing/portal.py`
 serves `/` (dashboard, embedded `_PORTAL_HTML`), `/configure` (Settings shell), `/portal/configurator`
 (iframes on-disk `usr/share/mios/configurator/mios.html`), and `GET/POST /portal/config` (read/write).
 `POST /portal/config` writes a **delta to the USER layer** `~/.config/mios/mios.toml` (`kernel/config.py`
 `write_user_config`, atomic `os.replace`). `usr/libexec/mios/mios-configurator-launch` probes
-`localhost:8640/configure` first, else the offline `~/Downloads/mios-configurator.html`.
+`/configure` on the local `agent_pipe` port first, else the offline `~/Downloads/mios-configurator.html`.
 
 **SSOT — 3× mios.toml, layered `vendor < host < user`** (resolver `usr/lib/mios/mios_toml.py`):
 - `C:\MiOS\usr\share\mios\mios.toml` — **canonical VENDOR** SSOT (every derived surface + drift-gate reads this).
@@ -50,7 +50,7 @@ irm .../mios | iex   (Windows)   /   curl .../mios | bash   (Linux)
        flash/live → cat/MiOS-Cat.bat   (flash executor only; no self-update, no web re-entry)
        oci/build  → build-mios.{ps1,sh}
        xbox       → cat/autounattend/*.ps1
-       configure  → Portal/configurator @ :8640/configure   (the one SSOT editor)
+       configure  → Portal/configurator @ /configure on the agent_pipe port   (the one SSOT editor)
 ```
 
 ## Reaching the guided surface from the web door
@@ -69,7 +69,7 @@ Both fetch the repo (git, else GitHub zip) exactly once, then hand into
 ## Steps (incremental; each keeps things working)
 
 1. **[DONE] `configure` target in `mios-install`** — the guided installer now opens the Portal /
-   configurator (`:8640/configure`, else MiOS-DEV launcher, else offline HTML). One surface for
+   configurator (`/configure` on the `agent_pipe` port, else MiOS-DEV launcher, else offline HTML). One surface for
    install **and** config.
 2. **[DONE] Shared `installation/mios-common.ps1` + `.sh`** — the ONE contract: layered SSOT
    resolver (`Get-MiosSsotValue` / `mios_ssot_value`, `user > host > vendor`, same order as
