@@ -1,12 +1,5 @@
-# AI-hint: Shared library for the mios-install unified dispatcher and its wrapped entrypoints.
-# Contains:
-#   1. Enable-MiosVt / Get-MiosPalette / C / B / Rule / Write-MiosLine / Write-MiosKV  (SSOT [colors] console theme)
-#   2. Get-MiosSsotValue (three-layer vendor<host<user overlay resolver)
-#   3. Test-MiosAdmin / Invoke-MiosSelfElevate (ONE elevation implementation)
-#   4. Ensure-MiosRepo (git clone / pull when mios-install runs on bare Windows)
-# AI-related: installation\mios-install.ps1, installation\mios-install.sh, cat\MiOS-Cat.bat, mios.toml
-# AI-functions: Enable-MiosVt, Get-MiosPalette, C, B, Rule, Write-MiosLine, Write-MiosKV
-#   Get-MiosSsotValue, Test-MiosAdmin, Invoke-MiosSelfElevate, Ensure-MiosRepo, Resolve-MiosMonitorScript, Start-MiosMonitor
+# AI-hint: Shared library for the mios-install unified dispatcher and its wrapped entrypoints. Contains: 1. Enable-MiosVt / Get-MiosPalette / C / B / Rule / Write-MiosLine /...
+# AI-doc: usr/share/doc/mios/manual/installation.md
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -241,7 +234,10 @@ function Ensure-MiosRepo {
 }
 
 function Resolve-MiosMonitorScript {
-    @((Join-Path (Split-Path $script:Root -Parent) 'MiOS\usr\libexec\mios\MiOS-Mon.py'), 'C:\MiOS\usr\libexec\mios\MiOS-Mon.py') |
+    # mios-mon.py first, MiOS-Mon.py second: this repo renamed it, the
+    # bootstrap repo has not yet, and the resolver must work in both.
+    @((Join-Path (Split-Path $script:Root -Parent) 'MiOS\usr\libexec\mios\mios-mon.py'), 'C:\MiOS\usr\libexec\mios\mios-mon.py',
+      (Join-Path (Split-Path $script:Root -Parent) 'MiOS\usr\libexec\mios\MiOS-Mon.py'), 'C:\MiOS\usr\libexec\mios\MiOS-Mon.py') |
         Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 }
 

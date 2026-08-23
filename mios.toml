@@ -306,7 +306,7 @@ cockpit_link       = 8120    # mios-cockpit-link Podman Desktop discovery shim
 searxng            = 8800     # local privacy-respecting metasearch
 crawl4ai           = 8810    # local crawl engine -- the crawl4ai FastAPI (crawl4ai over Chrome CDP + Camoufox fallback), the crawl4ai member of the mios-webtools pod. LOOPBACK only (127.0.0.1), NOT a published/LAN port.
 firecrawl          = 8820     # self-hosted firecrawl api -- the firecrawl-api member of the mios-webtools pod (Hermes's native web backend; FIRECRAWL_API_URL). LOOPBACK only (127.0.0.1), NOT a published/LAN port. (3002 is firecrawl's own default; free on MiOS -- 3000=forge_http, 3033=open_webui.)
-hermes             = 8720     # Hermes-Agent (canonical /v1; live MiOS agent at /)
+hermes             = 8720     # Hermes gateway (canonical /v1). ONE key: hermes-worker.service is the only unit running `hermes gateway run` and binds this.
 hermes_dashboard   = 8210     # Hermes Dashboard web UI (sessions, skills, stats)
 open_webui         = 8200     # Open WebUI (rich LLM interface at http://localhost:3033)
 # hermes_workspace REMOVED (port 3033 freed) -- use the
@@ -331,29 +331,26 @@ prefilter          = 8710    # mios-delegation-prefilter: conversational-bypass 
 arbiter            = 8760    # mios-policy-arbiter: risk-tier arbiter (verb/risk allow-list enforcer). LOOPBACK only. (Mirrors agent.arbiter_port; SSOT migrated here for port-table completeness.)
 daemon_agent       = 8740    # mios-daemon-agent: background inference worker lane (low-priority; CPU-affined). LOOPBACK only.
 model_router       = 8750    # mios-model-router: internal model-selection micro-router (routes by modality/task). LOOPBACK only.
-oscontrol          = 8950   # mios-oscontrol-server: Windows-side UI Automation / PowerShell executor (HTTP gate; mios-computer-use-server mirrors protocol). LOOPBACK only.
+oscontrol          =  8950   # mios-oscontrol-server: Windows-side UI Automation / PowerShell executor (HTTP gate; mios-computer-use-server mirrors protocol). LOOPBACK only.
 mcp                = 8770    # MCP host server (/mcp + A2A /.well-known; served by hermes-agent). LOOPBACK only. (Matches [agent].server_port when that key is absent.)
+guacd              = 8560    # guacd protocol daemon behind mios-guacamole (upstream default 4822). Was hardcoded in the Quadlet with no SSOT key.
+redis              = 8565    # redis/valkey backing the firecrawl api+worker in the mios-webtools pod (was hardcoded 6380 in three Quadlets, no SSOT key).
+chrome_cdp         = 9222    # Chrome DevTools Protocol on the PRIMARY browser (mios-hermes-browser.service). Pinned: an external contract, and its binder is a static flatpak flags file.
+chrome_cdp_worker  = 9223    # CDP on the SECOND browser (mios-hermes-browser-worker.service, profile-w2). Pinned alongside its primary.
+otelcol_otlp       = 8575    # OpenTelemetry OTLP gRPC receiver on mios-otelcol (upstream default 4317).
+otelcol_ui         = 8580    # Jaeger all-in-one query UI on mios-otelcol (upstream default 16686).
+pxe_hub_api        = 8585    # matchbox gRPC/API on mios-pxe-hub (upstream default 8081; its HTTP side rides forge_http's band).
 
-# [ports.lan_firewall] -- Windows Firewall rule scope for the ports above.
-# profiles: which Windows Firewall profiles get the inbound TCP allow rule.
-#   "Private"  -- home / personal LAN
-#   "Domain"   -- AD-joined corporate LAN
-#   "Public"   -- coffee-shop wifi / airports (DEFAULT-EXCLUDED for security:
-#                 Cockpit at :9090 over self-signed TLS is a juicy target on
-#                 an untrusted SSID; leave this off unless you know why).
-# expose: which service keys to expose. Default = every key in [ports].
-#   Operator can narrow this list to lock down individual services without
-#   moving the port number itself.
-chrome_cdp         = 9222
-guacd              = 8560
-otelcol_otlp       = 8575
-otelcol_ui         = 8580
-pxe_hub_api        = 8585
-redis              = 8565
-
-chrome_cdp_worker = 9223
+# Files pairing a MIOS_PORT_* name with a literal that disagrees with this table.
+# SHRINK-ONLY (gate: check_port_fallbacks), and currently EMPTY -- a new entry
+# needs a reason here, not just a line.
 stale_fallbacks = []
-# Allocated a key but deliberately not bound to a listener; mirrors main.
+
+# Allocated ports nothing references yet. SHRINK-ONLY (gate: check_ports_bound).
+# Per-key reasons: TASKS.md T-318. chrome_cdp_worker's only binder is an
+# `Environment=` literal in a shipped .service -- systemd does not expand ${} in
+# Environment=, and the [units] block that WOULD render the placeholder is inert
+# until T-317 makes mios-unit-gen faithful.
 unbound = ["chrome_cdp_worker"]
 [ports.lan_firewall]
 profiles = ["Private", "Domain"]
