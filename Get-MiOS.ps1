@@ -3258,7 +3258,7 @@ function mios-dev {
     & wsl.exe -d `$_devDistro --cd / --user mios @Args
 }
 
-function mios-mini {
+function mios-metal {
     if (Get-Command Show-MiosDashboard -ErrorAction SilentlyContinue) {
         `$cfg  = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' } else { '' }
         `$logo = if (Test-Path 'M:\MiOS\fastfetch\mios.txt')      { 'M:\MiOS\fastfetch\mios.txt' }      else { '' }
