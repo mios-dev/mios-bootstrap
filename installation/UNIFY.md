@@ -109,7 +109,7 @@ Both fetch the repo (git, else GitHub zip) exactly once, then hand into
    `C:\mios-bootstrap\mios.toml`), never touching owned content (`[autounattend]`/`[smoke_tests]`/
    `[mios_app]`, the gate-48 `ignored_prefixes`, and the copies' own `[ports.lan_firewall]`). Supports
    `--check`. Enforcement: new **drift-gate 62** `check_toml_projection` in
-   `automation/38-drift-checks.sh` (+ a `test_toml_projection` negative test), complementing gate 22
+   `automation/98-drift-checks.sh` (+ a `test_toml_projection` negative test), complementing gate 22
    (bootstrap `[ports]` value parity) and gate 48 (root key-subset) with a whole-block projection
    check. Validated with real python/tomllib: tool idempotent; gates 22/48/62 green; negative test
    passes; no key drops. Both the bootstrap `[colors]` projection and the `C:\MiOS` tool+gate
