@@ -1,16 +1,7 @@
 #!/usr/bin/env bash
 # AI-hint: The ONE shared library for every Linux MiOS entrypoint (mios-install.sh, build-mios.sh,
-# cat/MiOS-Cat.sh, the curl|bash web door). Source it: `. "$(dirname "$0")/mios-common.sh"`. It is the
-# bash sibling of installation/mios-common.ps1 -- same contracts, same SSOT layering (user > host >
-# vendor, mirroring usr/lib/mios/mios_toml.py): ONE layered toml resolver (mios_ssot_value), the
-# SSOT-[colors] themed logger (log_info/ok/warn/err/phase/die), ONE self-elevate (mios_self_elevate),
-# ONE repo-fetch (mios_ensure_repo), and find_mios_bin. No side effects on source beyond setting the
-# color vars + defining funcs. Safe under `set -euo pipefail`.
 # AI-related: mios-common.ps1, mios-install.sh, build-mios.sh, cat/MiOS-Cat.sh, usr/lib/mios/mios_toml.py, mios.toml
 
-# ---- SSOT: one layered resolver (user > host > vendor), the only toml reader anyone needs ---------
-# Emits existing layer paths, HIGHEST priority first. _MIOS_REPO_ROOT (repo-local mios.toml) is set by
-# the caller if it sources us from a repo checkout; else we fall back to the FHS/host locations only.
 mios_ssot_layers() {
     local p
     for p in \
@@ -22,7 +13,6 @@ mios_ssot_layers() {
     done
     return 0   # never let a false final [[ -f ]] make the loop exit non-zero (breaks callers under set -o pipefail)
 }
-# mios_ssot_value SECTION KEY [DEFAULT] -- first (highest) layer that defines [SECTION].KEY wins.
 mios_ssot_value() {
     local section="$1" key="$2" default="${3:-}" path v
     while IFS= read -r path; do
@@ -31,9 +21,7 @@ mios_ssot_value() {
             /^[[:space:]]*\[/ { h=$0; gsub(/^[[:space:]]*\[|\][[:space:]]*$/,"",h); insec=(h==section); next }
             insec && $0 ~ ("^[[:space:]]*" key "[[:space:]]*=") {
                 line=$0
-                # Quoted value first (handles # inside hex colors like "#1A407F"); matches the PS resolver.
                 if (match(line, /"[^"]*"/)) { print substr(line, RSTART+1, RLENGTH-2); exit }
-                # Unquoted fallback: text after =, minus trailing inline comment + spaces.
                 sub(/^[^=]*=[[:space:]]*/,"",line); sub(/[[:space:]]+#.*$/,"",line); sub(/[[:space:]]+$/,"",line)
                 print line; exit
             }
@@ -43,14 +31,12 @@ mios_ssot_value() {
     [[ -n "$default" ]] && printf '%s\n' "$default"
     return 0
 }
-# mios_ssot_path -- canonical vendor SSOT for display ("your config lives here"), else lowest layer.
 mios_ssot_path() {
     if [[ -f "/usr/share/mios/mios.toml" ]]; then printf '/usr/share/mios/mios.toml\n'; return 0; fi
     mios_ssot_layers | tail -n1 || true
     return 0
 }
 
-# ---- Theme: SSOT [colors] truecolor when on a TTY, tput/plain fallback otherwise ------------------
 _mios_rgb() { local h="${1#\#}"; [[ "$h" =~ ^[0-9A-Fa-f]{6}$ ]] || { printf ''; return; }; printf '%d;%d;%d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"; }
 mios_init_theme() {
     _bold=''; _reset=''; _cInfo=''; _cOk=''; _cWarn=''; _cErr=''; _cAccent=''
@@ -76,7 +62,6 @@ log_err()   { printf '%s[ERR ]%s %s\n' "${_cErr}"    "${_reset}" "$*" >&2; }
 log_phase() { printf '\n%s%s== %s ==%s\n\n' "${_bold}" "${_cAccent}" "$*" "${_reset}"; }
 die()       { log_err "$*"; exit 1; }
 
-# ---- Host maintenance binaries (mios-build / mios-update ship with the OS image, not this checkout) --
 find_mios_bin() {
     local name="$1" p
     if command -v "$name" >/dev/null 2>&1; then command -v "$name"; return 0; fi
@@ -86,15 +71,12 @@ find_mios_bin() {
     return 1
 }
 
-# ---- Elevation: one self-exec via sudo -E (for entrypoints that do NOT self-sudo) ----------------
 mios_self_elevate() {
-    # mios_self_elevate "$0" "${ORIG_ARGS[@]}" -- re-execs this script under sudo, preserving env.
     if [[ "$(id -u)" -eq 0 ]]; then return 0; fi
     log_info "this step needs root -- re-executing via 'sudo -E'..."
     exec sudo -E "$@"
 }
 
-# ---- Repo fetch: one Ensure-Repo (git, else GitHub tarball). Canonical checkout = the sourced root --
 mios_ensure_repo() {
     local root="${1:-$HOME/mios-bootstrap}"
     [[ -f "${root}/installation/mios-install.sh" ]] && { printf '%s\n' "$root"; return 0; }
@@ -112,9 +94,6 @@ mios_ensure_repo() {
     printf '%s\n' "$root"
 }
 
-# Law 14 / ADR-0011: Rust is MiOS's native tier. MiOS PROVIDES it as a dependency so every native
-# component is buildable on ANY Fedora machine. Idempotent. Prefers the packaged rust+cargo
-# (offline-friendly, no rustup); falls back to rustup. Returns 0 when cargo is available.
 mios_ensure_rust() {
     if command -v cargo >/dev/null 2>&1; then
         log_ok "Rust already present: $(cargo --version 2>/dev/null)"

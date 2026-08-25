@@ -710,13 +710,6 @@ function fmtSpan([timespan]$s) {
     return "{0:D2}:{1:D2}" -f [int]$s.TotalMinutes,$s.Seconds
 }
 
-function pbar([int]$done,[int]$total,[int]$width) {
-    $pct = if ($total -gt 0) { [int](($done/$total)*100) } else { 0 }
-    $f   = if ($total -gt 0) { [int](($done/$total)*$width) } else { 0 }
-    $bar = if ($f -gt 0) { ("=" * ([math]::Max(0,$f-1))) + ">" } else { "" }
-    return "[{0}] {1,3}%  {2}/{3}" -f $bar.PadRight($width),$pct,$done,$total
-}
-
 function Update-BuildSubPhase([string]$line) {
     # Strip BuildKit "#N 0.123 " prefix
     $stripped = ($line -replace '^\s*#\d+\s+[\d.]+\s+', '').TrimStart()

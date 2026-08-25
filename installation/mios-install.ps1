@@ -252,13 +252,25 @@ if ($entry.Contains('special')) {
 Show-MiosTargetBrief -Target $Target -Entry $entry -Type $Type -Stage $Stage
 if (-not (Confirm-MiosProceed -Entry $entry -Unattended $Unattended -Drive 'D:')) { exit 0 }
 
+# Consolidated installer surface: EVERY install/build target comes WITH the live monitor.
+# Launch mios mon (the unified TUI) in its own window so the operator watches the whole
+# pipeline live -- matches MiOS-Cat.bat's ensure_live_monitor. The 'monitor' target itself and
+# the early-exit special targets (configure/repos/update) never reach here. Suppressed by
+# MIOS_NO_MONITOR=1 (headless/CI/nested).
+if ($env:MIOS_NO_MONITOR -ne '1') {
+    $monScript = Resolve-MiosMonitorScript
+    if ($monScript) {
+        $monPy = if (Test-Path "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe") { "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" } else { 'python' }
+        try { Start-Process -FilePath $monPy -ArgumentList "`"$monScript`"" -WindowStyle Normal; Write-MiosLine 'info' 'live monitor launched (mios mon) -- watching the install pipeline' }
+        catch { Write-MiosLine 'warn' "could not launch live monitor: $($_.Exception.Message)" }
+    }
+}
+
 $plan = Resolve-Target -Target $Target -Type $Type -Stage $Stage -Unattended $Unattended -Passthrough $Passthrough
 if ($plan.NeedsAdmin) { Invoke-MiosSelfElevate -ArgList $PSBoundParameters.Values }
 
 if ($plan.Kind -eq 'ps') {
-    $logFile = Join-Path $script:Root 'installation\mios-install-live.log'
-    "[START] MiOS Install Execution Started at $(Get-Date)" | Out-File -FilePath $logFile -Encoding utf8 -Force
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $plan.Exe @($plan.Args) 2>&1 | ForEach-Object { Write-Host $_; $_ } | Out-File -FilePath $logFile -Encoding utf8 -Append
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $plan.Exe @($plan.Args)
     exit $LASTEXITCODE
 }
 
@@ -267,22 +279,10 @@ if ($plan.Kind -eq 'py') {
     exit $LASTEXITCODE
 }
 
+
+
 if ($Plan.Kind -eq 'bat') {
     Write-MiosLine 'info' "Launching MiOS-Cat.bat stage"
-    # Apply any env overrides (e.g. NONINTERACTIVE=1) into the current process env.
-    $envSnapshot = @{}
-    foreach ($kv in $plan.Env.GetEnumerator()) {
-        $envSnapshot[$kv.Key] = [System.Environment]::GetEnvironmentVariable($kv.Key)
-        [System.Environment]::SetEnvironmentVariable($kv.Key, $kv.Value)
-    }
-    $logFile = 'C:\Windows\Temp\mios-cat-install.log'
-    "[START] MiOS-Cat Flash Execution Started at $(Get-Date)" | Out-File -FilePath $logFile -Encoding utf8 -Force
-    try {
-        & cmd.exe /c "`"$($plan.Exe)`" >> `"$logFile`" 2>&1"
-        exit $LASTEXITCODE
-    } finally {
-        foreach ($kv in $envSnapshot.GetEnumerator()) {
-            [System.Environment]::SetEnvironmentVariable($kv.Key, $kv.Value)
-        }
-    }
+    & cmd.exe /c "`"$($plan.Exe)`"" @($plan.Args)
+    exit $LASTEXITCODE
 }

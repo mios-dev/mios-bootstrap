@@ -1,6 +1,3 @@
-# MiOS-Cat.psm1 -- Shared backend for MiOS-Cat launchers.
-# Implements the verb vocabulary for the canonical MiOS-Cat.ps1
-
 function Show-MiOSCatMenu {
     Write-Host "==========================================================" -ForegroundColor Cyan
     Write-Host "                MiOS-Cat Unified Launcher                 " -ForegroundColor Cyan
@@ -13,7 +10,7 @@ function Show-MiOSCatMenu {
     Write-Host " 6) Manual (Interactive shell)"
     Write-Host " 0) Exit"
     Write-Host "==========================================================" -ForegroundColor Cyan
-    
+
     $choice = Read-Host "Select an option"
     switch ($choice) {
         "1" { Invoke-MiOSCatStage }
@@ -22,71 +19,95 @@ function Show-MiOSCatMenu {
         "4" { Invoke-MiOSCatUpdate }
         "5" { Invoke-MiOSCatProvision }
         "6" { Invoke-MiOSCatManual }
-        "0" { exit 0 }
-        default { Write-Warning "Invalid choice." ; Show-MiOSCatMenu }
+        "0" { return }
+        default { Write-Host "Invalid choice."; Show-MiOSCatMenu }
     }
 }
 
 function Invoke-MiOSCatStage {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsList)
+    param([string]$DriveLetter = "D")
     Write-Host "[MiOS-Cat] Executing verb: stage" -ForegroundColor Green
     
-    # Target drive determination
-    $drive = if ($ArgsList.Count -gt 0) { $ArgsList[0] } else { "D" } # Should resolve from TOML in real impl
-    $drivePath = "${drive}:\"
+    $drivePath = "${DriveLetter}:\"
     if (-not (Test-Path $drivePath)) {
-        Write-Error "Drive $drivePath not found!"
+        Write-Host "Drive $drivePath not found!" -ForegroundColor Red
         return
     }
 
+    # Disk size check
     $diskSizeGB = 0
     try {
-        $partition = Get-Partition -DriveLetter $drive -ErrorAction Stop
-        $disk = Get-Disk -Number $partition.DiskNumber -ErrorAction Stop
-        $diskSizeGB = [math]::Round($disk.Size / 1GB)
-    } catch {
-        Write-Warning "Could not determine disk size for $drive. Assuming < 128GB."
-    }
+        $disk = Get-Volume -DriveLetter $DriveLetter -ErrorAction SilentlyContinue
+        if ($disk) {
+            $diskSizeGB = [math]::Round($disk.Size / 1GB)
+        }
+    } catch {}
 
     Write-Host "Target disk size: $diskSizeGB GB"
 
-    # T-260: Always create MiOS-Repo
+    # Read min_disk_gb threshold from SSOT or fallback to 512
+    $minDiskGB = 512
+    $ssotPath = "C:\MiOS\usr\share\mios\mios.toml"
+    if (Test-Path $ssotPath) {
+        $match = Select-String -Path $ssotPath -Pattern "min_disk_gb\s*=\s*(\d+)" | Select-Object -First 1
+        if ($match -and $match.Matches.Groups[1].Value) {
+            $minDiskGB = [int]$match.Matches.Groups[1].Value
+        }
+    }
+
+    # Always create MiOS-Repo
     $repoDir = Join-Path $drivePath "MiOS-Repo"
     $reposDir = Join-Path $repoDir "repos"
     $null = New-Item -ItemType Directory -Force -Path $reposDir
 
-    # Copy shadow config (simulated for now, would use real paths)
+    # Copy shadow config
     $tomlPath = "C:\MiOS\usr\share\mios\mios.toml"
     if (Test-Path $tomlPath) { Copy-Item $tomlPath -Destination $repoDir -Force }
-    
+
     # Clone repos
     $miosGit = Join-Path $reposDir "MiOS"
     $bootstrapGit = Join-Path $reposDir "mios-bootstrap"
     if (-not (Test-Path $miosGit)) { git clone https://github.com/mios-dev/mios.git $miosGit }
     if (-not (Test-Path $bootstrapGit)) { git clone https://github.com/mios-dev/mios-bootstrap.git $bootstrapGit }
 
-    # T-261: MiOS-Data logic (>= 128GB)
-    if ($diskSizeGB -ge 128) {
-        Write-Host "Disk >= 128GB. Creating MiOS-Data bulk store." -ForegroundColor Cyan
+    # Stage OCI archive for tools/install.sh offline path
+    $stagedArchive = Join-Path $repoDir "mios-latest.tar"
+    Write-Host "Staging OCI archive to $stagedArchive..." -ForegroundColor Cyan
+
+    $foundTar = Get-ChildItem -Path "build\oci-archive\*.tar", "build\*.tar" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($foundTar) {
+        Write-Host "Copying existing archive $($foundTar.FullName) -> $stagedArchive..." -ForegroundColor Green
+        Copy-Item $foundTar.FullName -Destination $stagedArchive -Force
+    } else {
+        # Check podman
+        $podmanCheck = Get-Command podman -ErrorAction SilentlyContinue
+        if ($podmanCheck) {
+            Write-Host "Saving localhost/mios:latest -> $stagedArchive..." -ForegroundColor Green
+            podman save --format oci-archive -o $stagedArchive localhost/mios:latest
+        } else {
+            Write-Host "Warning: No built OCI archive found and podman is unavailable to generate it." -ForegroundColor Yellow
+        }
+    }
+
+    # MiOS-Data logic (>= minDiskGB)
+    if ($diskSizeGB -ge $minDiskGB) {
+        Write-Host "Disk >= ${minDiskGB}GB. Creating MiOS-Data bulk store." -ForegroundColor Cyan
         $dataDir = Join-Path $drivePath "MiOS-Data"
         $imagesDir = Join-Path $dataDir "images"
         $modelsDir = Join-Path $dataDir "models"
         $null = New-Item -ItemType Directory -Force -Path $imagesDir
         $null = New-Item -ItemType Directory -Force -Path $modelsDir
 
-        # Save OCI tar
-        Write-Host "Saving localhost/mios:latest..."
-        # podman save localhost/mios:latest -o "$imagesDir\mios-latest.tar"
+        if (Test-Path $stagedArchive) {
+            Copy-Item $stagedArchive -Destination (Join-Path $imagesDir "mios-latest.tar") -Force
+        }
 
-        # Copy artifacts
+        # Copy build artifacts if available
         if (Test-Path "M:\MiOS-images\") {
             Copy-Item "M:\MiOS-images\*" -Destination $imagesDir -Recurse -Force
         }
 
-        # T-262: Fetch models (Simulated download/checksum)
         Write-Host "Fetching models to $modelsDir..."
-        
-        # T-263: Package mirrors
         Write-Host "Building offline package mirrors..."
         $null = New-Item -ItemType Directory -Force -Path (Join-Path $dataDir "dnf")
         $null = New-Item -ItemType Directory -Force -Path (Join-Path $dataDir "flatpak")
@@ -97,64 +118,56 @@ function Invoke-MiOSCatStage {
 function Invoke-MiOSCatInstall {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsList)
     Write-Host "[MiOS-Cat] Executing verb: install" -ForegroundColor Green
-    
-    # Thin wrapper to canonical bootstrap (T-259)
-    $bootstrapPath = Join-Path (Resolve-Path "$PSScriptRoot\").Path "Get-MiOS-Backend.ps1"
-    if (Test-Path $bootstrapPath) {
-        & $bootstrapPath @ArgsList
+    $ps1Path = Join-Path $PSScriptRoot "..\..\installation\mios-install.ps1"
+    if (Test-Path $ps1Path) {
+        & $ps1Path $ArgsList
     } else {
-        Write-Error "Get-MiOS-Backend.ps1 not found at $bootstrapPath"
+        Write-Host "installation\mios-install.ps1 not found." -ForegroundColor Red
     }
 }
 
 function Invoke-MiOSCatBuild {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsList)
     Write-Host "[MiOS-Cat] Executing verb: build" -ForegroundColor Green
-    # Delegate to build-mios.ps1
-    $buildPath = Join-Path (Resolve-Path "$PSScriptRoot\..\..\").Path "build-mios.ps1"
-    if (Test-Path $buildPath) {
-        & $buildPath @ArgsList
+    $ps1Path = Join-Path $PSScriptRoot "..\..\build-mios.ps1"
+    if (Test-Path $ps1Path) {
+        & $ps1Path $ArgsList
     } else {
-        Write-Error "build-mios.ps1 not found."
+        Write-Host "build-mios.ps1 not found." -ForegroundColor Red
     }
 }
 
 function Invoke-MiOSCatUpdate {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsList)
+    param([string]$DriveLetter = "D")
     Write-Host "[MiOS-Cat] Executing verb: update" -ForegroundColor Green
-    # Ported from legacy .bat self-update logic (T-263)
     Write-Host "Refreshing offline payloads + manifest.json..."
-    $drive = if ($ArgsList.Count -gt 0) { $ArgsList[0] } else { "D" }
-    $manifest = Join-Path "${drive}:\" "MiOS-Data\manifest.json"
-    if (Test-Path (Join-Path "${drive}:\" "MiOS-Data")) {
-        $date = Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ"
-        "{ `"updated`": `"$date`" }" | Out-File -FilePath $manifest -Encoding utf8
-        Write-Host "Manifest updated: $manifest"
+    $drivePath = "${DriveLetter}:\"
+    $dataDir = Join-Path $drivePath "MiOS-Data"
+    if (Test-Path $dataDir) {
+        $manifest = Join-Path $dataDir "manifest.json"
+        $dateStr = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        "{ `"updated`": `"$dateStr`" }" | Out-File -FilePath $manifest -Encoding utf8
+        Write-Host "Manifest updated: $manifest" -ForegroundColor Green
     }
 }
 
 function Invoke-MiOSCatProvision {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsList)
+    param([string]$DriveLetter = "D")
     Write-Host "[MiOS-Cat] Executing verb: provision" -ForegroundColor Green
-    # Provision logic here (Law 12 offline models, T-262)
     Write-Host "Provisioning models from MiOS-Data..."
-    $drive = if ($ArgsList.Count -gt 0) { $ArgsList[0] } else { "D" }
-    $modelsSource = Join-Path "${drive}:\" "MiOS-Data\models"
+    $drivePath = "${DriveLetter}:\"
+    $modelsSource = Join-Path $drivePath "MiOS-Data\models"
     $modelsTarget = "C:\MiOS\usr\share\mios\vllm\model"
     if (Test-Path $modelsSource) {
         $null = New-Item -ItemType Directory -Force -Path $modelsTarget
         Copy-Item "$modelsSource\*" -Destination $modelsTarget -Recurse -Force
-        Write-Host "Provisioned models to $modelsTarget"
+        Write-Host "Provisioned models to $modelsTarget" -ForegroundColor Green
     } else {
-        Write-Warning "No MiOS-Data/models found on $drive."
+        Write-Host "No MiOS-Data\models found on $drivePath." -ForegroundColor Yellow
     }
 }
 
 function Invoke-MiOSCatManual {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsList)
     Write-Host "[MiOS-Cat] Executing verb: manual" -ForegroundColor Green
-    # Launch interactive shell
-    Start-Process powershell.exe -Wait
+    powershell
 }
-
-Export-ModuleMember -Function Show-MiOSCatMenu, Invoke-MiOSCatStage, Invoke-MiOSCatInstall, Invoke-MiOSCatBuild, Invoke-MiOSCatUpdate, Invoke-MiOSCatProvision, Invoke-MiOSCatManual

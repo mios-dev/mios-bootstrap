@@ -41,17 +41,23 @@ function Invoke_MiOSCatStage() {
     if df -BG "$drive" >/dev/null 2>&1; then
         diskSizeGB=$(df -BG "$drive" | awk 'NR==2 {print int($2)}')
     else
-        echo "Could not determine disk size for $drive. Assuming < 128GB."
+        echo "Could not determine disk size for $drive."
     fi
 
     echo "Target disk size: $diskSizeGB GB"
+
+    # Read min_disk_gb from SSOT [cat.data_partition] (default 512)
+    local minDiskGB=512
+    if command -v python3 >/dev/null 2>&1; then
+        minDiskGB="$(python3 -c "import tomllib; f=open('/usr/share/mios/mios.toml','rb'); print((tomllib.load(f).get('cat') or {}).get('data_partition', {}).get('min_disk_gb', 512))" 2>/dev/null || echo 512)"
+    fi
 
     # T-260: Always create MiOS-Repo
     local repoDir="$drive/MiOS-Repo"
     local reposDir="$repoDir/repos"
     mkdir -p "$reposDir"
 
-    # Copy shadow config (simulated)
+    # Copy shadow config
     local tomlPath="/usr/share/mios/mios.toml"
     [[ -f "$tomlPath" ]] && cp "$tomlPath" "$repoDir/"
 
@@ -59,15 +65,46 @@ function Invoke_MiOSCatStage() {
     [[ ! -d "$reposDir/MiOS" ]] && git clone https://github.com/mios-dev/mios.git "$reposDir/MiOS"
     [[ ! -d "$reposDir/mios-bootstrap" ]] && git clone https://github.com/mios-dev/mios-bootstrap.git "$reposDir/mios-bootstrap"
 
-    # T-261: MiOS-Data logic (>= 128GB)
-    if (( diskSizeGB >= 128 )); then
-        echo -e "\033[36mDisk >= 128GB. Creating MiOS-Data bulk store.\033[0m"
+    # Stage OCI archive for tools/install.sh offline path
+    local stagedArchive="$repoDir/mios-latest.tar"
+    echo "Staging OCI archive to $stagedArchive..."
+    local foundTar=""
+    for t in build/oci-archive/*.tar build/*.tar; do
+        if [[ -f "$t" ]]; then
+            foundTar="$t"
+            break
+        fi
+    done
+
+    if [[ -n "$foundTar" ]]; then
+        echo "Copying existing archive $foundTar -> $stagedArchive..."
+        cp "$foundTar" "$stagedArchive"
+    elif command -v podman >/dev/null 2>&1 && podman image exists localhost/mios:latest 2>/dev/null; then
+        echo "Saving localhost/mios:latest -> $stagedArchive..."
+        podman save --format oci-archive -o "$stagedArchive" localhost/mios:latest
+    elif command -v just >/dev/null 2>&1; then
+        echo "Building oci-archive via just..."
+        just oci-archive
+        for t in build/oci-archive/*.tar; do
+            if [[ -f "$t" ]]; then
+                cp "$t" "$stagedArchive"
+                break
+            fi
+        done
+    else
+        echo -e "\033[33mWarning: No built OCI archive found and podman/just unavailable to generate it.\033[0m"
+    fi
+
+    # T-261: MiOS-Data logic (>= minDiskGB)
+    if (( diskSizeGB >= minDiskGB )); then
+        echo -e "\033[36mDisk >= ${minDiskGB}GB. Creating MiOS-Data bulk store.\033[0m"
         local dataDir="$drive/MiOS-Data"
         mkdir -p "$dataDir/images" "$dataDir/models" "$dataDir/dnf" "$dataDir/flatpak" "$dataDir/pip"
 
-        echo "Saving localhost/mios:latest..."
-        # podman save localhost/mios:latest -o "$dataDir/images/mios-latest.tar"
-        
+        if [[ -f "$stagedArchive" ]]; then
+            cp "$stagedArchive" "$dataDir/images/mios-latest.tar"
+        fi
+
         echo "Fetching models to $dataDir/models..."
         echo "Building offline package mirrors..."
     fi
