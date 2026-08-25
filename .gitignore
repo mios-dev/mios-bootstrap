@@ -23,6 +23,12 @@
 # Process.Start). build-mios.ps1 reads src/mios-launch.cs at runtime.
 !src/
 !src/**
+# The MiOS-Field deploy surface (renamed from cat/). The repo root is ignored,
+# so without these the 144 field/ files are invisible to git while the 142
+# tracked cat/ files show as deletions -- a `git add -A` would erase the whole
+# deploy surface and add nothing back.
+!field/
+!field/**
 # Win+R-friendly batch launcher. Operator double-clicks this OR pastes
 # the equivalent powershell one-liner into Win+R; both fetch Get-MiOS.ps1
 # via irm|iex.

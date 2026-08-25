@@ -15,7 +15,7 @@
 param(
   [Parameter(Mandatory)][string]$TargetDrive,          # e.g. "D"
   [string]$TomlPath = "",
-  [string]$PartitionLabel = "MiOS-Cat"                 # fallback ar_source label ([cat].partition_label)
+  [string]$PartitionLabel = "MiOS-Cat"                 # fallback ar_source label ([cat.sysrescue].ar_source_label)
 )
 $ErrorActionPreference = 'Stop'
 function Note($m){ Write-Host "[render-sysrescue] $m" }

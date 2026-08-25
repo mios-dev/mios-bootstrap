@@ -1,5 +1,5 @@
 @echo off
-title MiOS-Cat Dedicated USB Installer
+title MiOS-Field Dedicated USB Installer
 cd /d %~dp0
 set "maindir=%CD%"
 
@@ -139,7 +139,7 @@ set "build_xbox=Enabled"
 set "bake_drivers=Disabled"
 set "uup_channel=Dev"
 set "gaming_optimize=Enabled"
-set "partition_label=MiOS-Cat"
+set "partition_label=MiOS-Field"
 set "force_format=Enabled"
 
 :: ------------------------------------------------------------------
