@@ -297,49 +297,52 @@ vpn_endpoint = ""   # WireGuard endpoint for cluster-client mode; empty = local-
 # mirrored networking makes them reachable on Windows' all interfaces.
 # ----------------------------------------------------------------------------
 [ports]
-stack_id           = 0
-ssh                = 8100
-forge_http         = 8400
-forge_ssh          = 8410
-cockpit            = 8110
-cockpit_link       = 8120
-searxng            = 8800
-crawl4ai           = 8810
-firecrawl          = 8820
-hermes             = 8720
-hermes_dashboard   = 8210
-open_webui         = 8200
+stack_id           = 0        # Multiplier offset: ports dynamically shift by +(stack_id * 10000)
+ssh                = 8100     # host admin sshd. "mios-dev ssh should be port 2222" -- hardened off :22, off the prior :49955. firewall opens this; sshd_config Port drop-in lives at /etc/ssh/sshd_config.d/09-mios-ssh-port.conf and must match. Forgejo git-ssh moved to forge_ssh=49922 to vacate 2222.
+forge_http         = 8400     # Forgejo HTTP web UI
+forge_ssh          = 8410    # Forgejo git+ssh (vacated 2222 for host admin sshd). Non-22 to coexist with sshd; non-2222 to leave that as the canonical operator-SSH port.
+cockpit            = 8110     # host Cockpit web console
+cockpit_link       = 8120    # mios-cockpit-link Podman Desktop discovery shim
+searxng            = 8800     # local privacy-respecting metasearch
+crawl4ai           = 8810    # local crawl engine -- the crawl4ai FastAPI (crawl4ai over Chrome CDP + Camoufox fallback), the crawl4ai member of the mios-webtools pod. LOOPBACK only (127.0.0.1), NOT a published/LAN port.
+firecrawl          = 8820     # self-hosted firecrawl api -- the firecrawl-api member of the mios-webtools pod (Hermes's native web backend; FIRECRAWL_API_URL). LOOPBACK only (127.0.0.1), NOT a published/LAN port. (3002 is firecrawl's own default; free on MiOS -- 3000=forge_http, 3033=open_webui.)
+hermes             = 8720     # Hermes gateway (canonical /v1). ONE key: hermes-worker.service is the only unit running `hermes gateway run` and binds this.
+hermes_dashboard   = 8210     # Hermes Dashboard web UI (sessions, skills, stats)
+open_webui         = 8200     # Open WebUI (rich LLM interface at http://localhost:3033)
 # hermes_workspace REMOVED (port 3033 freed) -- use the
 # hermes-agent dashboard at port 9119 instead.
-code_server        = 8900
-k3s_api            = 8450
-guacamole_web      = 8220
-ceph_dashboard     = 8460
-rdp                = 8300
-pgvector           = 8600
-llm_light          = 8500
-cpu_node           = 8510
-agent_pipe         = 8700
-ttyd_bash          = 8310
-ttyd_powershell    = 8320
-adguard_dns        = 53
-adguard_ui         = 8050
-opencode_gateway   = 8780
-vllm               = 8520
-sglang             = 8530
-prefilter          = 8710
-arbiter            = 8760
-daemon_agent       = 8740
-model_router       = 8750
-oscontrol          =  8950
-mcp                = 8770
-guacd              = 8560
-redis              = 8565
-chrome_cdp         = 9222
-chrome_cdp_worker  = 9223
-otelcol_otlp       = 8575
-otelcol_ui         = 8580
-pxe_hub_api        = 8585
+code_server        = 8900     # code-server (VS Code in a browser; matches image default)
+k3s_api            = 8450     # K3s Kubernetes API
+guacamole_web      = 8220     # mios-guacamole browser desktop
+ceph_dashboard     = 8460     # Ceph dashboard
+rdp                = 8300     # GNOME Remote Desktop / xRDP
+pgvector           = 8600     # PostgreSQL + pgvector unified agent DB (WS-9, FOSS; sole agent DB since the WS-A3 cutover)
+llm_light          = 8500    # mios-llm-light: the primary llama.cpp multi-model + KV-paging lane (WS-10, FOSS; served via the upstream llama-swap proxy image)
+cpu_node           = 8510    # mios-cpu-node: the always-on / gaming-immune CPU llama-server lane (granite brain on -ngl 0). Rendered into mios-cpu-node.container's --port (was a DEAD key -> empty --port -> llama.cpp stoi crash-loop; SSOT-wired).
+agent_pipe         = 8700     # 'MiOS' standalone Agent Pipe (router + refine + critic; fronts hermes for every gateway)
+ttyd_bash          = 8310     # ttyd browser pty -- Linux bash session
+ttyd_powershell    = 8320     # ttyd browser pty -- Windows-side PowerShell session
+adguard_dns        = 53       # AdGuard Home DNS resolver (ad/tracker/malware sinkhole; tailnet-wide global nameserver)
+adguard_ui         = 8050     # AdGuard Home web UI + REST API (3000 is forge_http; 3053 is mnemonic for :53)
+opencode_gateway   = 8780     # opencode -> OpenAI /v1 gateway shim (mios-opencode-gateway.service); makes [agents.opencode] a REAL /v1 council peer. LOOPBACK only (127.0.0.1).
+vllm               = 8520    # vLLM heavy dGPU lane (re-scoped mios-llm-heavy Quadlet; OpenAI /v1, PagedAttention+APC). Off the iGPU's :11436 + finetune-serve :11438. GATED/disabled by default (VRAM). [ai.vllm] + [nodes.local-vllm].
+sglang             = 8530    # SGLang heavy dGPU lane (OpenAI /v1, HiCache CPU KV-offload). GATED/disabled by default (VRAM). [ai.sglang] + [nodes.local-sglang].
+prefilter          = 8710    # mios-delegation-prefilter: conversational-bypass classifier + delegation gate (OpenAI /v1 shim in front of hermes). LOOPBACK only.
+arbiter            = 8760    # mios-policy-arbiter: risk-tier arbiter (verb/risk allow-list enforcer). LOOPBACK only. (Mirrors agent.arbiter_port; SSOT migrated here for port-table completeness.)
+daemon_agent       = 8740    # mios-daemon-agent: background inference worker lane (low-priority; CPU-affined). LOOPBACK only.
+model_router       = 8750    # mios-model-router: internal model-selection micro-router (routes by modality/task). LOOPBACK only.
+oscontrol          =  8950   # mios-oscontrol-server: Windows-side UI Automation / PowerShell executor (HTTP gate; mios-computer-use-server mirrors protocol). LOOPBACK only.
+mcp                = 8770    # MCP host server (/mcp + A2A /.well-known; served by hermes-agent). LOOPBACK only. (Matches [agent].server_port when that key is absent.)
+guacd              = 8560    # guacd protocol daemon behind mios-guacamole (upstream default 4822). Was hardcoded in the Quadlet with no SSOT key.
+redis              = 8565    # redis/valkey backing the firecrawl api+worker in the mios-webtools pod (was hardcoded 6380 in three Quadlets, no SSOT key).
+chrome_cdp         = 9222    # Chrome DevTools Protocol on the PRIMARY browser (mios-hermes-browser.service). Pinned: an external contract, and its binder is a static flatpak flags file.
+chrome_cdp_worker  = 9223    # CDP on the SECOND browser (mios-hermes-browser-worker.service, profile-w2). Pinned alongside its primary.
+otelcol_otlp       = 8575    # OpenTelemetry OTLP gRPC receiver on mios-otelcol (upstream default 4317).
+otelcol_ui         = 8580    # Jaeger all-in-one query UI on mios-otelcol (upstream default 16686).
+pxe_hub_api        = 8585    # matchbox gRPC/API on mios-pxe-hub (upstream default 8081; its HTTP side rides forge_http's band).
+ai_legacy        = 8640    # legacy AI endpoint
+field_live_chat  = 8642    # field live chat
+node             = 8650    # mios-node edge daemon
 
 # Files pairing a MIOS_PORT_* name with a literal that disagrees with this table.
 # SHRINK-ONLY (gate: check_port_fallbacks), and currently EMPTY -- a new entry
@@ -352,9 +355,6 @@ stale_fallbacks = []
 # Environment=, and the [units] block that WOULD render the placeholder is inert
 # until T-317 makes mios-unit-gen faithful.
 unbound = ["chrome_cdp_worker", "ai_legacy", "field_live_chat"]
-ai_legacy = 8640
-field_live_chat = 8642
-node = 8650
 [ports.lan_firewall]
 profiles = ["Private", "Domain"]
 expose   = ["forge_http", "open_webui", "hermes", "searxng", "cockpit", "llm_light", "code_server", "guacamole_web"]
