@@ -70,8 +70,16 @@ function Invoke-MiOSCatStage {
     if (-not (Test-Path $miosGit)) { git clone https://github.com/mios-dev/mios.git $miosGit }
     if (-not (Test-Path $bootstrapGit)) { git clone https://github.com/mios-dev/mios-bootstrap.git $bootstrapGit }
 
-    # Stage OCI archive for tools/install.sh offline path
-    $stagedArchive = Join-Path $repoDir "mios-latest.tar"
+    # MiOS-Data bulk store (>= minDiskGB or standard data layout)
+    # Bulk OCI images and model weights stage to MiOS-Data/images/ and NOT MiOS-Repo
+    $dataDir = Join-Path $drivePath "MiOS-Data"
+    $imagesDir = Join-Path $dataDir "images"
+    $modelsDir = Join-Path $dataDir "models"
+    $null = New-Item -ItemType Directory -Force -Path $imagesDir
+    $null = New-Item -ItemType Directory -Force -Path $modelsDir
+
+    # Stage OCI archive for tools/install.sh offline path strictly into MiOS-Data/images/
+    $stagedArchive = Join-Path $imagesDir "mios-latest.tar"
     Write-Host "Staging OCI archive to $stagedArchive..." -ForegroundColor Cyan
 
     $foundTar = Get-ChildItem -Path "build\oci-archive\*.tar", "build\*.tar" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -89,24 +97,13 @@ function Invoke-MiOSCatStage {
         }
     }
 
-    # MiOS-Data logic (>= minDiskGB)
+    # Copy build artifacts if available
+    if (Test-Path "M:\MiOS-images\") {
+        Copy-Item "M:\MiOS-images\*" -Destination $imagesDir -Recurse -Force
+    }
+
     if ($diskSizeGB -ge $minDiskGB) {
-        Write-Host "Disk >= ${minDiskGB}GB. Creating MiOS-Data bulk store." -ForegroundColor Cyan
-        $dataDir = Join-Path $drivePath "MiOS-Data"
-        $imagesDir = Join-Path $dataDir "images"
-        $modelsDir = Join-Path $dataDir "models"
-        $null = New-Item -ItemType Directory -Force -Path $imagesDir
-        $null = New-Item -ItemType Directory -Force -Path $modelsDir
-
-        if (Test-Path $stagedArchive) {
-            Copy-Item $stagedArchive -Destination (Join-Path $imagesDir "mios-latest.tar") -Force
-        }
-
-        # Copy build artifacts if available
-        if (Test-Path "M:\MiOS-images\") {
-            Copy-Item "M:\MiOS-images\*" -Destination $imagesDir -Recurse -Force
-        }
-
+        Write-Host "Disk >= ${minDiskGB}GB. Initializing bulk package mirrors in MiOS-Data." -ForegroundColor Cyan
         Write-Host "Fetching models to $modelsDir..."
         Write-Host "Building offline package mirrors..."
         $null = New-Item -ItemType Directory -Force -Path (Join-Path $dataDir "dnf")

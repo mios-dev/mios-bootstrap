@@ -65,8 +65,12 @@ function Invoke_MiOSCatStage() {
     [[ ! -d "$reposDir/MiOS" ]] && git clone https://github.com/mios-dev/mios.git "$reposDir/MiOS"
     [[ ! -d "$reposDir/mios-bootstrap" ]] && git clone https://github.com/mios-dev/mios-bootstrap.git "$reposDir/mios-bootstrap"
 
-    # Stage OCI archive for tools/install.sh offline path
-    local stagedArchive="$repoDir/mios-latest.tar"
+    # T-261: MiOS-Data bulk store for images and models (keeps MiOS-Repo <16GB)
+    local dataDir="$drive/MiOS-Data"
+    mkdir -p "$dataDir/images" "$dataDir/models"
+
+    # Stage OCI archive for tools/install.sh offline path strictly into MiOS-Data/images/
+    local stagedArchive="$dataDir/images/mios-latest.tar"
     echo "Staging OCI archive to $stagedArchive..."
     local foundTar=""
     for t in build/oci-archive/*.tar build/*.tar; do
@@ -97,13 +101,8 @@ function Invoke_MiOSCatStage() {
 
     # T-261: MiOS-Data logic (>= minDiskGB)
     if (( diskSizeGB >= minDiskGB )); then
-        echo -e "\033[36mDisk >= ${minDiskGB}GB. Creating MiOS-Data bulk store.\033[0m"
-        local dataDir="$drive/MiOS-Data"
-        mkdir -p "$dataDir/images" "$dataDir/models" "$dataDir/dnf" "$dataDir/flatpak" "$dataDir/pip"
-
-        if [[ -f "$stagedArchive" ]]; then
-            cp "$stagedArchive" "$dataDir/images/mios-latest.tar"
-        fi
+        echo -e "\033[36mDisk >= ${minDiskGB}GB. Creating MiOS-Data bulk mirrors.\033[0m"
+        mkdir -p "$dataDir/dnf" "$dataDir/flatpak" "$dataDir/pip"
 
         echo "Fetching models to $dataDir/models..."
         echo "Building offline package mirrors..."
