@@ -59,7 +59,7 @@ Validated end-to-end: GUID -> `{MIOS-XBOX-SSOT}`, `lxss` removals stripped (WSL 
 the sanitizer's input contract and it passes without throwing.**
 
 ### 3 — autounattend.xml
-Windows-Setup-consumed answer file. Carries what DISM cannot: OOBE skips, disk layout (96 GB C:
+Windows-Setup-consumed answer file. Carries what DISM cannot: OOBE skips, disk layout (128 GB C:
 carve + M: = rest), local accounts, `FirstLogonCommands` (MiOS `irm|iex` bootstrap), and the
 Win11 hardware bypass — `windowsPE` `RunSynchronousCommand` writing
 `HKLM\System\Setup\LabConfig` (`BypassTPMCheck`/`BypassSecureBootCheck`/`BypassRAMCheck`/

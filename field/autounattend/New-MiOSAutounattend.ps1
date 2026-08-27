@@ -50,7 +50,7 @@
 
 .PARAMETER FullDiskWindows
     Give Windows the whole disk (C: = all), provisioning M:\ later via Get-MiOS.ps1.
-    DEFAULT (off) is the MiOS carve: C: = [autounattend].c_partition_gb (96 GB) and
+    DEFAULT (off) is the MiOS carve: C: = [autounattend].c_partition_gb (128 GB) and
     the REST of the disk allocated to MiOS as M:\ (MIOS-DEV).
 
 .PARAMETER ObfuscatePasswords
@@ -117,7 +117,7 @@ function New-MiOSAutounattendXml {
     $bypassHw     = (Get-Toml $Toml 'autounattend.bypass_hardware_checks' 'true') -match '^(true|1|yes)$'
     $runBootstrap = (Get-Toml $Toml 'autounattend.run_bootstrap' 'true') -match '^(true|1|yes)$'
     $bootUrl      = if ($BootstrapUrl) { $BootstrapUrl } else { Get-Toml $Toml 'autounattend.bootstrap_url' $CANONICAL_BOOTSTRAP }
-    $cGb          = [int](Get-Toml $Toml 'autounattend.c_partition_gb' '96')   # Windows C: size; MiOS M:\ gets the rest
+    $cGb          = [int](Get-Toml $Toml 'autounattend.c_partition_gb' '128')  # Windows C: size; MiOS M:\ gets the rest
     $layoutTree   = (Get-Toml $Toml 'autounattend.layout.linux_tree' 'etc usr var home opt srv tmp bin lib root').Trim()
 
     # Windows <TimeZone> takes a Windows tz id (tzutil), NOT an IANA name. Map the

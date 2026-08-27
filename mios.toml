@@ -315,6 +315,7 @@ code_server        = 8900     # code-server (VS Code in a browser; matches image
 k3s_api            = 8450     # K3s Kubernetes API
 guacamole_web      = 8220     # mios-guacamole browser desktop
 ceph_dashboard     = 8460     # Ceph dashboard
+radosgw            = 8470     # Ceph RADOS Gateway (S3 object storage)
 rdp                = 8300     # GNOME Remote Desktop / xRDP
 pgvector           = 8600     # PostgreSQL + pgvector unified agent DB (WS-9, FOSS; sole agent DB since the WS-A3 cutover)
 llm_light          = 8500    # mios-llm-light: the primary llama.cpp multi-model + KV-paging lane (WS-10, FOSS; served via the upstream llama-swap proxy image)
@@ -1282,7 +1283,7 @@ driver_pack_dir   = ""      # empty -> <build>\driverpacks (populate from MiOS-R
 # local Get-MiOS.ps1, irm|iex is only an update fallback. ~34 MB minus .git.
 embed_repo        = true
 # ISO carve + output.
-c_partition_gb = 96              # C: size; the REST of the disk -> M:\ (MIOS-DEV)
+c_partition_gb = 128             # C: size; the REST of the disk -> M:\ (MIOS-DEV)
 bootstrap_url  = ""              # empty -> canonical raw Get-MiOS.ps1
 # Build scratch + ISO output volume. Empty -> auto-pick the fixed drive with the
 # MOST free space (install.wim needs ~15-20 GB; the retired M:\ pin overflowed a
