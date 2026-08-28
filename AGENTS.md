@@ -42,6 +42,10 @@ back to the operator. Everything below describes *this repo's* slice of that
 whole: how a paste on Windows or a `curl | bash` on Linux becomes a booted,
 agentic MiOS host that can then rebuild itself.
 
+### Load-Bearing Architectural Invariant: the Blade owns the hardware
+
+A MiOS-Metal (formerly Mini) Blade is *bare metal*: it owns the NICs, radios, TPM, boot chain and dGPUs, and hosts the MiOS OCI image as a **NIC-less guest** obfuscated from all of it. A fleet is 2-6 Blades, and **every Blade is its own AP forming one mesh Wi-Fi**, as well as a member of the **HCI mesh VPN cluster** the hyper-converged lanes run over. **No hosted node is ever an access point** -- hardware-facing roles live on the Blade and must be *unclaimable* by a guest archetype, because a capability the guest plane can express but can never serve reads as available and fails at the hardware boundary. Three role shapes follow: **universal-per-Blade** (radio, mesh membership), **singleton-across-Blades** (WAN gateway, mesh coordinator), **guest-plane** (k3s, Pacemaker). This repo provisions onto that topology, so the installer must never offer a guest a role only a Blade can hold. Detail: mios.git TASKS.md T-985..T-991.
+
 ## 1. Repo identity
 
 * **Project:** MiOS — pronounced *MyOS* (short for *My OS*). Research project,
@@ -290,6 +294,23 @@ See [bootstrap_install.md](file:///usr/share/doc/mios/guides/bootstrap_install.m
 * **No double-tracking.** `mios.git` owns the system FHS overlay;
   `mios-bootstrap.git` owns the user-facing installer. Never
   cross-track paths.
+* **Rust static binaries, globally.** MiOS runs from a refined, canned,
+  minified code base compiled to **Rust static binaries**. Law 14
+  (TARGET-LANGUAGES) is the floor -- it grandfathers what already exists --
+  and this is the destination: *all* of it converts. When adding or porting a
+  generator, gate, verb backend or service, reach for a Rust static binary in
+  `tools/native/` rather than another Python or bash script.
+* **"Canned" means hardened templates.** Code and scripts are kept as
+  **hardened templates an AI generates the next tool FROM**. That is Law 16
+  (ONE-TEMPLATE-PER-TYPE) read as a *generative* system rather than only a
+  conformance gate: one canonical template per file type under
+  `usr/share/mios/templates/`, declared in `[templates.<type>]`, scaffolded
+  strictly via `mios new <type>` / `miosd scaffold`. Do not hand-roll a new
+  file of a type that already has a template.
+* **OpenAI-format schemas, globally.** Every schema is an OpenAI format --
+  not only the `/v1` wire surface but schemas everywhere. The strict-schema
+  converter already in the tree (deeply-nested JSON Schema to strict OpenAI
+  schema) is the shape to standardise on.
 
 ## 14. Persistence sanitization
 

@@ -32,6 +32,10 @@ the **Gemini-CLI delta** — how to load the shared identity and which endpoint 
 bind. Everything substantive lives once in the canonical agent prompt and is
 shared by every agent.
 
+## The Blade owns the hardware (load-bearing invariant)
+
+A MiOS-Metal (formerly Mini) Blade is *bare metal*: it owns the NICs, radios, TPM, boot chain and dGPUs, and hosts the MiOS OCI image as a **NIC-less guest** obfuscated from all of it. A fleet is 2-6 Blades, and **every Blade is its own AP forming one mesh Wi-Fi**, as well as a member of the **HCI mesh VPN cluster** the hyper-converged lanes (Ceph, k3s, Pacemaker) run over. **No hosted node is ever an access point** -- hardware-facing roles live on the Blade and must be *unclaimable* by a guest archetype, because a capability the guest plane can express but can never serve reads as available and fails at the hardware boundary. Three role shapes follow: **universal-per-Blade** (radio, mesh membership), **singleton-across-Blades** (WAN gateway, mesh coordinator), **guest-plane** (k3s, Pacemaker). Detail: `mios.git` TASKS.md T-985..T-991.
+
 ## Role and Objective
 
 The Gemini CLI runs as a **MiOS agent** — one node in the local MiOS AIOS, not a
@@ -50,6 +54,26 @@ override layer if present:
    by bootstrap).
 3. Apply `~/.config/mios/system-prompt.md` if present (per-user override, seeded
    from `etc/skel/` on first login).
+
+## Global code form
+
+Three standing operator directives, all scoped globally. They constrain *how*
+code is written here, not what it does.
+
+- **Rust static binaries, globally.** MiOS runs from a refined, canned,
+  minified code base compiled to Rust static binaries. Law 14
+  (TARGET-LANGUAGES) is the floor -- it grandfathers what exists -- and this
+  is the destination: all of it converts. Prefer a Rust static binary in
+  `tools/native/` over another Python or bash script for any new generator,
+  gate, verb backend or service.
+- **"Canned" means hardened templates.** Code and scripts are kept as hardened
+  templates an AI generates the next tool *from*. That is Law 16
+  (ONE-TEMPLATE-PER-TYPE) read generatively: one canonical template per file
+  type under `usr/share/mios/templates/`, declared in `[templates.<type>]`,
+  scaffolded strictly via `mios new <type>` / `miosd scaffold`. Do not
+  hand-roll a file of a type that already has a template.
+- **OpenAI-format schemas, globally.** Every schema is an OpenAI format --
+  not only the `/v1` wire surface but schemas everywhere.
 
 ## Endpoint binding (Architectural Law 5)
 
