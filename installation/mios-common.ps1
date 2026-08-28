@@ -250,7 +250,7 @@ function Start-MiosMonitor {
 
     $mon = Resolve-MiosMonitorScript
     if (-not $mon) { return $null }
-    
+
     # Single-console, in-process execution: render live monitor directly without background windows
     $env:MIOS_MONITOR_RUNNING = '1'
     & python $mon
@@ -268,7 +268,7 @@ function Read-MiosSecret {
     if ($Prompt) {
         Write-Host "  $Prompt " -NoNewline -ForegroundColor White
     }
-    
+
     $secure = Read-Host -MaskInput -AsSecureString
     if ($AsSecureString) {
         return $secure
@@ -290,10 +290,10 @@ function Read-MiosSecret {
         }
         $dir = Split-Path $PersistPath -Parent
         if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        
+
         $encrypted = ConvertFrom-SecureString -SecureString $secure
         Set-Content -Path $PersistPath -Value $encrypted -Encoding UTF8
-        
+
         try {
             $acl = Get-Acl $PersistPath
             $acl.SetAccessRuleProtection($true, $false)

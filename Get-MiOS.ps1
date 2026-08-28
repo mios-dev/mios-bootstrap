@@ -183,11 +183,11 @@ if ($Action -ne 'Default') {
         $stageDir = if ($v) { Join-Path "$($v.DriveLetter):\" "MiOS\medicat_stage" } else { Join-Path $env:TEMP "medicat_stage" }
         $targetDir = Join-Path $stageDir "cat"
         Write-Host "    Staging directory: $targetDir" -ForegroundColor Cyan
-        
+
         # 3. Copy source files to staging directory
         New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
         Copy-Item -Path "$srcDir\*" -Destination $targetDir -Recurse -Force
-        
+
         $catScript = Join-Path $targetDir "MiOS-Cat.bat"
         Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Cat`" cmd.exe /k `"$catScript`""
         Write-Host "[+] Interactive MiOS-Cat launcher spawned from staged directory." -ForegroundColor Green
@@ -328,7 +328,6 @@ if (-not $env:MIOS_CACHE_BUSTED -and -not $env:MIOS_GETMIOS_RELAUNCHED) {
         # cached copy. Better to run something stale than nothing at all.
     }
 }
-
 
 $installModuleDir = Join-Path $PSScriptRoot 'automation\lib\MiOS.Install'
 if (Test-Path $installModuleDir) {
@@ -966,7 +965,6 @@ try { Stop-Transcript *> `$null } catch {}
 }
 
 Invoke-MiOSAgreementGate | Out-Null
-
 
 function Get-MiosPalette {
     function _hex {
@@ -1691,7 +1689,6 @@ function Install-MiOSTerminalProfile {
     $existingList += $miosProfileObj
     $existingList += $miosDevProfileObj
     $wtJson.profiles.list = [object[]]$existingList
-
 
     # Write back, then VERIFY by re-reading and parsing. ConvertTo-Json
     # has a long history of unwrapping single-element arrays to bare
@@ -3080,7 +3077,6 @@ if (`$true) {
         Write-Host (`$BL + (`$H * (`$WIDTH - 2)) + `$BR) -ForegroundColor Blue
     }
 
-
     if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
         `$_ompShell = if (`$PSVersionTable.PSEdition -eq 'Desktop') { 'powershell' } else { 'pwsh' }
         `$ompInit = if (`$miosOmp -and (Test-Path -LiteralPath `$miosOmp)) {
@@ -3094,7 +3090,6 @@ if (`$true) {
         }
     }
 }
-
 
 `$Script:MiosBootstrapRaw = '$($Script:MiosBootstrapRaw)'
 
@@ -3534,7 +3529,6 @@ public struct RECT { public int Left, Top, Right, Bottom; }
     }
     if ($hwnd -eq [IntPtr]::Zero) { return $false }
 
-
     $hwndTopmost = [IntPtr]::new(-1)
     for ($attempt = 0; $attempt -lt 3; $attempt++) {
         $rect = New-Object MiOS.Native.Win+RECT
@@ -3552,8 +3546,6 @@ public struct RECT { public int Left, Top, Right, Bottom; }
     }
     return $true
 }
-
-
 
 # -- Status helpers (used by Step-0 + Pass-2) ---------------------------------
 # Defined here -- BEFORE Pass-1's Step-0 M:\ block -- so the M:\ provisioning
@@ -3747,7 +3739,7 @@ function Ensure-Git {
         Write-Good "Git already installed ($((git --version) 2>&1))"
         return
     }
-    
+
     $_gitPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'git_pkg' -Default 'Git.Git')
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         Write-Info "Installing Git via winget ($_gitPkg) ..."
@@ -3761,7 +3753,7 @@ function Ensure-Git {
                 ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
         }
     }
-    
+
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-Info "winget install failed or unavailable. Attempting PortableGit direct download..."
         $_gitUrl = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'git_url' -Default 'https://api.github.com/repos/git-for-windows/git/releases/latest')
@@ -3775,16 +3767,16 @@ function Ensure-Git {
             Write-Info "Downloading PortableGit from $($asset.browser_download_url) ..."
             $webClient = New-Object System.Net.WebClient
             $webClient.DownloadFile($asset.browser_download_url, $sfx)
-            
+
             $_root = Join-Path $env:LOCALAPPDATA 'MiOS'
             $gitDir = Join-Path $_root 'PortableGit'
             if (Test-Path $gitDir) { Remove-Item $gitDir -Recurse -Force -ErrorAction SilentlyContinue }
             New-Item -ItemType Directory -Path $gitDir -Force | Out-Null
-            
+
             Write-Info "Extracting PortableGit to $gitDir ..."
             & $sfx "-o$gitDir" -y | Out-Null
             Remove-Item $sfx -Force -ErrorAction SilentlyContinue
-            
+
             $gitCmd = Join-Path $gitDir 'cmd'
             if (Test-Path (Join-Path $gitCmd 'git.exe')) {
                 $_u = [Environment]::GetEnvironmentVariable('Path','User')
@@ -4917,7 +4909,6 @@ try {
     try { $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size 80, 30 } catch {}
 }
 
-
 try { Clear-Host } catch {}
 Write-Host "MiOS Bootstrap (irm | iex web entry)" -ForegroundColor Cyan
 Write-Host "------------------------------------" -ForegroundColor Cyan
@@ -4931,8 +4922,6 @@ Write-Good "Prerequisites OK (git, podman)"
 # are defined ABOVE (before Pass-1) so Step 0 can call them BEFORE Pass-1
 # stages files. Their original definitions moved up; this header retained
 # for orientation.
-
-
 
 # Create the canonical Windows install root structure now that M:\
 # is guaranteed to exist. The reset above wiped M:\MiOS, so this
@@ -5092,7 +5081,6 @@ if ($_bootstrapExit -eq 0) {
         Write-Host "  [!] Install-MiOSServiceShortcuts failed: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
-
 
 if ($_bootstrapExit -eq 0) {
     try {

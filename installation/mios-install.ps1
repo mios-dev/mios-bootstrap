@@ -279,8 +279,6 @@ if ($plan.Kind -eq 'py') {
     exit $LASTEXITCODE
 }
 
-
-
 if ($Plan.Kind -eq 'bat') {
     Write-MiosLine 'info' "Launching MiOS-Cat.bat stage"
     & cmd.exe /c "`"$($plan.Exe)`"" @($plan.Args)

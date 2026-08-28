@@ -1327,7 +1327,7 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
         try {
             $text = Get-Content -Raw -Path $card -ErrorAction Stop
         } catch { continue }
-        
+
         # 1. Parse [ai] section
         $m = [regex]::Match($text, '(?ms)^\[ai\]\s*$(.*?)(?=^\[|\z)')
         if ($m.Success) {
@@ -1342,7 +1342,7 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
                 if ($hit.Success) { $defaults[$kv.Slot] = $hit.Groups[1].Value }
             }
         }
-        
+
         # 2. Parse [llamacpp] section
         $m = [regex]::Match($text, '(?ms)^\[llamacpp\]\s*$(.*?)(?=^\[|\z)')
         if ($m.Success) {
@@ -1351,7 +1351,7 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
             $hit = $rx.Match($body)
             if ($hit.Success) { $defaults['LlamacppBakeModels'] = $hit.Groups[1].Value }
         }
-        
+
         # 3. Parse [ai.vllm] section
         $m = [regex]::Match($text, '(?ms)^\[ai\.vllm\]\s*$(.*?)(?=^\[|\z)')
         if ($m.Success) {
@@ -2589,7 +2589,6 @@ function Invoke-MiosQuadletOverlay {
 
     Set-Step "Overlaying MiOS Quadlets + systemd units onto $DevDistro..."
 
-
     # Per the directive "M:\ IS git", mios.git is overlaid AT
     # $MiosRepoDir root, not at $MiosRepoDir\mios subdir.
     $miosRoot = $MiosRepoDir
@@ -2662,8 +2661,6 @@ if [[ -f "$SENTINEL" && "$SENTINEL" -nt "$SRC/Containerfile" ]]; then
 fi
 
 echo "[quadlet-overlay] making / a git working tree of mios.git ($SRC) ..."
-
-
 
 ORIGIN_URL="${MIOS_GIT_ORIGIN:-https://github.com/mios-dev/MiOS.git}"
 ORIGIN_BRANCH="${MIOS_GIT_BRANCH:-main}"
@@ -4802,7 +4799,6 @@ return
     Set-Content -Path $dashPath -Value $dashScript -Encoding UTF8
     Log-Ok "Windows mios-dash staged at $dashPath (delegates to profile Show-MiosDashboard for unified compact rendering)"
 
-
     $devResolveBlock = @"
 `$Global:MiosDevCandidates = @('$DevDistro', 'podman-$DevDistro', '$LegacyDevName', 'podman-$LegacyDevName')
 function Resolve-MiosDevDistro {
@@ -5634,7 +5630,6 @@ $endMark
         return
     }
 
-
     # Try programmatic Pin to Start. Works on Windows 10; no-op on
     # Windows 11 (Microsoft removed the "Pin to Start" verb in 21H2+).
     # Operators on Win11 see a hint to right-click -> Pin manually.
@@ -5698,7 +5693,7 @@ $endMark
             if (Test-Path $builtExe) {
                 Copy-Item -Path $builtExe -Destination $wallpaperd_exe -Force
                 Log-Ok "mios-wallpaperd compiled and staged: $wallpaperd_exe"
-                
+
                 # Register as a Windows Service
                 $svcName = 'MiOS-Wallpaper-Service'
                 if (-not (Get-Service -Name $svcName -ErrorAction SilentlyContinue)) {
@@ -6409,7 +6404,7 @@ function Invoke-GitFetchWithRetry {
             # Fallback to full fetch if depth=1 fails (e.g. on commit SHAs or tags)
             $exitCode = Invoke-NativeQuiet { git fetch origin $Ref }
             if ($exitCode -eq 0) { return 0 }
-            
+
             if ($retry -lt 3) {
                 Log-Warn "git fetch failed for ref $Ref (exit $exitCode). Retrying in 5 seconds ($retry/3)..."
                 Start-Sleep -Seconds 5
@@ -6462,7 +6457,7 @@ $miosRepo = $MiosRepoDir
             $null = Invoke-NativeQuiet { git init -q }
             $null = Invoke-NativeQuiet { git config --unset core.worktree }
             $null = Invoke-NativeQuiet { git remote add origin $MiosRepoUrl }
-            
+
             $fetchExit = Invoke-GitFetchWithRetry -RepoPath $MiosRepoDir -Ref $MiosRef
             if ($fetchExit -ne 0) {
                 throw "mios.git: git fetch from $MiosRepoUrl failed (exit $fetchExit) at $MiosRepoDir"
@@ -6646,7 +6641,6 @@ $miosRepo = $MiosRepoDir
         } catch {}
         New-BuilderDistro -HW $HW
     }
-
 
     Invoke-MiosQuadletOverlay
 
