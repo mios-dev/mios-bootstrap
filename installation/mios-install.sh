@@ -7,7 +7,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BUILD_MIOS_SH="${ROOT}/build-mios.sh"
 CAT_DIR="${ROOT}/cat"
 if [[ ! -d "$CAT_DIR" && -d "${ROOT}/../mios-bootstrap/cat" ]]; then
     CAT_DIR="$(cd "${ROOT}/../mios-bootstrap/cat" && pwd)"
@@ -155,7 +154,7 @@ resolve_mios_update_like() {
     local bin
     if bin="$(find_mios_bin mios-update)"; then :; else
         if (( DRY_RUN )); then bin="mios-update"; else
-            die "Mios-update not found on PATH or under /usr/bin"
+            die "mios-update not found on PATH or under /usr/bin (via ${via})"
         fi
     fi
     local args=()
@@ -404,7 +403,7 @@ resolve_target_prereqs "$TARGET"
 
 for _kv in "${ENV[@]:-}"; do
     [[ -z "$_kv" ]] && continue
-    export "$_kv"
+    export "${_kv?}"
 done
 
 log_phase "Launching: ${TARGET}${TYPE:+ (--type ${TYPE})}${STAGE:+ (--stage ${STAGE})}"
