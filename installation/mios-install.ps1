@@ -163,7 +163,7 @@ function Resolve-Target {
             $r.Exe=Join-Path $PSScriptRoot 'MiOS-Cat.bat'
             $r.Args=$Passthrough
             if ($Unattended) { $r.Env['NONINTERACTIVE']='1' }
-            $d = Get-MiosSsotValue -Section 'cat' -Key 'drivepath'
+            $d = Get-MiosSsotValue -Section 'field' -Key 'drivepath'
             if ($d) { $r.Drive = "$($d):" }
         }
         { $_ -in 'monitor','dashboard','applet','tui' } {
