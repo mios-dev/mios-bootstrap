@@ -104,7 +104,7 @@ function Ensure-MiosBootstrapRepo {
         [string]$TargetDir = 'C:\mios-bootstrap',
         [string]$RepoUrl = 'https://github.com/mios-dev/mios-bootstrap.git',
         [string]$ZipUrl = 'https://codeload.github.com/mios-dev/mios-bootstrap/zip/refs/heads/main',
-        [string]$SentinelFile = 'cat\autounattend\Build-MiOSXboxISO.ps1'
+        [string]$SentinelFile = 'field\autounattend\Build-MiOSXboxISO.ps1'
     )
     if (Get-Command Get-MiosTomlValue -ErrorAction SilentlyContinue) {
         # The clone URL lives in [urls].bootstrap_repo -- NOT [bootstrap].mios_repo,
@@ -157,7 +157,7 @@ if ($Action -ne 'Default') {
     if ($Action -eq 'BuildXboxISO') {
         Write-Host "[*] Action: BuildXboxISO. Invoking Build-MiOSXboxISO..." -ForegroundColor Cyan
         $repoRoot = Ensure-MiosBootstrapRepo
-        $buildScript = Join-Path $repoRoot "cat\autounattend\Build-MiOSXboxISO.ps1"
+        $buildScript = Join-Path $repoRoot "field\autounattend\Build-MiOSXboxISO.ps1"
         if (-not (Test-Path $buildScript)) {
             Write-Error "Build-MiOSXboxISO.ps1 not found after fetch -- check network / GitHub access."
             exit 1

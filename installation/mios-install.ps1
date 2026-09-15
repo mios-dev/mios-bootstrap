@@ -14,7 +14,7 @@ $script:Root    = Split-Path -Parent $PSScriptRoot           # repo root (instal
 $script:CatBat  = Join-Path $script:Root 'installation\MiOS-Cat.bat'
 if (-not (Test-Path $script:CatBat)) { $script:CatBat = Join-Path $script:Root 'cat\MiOS-Cat.bat' }
 $script:BuildPs = Join-Path $script:Root 'build-mios.ps1'
-$script:AutoDir = Join-Path $script:Root 'cat\autounattend'
+$script:AutoDir = Join-Path $script:Root 'field\autounattend'
 
 # ============================================================================
 #  Shared library

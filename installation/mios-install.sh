@@ -215,7 +215,7 @@ resolve_xbox() {
     (( ${#PASSTHROUGH[@]} )) && extra=" ${PASSTHROUGH[*]}"
     case "$TYPE" in
         iso)
-            script='cat\autounattend\Build-MiOSXboxISO.ps1'
+            script='field\autounattend\Build-MiOSXboxISO.ps1'
             args_str="-TomlPath '<ssot>'"
             case "$STAGE" in
                 fetch|service|iso|flash) args_str+=" -SkipPrereqs" ;;
@@ -223,7 +223,7 @@ resolve_xbox() {
             [[ -n "$STAGE" ]] && STAGE_NOTES+=("--stage ${STAGE}: only -SkipPrereqs is a REAL flag at this wrapper level; service/iso isolation needs New-MiOSISO.ps1 directly.")
             ;;
         vm)
-            script='cat\autounattend\Deploy-MiOSXbox.ps1'
+            script='field\autounattend\Deploy-MiOSXbox.ps1'
             args_str="-TomlPath '<ssot>' -VMName MiOS-XBOX-Test -LogDir C:\\MiOS\\logs"
             if [[ "$STAGE" == flash ]]; then
                 args_str+=" -SkipBuild"
@@ -234,7 +234,7 @@ resolve_xbox() {
             fi
             ;;
         provision)
-            script='cat\autounattend\Invoke-MiOSProvision.ps1'
+            script='field\autounattend\Invoke-MiOSProvision.ps1'
             args_str="-TomlPath '<ssot>'"
             (( UNATTENDED )) && args_str+=" -SkipBootstrap"
             ;;
