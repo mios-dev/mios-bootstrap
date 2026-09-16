@@ -7,7 +7,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BUILD_MIOS_SH="${ROOT}/build-mios.sh"
 CAT_DIR="${ROOT}/cat"
 if [[ ! -d "$CAT_DIR" && -d "${ROOT}/../mios-bootstrap/cat" ]]; then
     CAT_DIR="$(cd "${ROOT}/../mios-bootstrap/cat" && pwd)"
@@ -155,7 +154,7 @@ resolve_mios_update_like() {
     local bin
     if bin="$(find_mios_bin mios-update)"; then :; else
         if (( DRY_RUN )); then bin="mios-update"; else
-            die "Mios-update not found on PATH or under /usr/bin"
+            die "mios-update not found on PATH or under /usr/bin (via ${via})"
         fi
     fi
     local args=()
@@ -215,7 +214,7 @@ resolve_xbox() {
     (( ${#PASSTHROUGH[@]} )) && extra=" ${PASSTHROUGH[*]}"
     case "$TYPE" in
         iso)
-            script='cat\autounattend\Build-MiOSXboxISO.ps1'
+            script='field\autounattend\Build-MiOSXboxISO.ps1'
             args_str="-TomlPath '<ssot>'"
             case "$STAGE" in
                 fetch|service|iso|flash) args_str+=" -SkipPrereqs" ;;
@@ -223,7 +222,7 @@ resolve_xbox() {
             [[ -n "$STAGE" ]] && STAGE_NOTES+=("--stage ${STAGE}: only -SkipPrereqs is a REAL flag at this wrapper level; service/iso isolation needs New-MiOSISO.ps1 directly.")
             ;;
         vm)
-            script='cat\autounattend\Deploy-MiOSXbox.ps1'
+            script='field\autounattend\Deploy-MiOSXbox.ps1'
             args_str="-TomlPath '<ssot>' -VMName MiOS-XBOX-Test -LogDir C:\\MiOS\\logs"
             if [[ "$STAGE" == flash ]]; then
                 args_str+=" -SkipBuild"
@@ -234,7 +233,7 @@ resolve_xbox() {
             fi
             ;;
         provision)
-            script='cat\autounattend\Invoke-MiOSProvision.ps1'
+            script='field\autounattend\Invoke-MiOSProvision.ps1'
             args_str="-TomlPath '<ssot>'"
             (( UNATTENDED )) && args_str+=" -SkipBootstrap"
             ;;
@@ -404,7 +403,7 @@ resolve_target_prereqs "$TARGET"
 
 for _kv in "${ENV[@]:-}"; do
     [[ -z "$_kv" ]] && continue
-    export "$_kv"
+    export "${_kv?}"
 done
 
 log_phase "Launching: ${TARGET}${TYPE:+ (--type ${TYPE})}${STAGE:+ (--stage ${STAGE})}"

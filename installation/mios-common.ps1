@@ -171,7 +171,7 @@ function Ensure-MiosBootstrapRepo {
         [string]$TargetDir = 'C:\mios-bootstrap',
         [string]$RepoUrl = 'https://github.com/mios-dev/mios-bootstrap.git',
         [string]$ZipUrl = 'https://codeload.github.com/mios-dev/mios-bootstrap/zip/refs/heads/main',
-        [string]$SentinelFile = 'cat\autounattend\Build-MiOSXboxISO.ps1'
+        [string]$SentinelFile = 'field\autounattend\Build-MiOSXboxISO.ps1'
     )
     if (Get-Command Get-MiosTomlValue -ErrorAction SilentlyContinue) {
         $cfgRepo = Get-MiosTomlValue -Key 'bootstrap.mios_repo' -Default $RepoUrl

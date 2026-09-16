@@ -14,7 +14,7 @@ $script:Root    = Split-Path -Parent $PSScriptRoot           # repo root (instal
 $script:CatBat  = Join-Path $script:Root 'installation\MiOS-Cat.bat'
 if (-not (Test-Path $script:CatBat)) { $script:CatBat = Join-Path $script:Root 'cat\MiOS-Cat.bat' }
 $script:BuildPs = Join-Path $script:Root 'build-mios.ps1'
-$script:AutoDir = Join-Path $script:Root 'cat\autounattend'
+$script:AutoDir = Join-Path $script:Root 'field\autounattend'
 
 # ============================================================================
 #  Shared library
@@ -163,7 +163,7 @@ function Resolve-Target {
             $r.Exe=Join-Path $PSScriptRoot 'MiOS-Cat.bat'
             $r.Args=$Passthrough
             if ($Unattended) { $r.Env['NONINTERACTIVE']='1' }
-            $d = Get-MiosSsotValue -Section 'cat' -Key 'drivepath'
+            $d = Get-MiosSsotValue -Section 'field' -Key 'drivepath'
             if ($d) { $r.Drive = "$($d):" }
         }
         { $_ -in 'monitor','dashboard','applet','tui' } {

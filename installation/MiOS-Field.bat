@@ -802,27 +802,27 @@ goto :eof
 
 :resolve_xbox_builder
 :: Offline-first MiOS-Xbox builder resolution. Canonical relocated
-:: path is cat\autounattend\. Prefer the one-shot self-provisioning
+:: path is field\autounattend\. Prefer the one-shot self-provisioning
 :: wrapper (Build-MiOSXbox.ps1), else the DISM orchestrator
 :: (New-MiOSISO.ps1).
 set "xbox_builder="
 :: [cat].xbox_builder SSOT override (an absolute path) wins if set + present.
 if exist "%toml_path%" for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$v=(Get-Content '%toml_path%' | Select-String -Pattern '^\s*xbox_builder\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value } | Select-Object -First 1); if ($v -and (Test-Path $v)) { $v }"`) do set "xbox_builder=%%i"
 if defined xbox_builder if not "%xbox_builder%"=="" goto :eof
-if exist "%~dp0..\cat\autounattend\Build-MiOSXbox.ps1" (
-    set "xbox_builder=%~dp0..\cat\autounattend\Build-MiOSXbox.ps1"
+if exist "%~dp0..\field\autounattend\Build-MiOSXbox.ps1" (
+    set "xbox_builder=%~dp0..\field\autounattend\Build-MiOSXbox.ps1"
     goto :eof
 )
-if exist "%~dp0..\cat\autounattend\New-MiOSISO.ps1" (
-    set "xbox_builder=%~dp0..\cat\autounattend\New-MiOSISO.ps1"
+if exist "%~dp0..\field\autounattend\New-MiOSISO.ps1" (
+    set "xbox_builder=%~dp0..\field\autounattend\New-MiOSISO.ps1"
     goto :eof
 )
-if exist "C:\mios-bootstrap\cat\autounattend\Build-MiOSXbox.ps1" (
-    set "xbox_builder=C:\mios-bootstrap\cat\autounattend\Build-MiOSXbox.ps1"
+if exist "C:\mios-bootstrap\field\autounattend\Build-MiOSXbox.ps1" (
+    set "xbox_builder=C:\mios-bootstrap\field\autounattend\Build-MiOSXbox.ps1"
     goto :eof
 )
-if exist "C:\mios-bootstrap\cat\autounattend\New-MiOSISO.ps1" (
-    set "xbox_builder=C:\mios-bootstrap\cat\autounattend\New-MiOSISO.ps1"
+if exist "C:\mios-bootstrap\field\autounattend\New-MiOSISO.ps1" (
+    set "xbox_builder=C:\mios-bootstrap\field\autounattend\New-MiOSISO.ps1"
     goto :eof
 )
 goto :eof
@@ -847,12 +847,12 @@ timeout /t 2 /nobreak >nul
 :compile_xbox_iso
 echo.
 echo Compiling MiOS-Xbox Installer ISO on Localhost SSD...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\cat\autounattend\Render-MiosRunToml.ps1" -TomlPath "%toml_path%" -UupChannel "%uup_channel%" -BakeDrivers "%bake_drivers%" -GamingOptimize "%gaming_optimize%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\field\autounattend\Render-MiosRunToml.ps1" -TomlPath "%toml_path%" -UupChannel "%uup_channel%" -BakeDrivers "%bake_drivers%" -GamingOptimize "%gaming_optimize%"
 if errorlevel 1 ( echo [FATAL ERROR] Render-MiosRunToml failed! & exit /b 1 )
 
-set "xbox_builder_script=%~dp0..\cat\autounattend\Build-MiOSXboxISO.ps1"
-if not exist "%xbox_builder_script%" set "xbox_builder_script=%~dp0cat\autounattend\Build-MiOSXboxISO.ps1"
-if not exist "%xbox_builder_script%" set "xbox_builder_script=C:\mios-bootstrap\cat\autounattend\Build-MiOSXboxISO.ps1"
+set "xbox_builder_script=%~dp0..\field\autounattend\Build-MiOSXboxISO.ps1"
+if not exist "%xbox_builder_script%" set "xbox_builder_script=%~dp0field\autounattend\Build-MiOSXboxISO.ps1"
+if not exist "%xbox_builder_script%" set "xbox_builder_script=C:\mios-bootstrap\field\autounattend\Build-MiOSXboxISO.ps1"
 if not exist "%xbox_builder_script%" ( echo [FATAL ERROR] Build-MiOSXboxISO.ps1 script missing! & exit /b 1 )
 
 powershell.exe -ExecutionPolicy Bypass -File "%xbox_builder_script%" -TomlPath "%temp%\mios_run.toml" -OutIso "%aio_stage%\Live_Operating_Systems\MiOS-Xbox.iso" -WorkDir "%stage_dir%\isobuild_live" -SkipWsl -SkipPrereqs
