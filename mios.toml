@@ -1766,6 +1766,7 @@ list = [
   { ordinal = "52", name = "apply-boot-fixes", script = "52-apply-boot-fixes.sh", fatal = true, apply_class = "universal" },
   { ordinal = "53", name = "enable-log-copy-service", script = "53-enable-log-copy-service.sh", fatal = false, apply_class = "universal" },
   { ordinal = "54", name = "bake-coderun-sandbox", script = "54-bake-coderun-sandbox.sh", fatal = true, apply_class = "universal" },
+  { ordinal = "55", name = "native-build", script = "55-native-build.sh", fatal = true, apply_class = "universal" },
   { ordinal = "56", name = "fonts", script = "56-fonts.sh", fatal = true, apply_class = "universal" },
   { ordinal = "57", name = "gnome", script = "57-gnome.sh", fatal = false, apply_class = "universal" },
   { ordinal = "58", name = "gnome-remote-desktop", script = "58-gnome-remote-desktop.sh", fatal = false, apply_class = "universal" },
