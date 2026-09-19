@@ -1,0 +1,30 @@
+{
+  "name": "mios-bootstrap Installer Dev (Fedora 44)",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": { "FEDORA_VERSION": "44" }
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh"
+      },
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml",
+        "ms-vscode.powershell",
+        "timonwong.shellcheck",
+        "tamasfe.even-better-toml",
+        "eamodio.gitlens",
+        "usernamehw.errorlens",
+        "editorconfig.editorconfig"
+      ]
+    }
+  },
+  "remoteUser": "mios-dev",
+  "workspaceFolder": "/mios-bootstrap",
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/mios-bootstrap,type=bind,consistency=cached"
+  ]
+}
