@@ -3,7 +3,9 @@
   "build": {
     "dockerfile": "Dockerfile",
     "context": "..",
-    "args": { "FEDORA_VERSION": "44" }
+    "args": {
+      "FEDORA_VERSION": "44"
+    }
   },
   "customizations": {
     "vscode": {
@@ -26,5 +28,7 @@
   "workspaceFolder": "/mios-bootstrap",
   "mounts": [
     "source=${localWorkspaceFolder},target=/mios-bootstrap,type=bind,consistency=cached"
-  ]
+  ],
+  "postCreateCommand": "{ git clone --depth 1 https://github.com/mios-dev/-dev-loop.git \"$HOME/.dev-loop\" 2>/dev/null || git -C \"$HOME/.dev-loop\" pull --ff-only 2>/dev/null; } ; bash \"$HOME/.dev-loop/skills/dev-loop/scripts/env/setup-antigravity.sh\" --quiet || true",
+  "postStartCommand": "bash -c '. \"$HOME/.dev-loop/skills/dev-loop/scripts/env/agy-keyring.sh\" || true'"
 }
