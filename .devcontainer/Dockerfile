@@ -28,6 +28,11 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         util-linux openssl \
     && dnf clean all
 
+# Agent CLIs available by default: the Claude Code CLI system-wide here, and
+# the Antigravity CLI (agy) plus the dev-loop skill per-user at postCreate,
+# by delegating to -dev-loop's own setup script rather than duplicating it.
+RUN npm install -g @anthropic-ai/claude-code
+
 # Non-root user with passwordless sudo, matching mios.git's devcontainer so the
 # two repos present the same account. visudo -cf fails the build on a malformed
 # rule rather than shipping one that silently grants nothing.

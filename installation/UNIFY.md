@@ -132,3 +132,11 @@ than as drift someone forgot to fix: the entry points (`install.sh` redirects to
 redirects to `cat/MiOS-Cat.sh`, which exists only there), `mios-common.sh`
 (identical code, richer comments in bootstrap that are not yet harvested), each
 repo's agent instructions, and `.gitignore`.
+
+`.devcontainer/` belongs on that list too. Both repos have one and neither is a
+copy: each names its own workspace folder and image, and the toolchains differ
+on purpose — this repo carries the OS-lifecycle tools (`bootc`, `rpm-ostree`,
+`bootupd`) because it owns the image, while bootstrap carries only what its
+installers and TOML need. Mirroring them would force one repo to build the
+other's container. They share a spec — same pinned Fedora, same `mios-dev` at
+uid 1000, same agent toolchain — not the same bytes.
