@@ -22,6 +22,15 @@
         "usernamehw.errorlens",
         "editorconfig.editorconfig"
       ]
+    },
+    "codespaces": {
+      "repositories": {
+        "mios-dev/-dev-loop": {
+          "permissions": {
+            "contents": "read"
+          }
+        }
+      }
     }
   },
   "remoteUser": "mios-dev",
@@ -29,6 +38,11 @@
   "mounts": [
     "source=${localWorkspaceFolder},target=/mios-bootstrap,type=bind,consistency=cached"
   ],
-  "postCreateCommand": "{ git clone --depth 1 https://github.com/mios-dev/-dev-loop.git \"$HOME/.dev-loop\" 2>/dev/null || git -C \"$HOME/.dev-loop\" pull --ff-only 2>/dev/null; } ; bash \"$HOME/.dev-loop/skills/dev-loop/scripts/env/setup-antigravity.sh\" --quiet || true",
-  "postStartCommand": "bash -c '. \"$HOME/.dev-loop/skills/dev-loop/scripts/env/agy-keyring.sh\" || true'"
+  "postCreateCommand": "{ git clone --depth 1 https://github.com/mios-dev/-dev-loop.git \"$HOME/.dev-loop\" 2>/dev/null || git -C \"$HOME/.dev-loop\" pull --ff-only 2>/dev/null ; } ; if [ -r \"$HOME/.dev-loop/skills/dev-loop/scripts/env/setup-antigravity.sh\" ]; then bash \"$HOME/.dev-loop/skills/dev-loop/scripts/env/setup-antigravity.sh\" --quiet || echo 'WARNING: dev-loop setup failed; agy itself is baked into the image' ; else echo 'NOTE: -dev-loop not cloned (private repo); agy is baked into the image, but the /dev-loop skill is unavailable. Authorize -dev-loop when creating the codespace.' ; fi",
+  "postStartCommand": "bash -c '. \"$HOME/.dev-loop/skills/dev-loop/scripts/env/agy-keyring.sh\" || true'",
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "32gb"
+  }
 }

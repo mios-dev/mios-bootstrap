@@ -43,6 +43,25 @@ RUN useradd -m -u 1000 -s /usr/bin/zsh mios-dev \
 
 ENV MIOS_DEVCONTAINER=1
 
-WORKDIR /mios-bootstrap
+# The Antigravity CLI is baked into the image rather than left to postCreate.
+# Two reasons postCreate could not be trusted: a Codespaces prebuild does not
+# re-run postCreateCommand for codespaces created from that prebuild, and the
+# dev-loop checkout agy used to come from lives in a PRIVATE repo that a public
+# repo's codespace token cannot clone -- so it failed silently behind `|| true`.
+#
+# Guarded on purpose: a transient network failure must degrade to a warning,
+# never fail the image build. A failed devcontainer build drops Codespaces into
+# a recovery container with nothing installed at all, which is far worse.
 USER mios-dev
+RUN set -u; tmp="$(mktemp -d)"; \
+    if curl -fsSL --retry 4 --retry-delay 2 https://antigravity.google/cli/install.sh -o "$tmp/install.sh" \
+       && [ -s "$tmp/install.sh" ] && bash "$tmp/install.sh" >/dev/null 2>&1; then \
+         /home/mios-dev/.local/bin/agy --version; \
+    else \
+         echo "WARNING: Antigravity CLI not installed at build time" >&2; \
+    fi; \
+    rm -rf "$tmp"
+ENV PATH="/home/mios-dev/.local/bin:${PATH}"
+
+WORKDIR /mios-bootstrap
 CMD ["/usr/bin/zsh"]
