@@ -70,6 +70,8 @@
 !.gitignore
 !.github/
 !.github/**
+!.devcontainer/
+!.devcontainer/**
 
 # Agent identity dotfiles -- mirror MiOS so Cline/Cursor/Codex etc. resolve
 # the same canonical system prompt (/usr/share/mios/ai/system.md) regardless
