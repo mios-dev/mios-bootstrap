@@ -1062,6 +1062,7 @@ pkgs = [
 [packages.ai]
 pkgs = [
     "python3-openai",
+    "python3-httpx",    # mios_mcp imports it directly; never lean on python3-openai pulling it in
     "nodejs",           # required by claude-code + gemini-cli (npm-installed)
     "npm",
 ]
