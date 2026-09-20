@@ -16,7 +16,10 @@
     "vscode": {
       "settings": {
         "terminal.integrated.defaultProfile.linux": "zsh",
-        "python.defaultInterpreterPath": "/usr/bin/python3"
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "git.autoRepositoryDetection": "subFolders",
+        "git.repositoryScanMaxDepth": 5,
+        "git.openRepositoryInParentFolders": "always"
       },
       "extensions": [
         "rust-lang.rust-analyzer",
@@ -58,6 +61,7 @@
     }
   },
   "remoteUser": "mios-dev",
+  "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspaces,type=bind,consistency=cached",
   "workspaceFolder": "/workspaces/mios-bootstrap",
   "postCreateCommand": "bash -c 'if [ -f /workspaces/MiOS/.devcontainer/setup-devcontainer.sh ]; then bash /workspaces/MiOS/.devcontainer/setup-devcontainer.sh; else { git clone --depth 1 https://github.com/mios-dev/MiOS.git /workspaces/MiOS 2>/dev/null || true; } && bash /workspaces/MiOS/.devcontainer/setup-devcontainer.sh; fi'",
   "postStartCommand": "bash -c '. /workspaces/-dev-loop/skills/dev-loop/scripts/env/agy-keyring.sh 2>/dev/null || true'",
