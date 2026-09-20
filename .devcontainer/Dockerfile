@@ -1,57 +1,37 @@
-# AI-hint: Defines the Fedora-based development container for mios-bootstrap,
-# the interactive installer and user-editable overlay layer. Carries the shared
-# MiOS dev toolchain plus what this repo's shell installers, TOML SSOT and
-# smoke tests need to run and lint.
-# AI-related: mios-dev, install.sh, mios.toml
-#
-# This is the DEVELOPMENT container for editing this source tree. It is not the
-# OS image (that is mios.git's Containerfile) and not the MiOS-DEV builder VM.
-# Fedora is pinned rather than floating on :latest so the image name and the
-# container's contents cannot drift apart, per the repo's pinning convention
-# (newest stable upstream, bumped forward on next touch).
-ARG FEDORA_VERSION=44
-FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
+# AI-hint: Defines the unified Fedora development container for the MiOS ecosystem (MiOS, mios-bootstrap, and -dev-loop).
+# Floats on Fedora latest, providing full toolchain coverage: Rust, dual Python (3.14 + 3.11), Podman/Docker, and Agent CLIs.
+FROM registry.fedoraproject.org/fedora:latest
 
-# Shared MiOS dev toolchain (kept in step with the mios.git and -dev-loop
-# devcontainers), plus this repo's own needs: ShellCheck for the installers,
-# python3 for the TOML SSOT (tomllib is stdlib), podman/skopeo for the build
-# handoff, rsync for the overlay merge.
+# 1. Base OS Packages, Compilers, Runtimes, and Utilities
 RUN dnf install -y --setopt=install_weak_deps=False \
-        git jq yq rsync curl wget \
-        python3 python3-pip \
+        just \
+        podman podman-compose podman-docker buildah skopeo \
+        bootc bootupd ostree rpm-ostree \
+        jq yq rsync git tmux \
         nodejs npm \
+        python3 python3-pip python3-devel \
+        python3.11 python3.11-devel \
+        python3-rich python3-textual python3-psutil python3-pytest python3-jsonschema \
+        rust cargo clippy rustfmt gcc gcc-c++ make \
+        dbus-daemon dbus-tools gnome-keyring libsecret \
+        procps-ng util-linux shadow-utils authselect \
         sudo zsh \
-        ShellCheck \
-        podman skopeo \
         findutils grep sed gawk diffutils patch \
         ripgrep tar gzip unzip zip \
-        util-linux openssl \
+        openssl qemu-img attr \
+        ShellCheck \
     && dnf clean all
 
-# Agent CLIs available by default: the Claude Code CLI system-wide here, and
-# the Antigravity CLI (agy) plus the dev-loop skill per-user at postCreate,
-# by delegating to -dev-loop's own setup script rather than duplicating it.
-RUN npm install -g @anthropic-ai/claude-code
+# 2. Agent CLIs (System-wide node packages)
+RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli
 
-# Non-root user with passwordless sudo, matching mios.git's devcontainer so the
-# two repos present the same account. visudo -cf fails the build on a malformed
-# rule rather than shipping one that silently grants nothing.
+# 3. User Setup (mios-dev UID 1000, matching host bind mount and sudoers)
 RUN useradd -m -u 1000 -s /usr/bin/zsh mios-dev \
     && echo "mios-dev ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/mios-dev \
     && chmod 0440 /etc/sudoers.d/mios-dev \
     && visudo -cf /etc/sudoers.d/mios-dev
 
-ENV MIOS_DEVCONTAINER=1
-
-# The Antigravity CLI is baked into the image rather than left to postCreate.
-# Two reasons postCreate could not be trusted: a Codespaces prebuild does not
-# re-run postCreateCommand for codespaces created from that prebuild, and the
-# dev-loop checkout agy used to come from lives in a PRIVATE repo that a public
-# repo's codespace token cannot clone -- so it failed silently behind `|| true`.
-#
-# Guarded on purpose: a transient network failure must degrade to a warning,
-# never fail the image build. A failed devcontainer build drops Codespaces into
-# a recovery container with nothing installed at all, which is far worse.
+# 4. Antigravity CLI (baked into image with error-tolerant fallback)
 USER mios-dev
 RUN set -u; tmp="$(mktemp -d)"; \
     if curl -fsSL --retry 4 --retry-delay 2 https://antigravity.google/cli/install.sh -o "$tmp/install.sh" \
@@ -61,7 +41,9 @@ RUN set -u; tmp="$(mktemp -d)"; \
          echo "WARNING: Antigravity CLI not installed at build time" >&2; \
     fi; \
     rm -rf "$tmp"
-ENV PATH="/home/mios-dev/.local/bin:${PATH}"
 
-WORKDIR /mios-bootstrap
+ENV PATH="/home/mios-dev/.local/bin:${PATH}"
+ENV MIOS_DEVCONTAINER=1
+
+WORKDIR /workspaces/mios-bootstrap
 CMD ["/usr/bin/zsh"]

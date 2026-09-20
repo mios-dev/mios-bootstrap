@@ -1,18 +1,26 @@
 {
-  "name": "mios-bootstrap Installer Dev (Fedora 44)",
+  "name": "mios-bootstrap Installer Dev (Fedora latest)",
   "build": {
     "dockerfile": "Dockerfile",
-    "context": "..",
-    "args": {
-      "FEDORA_VERSION": "44"
+    "context": ".."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:latest": {
+      "username": "mios-dev",
+      "userUid": "1000",
+      "userGid": "1000",
+      "upgradePackages": false
     }
   },
   "customizations": {
     "vscode": {
       "settings": {
-        "terminal.integrated.defaultProfile.linux": "zsh"
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "python.defaultInterpreterPath": "/usr/bin/python3"
       },
       "extensions": [
+        "rust-lang.rust-analyzer",
+        "ms-python.python",
         "ms-azuretools.vscode-docker",
         "redhat.vscode-yaml",
         "ms-vscode.powershell",
@@ -25,21 +33,34 @@
     },
     "codespaces": {
       "repositories": {
+        "mios-dev/MiOS": {
+          "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "workflows": "write"
+          }
+        },
+        "mios-dev/mios-bootstrap": {
+          "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "workflows": "write"
+          }
+        },
         "mios-dev/-dev-loop": {
           "permissions": {
-            "contents": "read"
+            "contents": "write",
+            "pull_requests": "write",
+            "workflows": "write"
           }
         }
       }
     }
   },
   "remoteUser": "mios-dev",
-  "workspaceFolder": "/mios-bootstrap",
-  "mounts": [
-    "source=${localWorkspaceFolder},target=/mios-bootstrap,type=bind,consistency=cached"
-  ],
-  "postCreateCommand": "{ git clone --depth 1 https://github.com/mios-dev/-dev-loop.git \"$HOME/.dev-loop\" 2>/dev/null || git -C \"$HOME/.dev-loop\" pull --ff-only 2>/dev/null ; } ; if [ -r \"$HOME/.dev-loop/skills/dev-loop/scripts/env/setup-antigravity.sh\" ]; then bash \"$HOME/.dev-loop/skills/dev-loop/scripts/env/setup-antigravity.sh\" --quiet || echo 'WARNING: dev-loop setup failed; agy itself is baked into the image' ; else echo 'NOTE: -dev-loop not cloned (private repo); agy is baked into the image, but the /dev-loop skill is unavailable. Authorize -dev-loop when creating the codespace.' ; fi",
-  "postStartCommand": "bash -c '. \"$HOME/.dev-loop/skills/dev-loop/scripts/env/agy-keyring.sh\" || true'",
+  "workspaceFolder": "/workspaces/mios-bootstrap",
+  "postCreateCommand": "bash -c 'if [ -f /workspaces/MiOS/.devcontainer/setup-devcontainer.sh ]; then bash /workspaces/MiOS/.devcontainer/setup-devcontainer.sh; else { git clone --depth 1 https://github.com/mios-dev/MiOS.git /workspaces/MiOS 2>/dev/null || true; } && bash /workspaces/MiOS/.devcontainer/setup-devcontainer.sh; fi'",
+  "postStartCommand": "bash -c '. /workspaces/-dev-loop/skills/dev-loop/scripts/env/agy-keyring.sh 2>/dev/null || true'",
   "hostRequirements": {
     "cpus": 4,
     "memory": "16gb",
