@@ -1,4 +1,4 @@
-﻿# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver ...
+# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver ...
 # AI-doc: usr/share/doc/mios/manual/root.md
 
 param(
@@ -7401,55 +7401,44 @@ exit 0
     Start-Phase 7
     $MiosLlamacppBakeModels = $aiDefaults.LlamacppBakeModels
     $MiosVllmBakeModel       = $aiDefaults.VllmBakeModel
-    $envContent = @"
-MIOS_USER='$MiosUser'
-MIOS_HOSTNAME='$MiosHostname'
-MIOS_USER_PASSWORD_HASH='$MiosHash'
-MIOS_AI_MODEL='$MiosAiModel'
-MIOS_AI_EMBED_MODEL='$MiosAiEmbedModel'
-MIOS_LLAMACPP_BAKE_MODELS='$MiosLlamacppBakeModels'
-MIOS_VLLM_BAKE_MODEL='$MiosVllmBakeModel'
-"@.Trim()
-    $writeCmd  = "mkdir -p /etc/mios && cat > /etc/mios/install.env && chmod 0640 /etc/mios/install.env"
+    $identBash = @"
+mkdir -p /etc/mios
+touch /etc/mios/install.env
+if [ -n '$MiosHash' ]; then printf "MIOS_USER_PASSWORD_HASH='%s'\n" '$MiosHash' > /etc/mios/secrets.env; chmod 0600 /etc/mios/secrets.env; fi
+for p in "MIOS_USER=$MiosUser" "MIOS_HOSTNAME=$MiosHostname" "MIOS_AI_MODEL=$MiosAiModel" "MIOS_AI_EMBED_MODEL=$MiosAiEmbedModel" "MIOS_LLAMACPP_BAKE_MODELS=$MiosLlamacppBakeModels" "MIOS_VLLM_BAKE_MODEL=$MiosVllmBakeModel"; do
+    k="`${p%%=*}"; v="`${p#*=}"
+    grep -q "^`${k}=" /etc/mios/install.env && sed -i "s|^`${k}=.*|`${k}=`${v}|" /etc/mios/install.env || printf '%s=%s\n' "`$k" "`$v" >> /etc/mios/install.env
+done
+chmod 0640 /etc/mios/install.env
+"@
+    $identB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($identBash))
+    $runB64 = "printf '%s' '$identB64' | base64 -d | bash"
     $written = $false
 
     # Try wsl.exe (works when machine runs 'MiOS' after bootc switch).
-    # `*>$null` discards stdout AND stderr without funneling stderr to
-    # the success pipeline, so $ErrorActionPreference='Stop' can't trip
-    # on a chatty native-command stderr line. $LASTEXITCODE is set
-    # independently of stream redirection.
-    $envContent | & wsl.exe -d $BuilderDistro --user root --exec bash -c $writeCmd *>$null
+    & wsl.exe -d $BuilderDistro --user root --exec bash -c $runB64 *>$null
     if ($LASTEXITCODE -eq 0) { $written = $true }
 
-    # Try the dev-distro shell via Invoke-DistroSh (auto-picks
-    # wsl-direct post-rename, podman-machine-ssh pre-rename). Bakes
-    # the env content into the script as base64 so we don't need a
-    # second stdin channel (Invoke-DistroSh's stdin is already used
-    # for the base64-encoded script body).
+    # Try the dev-distro shell via Invoke-DistroSh.
     if (-not $written) {
-        $envB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($envContent))
-        $writeBaked = @"
-mkdir -p /etc/mios
-printf '%s' '$envB64' | base64 -d > /etc/mios/install.env
-chmod 0640 /etc/mios/install.env
-"@
-        Invoke-DistroSh -Bash $writeBaked -MachineName $BuilderDistro *>$null
+        Invoke-DistroSh -Bash $runB64 -MachineName $BuilderDistro *>$null
         if ($LASTEXITCODE -eq 0) { $written = $true }
     }
 
     # Fallback: write via privileged container that mounts the machine's host filesystem.
-    # Rootful machine-os exposes / to privileged containers via -v /:/host.
     if (-not $written) {
         Set-Step "Writing identity via privileged container..."
-        $envContent | & podman run --rm -i --privileged --security-opt label=disable `
+        $identHost = $identBash -replace '/etc/mios','/host/etc/mios'
+        $hostB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($identHost))
+        & podman run --rm -i --privileged --security-opt label=disable `
             -v /:/host:z `
             docker.io/library/alpine:latest `
-            sh -c "mkdir -p /host/etc/mios && cat > /host/etc/mios/install.env && chmod 0640 /host/etc/mios/install.env" `
+            sh -c "printf '%s' '$hostB64' | base64 -d | sh" `
             *>$null
         if ($LASTEXITCODE -eq 0) { $written = $true }
     }
 
-    if ($written) { Log-Ok "/etc/mios/install.env written" } `
+    if ($written) { Log-Ok "/etc/mios/install.env updated and secrets.env secured" } `
     else { Log-Warn "install.env write failed (non-fatal -- firstboot will use default identity; set MIOS_* vars manually)" }
     End-Phase 7
 
