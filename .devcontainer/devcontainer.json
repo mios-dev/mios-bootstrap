@@ -183,6 +183,13 @@
             "pull_requests": "write",
             "workflows": "write"
           }
+        },
+        "mios-dev/mios-micro": {
+          "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "workflows": "write"
+          }
         }
       }
     }
