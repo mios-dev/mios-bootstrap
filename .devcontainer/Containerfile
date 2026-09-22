@@ -1,16 +1,17 @@
 # AI-hint: Defines the unified Fedora development container for the MiOS ecosystem (MiOS, mios-bootstrap, and -dev-loop).
-# Floats on Fedora latest, providing full toolchain coverage: Rust, dual Python (3.14 + 3.11), Podman/Docker, and Agent CLIs.
+# Floats on Fedora latest, providing full toolchain coverage: Rust, dual Python (3.14 + 3.11), Podman, and agent CLIs.
 FROM registry.fedoraproject.org/fedora:latest
 
 # 1. Base OS Packages, Compilers, Runtimes, and Utilities
 RUN dnf install -y --setopt=install_weak_deps=False \
         just \
-        podman podman-compose podman-docker buildah skopeo \
+        podman podman-compose buildah skopeo \
         bootc bootupd ostree rpm-ostree \
-        jq yq rsync git tmux \
+        curl wget ca-certificates gh jq yq rsync git tmux \
         nodejs npm \
         python3 python3-pip python3-devel \
         python3.11 python3.11-devel \
+        ruby ruby-devel \
         python3-rich python3-textual python3-psutil python3-pytest python3-jsonschema \
         rust cargo clippy rustfmt gcc gcc-c++ make \
         dbus-daemon dbus-tools gnome-keyring libsecret \
@@ -23,7 +24,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
     && dnf clean all
 
 # 2. Agent CLIs (System-wide node packages)
-RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli
+RUN npm install -g @anthropic-ai/claude-code @github/copilot @google/gemini-cli
 
 # 3. User Setup (mios-dev UID 1000, matching host bind mount and sudoers)
 RUN useradd -m -u 1000 -s /usr/bin/zsh mios-dev \
