@@ -23,7 +23,6 @@
         "workbench.colorTheme": "Dark Modern",
         "workbench.experimental.modernUI": true,
         "window.titleBarStyle": "custom",
-        "window.customTitleBarVisibility": "never",
         "window.density.layout": "compact",
         "workbench.layoutControl.enabled": false,
         "workbench.activityBar.location": "top",
