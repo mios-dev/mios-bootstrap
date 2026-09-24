@@ -175,7 +175,12 @@
         "vscode_custom_css.imports": [
           "file:///usr/share/mios/themes/code-server-terminal.css"
         ],
-        "vscode_custom_css.policy": true
+        "vscode_custom_css.policy": true,
+        "remote.extensionKind": {
+          "be5invis.vscode-custom-css": [
+            "ui"
+          ]
+        }
       },
       "extensions": [
         "rust-lang.rust-analyzer",
