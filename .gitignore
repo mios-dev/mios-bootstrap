@@ -50,6 +50,7 @@
 !CLAUDE.md
 !GEMINI.md
 !system-prompt.md
+!AGENT-ARTIFACT-SYSTEM-PROMPT.md
 
 # Single canonical user-edit dotfile (the one users actually edit).
 # Every script in mios.git and mios-bootstrap.git resolves through this
