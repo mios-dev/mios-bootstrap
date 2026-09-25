@@ -145,6 +145,49 @@ The installer:
    uid ≥ 1000 home from `/etc/skel/.config/mios/`.
 5. **Phase-4** -- reboot prompt.
 
+### Hosted cloud dev session (Claude Code cloud environment)
+
+To work on this repo from a hosted cloud session: the VM is a fixed Ubuntu image, and MiOS's one dev image (`MiOS/.devcontainer/Containerfile`, the same one this repo's devcontainer builds) runs inside it, so the session matches the devcontainer. Create the environment once (claude.ai/code, the cloud icon above the message box, **Add cloud environment**), paste the script below into **Setup script**, add the variables, and tick it as the default. The platform runs the script, snapshots the disk, and every later session starts from that snapshot.
+
+**Setup script.** It clones the dev-loop plugin to `/opt/dev-loop` and hands off to its `cloud-fedora-setup.sh`. All the logic lives in that clone, so this text never needs editing, and it always exits 0 because a failing setup script fails every session:
+
+```bash
+#!/bin/bash
+# MiOS Fedora dev environment + the dev-loop plugin (/dev-loop:*) in every session.
+export FEDORA_DEVCONTAINER_REPO=https://github.com/mios-dev/MiOS
+export FEDORA_DEVCONTAINER_FILE=.devcontainer/Containerfile
+# dev-loop plugin checkout; loaded by CLAUDE_CODE_PLUGIN_DIRS=/opt/dev-loop
+if [ -d /opt/dev-loop/.git ]; then
+  git -C /opt/dev-loop pull -q --ff-only || true
+else
+  git clone -q --depth 1 https://github.com/mios-dev/-dev-loop /opt/dev-loop || true
+fi
+[ -f /opt/dev-loop/skills/dev-loop/scripts/env/cloud-fedora-setup.sh ] &&
+  bash /opt/dev-loop/skills/dev-loop/scripts/env/cloud-fedora-setup.sh
+exit 0
+```
+
+**Environment variables**, set in the same dialog:
+
+| Variable | Value | What it does |
+|---|---|---|
+| `FEDORA_DEVCONTAINER_REPO` | `https://github.com/mios-dev/MiOS` | Projection mode: the session's Fedora userspace is this repo's devcontainer, built unedited, so it is the one MiOS dev image. Unset, the script builds a generic Fedora image instead. |
+| `FEDORA_DEVCONTAINER_FILE` | `.devcontainer/Containerfile` | The Containerfile inside that repo. This is the default; setting it keeps the environment a complete record. |
+| `CLAUDE_CODE_PLUGIN_DIRS` | `/opt/dev-loop` | Loads the dev-loop plugin in every session, whatever repo it opens: the `/dev-loop:*` commands, hooks and agents. A cloud session loads plugins no other way. |
+
+Optional, same place:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `FEDORA_RUNTIME` | `auto` | `auto`, `podman` or `docker`. MiOS is Podman-native: `auto` takes podman when it is installed and Docker only where it is the sole runtime, which is this cloud VM. An explicit runtime that is missing logs an error and builds nothing. |
+| `FEDORA_SETUP_BUDGET_S` | `0` (never) | Defers the devcontainer lifecycle prebuild (`miosd`, the root overlay, `/opt/mios/bin`) once this many seconds of the setup have elapsed, so a slow run stays inside the platform's roughly 5-minute snapshot budget. A deferred prebuild is applied later, inside a session, with `bash /opt/dev-loop-fedora/cloud-fedora-setup.sh --lifecycle`. A full run measured 452 s; start with `240` if the environment cache stops building. |
+| `FEDORA_DEVCONTAINER_REF` | the repo's default branch | Branch or tag of the repo to clone. |
+| `FEDORA_EXEC_USER` | `root` | The user container commands run as. `mios-dev` matches the devcontainer's `remoteUser`. |
+| `FEDORA_PROVISION_HOST` | `1` | `0` skips provisioning the VM itself (`agy`, keyring, headless grants, dev-loop skill), which otherwise runs first. |
+| `FEDORA_REBUILD` | `0` | `1` forces an image rebuild even when one is cached. |
+
+What every session then has: `mios-dev <cmd>` and `fedora <cmd>` run inside the Fedora image at the same path as on the host; `agy`, `claude`, `gemini` and `copilot` on the host and in the image; the `/dev-loop:*` commands. Sign in to `agy` once per container: `bash /opt/dev-loop/skills/dev-loop/scripts/env/agy-login.sh` prints the URL, then the same command with `--code '<code>'` finishes. The script and every variable are owned by [-dev-loop](https://github.com/mios-dev/-dev-loop) (`skills/dev-loop/references/environment.md`); this copy is for the operator creating the environment.
+
 ## Offline / Air-Gapped and Proxy Support
 
 The MiOS bootstrap installer has built-in support for offline/air-gapped and proxied environments:
