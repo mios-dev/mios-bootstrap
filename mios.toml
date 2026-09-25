@@ -344,6 +344,8 @@ pxe_hub_api        = 8585    # matchbox gRPC/API on mios-pxe-hub (upstream defau
 ai_legacy        = 8640    # legacy AI endpoint
 field_live_chat  = 8642    # field live chat
 node             = 8650    # mios-node edge daemon
+whisper            = 8178     # mios-whisper: whisper.cpp streaming STT engine (audio band, index 0). Was a DEAD key: mios-whisper.container carried :-8178 with no SSOT row, so nothing could tune or collision-check it.
+piper              = 8179     # mios-piper: Piper/Kokoro streaming TTS engine (audio band, index 1). Was a DEAD key: mios-piper.container carried :-8179 with no SSOT row.
 
 # Files pairing a MIOS_PORT_* name with a literal that disagrees with this table.
 # SHRINK-ONLY (gate: check_port_fallbacks), and currently EMPTY -- a new entry
