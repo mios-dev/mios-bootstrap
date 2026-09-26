@@ -1,4 +1,4 @@
-﻿# AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
+# AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
 # AI-doc: usr/share/doc/mios/manual/root.md
 <#
 .SYNOPSIS
@@ -1112,7 +1112,7 @@ function Install-MiOSWindowsTerminal {
         Write-Host "      Install manually from the Microsoft Store." -ForegroundColor DarkGray
         return $false
     }
-    # TOML-first per AGENTS.md §3 -- winget ID resolves from
+    # TOML-first per AGENTS.md section 3 -- winget ID resolves from
     # mios.toml [bootstrap.prereqs].terminal_pkg so operators can pin to
     # WindowsTerminalPreview or a different distribution channel via mios.html.
     $_wtPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'terminal_pkg' -Default 'Microsoft.WindowsTerminal')
