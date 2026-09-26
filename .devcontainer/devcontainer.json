@@ -30,14 +30,12 @@
         "git.openRepositoryInParentFolders": "always",
         "workbench.colorTheme": "MiOS-Dev",
         "workbench.experimental.modernUI": true,
-        "window.titleBarStyle": "custom",
         "window.density.layout": "compact",
         "workbench.layoutControl.enabled": false,
         "workbench.activityBar.location": "top",
         "workbench.statusBar.visible": true,
         "workbench.secondarySideBar.defaultVisibility": "hidden",
         "workbench.panel.defaultLocation": "bottom",
-        "workbench.panel.alignment": "justify",
         "workbench.panel.opensMaximized": "always",
         "workbench.sideBar.location": "left",
         "workbench.editor.openSideBySideDirection": "down",
@@ -88,9 +86,7 @@
         "terminal.integrated.gpuAcceleration": "on",
         "breadcrumbs.enabled": true,
         "breadcrumbs.filePath": "last",
-        "window.zoomLevel": -0.5,
         "window.commandCenter": false,
-        "window.menuBarVisibility": "compact",
         "workbench.editor.tabActionLocation": "left",
         "workbench.editor.labelFormat": "short",
         "workbench.colorCustomizations": {
@@ -162,14 +158,6 @@
           "scrollbarSlider.activeBackground": "#00000000",
           "scrollbar.shadow": "#00000000"
         },
-        "docker.dockerPath": "podman",
-        "docker.environment": {
-          "DOCKER_HOST": "unix:///run/user/1000/podman/podman.sock"
-        },
-        "podman.socketPath": "unix:///run/user/1000/podman/podman.sock",
-        "podman.systemSocketPath": "unix:///run/podman/podman.sock",
-        "window.customTitleBarVisibility": "never",
-        "window.dialogStyle": "custom",
         "terminal.integrated.defaultLocation": "view",
         "terminal.integrated.tabs.showActions": "never",
         "terminal.integrated.tabs.showActiveTerminal": "never",
@@ -180,20 +168,20 @@
         "terminal.integrated.cursorWidth": 1,
         "terminal.integrated.shellIntegration.decorationsEnabled": "never",
         "terminal.integrated.shellIntegration.enabled": false,
-        "vscode_custom_css.imports": [
-          "file:///usr/share/mios/themes/code-server-terminal.css"
-        ],
-        "vscode_custom_css.policy": true,
         "remote.extensionKind": {
           "be5invis.vscode-custom-css": [
             "ui"
           ]
+        },
+        "containers.containerCommand": "podman",
+        "containers.environment": {
+          "DOCKER_HOST": "unix:///run/user/1000/podman/podman.sock"
         }
       },
       "extensions": [
         "rust-lang.rust-analyzer",
         "ms-python.python",
-        "redhat.vscode-podman",
+        "ms-azuretools.vscode-containers",
         "redhat.vscode-yaml",
         "ms-vscode.powershell",
         "timonwong.shellcheck",
