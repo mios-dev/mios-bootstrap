@@ -1,9 +1,9 @@
 ### Le travail sur ce script est actuellement en pause. Je travaille à temps plein comme technicien informatique et formateur, tout en reprenant mes études à l’université. Désolé.
 
 # Installeur Medicat
-![Logo](icon.png)
+![Logo](../icon.png)
 
-> À lire en: [![Anglais](https://img.shields.io/badge/Anglais-blue)](README.md) [![Espagnol](https://img.shields.io/badge/Espagnol-blue)](README.ES.md) [![Turque](https://img.shields.io/badge/Turque-blue)](README.TR.md)  
+> À lire en: [![Anglais](https://img.shields.io/badge/Anglais-blue)](../README.md) [![Espagnol](https://img.shields.io/badge/Espagnol-blue)](README.ES.md) [![Turque](https://img.shields.io/badge/Turque-blue)](README.TR.md)  
 > Traduction française par [@EDM115](https://github.com/EDM115) & [@Ludo-code](https://github.com/Ludo-code)
 
 # [Visiter le site Medicat](https://medicatusb.com/)
