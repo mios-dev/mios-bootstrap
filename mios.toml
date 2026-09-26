@@ -1622,6 +1622,14 @@ branding.living_wallpaper    = "true"
 #   drivepath      : target USB drive letter, no colon
 #   medicatver     : MediCat recovery-payload version (filename + cache path)
 #   cache_path     : absolute path to the cached MediCat 7z archive
+#   medicat_sha1 / medicat_md5 : upstream-published hashes of MediCat.USB.v<medicatver>.7z,
+#                    checked by installation/MiOS-Field.bat after download (SHA1 preferred,
+#                    MD5 if SHA1 is empty; both empty -> check skipped). Update them with
+#                    medicatver. Source for v21.12: the MediCat download page,
+#                    https://medicatusb.com/#downloads (repo github.com/mon5termatt/medicat-website,
+#                    src/components/home/downloads.astro @ cd6f924); the MD5 matches upstream
+#                    github.com/mon5termatt/medicat_installer src/downloads.h + download/cdn.bat
+#                    @ d588fd3, whose archive size (22994783619) matches MiOS-Field.bat's size gate.
 #   ventoy_version : "latest" -> resolve newest Ventoy upstream at build/runtime; MiOS
 #                    never hand-pins a fallback (SBOM records the resolved version). ADR-0003
 #   xbox_builder   : PowerShell script that builds the MiOS-Xbox ISO ('' -> field/autounattend/Build-MiOSXbox.ps1)
@@ -1639,6 +1647,8 @@ build_xbox        = "Enabled"
 gaming_optimize   = "Enabled"
 medicatver        = "21.12"
 cache_path        = "M:\\MediCat.USB.v21.12.7z"
+medicat_sha1      = "2cbf5f337849a11084124a79a1b8d7e77eaca7d5"
+medicat_md5       = "db50f96a5c7b5ec6dc9ed77ea29fffb0"
 ventoy_version    = "latest"
 xbox_builder      = ""
 build_driver      = ""
