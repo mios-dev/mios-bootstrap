@@ -163,7 +163,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/mios-dev/mios-boots
 | `mios.toml` | This repo's reference `mios.toml`. |
 | `system-prompt.md` | Host-layer prompt redirector. |
 | `identity.env.example` | Operator identity template. |
-| `image-versions.yml` | Pinned upstream image versions. |
+| `image-versions.yml` | Not here: pinned upstream image digests live in mios.git (Renovate-managed, next to the Containerfile). |
 | `llms.txt` | LLM ingest index. |
 
 ---
