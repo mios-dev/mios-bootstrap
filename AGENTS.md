@@ -57,10 +57,14 @@ A MiOS-Metal (formerly Mini) Blade is *bare metal*: it owns the NICs, radios, TP
 * **Version:** see `VERSION` (top-level).
 * **Owns:** AI files (`usr/share/mios/ai/`), knowledge graphs, user
   profile templates, installer scripts (`Get-MiOS.ps1`,
-  `bootstrap.{sh,ps1}`, `install.{sh,ps1}`, `build-mios.{sh,ps1}`,
-  `seed-merge.{sh,ps1}`).
+  `bootstrap.{sh,ps1}`, `install.{sh,ps1}`, `build-mios.sh`,
+  `seed-merge.{sh,ps1}`). `build-mios.ps1`, `Get-MiOS.ps1` and the shared
+  `installation/` scripts are byte mirrors of `mios.git`'s copies, which win
+  (mios.git `mios.toml [bootstrap.sync]`).
 * **Does NOT own:** `Containerfile`, FHS system overlay, systemd units,
-  Quadlet sidecars, kernel args, tmpfiles, sysusers — those live in
+  Quadlet sidecars, kernel args, tmpfiles, sysusers, the per-user
+  `etc/skel/.config/{mios,aichat}/` templates, `etc/mios/ai/config.json`,
+  and the root agent files baked into the image — those live in
   `mios.git`. **Never double-track paths across the two repos.**
 
 ## 2. The three project-wide laws (this repo's slice)

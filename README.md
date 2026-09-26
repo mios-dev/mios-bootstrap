@@ -23,19 +23,19 @@ end: **bootstrap (this repo) → image build (`mios.git`) → bootc lifecycle
 on the host.** Nothing here owns runtime system files — it owns the *path
 in*.
 
-**Version:** v0.2.4
+**Version:** v0.3.0
 **System repo:** <https://github.com/mios-dev/mios>
 
 ## Contents
 
 - `install.sh` -- interactive Phase-0..4 orchestrator. Prompts for Linux
   username, hostname, password, SSH key, GitHub PAT, and image tag --
-  everything defaults to `mios` until the user overrides.
+  everything defaults to `user` until the user overrides.
 - `etc/mios/profile.toml` -- user-editable profile (TOML) that overlays
   the vendor defaults shipped by `mios.git` at
   `/usr/share/mios/profile.toml`.
-- `etc/skel/.config/mios/{profile.toml,system-prompt.md}` -- per-user
-  templates seeded into every Linux user's home (uid ≥ 1000) by
+- `etc/skel/.config/mios/{profile.toml,system-prompt.md}` (owned and
+  shipped by `mios.git`, not this repo) -- per-user templates seeded into every Linux user's home (uid ≥ 1000) by
   `install.sh:seed_user_skel_for_all_accounts` and by `useradd -m` for
   future users.
 - `system-prompt.md` -- host AI prompt redirector. Bootstrap deploys this

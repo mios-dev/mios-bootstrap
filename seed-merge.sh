@@ -15,18 +15,21 @@
 #
 # Day-0 builds from any platform produce an identical OCI image with:
 #   - mios.git's factory FHS overlay   (etc/, usr/, var/, automation/, ...)
-#   - mios-bootstrap's user/AI overlay (etc/skel/, etc/mios/, usr/share/mios/ai/)
-#   - bootstrap's root-level files     (mios.toml, CLAUDE.md, AGENTS.md,
-#                                       GEMINI.md, usr/share/doc/mios-bootstrap/concepts/ai-architecture.md, .cursorrules, ...)
-# baked in. Every deploy shape (raw, vhdx, qcow2, ISO, WSL2 distro,
+#   - mios-bootstrap's user/AI overlay (etc/mios/, usr/share/mios/ai/, ...)
+#   - bootstrap's root-level entry points (mios.toml, install.{sh,ps1},
+#                                       bootstrap.{sh,ps1}, build-mios.sh, ...)
+# baked in. The root agent files (CLAUDE.md, AGENTS.md, GEMINI.md,
+# .cursorrules, system-prompt.md, llms.txt) are NOT overlaid: the image
+# carries mios.git's, the same ones the CI image ships (Law 15, one owner
+# per file). Bootstrap's copies describe this repo, not the deployed OS. Every deploy shape (raw, vhdx, qcow2, ISO, WSL2 distro,
 # Podman-WSL OCI host) lands the same content because they're produced
 # by bootc-image-builder from the same OCI image.
 #
 # Idempotent: re-running on an already-merged tree produces no diff.
-# Non-destructive: bootstrap files OVERLAY onto mios.git -- bootstrap
-# wins when both repos own the same path (which is correct: bootstrap
-# is the user/AI layer that bootstraps configure, mios.git is the
-# read-only factory layer).
+# Non-destructive: bootstrap files OVERLAY onto mios.git. Each path has
+# one owner (Law 15), so a path both repos track is either a byte mirror
+# of mios.git's (mios.git mios.toml [bootstrap.sync]) or absent from the
+# overlay below; the overlay never replaces a mios.git-owned file.
 #
 # Usage:
 #   seed-merge.sh <path-to-mios.git> <path-to-mios-bootstrap.git>
@@ -61,14 +64,11 @@ done
 # canonical user-edit dotfile that live at / on the deployed system.
 # After merge, mios.git's checkout has these at its root, and the
 # Containerfile picks them up via the new /ctx/rootfiles staging.
+# Agent files and build-mios.ps1 are mios.git's (Law 15) and stay out.
 ROOT_FILES=(
     mios.toml
-    CLAUDE.md AGENTS.md GEMINI.md
-    .cursorrules
-    system-prompt.md
-    llms.txt
     bootstrap.sh bootstrap.ps1 install.sh install.ps1
-    Get-MiOS.ps1 build-mios.sh build-mios.ps1
+    Get-MiOS.ps1 build-mios.sh
 )
 for file in "${ROOT_FILES[@]}"; do
     if [[ -f "${BOOT_DIR}/${file}" ]]; then

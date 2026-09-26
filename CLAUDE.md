@@ -171,16 +171,16 @@ AI files owned by this repo:
 | `usr/share/mios/ai/models.json` | OpenAI `/v1/models` catalog |
 | `usr/share/mios/ai/mcp.json` | MCP server registry |
 | `usr/share/mios/knowledge/` | RAG knowledge graphs |
-| `etc/mios/ai/config.json` | Inference config (base_url, models) |
-| `etc/skel/.config/mios/system-prompt.md` | Per-user prompt template (seeded on first login) |
 | `/var/lib/mios/ai/memory/` | Episodic journal (JSONL) — runtime, not committed |
 | `/var/lib/mios/ai/scratch/` | Transient working dir — runtime, not committed |
 
 Agent state (memory, sessions, tool calls, skills, the `knowledge` table of finished Q+A with vector recall) lives in the unified **PostgreSQL + pgvector** datastore (`mios-pgvector` on `:5432`, defined in `mios.git`); `nomic-embed-text` served by `mios-llm-light` provides the recall embeddings. This repo does not own that container — it ships the prompts and manifests the agents read.
 
-## User-space templates (`etc/skel/`)
+## User-space templates (`etc/skel/`, owned by `mios.git`)
 
-Seeded into every uid ≥ 1000 home by Phase-3 (`seed_user_skel_for_all_accounts`):
+These ship in the image from `mios.git`, which owns them (Law 15); this repo
+carries no copy, and neither does `etc/mios/ai/config.json` (generated in
+`mios.git` from `[ai]` + `[ports]`). Seeded into every uid ≥ 1000 home by Phase-3 (`seed_user_skel_for_all_accounts`):
 
 * `~/.config/mios/profile.toml` — per-user TOML override template
 * `~/.config/mios/system-prompt.md` — per-user AI prompt template

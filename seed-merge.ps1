@@ -18,9 +18,12 @@
     host) lands the same content because they're produced by
     bootc-image-builder from the same OCI image.
 
-    Idempotent + non-destructive: bootstrap files OVERLAY onto mios.git
-    (bootstrap wins when both own the same path). Re-running produces
-    no diff.
+    Idempotent + non-destructive: bootstrap files OVERLAY onto mios.git.
+    Each path has one owner (Law 15): a path both repos track is a byte
+    mirror of mios.git's, or it is left out of the overlay -- the root
+    agent files (CLAUDE.md, AGENTS.md, GEMINI.md, .cursorrules,
+    system-prompt.md, llms.txt) and build-mios.ps1 stay mios.git's.
+    Re-running produces no diff.
 
 .PARAMETER MiosDir
     Path to the mios.git checkout. Mutated in place; pass a copy if you
@@ -64,14 +67,11 @@ foreach ($dir in @("etc", "usr", "var", "profile")) {
 
 # 2. Root-level files. User-facing entry points + the canonical
 # user-edit dotfile that live at / on the deployed system.
+# Agent files and build-mios.ps1 are mios.git's (Law 15) and stay out.
 $rootFiles = @(
     "mios.toml",
-    "CLAUDE.md", "AGENTS.md", "GEMINI.md",
-    ".cursorrules",
-    "system-prompt.md",
-    "llms.txt",
     "bootstrap.sh", "bootstrap.ps1", "install.sh", "install.ps1",
-    "Get-MiOS.ps1", "build-mios.sh", "build-mios.ps1"
+    "Get-MiOS.ps1", "build-mios.sh"
 )
 foreach ($file in $rootFiles) {
     $src = Join-Path $BootstrapDir $file
@@ -84,7 +84,7 @@ foreach ($file in $rootFiles) {
 # runtime resolver (tools/lib/userenv.sh) finds it without needing
 # a bootstrap-side install step. Both vendor layer and host-local
 # layer get the same content baked in; firstboot writes a per-user
-# copy from /etc/skel/.config/mios/mios.toml (also bootstrap-supplied).
+# copy from /etc/skel/.config/mios/mios.toml (shipped by mios.git).
 $miosToml = Join-Path $BootstrapDir "mios.toml"
 if (Test-Path $miosToml) {
     $staged = Join-Path $MiosDir "etc\mios\mios.toml"
