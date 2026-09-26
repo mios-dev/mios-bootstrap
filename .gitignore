@@ -70,6 +70,9 @@
 !.gitignore
 !.github/
 !.github/**
+!.claude/
+!.claude/**
+.claude/settings.local.json
 !.devcontainer/
 !.devcontainer/**
 
