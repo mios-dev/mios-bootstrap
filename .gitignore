@@ -119,3 +119,16 @@
 **/*.pyc
 **/.DS_Store
 **/Thumbs.db
+
+# field/ -- MiOS-Field runtime binaries and downloaded artifacts (fetched on
+# demand; do not track). These replace the old cat/ rules and must stay BELOW
+# the `!field/**` allow above, or that allow re-includes them. field/bin/ is
+# written as `field/bin/*`, not `field/bin/`: git cannot re-include a file
+# whose parent directory is excluded, and the vendored field/bin/7z.dll is
+# tracked on purpose. *.7z (and *.zip, *.tar.gz, *.torrent) are already
+# ignored at any depth by field/.gitignore, so there is no field/*.7z line.
+field/bin/*
+!field/bin/7z.dll
+field/Ventoy2Disk/
+field/download/
+field/*.iso
