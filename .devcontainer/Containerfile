@@ -1,0 +1,102 @@
+# This file is the one MiOS dev image. It is mirrored byte-identical into
+# mios-bootstrap and -dev-loop (.devcontainer/Containerfile) and gated; edit it
+# HERE only. Gates: mios.toml [bootstrap.sync].mirror_files through
+# tools/sync-bootstrap.py --check (Law 15) for mios-bootstrap, and
+# tests/test_devcontainer_mirror.py in -dev-loop.
+#
+# The same bytes build from ANY repo root. The build context is consulted once:
+# when it is a MiOS checkout (usr/share/mios/mios.toml, automation/lib/packages.sh
+# and .devcontainer/fetch-installer.sh present) the SSOT is staged from it;
+# otherwise MiOS is shallow-cloned at MIOS_REF and staged from the clone. Every
+# later step reads the staged copy, so the mios-bootstrap and -dev-loop
+# devcontainers, a Codespaces prebuild and the hosted cloud-session projection
+# produce the same image as MiOS's own devcontainer, with no sibling checkout
+# and no initializeCommand -- the same image when that checkout is at MIOS_REF:
+# a MiOS branch's own devcontainer builds from the branch while the mirrors
+# build main, so the two can differ until the branch merges. The staged copy is
+# removed before the image is done: the live source of a running devcontainer
+# is /workspaces/MiOS.
+#
+# The dnf package set is NOT listed here: it is [packages.devcontainer] in
+# usr/share/mios/mios.toml, resolved by the canonical automation/lib/packages.sh.
+FROM registry.fedoraproject.org/fedora:44
+
+# Where the SSOT comes from when the build context is not a MiOS checkout.
+ARG MIOS_REPO=https://github.com/mios-dev/MiOS.git
+ARG MIOS_REF=main
+
+# Stage the SSOT surfaces this image reads. BuildKit/buildah bind mount of the
+# build context: only the files listed here reach a layer, and a required one
+# that is missing fails the build at this step instead of later and vaguer.
+RUN --mount=type=bind,source=.,target=/ctx,ro \
+    set -euo pipefail; \
+    stage=/usr/src/mios-ssot; src=/ctx; \
+    if [ -f /ctx/usr/share/mios/mios.toml ] && [ -f /ctx/automation/lib/packages.sh ] \
+       && [ -f /ctx/.devcontainer/fetch-installer.sh ]; then \
+        echo "[devcontainer] SSOT: the build context is a MiOS checkout"; \
+    else \
+        echo "[devcontainer] SSOT: the build context is not a MiOS checkout; cloning ${MIOS_REPO} (${MIOS_REF})"; \
+        dnf install -y --setopt=install_weak_deps=False git-core; \
+        dnf clean all; \
+        src=/tmp/mios-src; \
+        git clone --depth 1 --branch "${MIOS_REF}" "${MIOS_REPO}" "$src" \
+            || { echo "[devcontainer] ERROR: clone of ${MIOS_REPO} (${MIOS_REF}) failed" >&2; exit 1; }; \
+    fi; \
+    install -d -m 0755 "$stage"; \
+    for f in usr/share/mios/mios.toml automation/lib usr/lib/mios/agent-pipe/requirements.txt \
+             .devcontainer/install-root-overlay.sh .devcontainer/mios-agent-pipe-dev \
+             .devcontainer/fetch-installer.sh; do \
+        [ -e "$src/$f" ] || { echo "[devcontainer] ERROR: $f is missing from the MiOS source" >&2; exit 1; }; \
+        install -d -m 0755 "$stage/$(dirname "$f")"; cp -a "$src/$f" "$stage/$f"; \
+    done; \
+    for f in VERSION tools/lib/userenv.sh usr/lib/mios/log.sh; do \
+        [ -f "$src/$f" ] || continue; \
+        install -d -m 0755 "$stage/$(dirname "$f")"; cp -a "$src/$f" "$stage/$f"; \
+    done; \
+    rm -rf /tmp/mios-src
+
+# get_packages_strict fails the build on an empty or missing section rather
+# than installing nothing.
+RUN set -euo pipefail; \
+    export MIOS_TOML=/usr/src/mios-ssot/usr/share/mios/mios.toml; \
+    . /usr/src/mios-ssot/automation/lib/packages.sh; \
+    pkgs="$(get_packages_strict devcontainer)"; \
+    dnf install -y --setopt=install_weak_deps=False $pkgs; \
+    dnf clean all
+
+RUN npm install -g @anthropic-ai/claude-code @github/copilot @google/gemini-cli
+
+RUN install -d -m 0755 /usr/lib/mios/agents \
+    && python3.11 -m venv /usr/lib/mios/agents/.venv \
+    && /usr/lib/mios/agents/.venv/bin/pip install --no-cache-dir \
+         -r /usr/src/mios-ssot/usr/lib/mios/agent-pipe/requirements.txt
+
+RUN useradd -m -u 1000 -s /usr/bin/zsh mios-dev \
+    && echo "mios-dev ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/mios-dev \
+    && chmod 0440 /etc/sudoers.d/mios-dev \
+    && visudo -cf /etc/sudoers.d/mios-dev
+
+# The helpers come from the staged source, so they are the same files whichever
+# way the SSOT arrived. The staged copy is dropped here, after its last reader.
+RUN install -m 0755 /usr/src/mios-ssot/.devcontainer/install-root-overlay.sh /usr/local/bin/mios-root-overlay \
+    && install -m 0755 /usr/src/mios-ssot/.devcontainer/mios-agent-pipe-dev /usr/local/bin/mios-agent-pipe-dev \
+    && install -m 0755 /usr/src/mios-ssot/.devcontainer/fetch-installer.sh /usr/local/bin/mios-fetch-installer \
+    && rm -rf /usr/src/mios-ssot
+
+# The Antigravity CLI is part of the environment, so a failed install fails the
+# build instead of shipping an image that silently lacks it. The fetch helper
+# decodes the CDN's unsolicited gzip and refuses a non-script payload.
+USER mios-dev
+RUN set -eu; tmp="$(mktemp -d)"; \
+    mios-fetch-installer https://antigravity.google/cli/install.sh "$tmp/install.sh"; \
+    bash "$tmp/install.sh" >/dev/null; \
+    /home/mios-dev/.local/bin/agy --version; \
+    rm -rf "$tmp"
+
+ENV PATH="/home/mios-dev/.local/bin:${PATH}"
+ENV MIOS_DEVCONTAINER=1
+ENV MIOS_VERSION=0.3.0
+ENV MIOS_AGENT_PIPE_PYTHON=/usr/lib/mios/agents/.venv/bin/python
+
+WORKDIR /workspaces/MiOS
+CMD ["/usr/bin/zsh"]
