@@ -115,21 +115,8 @@
 !installation/
 !installation/**
 
-# cat/ -- MiOS-Cat unified installer entrypoint
-!cat/
-!cat/**
-
 # Re-ignore noise
 **/__pycache__/
 **/*.pyc
 **/.DS_Store
 **/Thumbs.db
-
-# MiOS-Cat runtime binaries / downloaded artifacts (fetch-on-demand; do not track)
-cat/bin/
-cat/Ventoy2Disk/
-cat/download/
-cat/*.7z
-cat/*.iso
-
-

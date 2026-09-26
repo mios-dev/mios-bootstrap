@@ -7,9 +7,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$catPath = Join-Path $PSScriptRoot "cat\MiOS-Cat.ps1"
+$catPath = Join-Path $PSScriptRoot "field\MiOS-Cat.ps1"
 if (-not (Test-Path $catPath)) {
-    $url = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/cat/MiOS-Cat.ps1"
+    $url = "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/field/MiOS-Cat.ps1"
     Invoke-RestMethod $url | Invoke-Expression
 }
 

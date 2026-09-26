@@ -3,13 +3,13 @@ title MiOS-Field Dedicated USB Installer
 cd /d %~dp0
 set "maindir=%CD%"
 
-:: Resource assets (Ventoy config+theme, autorun, fonts, CdUsb, icon) live under <repo>\cat\resources
+:: Resource assets (Ventoy config+theme, autorun, fonts, CdUsb, icon) live under <repo>\field\resources
 :: -- NOT under the launcher dir. maindir is the launcher dir (installation\), so %maindir%\resources
 :: pointed at installation\resources\ which DOES NOT EXIST: the flash printed "File not found - ventoy"
 :: / "File not found - theme" and deployed an EMPTY \ventoy\ (no menu, no injection, no branding) --
 :: the exact reason a flashed stick booted as a bare Ventoy. Resolve the REAL resources root relative
 :: to THIS script (CWD-independent), with fallbacks for alternate layouts. (flash-log B6 fix.)
-set "res_dir=%~dp0..\cat\resources"
+set "res_dir=%~dp0..\field\resources"
 if not exist "%res_dir%\ventoy\ventoy.json" set "res_dir=%maindir%\resources"
 if not exist "%res_dir%\ventoy\ventoy.json" set "res_dir=%~dp0resources"
 
@@ -32,7 +32,7 @@ if %errorlevel% neq 0 (
 )
 call :ensure_live_monitor
 :: Resolve dynamic configuration from mios.toml (SSOT).
-:: The launcher lives at <repo>\cat\, so the repo-local SSOT (which also travels
+:: The launcher lives at <repo>\field\, so the repo-local SSOT (which also travels
 :: with the MiOS-Repo USB) is one level up; fall back to the canonical MiOS SSOT
 :: on a MiOS-equipped host. (Future [cat] SSOT block -> T-258.)
 set "toml_path=%~dp0..\mios.toml"
@@ -561,8 +561,8 @@ copy "%res_dir%\autorun.sh" "%drivepath%:\autorun9" /Y >nul
 copy "%res_dir%\CdUsb.Y" "%drivepath%:\CdUsb.Y" /Y >nul
 :: SSOT: project mios.toml [cat.sysrescue] onto the deployed SystemRescue boot config
 :: (rootpass + nofirewall = reliable, non-destructive remote access), rendered at flash time.
-if exist "%~dp0..\cat\resources\ventoy\Render-Sysrescue.ps1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\cat\resources\ventoy\Render-Sysrescue.ps1" -TargetDrive "%drivepath%" -TomlPath "%toml_path%" -PartitionLabel "%partition_label%" >nul 2>&1
+if exist "%~dp0..\field\resources\ventoy\Render-Sysrescue.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\field\resources\ventoy\Render-Sysrescue.ps1" -TargetDrive "%drivepath%" -TomlPath "%toml_path%" -PartitionLabel "%partition_label%" >nul 2>&1
 )
 
 for /f "usebackq tokens=1,2 delims=," %%a in (`powershell -NoProfile -Command "$rp=(Get-Volume -FileSystemLabel '%repo_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; $dp=(Get-Volume -FileSystemLabel '%data_label%' -ErrorAction SilentlyContinue | Select-Object -First 1).DriveLetter; if (-not $rp) { $rp='_' }; if (-not $dp) { $dp='_' }; Write-Output ($rp + ',' + $dp)"`) do (
@@ -585,16 +585,16 @@ if exist "%toml_path%" copy "%toml_path%" "%repodrive%:\mios.toml" /Y >nul 2>&1
 copy "%~f0" "%repodrive%:\MiOS-Cat.bat" /Y >nul 2>&1
 
 echo Staging MiOS drive icons and autorun.inf across all partitions...
-if exist "%~dp0..\cat\resources\autorun\mios-stage-icons.ps1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\cat\resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
+if exist "%~dp0..\field\resources\autorun\mios-stage-icons.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\field\resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
 )
 
 if exist "%drivepath%:\PortableApps" (
     echo Debloating PortableApps suite to MiOS specifications...
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$keep = @('7-ZipPortable', 'AOMEIPartitionAssistantPortable', 'CrystalDiskInfoPortable', 'CrystalDiskMarkPortable', 'HWiNFOPortable', 'Notepad++Portable', 'Rufus', 'WizTree', 'SnappyDriverInstaller', 'SnappyDriverInstallerOrigin', 'SDIO', 'SDIO_x64', 'SDI_x64', 'SDI', 'PortableApps.com', 'MiOSInstaller', 'MiOSMonitor', 'MiOSSystemRescue', 'SoftwareLister'); $targets = @('%drivepath%:\PortableApps', '%aio_stage%\PortableApps'); foreach ($t in $targets) { if (Test-Path -LiteralPath $t) { Get-ChildItem -LiteralPath $t -Directory | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } }" >nul 2>&1
     echo Applying MiOSTheme branding to PortableApps Menu...
-    if exist "%~dp0..\cat\resources\autorun\apply-mios-pa-theme.ps1" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\cat\resources\autorun\apply-mios-pa-theme.ps1" -TargetDrive "%drivepath%" >nul 2>&1
+    if exist "%~dp0..\field\resources\autorun\apply-mios-pa-theme.ps1" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\field\resources\autorun\apply-mios-pa-theme.ps1" -TargetDrive "%drivepath%" >nul 2>&1
     )
 )
 
@@ -621,8 +621,8 @@ if exist "%aio_stage%\PortableApps" (
     echo Debloating PortableApps suite to MiOS specifications...
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$keep = @('7-ZipPortable', 'AOMEIPartitionAssistantPortable', 'CrystalDiskInfoPortable', 'CrystalDiskMarkPortable', 'HWiNFOPortable', 'Notepad++Portable', 'Rufus', 'WizTree', 'SnappyDriverInstallerOrigin', 'SDIO', 'PortableApps.com'); $targets = @('%drivepath%:\PortableApps', '%aio_stage%\PortableApps'); foreach ($t in $targets) { if (Test-Path -LiteralPath $t) { Get-ChildItem -LiteralPath $t -Directory | Where-Object { $keep -notcontains $_.Name } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } }" >nul 2>&1
     echo Applying MiOSTheme branding to PortableApps Menu...
-    if exist "%~dp0..\cat\resources\autorun\apply-mios-pa-theme.ps1" (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\cat\resources\autorun\apply-mios-pa-theme.ps1" -TargetDrive "%drivepath%" >nul 2>&1
+    if exist "%~dp0..\field\resources\autorun\apply-mios-pa-theme.ps1" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\field\resources\autorun\apply-mios-pa-theme.ps1" -TargetDrive "%drivepath%" >nul 2>&1
     )
 )
 
@@ -640,8 +640,8 @@ if exist "%aio_stage%\Documents" (
 
 :: 15. Finalize SSOT Branding & Start.exe launcher
 echo Finalizing SSOT MiOS drive icons and autorun metadata across target partitions...
-if exist "%~dp0..\cat\resources\autorun\mios-stage-icons.ps1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\cat\resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
+if exist "%~dp0..\field\resources\autorun\mios-stage-icons.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\field\resources\autorun\mios-stage-icons.ps1" -CatDrive "%drivepath%" -RepoDrive "%repodrive%" -DataDrive "%datadrive%" >nul 2>&1
 )
 
 set "ico_file="

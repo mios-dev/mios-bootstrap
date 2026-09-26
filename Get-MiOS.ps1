@@ -173,9 +173,9 @@ if ($Action -ne 'Default') {
     if ($Action -eq 'FlashUSB') {
         Write-Host "[*] Action: FlashUSB. Staging and launching interactive MiOS-Cat installer..." -ForegroundColor Cyan
         # 1. Locate source folder
-        $srcDir = Join-Path (Ensure-MiosBootstrapRepo) "cat"
+        $srcDir = Join-Path (Ensure-MiosBootstrapRepo) "field"
         if (-not (Test-Path $srcDir)) {
-            Write-Error "MiOS-Cat (cat) folder not found after fetch -- check network / GitHub access."
+            Write-Error "MiOS-Cat (field) folder not found after fetch -- check network / GitHub access."
             exit 1
         }
         # 2. Resolve staging directory
@@ -5103,8 +5103,8 @@ if ($_bootstrapExit -eq 0) {
 
 if ($_bootstrapExit -eq 0 -and -not $Unattended) {
     try {
-        $_catSrc = Join-Path $RepoDir 'cat'
-        if (-not (Test-Path $_catSrc)) { $_catSrc = 'C:\mios-bootstrap\cat' }
+        $_catSrc = Join-Path $RepoDir 'field'
+        if (-not (Test-Path $_catSrc)) { $_catSrc = 'C:\mios-bootstrap\field' }
         $_catBat = Join-Path $_catSrc 'MiOS-Cat.bat'
         if (Test-Path $_catBat) {
             Write-Host ''
