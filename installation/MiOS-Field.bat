@@ -40,6 +40,10 @@ if not exist "%toml_path%" set "toml_path=C:\MiOS\usr\share\mios\mios.toml"
 
 set "drivepath=D"
 set "medicatver=21.12"
+:: Upstream-published hashes of the MediCat archive, pinned in mios.toml [field]
+:: (medicat_sha1 / medicat_md5). Empty = no pin -> the post-download check is skipped.
+set "medicat_sha1="
+set "medicat_md5="
 :: Ventoy version is NEVER hand-pinned. MiOS targets the NEWEST upstream GLOBALLY and
 :: GENERATES the pin at runtime (resolved live from GitHub) or at build (recorded into the
 :: SSOT SBOM as [cat].ventoy_version). Empty here on purpose -- no hardcoded fallback. If
@@ -71,7 +75,7 @@ if not exist "%toml_path%" goto no_toml
 echo Loading installation settings from mios.toml SSOT...
 set "ssot_env=%TEMP%\mios-cat-ssot.cmd"
 del "%ssot_env%" /q >nul 2>&1
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content -Raw -LiteralPath '%toml_path%'; $q=[char]34; function G([string]$k){ $m=[regex]::Match($t, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*(?:'+$q+'([^'+$q+'\r\n]*)'+$q+'|(\d+)|(true|false))')); if($m.Success){ if($m.Groups[1].Value){ $m.Groups[1].Value -replace '\\\\','\' } elseif($m.Groups[2].Value){ $m.Groups[2].Value } else { $m.Groups[3].Value } } }; function GS([string]$sec,[string]$k){ $sm=[regex]::Match($t, ('(?ms)^\s*\['+[regex]::Escape($sec)+'\]\s*(.*?)(?=\r?\n\s*\[|\Z)')); if($sm.Success){ $m=[regex]::Match($sm.Groups[1].Value, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*(?:'+$q+'([^'+$q+'\r\n]*)'+$q+'|(\d+)|(true|false))')); if($m.Success){ if($m.Groups[1].Value){ $m.Groups[1].Value -replace '\\\\','\' } elseif($m.Groups[2].Value){ $m.Groups[2].Value } else { $m.Groups[3].Value } } } }; $map=[ordered]@{ drivepath='drivepath'; medicatver='medicatver'; ventoy_ver='ventoy_version'; file='cache_path'; bg_color='bg'; fg_color='fg'; accent_color='accent'; cursor_color='cursor'; success_color='success'; muted_color='muted'; subtle_color='subtle'; live_chat_enabled='live_chat_enabled'; live_chat_iso_name='live_chat_iso_name'; live_chat_iso_src='live_chat_iso_src'; monitor_enabled='monitor_enabled'; show_live_monitor='show_live_monitor' }; $o=New-Object System.Collections.Generic.List[string]; foreach($e in $map.GetEnumerator()){ $v=G $e.Value; if($v){ $o.Add('set '+$q+$e.Key+'='+$v+$q) } }; $mg=G 'min_disk_gb'; if($mg){ $o.Add('set '+$q+'min_disk_gb='+$mg+$q) }; $rl=GS 'cat.repo_partition' 'label'; if($rl){ $o.Add('set '+$q+'repo_label='+$rl+$q) }; $dl=GS 'cat.data_partition' 'label'; if($dl){ $o.Add('set '+$q+'data_label='+$dl+$q) }; if($o.Count){ Set-Content -LiteralPath '%ssot_env%' -Value $o -Encoding ascii }" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content -Raw -LiteralPath '%toml_path%'; $q=[char]34; function G([string]$k){ $m=[regex]::Match($t, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*(?:'+$q+'([^'+$q+'\r\n]*)'+$q+'|(\d+)|(true|false))')); if($m.Success){ if($m.Groups[1].Value){ $m.Groups[1].Value -replace '\\\\','\' } elseif($m.Groups[2].Value){ $m.Groups[2].Value } else { $m.Groups[3].Value } } }; function GS([string]$sec,[string]$k){ $sm=[regex]::Match($t, ('(?ms)^\s*\['+[regex]::Escape($sec)+'\]\s*(.*?)(?=\r?\n\s*\[|\Z)')); if($sm.Success){ $m=[regex]::Match($sm.Groups[1].Value, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*(?:'+$q+'([^'+$q+'\r\n]*)'+$q+'|(\d+)|(true|false))')); if($m.Success){ if($m.Groups[1].Value){ $m.Groups[1].Value -replace '\\\\','\' } elseif($m.Groups[2].Value){ $m.Groups[2].Value } else { $m.Groups[3].Value } } } }; $map=[ordered]@{ drivepath='drivepath'; medicatver='medicatver'; medicat_sha1='medicat_sha1'; medicat_md5='medicat_md5'; ventoy_ver='ventoy_version'; file='cache_path'; bg_color='bg'; fg_color='fg'; accent_color='accent'; cursor_color='cursor'; success_color='success'; muted_color='muted'; subtle_color='subtle'; live_chat_enabled='live_chat_enabled'; live_chat_iso_name='live_chat_iso_name'; live_chat_iso_src='live_chat_iso_src'; monitor_enabled='monitor_enabled'; show_live_monitor='show_live_monitor' }; $o=New-Object System.Collections.Generic.List[string]; foreach($e in $map.GetEnumerator()){ $v=G $e.Value; if($v){ $o.Add('set '+$q+$e.Key+'='+$v+$q) } }; $mg=G 'min_disk_gb'; if($mg){ $o.Add('set '+$q+'min_disk_gb='+$mg+$q) }; $rl=GS 'cat.repo_partition' 'label'; if($rl){ $o.Add('set '+$q+'repo_label='+$rl+$q) }; $dl=GS 'cat.data_partition' 'label'; if($dl){ $o.Add('set '+$q+'data_label='+$dl+$q) }; if($o.Count){ Set-Content -LiteralPath '%ssot_env%' -Value $o -Encoding ascii }" 2>nul
 if exist "%ssot_env%" call "%ssot_env%"
 if exist "%ssot_env%" del "%ssot_env%" /q >nul 2>&1
 :no_toml
@@ -265,6 +269,35 @@ if "%download_needed%"=="1" (
 ) else (
     echo OK: Core Medicat archive found and complete at %file%
 )
+
+:: 6a. Post-download integrity check against the upstream-published hash pinned in
+:: mios.toml [field].medicat_sha1 (preferred) or [field].medicat_md5. The size gate above
+:: runs only before the download, so a truncated or corrupt body would otherwise reach 7z.
+:: No pin -> skip with a warning (degrade-open, Law 12). A pass is recorded in
+:: "%file%.hash-ok" (the pinned value) so a 23 GB archive is hashed once, not every run.
+set "medicat_pin=%medicat_sha1%"
+set "medicat_algo=SHA1"
+if "%medicat_pin%"=="" set "medicat_pin=%medicat_md5%"
+if "%medicat_sha1%"=="" set "medicat_algo=MD5"
+if "%medicat_pin%"=="" goto medicat_hash_skip
+if not exist "%file%" goto medicat_hash_done
+set "medicat_ok="
+if exist "%file%.hash-ok" set /p medicat_ok=<"%file%.hash-ok"
+if /i "%medicat_ok%"=="%medicat_pin%" goto medicat_hash_done
+echo Verifying core Medicat archive %medicat_algo% against the pinned upstream hash...
+powershell -NoProfile -Command "$h=(Get-FileHash -LiteralPath '%file%' -Algorithm %medicat_algo%).Hash; if ($h -ne '%medicat_pin%') { Write-Host ('Expected: %medicat_pin%'); Write-Host ('Got     : '+$h); exit 1 } else { exit 0 }"
+if errorlevel 1 (
+    echo [FATAL ERROR] Core Medicat archive failed %medicat_algo% verification. Deleting %file% so the next run downloads it again.
+    del "%file%" /q >nul 2>&1
+    del "%file%.hash-ok" /q >nul 2>&1
+    exit /b 1
+)
+>"%file%.hash-ok" echo %medicat_pin%
+echo OK: Core Medicat archive matches the pinned %medicat_algo%.
+goto medicat_hash_done
+:medicat_hash_skip
+echo [WARN] No Medicat hash pinned in mios.toml [field] - skipping the integrity check.
+:medicat_hash_done
 
 :: 6b. Extract WIM payload & PortableApps suite to Localhost AIO Stage
 echo Extracting Mini_Windows WIM and PortableApps suite from core archive to Localhost SSD...
