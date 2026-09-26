@@ -1,9 +1,8 @@
 {
   "name": "mios-bootstrap Installer Dev (MiOS devcontainer)",
-  "initializeCommand": "git clone --depth 1 https://github.com/mios-dev/MiOS.git ../MiOS || git -C ../MiOS rev-parse --git-dir",
   "build": {
-    "dockerfile": "../../MiOS/.devcontainer/Containerfile",
-    "context": "../../MiOS"
+    "dockerfile": "Containerfile",
+    "context": ".."
   },
   "init": true,
   "features": {
@@ -239,8 +238,8 @@
   "remoteUser": "mios-dev",
   "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspaces,type=bind,consistency=cached",
   "workspaceFolder": "/workspaces/mios-bootstrap",
-  "postCreateCommand": "cd /workspaces/MiOS && bash .devcontainer/post-create.sh && bash .devcontainer/platform-bootstrap.sh",
-  "postStartCommand": "cd /workspaces/MiOS && bash .devcontainer/boot-mios-systems.sh && bash .devcontainer/post-start.sh",
+  "postCreateCommand": "bash -c 'if [ -f /workspaces/MiOS/.devcontainer/setup-devcontainer.sh ]; then bash /workspaces/MiOS/.devcontainer/setup-devcontainer.sh; else { git clone --depth 1 https://github.com/mios-dev/MiOS.git /workspaces/MiOS 2>/dev/null || true; } && bash /workspaces/MiOS/.devcontainer/setup-devcontainer.sh; fi'",
+  "postStartCommand": "bash -c 'if [ -d /workspaces/MiOS ]; then cd /workspaces/MiOS && bash .devcontainer/boot-mios-systems.sh && bash .devcontainer/post-start.sh; else echo \"[devcontainer:post-start] /workspaces/MiOS is absent: MiOS lifecycle skipped (postCreateCommand clones it)\"; fi'",
   "postAttachCommand": "code --execute-command workbench.action.closeSidebar",
   "hostRequirements": {
     "cpus": 4,

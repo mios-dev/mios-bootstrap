@@ -133,10 +133,11 @@ redirects to `cat/MiOS-Cat.sh`, which exists only there), `mios-common.sh`
 (identical code, richer comments in bootstrap that are not yet harvested), each
 repo's agent instructions, and `.gitignore`.
 
-`.devcontainer/` belongs on that list too. Both repos have one and neither is a
-copy: each names its own workspace folder and image, and the toolchains differ
-on purpose — this repo carries the OS-lifecycle tools (`bootc`, `rpm-ostree`,
-`bootupd`) because it owns the image, while bootstrap carries only what its
-installers and TOML need. Mirroring them would force one repo to build the
-other's container. They share a spec — same pinned Fedora, same `mios-dev` at
-uid 1000, same agent toolchain — not the same bytes.
+`.devcontainer/` is split. `devcontainer.json` belongs on that list: each repo
+names its own workspace folder, image name and editor customizations.
+`.devcontainer/Containerfile` is mirrored, byte-identical: it is the ONE MiOS
+dev image, and the same bytes build from either repo root — when the build
+context is not a MiOS checkout the file shallow-clones MiOS and resolves
+`[packages.devcontainer]` from the clone — so bootstrap does not build the
+other repo's container, it builds the same one. `-dev-loop` carries the same
+mirror, gated by its own `tests/test_devcontainer_mirror.py`.
