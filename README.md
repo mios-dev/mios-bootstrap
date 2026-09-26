@@ -46,7 +46,6 @@ in*.
 - `.env.mios` (deprecated, legacy) -- env-style user defaults; sourced
   by `install.sh` after TOML layers so explicit TOML wins. Migrate to
   `etc/mios/profile.toml`.
-- `etc/mios/{manifest.json,rag-manifest.yaml}` -- installation metadata.
 - `usr/share/mios/knowledge/*` -- RAG knowledge graphs. At runtime these
   are embedded (`nomic-embed-text`, served by the `mios-llm-light` lane)
   and recalled from the PostgreSQL+pgvector agent datastore.
