@@ -13,7 +13,7 @@ prereq-install / toml-resolution / redirector into one shared step.
 
 **Entrypoints (Windows):** `Get-MiOS.ps1` (the `irm|iex` web door, `-Action` router + Default
 bootstrap → `bootstrap.ps1` → `build-mios.ps1`), `installation/mios-install.{ps1,sh,bat}` (guided
-dispatcher), `cat/MiOS-Cat.bat` (USB flasher/menu hub), `build-mios.ps1` (MiOS-DEV builder).
+dispatcher), `field/MiOS-Cat.bat` (USB flasher/menu hub), `build-mios.ps1` (MiOS-DEV builder).
 **Linux:** `build-mios.sh` (canonical), `bootstrap.sh`/`install.sh` (redirectors → build-mios.sh).
 
 **Portal + configurator = one app.** The Portal is routes inside the agent-pipe FastAPI
@@ -47,9 +47,9 @@ irm .../mios | iex   (Windows)   /   curl .../mios | bash   (Linux)
   └─ ONE bootstrap, shared steps EXACTLY ONCE:
        agreement → elevate → repo-fetch → prereq(target) → SSOT-resolve
   └─ hands into  installation/mios-install.{ps1,sh}   (the single guided surface)
-       flash/live → cat/MiOS-Cat.bat   (flash executor only; no self-update, no web re-entry)
+       flash/live → field/MiOS-Cat.bat   (flash executor only; no self-update, no web re-entry)
        oci/build  → build-mios.{ps1,sh}
-       xbox       → cat/autounattend/*.ps1
+       xbox       → field/autounattend/*.ps1
        configure  → Portal/configurator @ /configure on the agent_pipe port   (the one SSOT editor)
 ```
 
@@ -129,7 +129,7 @@ Only listed files are touched. What the two repos legitimately own differently
 is enumerated in `not_mirrored` so the divergence reads as deliberate rather
 than as drift someone forgot to fix: the entry points (`install.sh` redirects to
 `build-mios.sh` here because this repo root IS the system root, while bootstrap
-redirects to `cat/MiOS-Cat.sh`, which exists only there), `mios-common.sh`
+redirects to `field/MiOS-Cat.sh`, which exists only there), `mios-common.sh`
 (identical code, richer comments in bootstrap that are not yet harvested), each
 repo's agent instructions, and `.gitignore`.
 

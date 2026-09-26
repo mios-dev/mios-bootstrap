@@ -114,12 +114,12 @@ Disable-ConsoleQuickEdit
 # so a factory Windows can go straight from the web one-liner to a build/flash with no manual clone.
 function Ensure-MiosBootstrapRepo {
     $root = 'C:\mios-bootstrap'
-    if (Test-Path (Join-Path $root 'cat\autounattend\Build-MiOSXboxISO.ps1')) { return $root }
+    if (Test-Path (Join-Path $root 'field\autounattend\Build-MiOSXboxISO.ps1')) { return $root }
     Write-Host "  [*] mios-bootstrap not present -- fetching it for this action (bare-Windows path)..." -ForegroundColor Cyan
     if (Get-Command git -ErrorAction SilentlyContinue) {
         try { & git clone --depth 1 'https://github.com/mios-dev/mios-bootstrap.git' $root 2>&1 | Out-Null } catch {}
     }
-    if (-not (Test-Path (Join-Path $root 'cat\autounattend\Build-MiOSXboxISO.ps1'))) {
+    if (-not (Test-Path (Join-Path $root 'field\autounattend\Build-MiOSXboxISO.ps1'))) {
         $zip = Join-Path $env:TEMP 'mios-bootstrap.zip'
         $tmp = Join-Path $env:TEMP ('mios-bs-' + [System.Guid]::NewGuid().ToString('N').Substring(0,8))
         try {
@@ -142,7 +142,7 @@ if ($Action -ne 'Default') {
     if ($Action -eq 'BuildXboxISO') {
         Write-Host "[*] Action: BuildXboxISO. Invoking Build-MiOSXboxISO..." -ForegroundColor Cyan
         $repoRoot = Ensure-MiosBootstrapRepo
-        $buildScript = Join-Path $repoRoot "cat\autounattend\Build-MiOSXboxISO.ps1"
+        $buildScript = Join-Path $repoRoot "field\autounattend\Build-MiOSXboxISO.ps1"
         if (-not (Test-Path $buildScript)) {
             Write-Error "Build-MiOSXboxISO.ps1 not found after fetch -- check network / GitHub access."
             exit 1
@@ -158,9 +158,9 @@ if ($Action -ne 'Default') {
     if ($Action -eq 'FlashUSB') {
         Write-Host "[*] Action: FlashUSB. Staging and launching interactive MiOS-Cat installer..." -ForegroundColor Cyan
         # 1. Locate source folder
-        $srcDir = Join-Path (Ensure-MiosBootstrapRepo) "cat"
+        $srcDir = Join-Path (Ensure-MiosBootstrapRepo) "field"
         if (-not (Test-Path $srcDir)) {
-            Write-Error "MiOS-Cat (cat) folder not found after fetch -- check network / GitHub access."
+            Write-Error "MiOS-Cat (field) folder not found after fetch -- check network / GitHub access."
             exit 1
         }
         # 2. Resolve staging directory
@@ -7181,8 +7181,8 @@ if ($_bootstrapExit -eq 0) {
 # (never surprise-format a drive) or if bootstrap did not succeed.
 if ($_bootstrapExit -eq 0 -and -not $Unattended) {
     try {
-        $_catSrc = Join-Path $RepoDir 'cat'
-        if (-not (Test-Path $_catSrc)) { $_catSrc = 'C:\mios-bootstrap\cat' }
+        $_catSrc = Join-Path $RepoDir 'field'
+        if (-not (Test-Path $_catSrc)) { $_catSrc = 'C:\mios-bootstrap\field' }
         $_catBat = Join-Path $_catSrc 'MiOS-Cat.bat'
         if (Test-Path $_catBat) {
             Write-Host ''

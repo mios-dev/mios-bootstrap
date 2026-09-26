@@ -1298,7 +1298,7 @@ iso_label      = "MiOS-Xbox"
 # wrapper auto-detects a local base, else downloads fresh from UUP Dump.
 source_iso     = ""
 # Neutralize the debloat DISM can't component-remove (telemetry/AI/Copilot/consumer
-# features/OneDrive) via offline registry + service policy (cat/autounattend/
+# features/OneDrive) via offline registry + service policy (field/autounattend/
 # mios-debloat.json). The deep NTLite CBS component files can't be DISM-deleted, but
 # their behaviour is killed. Applies on every build (native + -SourceIso).
 debloat        = true
@@ -1615,7 +1615,7 @@ branding.living_wallpaper    = "true"
 
 # ----------------------------------------------------------------------------
 # [cat] -- MiOS-Cat unified USB installer + launcher/build configuration (SSOT for the
-# cat/ entry point). Consumed by cat/MiOS-Cat.{bat,ps1,sh}. Consolidates the former
+# field/ entry point). Consumed by field/MiOS-Cat.{bat,ps1,sh}. Consolidates the former
 # [medicat] block (T-258b). Empty ("") launcher paths mean "use the built-in portable
 # %~dp0-relative resolution" so a MiOS-Repo USB stays self-contained; set an ABSOLUTE
 # path only to OVERRIDE. (ADR-0008)
@@ -1624,7 +1624,7 @@ branding.living_wallpaper    = "true"
 #   cache_path     : absolute path to the cached MediCat 7z archive
 #   ventoy_version : "latest" -> resolve newest Ventoy upstream at build/runtime; MiOS
 #                    never hand-pins a fallback (SBOM records the resolved version). ADR-0003
-#   xbox_builder   : PowerShell script that builds the MiOS-Xbox ISO ('' -> cat/autounattend/Build-MiOSXbox.ps1)
+#   xbox_builder   : PowerShell script that builds the MiOS-Xbox ISO ('' -> field/autounattend/Build-MiOSXbox.ps1)
 #   build_driver   : OCI/disk-image build entry ('' -> build-mios.ps1, self-provisions the podman machine)
 #   log_path       : directory for the launcher's build/stage logs ('' -> beside the launcher)
 # ----------------------------------------------------------------------------

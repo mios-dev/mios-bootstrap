@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # AI-hint: Thin Linux bash dispatcher for the mios-install unified provisioning
-# AI-related: mios-common.sh, build-mios.sh, cat/MiOS-Cat.sh, cat/MiOS-Cat.bat
+# AI-related: mios-common.sh, build-mios.sh, field/MiOS-Cat.sh, field/MiOS-Cat.bat
 # AI-functions: usage, resolve_flash_or_live, resolve_live, resolve_flash
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CAT_DIR="${ROOT}/cat"
-if [[ ! -d "$CAT_DIR" && -d "${ROOT}/../mios-bootstrap/cat" ]]; then
-    CAT_DIR="$(cd "${ROOT}/../mios-bootstrap/cat" && pwd)"
+CAT_DIR="${ROOT}/field"
+if [[ ! -d "$CAT_DIR" && -d "${ROOT}/../mios-bootstrap/field" ]]; then
+    CAT_DIR="$(cd "${ROOT}/../mios-bootstrap/field" && pwd)"
 fi
 MIOS_CAT_SH="${CAT_DIR}/MiOS-Cat.sh"
 
@@ -176,7 +176,7 @@ resolve_update() {
     case "$TYPE" in
         ""|update) ;;
         repo)
-            WINDOWS_GUIDANCE="target 'update' --type repo is Windows-only: it maps to 'cat\\MiOS-Cat.bat update' (git fetch/pull of BOTH C:\\MiOS and C:\\mios-bootstrap). There is no Linux row for this in installation/README.md -- run it on the Windows checkout instead, or just 'git pull' this repo yourself."
+            WINDOWS_GUIDANCE="target 'update' --type repo is Windows-only: it maps to 'field\\MiOS-Cat.bat update' (git fetch/pull of BOTH C:\\MiOS and C:\\mios-bootstrap). There is no Linux row for this in installation/README.md -- run it on the Windows checkout instead, or just 'git pull' this repo yourself."
             return
             ;;
         *) die "Target 'update' supports" ;;
@@ -269,7 +269,7 @@ resolve_seed() {
     local extra=""
     (( ${#PASSTHROUGH[@]} )) && extra=" ${PASSTHROUGH[*]}"
     WINDOWS_GUIDANCE="target 'seed' (--type dev) is a Windows-only entrypoint (exports an existing MiOS-DEV WSL2 distro + OCI image as an offline seed blob) -- it cannot run on Linux. On a Windows host, run:
-  powershell -NoProfile -ExecutionPolicy Bypass -File cat\\autounattend\\Build-MiOSSeed.ps1 -TomlPath '<ssot>'${extra}
+  powershell -NoProfile -ExecutionPolicy Bypass -File field\\autounattend\\Build-MiOSSeed.ps1 -TomlPath '<ssot>'${extra}
 --stage/--unattended have no mapping here -- the script has no stage flags and (per source) no interactive prompts, so it already runs unattended. mios.toml on THIS checkout: ${toml}"
 }
 

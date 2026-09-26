@@ -24,7 +24,7 @@ try {
   # --- resolve the SSOT mios.toml (arg -> repo-local -> canonical MiOS host copy) --------
   if (-not $TomlPath -or -not (Test-Path -LiteralPath $TomlPath)) {
     $cand = @(
-      (Join-Path $PSScriptRoot '..\..\..\mios.toml'),          # cat\resources\ventoy -> repo root
+      (Join-Path $PSScriptRoot '..\..\..\mios.toml'),          # field\resources\ventoy -> repo root
       'C:\MiOS\usr\share\mios\mios.toml'
     )
     $TomlPath = $cand | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1

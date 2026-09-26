@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:Root    = Split-Path -Parent $PSScriptRoot           # repo root (installation\ is one level down)
 $script:CatBat  = Join-Path $script:Root 'installation\MiOS-Cat.bat'
-if (-not (Test-Path $script:CatBat)) { $script:CatBat = Join-Path $script:Root 'cat\MiOS-Cat.bat' }
+if (-not (Test-Path $script:CatBat)) { $script:CatBat = Join-Path $script:Root 'field\MiOS-Cat.bat' }
 $script:BuildPs = Join-Path $script:Root 'build-mios.ps1'
 $script:AutoDir = Join-Path $script:Root 'field\autounattend'
 

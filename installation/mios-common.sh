@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI-hint: The ONE shared library for every Linux MiOS entrypoint (mios-install.sh, build-mios.sh,
-# AI-related: mios-common.ps1, mios-install.sh, build-mios.sh, cat/MiOS-Cat.sh, usr/lib/mios/mios_toml.py, mios.toml
+# AI-related: mios-common.ps1, mios-install.sh, build-mios.sh, field/MiOS-Cat.sh, usr/lib/mios/mios_toml.py, mios.toml
 
 mios_ssot_layers() {
     local p
