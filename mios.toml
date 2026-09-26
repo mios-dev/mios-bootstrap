@@ -353,7 +353,7 @@ piper              = 8179     # mios-piper: Piper/Kokoro streaming TTS engine (a
 stale_fallbacks = []
 
 # Allocated ports nothing references yet. SHRINK-ONLY (gate: check_ports_bound).
-# Per-key reasons: TASKS.md T-318. chrome_cdp_worker's only binder is an
+# Per-key reasons: TASKS.jsonl T-318. chrome_cdp_worker's only binder is an
 # `Environment=` literal in a shipped .service -- systemd does not expand ${} in
 # Environment=, and the [units] block that WOULD render the placeholder is inert
 # until T-317 makes mios-unit-gen faithful.
