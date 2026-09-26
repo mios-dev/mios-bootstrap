@@ -31,9 +31,9 @@ Machine-readable index: `/usr/share/mios/ai/vars.json`
 
 | Variable | Default | Description |
 |---|---|---|
-| `MIOS_VERSION` | `0.2.4` | 'MiOS' release version |
-| `MIOS_DEFAULT_USER` | `mios` | Default Linux username |
-| `MIOS_DEFAULT_HOST` | `mios` | Default hostname |
+| `MIOS_VERSION` | `0.3.0` | 'MiOS' release version |
+| `MIOS_DEFAULT_USER` | `user` | Default Linux username |
+| `MIOS_DEFAULT_HOST` | `user` | Default hostname |
 | `MIOS_DEFAULT_SHELL` | `/bin/bash` | Default login shell |
 | `MIOS_DEFAULT_TIMEZONE` | `UTC` | Default timezone |
 | `MIOS_DEFAULT_LOCALE` | `en_US.UTF-8` | Default system locale |
@@ -180,8 +180,8 @@ unattended).
 
 | Prompt | Default | Persisted to |
 |---|---|---|
-| Linux username | `mios` | `MIOS_DEFAULT_USER` → `/etc/mios/install.env` |
-| Hostname | `mios` | `MIOS_DEFAULT_HOST` → `/etc/mios/install.env` |
+| Linux username | `user` | `MIOS_DEFAULT_USER` → `/etc/mios/install.env` |
+| Hostname | `user` | `MIOS_DEFAULT_HOST` → `/etc/mios/install.env` |
 | Full name (GECOS) | `'MiOS' User` | `/etc/mios/install.env` |
 | Password | (prompted twice) | SHA-512 hash via `chpasswd` -- never written plaintext |
 | SSH key | generate ed25519 | `~/.ssh/id_ed25519` (mode 0600) |

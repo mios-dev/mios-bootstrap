@@ -87,8 +87,8 @@
 !llms.txt
 
 # Bootstrap-owned overlay subtrees merged into / on FHS hosts and
-# baked into the image on bootc. Per-user templates live under etc/skel
-# (FHS standard skel directory -- populated into ~/<user>/ on useradd -m).
+# baked into the image on bootc. Per-user etc/skel templates are owned and
+# shipped by mios.git (Law 15), not this repo.
 !etc/
 !etc/**
 !usr/

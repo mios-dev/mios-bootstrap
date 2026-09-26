@@ -125,9 +125,9 @@
   },
 
   "variables": {
-    "MIOS_VERSION":            "0.2.2",
-    "MIOS_DEFAULT_USER":       "mios",
-    "MIOS_DEFAULT_HOST":       "mios",
+    "MIOS_VERSION":            "0.3.0",
+    "MIOS_DEFAULT_USER":       "user",
+    "MIOS_DEFAULT_HOST":       "user",
     "MIOS_IMAGE_REF":          "ghcr.io/mios-dev/mios:latest",
     "MIOS_BASE_IMAGE":         "ghcr.io/ublue-os/ucore-hci:stable-nvidia",
     "MIOS_LOCALAI_VERSION":    "v2.20.0",

@@ -47,7 +47,7 @@ knowledge) and the user profile templates seeded into every account.
 - `bootstrap.{sh,ps1}`         -- lower-level bootstrap primitives
 - `seed-merge.{sh,ps1}`        -- Total Root Merge primitive (Phase-1)
 - `etc/mios/profile.toml`             -- Host-layer profile overlay (identity, locale, auth, AI, desktop)
-- `etc/skel/.config/mios/`            -- Per-user templates seeded into every uid≥1000 home
+- `etc/skel/.config/mios/`            -- Per-user templates seeded into every uid≥1000 home (owned and shipped by mios.git)
 - `usr/share/mios/ai/system.md`       -- Deployed agent system prompt (SSOT here; materialized to `/usr/share/mios/ai/` at install)
 - `usr/share/mios/ai/models.json`     -- OpenAI `/v1/models` catalog
 - `usr/share/mios/ai/mcp.json`        -- MCP server registry
