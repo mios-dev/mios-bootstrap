@@ -11,6 +11,8 @@
     Stages, each skippable + resumable:
       0. Install-MiOSBuildPrereqs.ps1  -> ADK oscdimg (+ optional WSL) via winget
       1. Merge-MiOSPresets.ps1         -> MiOS-Xbox-Merged.xml (protect-clean union)
+                                          into WorkDir; the TRACKED MiOS-Xbox-Merged.xml
+                                          is a byte-identical copy of presets\mios-xbox.xml
       2. New-MiOSISO.ps1               -> the DISM-native ISO (internally: uup-fetch
                                           Dev -> extract -> service -> autounattend
                                           -> oscdimg)
