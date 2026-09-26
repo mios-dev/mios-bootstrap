@@ -1,19 +1,4 @@
-# AI-hint: Default configuration for aichat/aichat-ng that redirects OpenAI-compatible requests to the local LocalAI Quadlet at http://localhost:8642/v1, ensuring seamless local LLM integration for all users.
-# AI-related: /etc/mios/profile.toml, mios-ai, mios-localai, mios-ai.container, localhost:8080
-# ~/.config/aichat/config.yaml -- 'MiOS' AIChat / AIChat-NG default config.
-#
-# Architectural Law 5 (UNIFIED-AI-REDIRECTS): every OpenAI-API-shaped
-# client on a 'MiOS' system targets http://localhost:8642/v1 by default.
-# This file is seeded into every uid >= 1000 home from /etc/skel/ at
-# install time so 'aichat' and 'aichat-ng' resolve the local LocalAI
-# Quadlet (mios-ai.container) without any per-user setup.
-#
-# Spec for this file's schema:
-#   https://github.com/sigoden/aichat/blob/main/config.example.yaml
-#
-# Override per-user by editing this file in $HOME, or system-wide by
-# editing /etc/mios/profile.toml's [ai] section -- the bootstrap layer
-# regenerates this from profile.toml on every install.
+# AI-hint: Default configuration for aichat/aichat-ng that redirects OpenAI-compatible requests to the local Agent-Pipe Quadlet at http://localhost:8700/v1, ensuring seamless local LLM integration for all users.
 model: openai:qwen3.5:2b
 temperature: null
 top_p: null
@@ -29,13 +14,13 @@ save_session: null
 compress_threshold: 4000
 
 clients:
-  # Canonical 'MiOS' OpenAI-compatible endpoint (LocalAI Quadlet).
+  # Canonical 'MiOS' OpenAI-compatible endpoint (Agent-Pipe Quadlet).
   - type: openai-compatible
-    name: mios-localai
-    api_base: http://localhost:8642/v1
+    name: mios-ai
+    api_base: http://localhost:8700/v1
     api_key: ""
     models:
-      - name: qwen3.5:2b
+      - name: MiOS AI
         max_input_tokens: 32768
         supports_function_calling: true
       - name: qwen2.5-coder:14b

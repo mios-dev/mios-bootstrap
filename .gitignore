@@ -62,7 +62,6 @@
 !.env
 !.env.mios
 !identity.env.example
-!image-versions.yml
 
 # Repo hygiene
 !.editorconfig
