@@ -24,7 +24,7 @@ fallbacks (so the flow is forward-accurate but the keys are not yet populated in
 | # | Stage | Tool | Input -> Output | Status |
 |---|---|---|---|---|
 | 0 | Acquire stock media (**Dev channel**) | `mios-uup-fetch.ps1` -> **UUP Dump** | `[autounattend].uup_channel=dev` -> newest Dev Win11 Pro en-US -> stock bootable ISO (+ `.uup.json` build pin) | **[done]**\* |
-| 1 | Merge presets | `Merge-MiOSPresets.ps1` | 3 intact NTLite presets -> `MiOS-Xbox-Merged.xml` (deduped, identity-agnostic) | **[done]** |
+| 1 | Canonical preset | `presets/mios-xbox.xml` (source) | copied byte-for-byte to `MiOS-Xbox-Merged.xml` (CI `cmp` gate); originally the `Merge-MiOSPresets.ps1` union of 3 NTLite presets (inputs removed in 198ea11) | **[done]** |
 | 2 | Sanitize + inject identity (NTLite path) | `ConvertTo-MiOSPreset.ps1` | `MiOS-Xbox-Merged.xml` + `mios.toml` -> `MiOS-Xbox.xml` (SSOT hostname/accounts/AutoLogon/FirstLogonCommands, GUID `{MIOS-XBOX-SSOT}`, AutoIso, Posture B) | **[done]** |
 | 3 | Emit autounattend | `New-MiOSAutounattend.ps1` | SSOT -> `autounattend.xml` (Setup-consumed: OOBE, LabConfig bypass, disk layout, accounts, FirstLogon incl. Xbox) | **[partial]** |
 | 4 | Export drivers | `Export-MiOSDrivers.ps1` | live OEM -> `M:\MiOS\drivers\*.inf` for slipstream | **[partial]** |
@@ -46,8 +46,15 @@ three source presets' `ImageInfo/Version`). UUP Dump's `uup_download_windows.cmd
 Microsoft-signed `install.wim` (or `.esd`) from Windows Update payloads — no third-party media.
 This is what makes the whole path reproducible: every downstream op is DISM on Microsoft bits.
 
-### 1 — Merge (DONE)
-`Merge-MiOSPresets.ps1` unions the debloat intent of all three intact presets into one
+### 1 — Merge (DONE; now a tracked source + copy)
+**Current state:** `field/autounattend/presets/mios-xbox.xml` is the source of truth and
+`MiOS-Xbox-Merged.xml` is a byte-identical tracked copy of it, enforced by a `cmp` step in the
+`validate-linux` CI job. The three input presets described below were removed in commit 198ea11 and
+`Merge-MiOSPresets.ps1` now defaults to the single `presets/mios-xbox.xml` input, so running it with
+defaults does not reproduce the merged file (its provenance header would change). To change the
+preset, edit `presets/mios-xbox.xml` and copy it over `MiOS-Xbox-Merged.xml`.
+
+Historical: `Merge-MiOSPresets.ps1` unions the debloat intent of all three intact presets into one
 well-formed, deduped, **identity-agnostic** preset. Base/canonical = `Xbox-Minimal-ULTRA-PLUS.xml`
 (sole `Unattended`, `ApplyOptions`, `ImageInfo`, `Packages`, `Drivers`). Validated: 286 unique
 `<c>`, 81 unique Features, exactly 1 oobeSystem Shell-Setup, exactly 1 ApplyOptions, no purged identity token.

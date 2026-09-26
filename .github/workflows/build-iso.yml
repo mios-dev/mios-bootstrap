@@ -60,3 +60,12 @@ jobs:
       - name: Lint shell scripts
         run: |
           find . -name "*.sh" | xargs -I {} bash -n {}
+
+      - name: Verify MiOS-Xbox-Merged.xml is identical to presets/mios-xbox.xml
+        run: |
+          # presets/mios-xbox.xml is the source of truth; MiOS-Xbox-Merged.xml is a tracked copy.
+          if ! cmp field/autounattend/presets/mios-xbox.xml field/autounattend/MiOS-Xbox-Merged.xml; then
+            echo "::error file=field/autounattend/MiOS-Xbox-Merged.xml::MiOS-Xbox-Merged.xml differs from presets/mios-xbox.xml (the source). Edit presets/mios-xbox.xml, then run: cp field/autounattend/presets/mios-xbox.xml field/autounattend/MiOS-Xbox-Merged.xml"
+            exit 1
+          fi
+          echo "MiOS-Xbox-Merged.xml is byte-identical to presets/mios-xbox.xml."

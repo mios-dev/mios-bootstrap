@@ -47,7 +47,15 @@
 
 .EXAMPLE
     .\Merge-MiOSPresets.ps1
-    # merges the three vendored .\presets\*.xml -> .\MiOS-Xbox-Merged.xml
+    # merges the default .\presets\mios-xbox.xml -> .\MiOS-Xbox-Merged.xml
+
+.NOTES
+    The three original input presets (xbox-minimal-ultra-plus.xml, autosave-7eb3e01a.xml,
+    autosave-e8a2b9d1.xml) were removed in commit 198ea11. The tracked
+    MiOS-Xbox-Merged.xml is now a byte-identical COPY of presets\mios-xbox.xml, which is
+    the source of truth (CI validate-linux `cmp`-checks the pair). Running this script
+    with its defaults does NOT reproduce the tracked merged file: it rewrites the
+    provenance header (single input, zero unions). Edit presets\mios-xbox.xml and copy it.
 
 .EXAMPLE
     .\Merge-MiOSPresets.ps1 -InputPresets 'A.xml','B.xml' -OutputPreset '.\Merged.xml'
