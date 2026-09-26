@@ -45,7 +45,9 @@ RUN --mount=type=bind,source=.,target=/ctx,ro \
     install -d -m 0755 "$stage"; \
     for f in usr/share/mios/mios.toml automation/lib usr/lib/mios/agent-pipe/requirements.txt \
              .devcontainer/install-root-overlay.sh .devcontainer/mios-agent-pipe-dev \
-             .devcontainer/fetch-installer.sh; do \
+             .devcontainer/fetch-installer.sh usr/libexec/mios/mios-vscode-custom-css \
+             usr/libexec/mios/mios-toml-get usr/lib/mios/mios_toml.py \
+             usr/share/mios/themes/code-server-terminal.css; do \
         [ -e "$src/$f" ] || { echo "[devcontainer] ERROR: $f is missing from the MiOS source" >&2; exit 1; }; \
         install -d -m 0755 "$stage/$(dirname "$f")"; cp -a "$src/$f" "$stage/$f"; \
     done; \
@@ -70,6 +72,21 @@ RUN install -d -m 0755 /usr/lib/mios/agents \
     && python3.11 -m venv /usr/lib/mios/agents/.venv \
     && /usr/lib/mios/agents/.venv/bin/pip install --no-cache-dir \
          -r /usr/src/mios-ssot/usr/lib/mios/agent-pipe/requirements.txt
+
+# code-server pinned by [image.sidecars].code_server; stylesheet and both workbench.js patches baked, a moved anchor fails the build.
+RUN set -euo pipefail; \
+    stage=/usr/src/mios-ssot; export MIOS_TOML_ROOT="$stage"; \
+    get() { python3 "$stage/usr/libexec/mios/mios-toml-get" --vendor "$@"; }; \
+    img="$(get image.sidecars code_server)"; v="${img##*:}"; \
+    case "$img:$v" in *:*:latest|*:|"$v:$v") echo "[devcontainer] ERROR: [image.sidecars].code_server '$img' has no pinned tag" >&2; exit 1;; esac; \
+    case "$(uname -m)" in x86_64) arch=amd64;; aarch64) arch=arm64;; *) echo "[devcontainer] ERROR: no code-server RPM for $(uname -m)" >&2; exit 1;; esac; \
+    dnf install -y "https://github.com/coder/code-server/releases/download/v${v}/code-server-${v}-${arch}.rpm"; \
+    dnf clean all; \
+    sb="$(get theme.edge code_server_scrollbar_px)"; pm="$(get theme.edge code_server_perimeter_px)"; \
+    set -- --target /usr/lib/code-server/lib/vscode/out/vs/code/browser/workbench/workbench.html \
+        --css "$stage/usr/share/mios/themes/code-server-terminal.css" --scrollbar-px "$sb" --perimeter-px "$pm"; \
+    python3 "$stage/usr/libexec/mios/mios-vscode-custom-css" patch "$@"; \
+    python3 "$stage/usr/libexec/mios/mios-vscode-custom-css" verify "$@"
 
 RUN useradd -m -u 1000 -s /usr/bin/zsh mios-dev \
     && echo "mios-dev ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/mios-dev \

@@ -14,7 +14,7 @@
     }
   },
   "containerEnv": {
-    "MIOS_AI_ENDPOINT": "http://127.0.0.1:8080/v1",
+    "MIOS_AI_ENDPOINT": "http://localhost:8700/v1",
     "MIOS_AI_ROLE": "builder",
     "DEVLOOP_HARNESS": "embedded",
     "PYTHONUNBUFFERED": "1"
@@ -233,5 +233,11 @@
     "cpus": 4,
     "memory": "16gb",
     "storage": "32gb"
-  }
+  },
+  "forwardPorts": [
+    8900,
+    8700,
+    8500,
+    8600
+  ]
 }

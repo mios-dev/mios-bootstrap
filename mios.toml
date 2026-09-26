@@ -175,8 +175,8 @@ height            = 1000
 acrylic           = true
 opacity           = 50
 system_backdrop   = "acrylic"
-scrollbar_state   = "hidden"
-padding           = "0"
+scrollbar_state   = "hidden"   # EVERY terminal surface (WT, code-server, VTE, Portal); mirrored from mios.git [theme]
+padding           = "0"        # EVERY terminal surface, WT grammar; "0" = edge to edge; mirrored from mios.git [theme]
 launch_mode       = "focus"
 cursor_shape      = "vintage"     # steady half-block (make terminal cursor thicker -- thin "bar" was almost too thin on 4K)
 
