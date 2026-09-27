@@ -35,9 +35,10 @@ is editing the OS.
 `mios-bootstrap.git` is the **user-facing entry surface**. It turns a bare
 Windows or Fedora-bootc host into a MiOS host: preflight, three-layer
 profile capture, Total Root Merge of `mios.git` into `/`, build/`bootc
-switch`, service stand-up, reboot. It also carries the AI files the deployed
-agent plane serves (system prompt, model catalog, MCP registry, RAG
-knowledge) and the user profile templates seeded into every account.
+switch`, service stand-up, reboot. It also carries the RAG knowledge the
+deployed agent plane serves and the user profile templates seeded into every
+account; the other AI files (system prompt, model catalog, MCP registry,
+`usr/share/mios/ai/`) are owned by `mios.git`.
 
 ## Key files
 
@@ -48,9 +49,9 @@ knowledge) and the user profile templates seeded into every account.
 - `seed-merge.{sh,ps1}`        -- Total Root Merge primitive (Phase-1)
 - `etc/mios/profile.toml`             -- Host-layer profile overlay (identity, locale, auth, AI, desktop)
 - `etc/skel/.config/mios/`            -- Per-user templates seeded into every uid≥1000 home (owned and shipped by mios.git)
-- `usr/share/mios/ai/system.md`       -- Deployed agent system prompt (SSOT here; materialized to `/usr/share/mios/ai/` at install)
-- `usr/share/mios/ai/models.json`     -- OpenAI `/v1/models` catalog
-- `usr/share/mios/ai/mcp.json`        -- MCP server registry
+- `usr/share/mios/ai/system.md`       -- Deployed agent system prompt (owned by mios.git, baked into the image; not tracked here)
+- `usr/share/mios/ai/models.json`     -- OpenAI `/v1/models` catalog (owned by mios.git)
+- `usr/share/mios/ai/mcp.json`        -- MCP server registry (owned by mios.git)
 - `usr/share/mios/knowledge/`         -- RAG knowledge graphs
 - `mios.toml`                         -- This repo's reference `mios.toml` (the singular SSOT)
 - `AGENTS.md`                         -- Canonical agent entry point (agents.md standard); `CLAUDE.md` / `GEMINI.md` redirect to it
@@ -82,10 +83,11 @@ fastest unattended).
 
 ## Repo split (never double-track paths)
 
-`mios.git` owns: Containerfile, build automation, FHS system overlay,
-systemd units, Quadlet sidecars, kernel args, tmpfiles, sysusers.
+`mios.git` owns: Containerfile, build automation, FHS system overlay
+(including the AI files, `usr/share/mios/ai/`), systemd units, Quadlet
+sidecars, kernel args, tmpfiles, sysusers.
 
-`mios-bootstrap.git` owns: AI files (`usr/share/mios/ai/`), knowledge
+`mios-bootstrap.git` owns: knowledge
 graphs, user profile templates, installer scripts. The two overlay onto the
 same `/`; no path is tracked in both.
 
@@ -107,7 +109,7 @@ Edited as HTML in a local browser (`file://` works — no server), saved to
 non-empty values below; an empty user TOML is the vendor-default state, not
 an error. Hardcoded values that could live in `mios.toml` are bugs.
 
-## AI stack (what this repo's AI files feed)
+## AI stack (what the AI files feed)
 
 The deployed AI plane is the "agentic AI OS" half of MiOS. A request flows
 from a front-end (Open WebUI, the chat/Discord gateways, the `mios` CLI)

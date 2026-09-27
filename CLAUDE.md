@@ -57,7 +57,7 @@ A MiOS-Metal (formerly Mini) Blade is *bare metal*: it owns the NICs, radios, TP
 
 ## Repo identity
 
-This repo is the **interactive installer and user-editable layer** of MiOS. It owns AI files (`usr/share/mios/ai/`), knowledge graphs, user profile templates, and all installer scripts. It does **not** own the system FHS overlay, Containerfile, systemd units, Quadlets, kernel args, tmpfiles, or sysusers — those live in `mios.git`. Never double-track paths across the two repos.
+This repo is the **interactive installer and user-editable layer** of MiOS. It owns knowledge graphs, user profile templates, and all installer scripts. It does **not** own the AI files (`usr/share/mios/ai/`), the system FHS overlay, Containerfile, systemd units, Quadlets, kernel args, tmpfiles, or sysusers — those live in `mios.git`. Never double-track paths across the two repos.
 
 The division of labor is the whole-system contract: `mios.git` defines *what the OS is* (baked into the immutable image); `mios-bootstrap.git` defines *how an operator gets onto it and tunes it* (the installer + the user overlay that wins at resolution time).
 
@@ -163,14 +163,14 @@ Default model auto-selection from `[ai.host_thresholds]` (VRAM-tiered; the lean 
 | ≥ 12 GB (auto-promote) | `mid_ram_model` | `qwen3.5:2b` |
 | default / CPU-fit | `small_ram_model` | `phi4-mini:3.8b-q4_K_M` (vendor default) |
 
-AI files owned by this repo:
+AI files (`usr/share/mios/ai/` is owned and shipped by `mios.git`, which bakes it into the image; this repo does not track it):
 
 | Path | Purpose |
 |---|---|
-| `usr/share/mios/ai/system.md` | Vendor canonical system prompt |
-| `usr/share/mios/ai/models.json` | OpenAI `/v1/models` catalog |
-| `usr/share/mios/ai/mcp.json` | MCP server registry |
-| `usr/share/mios/knowledge/` | RAG knowledge graphs |
+| `usr/share/mios/ai/system.md` | Vendor canonical system prompt (`mios.git`) |
+| `usr/share/mios/ai/models.json` | OpenAI `/v1/models` catalog (`mios.git`) |
+| `usr/share/mios/ai/mcp.json` | MCP server registry (`mios.git`) |
+| `usr/share/mios/knowledge/` | RAG knowledge graphs (this repo) |
 | `/var/lib/mios/ai/memory/` | Episodic journal (JSONL) — runtime, not committed |
 | `/var/lib/mios/ai/scratch/` | Transient working dir — runtime, not committed |
 

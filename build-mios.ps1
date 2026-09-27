@@ -196,8 +196,6 @@ try {
 
 $MiosScope = if ($script:IsAdmin) { "AllUsers" } else { "CurrentUser" }
 
-$_v             = Get-MiosTomlValue -Section 'meta'      -Key 'mios_version'    -Default '0.2.4'
-$MiosVersion    = if ($_v -match '^v') { $_v } else { "v$_v" }
 $MiosRepoUrl    = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_repo'       -Default 'https://github.com/mios-dev/MiOS.git'
 $MiosBootstrapUrl = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_repo' -Default 'https://github.com/mios-dev/mios-bootstrap.git'
 $MiosRef          = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_ref'       -Default 'main'
@@ -208,6 +206,17 @@ $MiosBootstrapRef = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_ref' 
 $MiosRawBase      = (($MiosRepoUrl      -replace '^https://github\.com/', 'https://raw.githubusercontent.com/' -replace '\.git$', '') + "/$MiosRef")
 $MiosBootstrapRaw = (($MiosBootstrapUrl -replace '^https://github\.com/', 'https://raw.githubusercontent.com/' -replace '\.git$', '') + "/$MiosBootstrapRef")
 $MiosRepoOwner    = (($MiosRepoUrl -replace '^https://github\.com/', '') -split '/')[0]   # ghcr.io / GitHub owner namespace
+# Release number: VERSION beside this script, else $MiosRawBase/VERSION (irm | iex
+# has no PSScriptRoot), else [meta].mios_version, else 'unknown'. Never a literal.
+$_v = ''
+foreach ($_vroot in @($PSScriptRoot, $MiosRawBase)) {
+    if ($_v -or -not $_vroot) { continue }
+    try { $_v = if ($_vroot -match '^[A-Za-z]:|^[\\/]') { [IO.File]::ReadAllText((Join-Path $_vroot 'VERSION')) } else { [string](Invoke-WebRequest -Uri "$_vroot/VERSION" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop).Content } } catch { $_v = '' }
+    $_v = ([string]$_v).Trim(); if ($_v -notmatch '^v?\d+(\.\d+)+') { $_v = '' }
+}
+if (-not $_v) { $_v = Get-MiosTomlValue -Section 'meta' -Key 'mios_version' -Default '' }
+if (-not $_v) { $_v = 'unknown' }
+$MiosVersion    = if ($_v -match '^v') { $_v } else { "v$_v" }
 # Podman machine name. Backed by WSL distro `podman-MiOS-DEV` once `podman
 # machine init` runs. Locked per memory feedback_mios_distro_name_locked.md
 # (renaming breaks podman's distro discovery), so the TOML key carries
