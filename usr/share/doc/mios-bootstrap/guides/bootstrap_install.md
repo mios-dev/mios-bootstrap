@@ -158,13 +158,14 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/mios-dev/mios-boots
 | `seed-merge.{sh,ps1}` | Total Root Merge primitive (Phase-1). |
 | `etc/mios/profile.toml` | Host-layer profile overlay (TOML). |
 | `etc/skel/.config/mios/{profile.toml,system-prompt.md}` | Per-user templates seeded into every uid≥1000 home. |
-| `usr/share/mios/ai/{system.md,models.json,mcp.json}` | Deployed AI assets (SSOT here, materialized to `/usr/share/mios/ai/` at install). |
 | `usr/share/mios/knowledge/*` | RAG knowledge graphs. |
 | `mios.toml` | This repo's reference `mios.toml`. |
 | `system-prompt.md` | Host-layer prompt redirector. |
-| `identity.env.example` | Operator identity template. |
 | `image-versions.yml` | Not here: pinned upstream image digests live in mios.git (Renovate-managed, next to the Containerfile). |
 | `llms.txt` | LLM ingest index. |
+
+Not here: the deployed AI assets (`usr/share/mios/ai/` -- `system.md`, `models.json`,
+`mcp.json`) are owned and shipped by `mios.git`, baked into the image.
 
 ---
 
