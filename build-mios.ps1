@@ -206,23 +206,13 @@ $MiosBootstrapRef = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_ref' 
 $MiosRawBase      = (($MiosRepoUrl      -replace '^https://github\.com/', 'https://raw.githubusercontent.com/' -replace '\.git$', '') + "/$MiosRef")
 $MiosBootstrapRaw = (($MiosBootstrapUrl -replace '^https://github\.com/', 'https://raw.githubusercontent.com/' -replace '\.git$', '') + "/$MiosBootstrapRef")
 $MiosRepoOwner    = (($MiosRepoUrl -replace '^https://github\.com/', '') -split '/')[0]   # ghcr.io / GitHub owner namespace
-# The release number is the VERSION file both repos mirror: beside this script
-# in a checkout, else from the raw tree resolved above (irm | iex has no
-# PSScriptRoot); [meta].mios_version is the fallback, 'unknown' the last resort.
+# Release number: VERSION beside this script, else $MiosRawBase/VERSION (irm | iex
+# has no PSScriptRoot), else [meta].mios_version, else 'unknown'. Never a literal.
 $_v = ''
 foreach ($_vroot in @($PSScriptRoot, $MiosRawBase)) {
     if ($_v -or -not $_vroot) { continue }
-    try {
-        if ($_vroot -match '^[A-Za-z]:|^[\\/]') {
-            $_vf = Join-Path $_vroot 'VERSION'
-            if (Test-Path -LiteralPath $_vf) { $_v = [IO.File]::ReadAllText($_vf).Trim() }
-        } else {
-            $_vc = (Invoke-WebRequest -Uri "$_vroot/VERSION" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop).Content
-            if ($_vc -is [byte[]]) { $_vc = [Text.Encoding]::UTF8.GetString($_vc) }
-            $_v = ([string]$_vc).Trim()
-        }
-    } catch { $_v = '' }
-    if ($_v -notmatch '^v?\d+(\.\d+)+') { $_v = '' }
+    try { $_v = if ($_vroot -match '^[A-Za-z]:|^[\\/]') { [IO.File]::ReadAllText((Join-Path $_vroot 'VERSION')) } else { [string](Invoke-WebRequest -Uri "$_vroot/VERSION" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop).Content } } catch { $_v = '' }
+    $_v = ([string]$_v).Trim(); if ($_v -notmatch '^v?\d+(\.\d+)+') { $_v = '' }
 }
 if (-not $_v) { $_v = Get-MiosTomlValue -Section 'meta' -Key 'mios_version' -Default '' }
 if (-not $_v) { $_v = 'unknown' }

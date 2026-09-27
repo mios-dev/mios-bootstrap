@@ -469,25 +469,15 @@ $Script:MiosRef          = Get-MiosTomlValue -Section 'bootstrap' -Key 'mios_ref
 $Script:MiosBootstrapRef = Get-MiosTomlValue -Section 'bootstrap' -Key 'bootstrap_ref'  -Default 'main'
 $Script:MiosRawBase      = ConvertTo-MiosRawBase $Script:MiosRepoUrl      $Script:MiosRef          # vendor mios.git raw tree base
 $Script:MiosBootstrapRaw = ConvertTo-MiosRawBase $Script:MiosBootstrapUrl $Script:MiosBootstrapRef  # bootstrap repo raw tree base
-# The release number is the VERSION file both repos mirror: from $LocalRoot (a
-# checkout) when given, else from the raw tree above (irm | iex has no local
-# copy); [meta].mios_version is the fallback, 'unknown' the last resort.
+# Release number: VERSION in $LocalRoot (a checkout), else $MiosRawBase/VERSION (irm | iex
+# has no local copy), else [meta].mios_version, else 'unknown'. Never a literal.
 function Get-MiosReleaseVersion {
     param([string]$LocalRoot = '')
     $v = ''
     foreach ($root in @($LocalRoot, $Script:MiosRawBase)) {
         if ($v -or -not $root) { continue }
-        try {
-            if ($root -match '^[A-Za-z]:|^[\\/]') {
-                $f = Join-Path $root 'VERSION'
-                if (Test-Path -LiteralPath $f) { $v = [IO.File]::ReadAllText($f).Trim() }
-            } else {
-                $c = (Invoke-WebRequest -Uri "$root/VERSION" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop).Content
-                if ($c -is [byte[]]) { $c = [Text.Encoding]::UTF8.GetString($c) }
-                $v = ([string]$c).Trim()
-            }
-        } catch { $v = '' }
-        if ($v -notmatch '^v?\d+(\.\d+)+') { $v = '' }
+        try { $v = if ($root -match '^[A-Za-z]:|^[\\/]') { [IO.File]::ReadAllText((Join-Path $root 'VERSION')) } else { [string](Invoke-WebRequest -Uri "$root/VERSION" -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop).Content } } catch { $v = '' }
+        $v = ([string]$v).Trim(); if ($v -notmatch '^v?\d+(\.\d+)+') { $v = '' }
     }
     if (-not $v) { $v = [string](Get-MiosTomlValue -Section 'meta' -Key 'mios_version' -Default '') }
     if (-not $v) { $v = 'unknown' }
