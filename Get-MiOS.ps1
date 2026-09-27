@@ -74,6 +74,49 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Invoke-Expression runs this body inside its caller's PowerShell process.
+# This entrypoint uses `exit` for explicit pipeline exit codes, so executing it
+# directly with `irm ... | iex` would close the operator's terminal. Re-run the
+# fetched entrypoint as a script file in a child process; exit then returns to
+# the caller's prompt. The environment guard prevents the child's cache-busted
+# in-process refresh from spawning another child.
+if (-not $PSCommandPath -and -not $env:MIOS_GETMIOS_FILE_RELAUNCHED) {
+    $entryUrl = 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1'
+    $entryPath = Join-Path $env:TEMP ('mios-entry-' + [guid]::NewGuid().ToString('N') + '.ps1')
+    try {
+        $entryResponse = Invoke-WebRequest -Uri $entryUrl `
+            -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } `
+            -UseBasicParsing -ErrorAction Stop
+        if (-not $entryResponse.Content -or $entryResponse.Content.Length -lt 1000) {
+            throw 'The fetched Get-MiOS.ps1 response was empty or incomplete.'
+        }
+        [IO.File]::WriteAllText($entryPath, [string]$entryResponse.Content, (New-Object System.Text.UTF8Encoding($true)))
+        $engine = Join-Path $PSHOME $(if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' })
+        if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) { $engine = 'powershell.exe' }
+        $childArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $entryPath,
+            '-Action', $Action, '-RepoUrl', $RepoUrl, '-Branch', $Branch, '-RepoDir', $RepoDir, '-Workflow', $Workflow)
+        if ($FullBuild) { $childArgs += '-FullBuild' }
+        if ($Unattended) { $childArgs += '-Unattended' }
+
+        $oldRelaunchFlag = $env:MIOS_GETMIOS_FILE_RELAUNCHED
+        $env:MIOS_GETMIOS_FILE_RELAUNCHED = '1'
+        try {
+            & $engine @childArgs
+            $childExit = $LASTEXITCODE
+        } finally {
+            if ($null -eq $oldRelaunchFlag) { Remove-Item Env:MIOS_GETMIOS_FILE_RELAUNCHED -ErrorAction SilentlyContinue }
+            else { $env:MIOS_GETMIOS_FILE_RELAUNCHED = $oldRelaunchFlag }
+        }
+    } catch {
+        Write-Host ("[!] Could not start the MiOS installer in a child PowerShell process: " + $_.Exception.Message) -ForegroundColor Red
+        $childExit = 1
+    } finally {
+        Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
+    }
+    if ($null -ne $childExit) { $global:LASTEXITCODE = [int]$childExit }
+    return
+}
+
 # Set TLS 1.2 explicitly for down-level/.NET-old hosts
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
