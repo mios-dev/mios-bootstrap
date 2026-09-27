@@ -4956,13 +4956,36 @@ function Invoke-GitProc {
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = 'git'
-        foreach ($a in $ArgList) {
-            if ($psi.ArgumentList -ne $null) { [void]$psi.ArgumentList.Add($a) }
-        }
-        if ($psi.ArgumentList -eq $null -or $psi.ArgumentList.Count -eq 0) {
-            # PS 5.1 fallback: build single-string Arguments. Each arg
-            # quoted in case of spaces in paths.
-            $psi.Arguments = ($ArgList | ForEach-Object { '"' + ($_ -replace '"','\"') + '"' }) -join ' '
+        $argumentListProperty = $psi.GetType().GetProperty('ArgumentList')
+        if ($argumentListProperty) {
+            $argumentList = $argumentListProperty.GetValue($psi, $null)
+            foreach ($a in $ArgList) { [void]$argumentList.Add([string]$a) }
+        } else {
+            # Windows PowerShell 5.1 uses .NET Framework, which has no
+            # ProcessStartInfo.ArgumentList. Quote according to the Windows
+            # command-line rules so paths, quotes, and trailing slashes survive.
+            $quotedArgs = foreach ($a in $ArgList) {
+                $s = [string]$a
+                if ($s.Length -gt 0 -and $s -notmatch '[\s"]') { $s; continue }
+                $b = New-Object System.Text.StringBuilder
+                [void]$b.Append('"')
+                $slashes = 0
+                foreach ($ch in $s.ToCharArray()) {
+                    if ($ch -eq '\') { $slashes++; continue }
+                    if ($ch -eq '"') {
+                        [void]$b.Append(('\' * (2 * $slashes + 1)))
+                        [void]$b.Append('"')
+                        $slashes = 0
+                        continue
+                    }
+                    if ($slashes) { [void]$b.Append(('\' * $slashes)); $slashes = 0 }
+                    [void]$b.Append($ch)
+                }
+                if ($slashes) { [void]$b.Append(('\' * (2 * $slashes))) }
+                [void]$b.Append('"')
+                $b.ToString()
+            }
+            $psi.Arguments = $quotedArgs -join ' '
         }
         if ($Cwd) { $psi.WorkingDirectory = $Cwd }
         $psi.UseShellExecute        = $false
