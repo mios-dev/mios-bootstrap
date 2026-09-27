@@ -117,7 +117,11 @@ function Invoke-MiOSCatInstall {
     Write-Host "[MiOS-Cat] Executing verb: install" -ForegroundColor Green
     $ps1Path = Join-Path $PSScriptRoot "..\..\installation\mios-install.ps1"
     if (Test-Path $ps1Path) {
-        & $ps1Path $ArgsList
+        if ($ArgsList -and $ArgsList.Count -gt 0) {
+            & $ps1Path @ArgsList
+        } else {
+            & $ps1Path
+        }
     } else {
         Write-Host "installation\mios-install.ps1 not found." -ForegroundColor Red
     }

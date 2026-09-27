@@ -116,6 +116,7 @@ if (-not $PSCommandPath -and -not $env:MIOS_GETMIOS_FILE_RELAUNCHED) {
     if ($null -ne $childExit) { $global:LASTEXITCODE = [int]$childExit }
     return
 }
+if ($PSCommandPath) { $global:MIOS_GETMIOS_FILE_RELAUNCHED = $true }
 
 # Set TLS 1.2 explicitly for down-level/.NET-old hosts
 try {
@@ -416,6 +417,32 @@ function Resolve-MiosTomlText {
         $script:_MiosTomlCache['_source'] = '(unreachable -- vendor defaults only)'
         return ''
     }
+}
+
+function Resolve-MiosVendorTomlText {
+    # The system repo owns the complete vendor TOML. The bootstrap repo's
+    # root mios.toml is the operator profile overlay, not a replacement for
+    # the much larger vendor document.
+    $vendorPaths = @(
+        'C:\MiOS\usr\share\mios\mios.toml',
+        'M:\usr\share\mios\mios.toml',
+        (Join-Path $PSScriptRoot 'usr\share\mios\mios.toml')
+    )
+    foreach ($path in $vendorPaths) {
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            try { return [IO.File]::ReadAllText($path, (New-Object System.Text.UTF8Encoding($false))) } catch {}
+        }
+    }
+    try {
+        $cb = [int][double]::Parse((Get-Date -UFormat %s))
+        $rawBase = if ($Script:MiosRawBase) { $Script:MiosRawBase } else { 'https://raw.githubusercontent.com/mios-dev/MiOS/main' }
+        $url = "$rawBase/usr/share/mios/mios.toml?cb=$cb"
+        $resp = Invoke-WebRequest -Uri $url `
+            -Headers @{ 'Cache-Control'='no-cache, no-store, max-age=0'; 'Pragma'='no-cache' } `
+            -UseBasicParsing -ErrorAction Stop
+        if ($resp.Content -is [byte[]]) { return [System.Text.Encoding]::UTF8.GetString($resp.Content) }
+        return [string]$resp.Content
+    } catch { return '' }
 }
 
 function Get-MiosTomlValue {
@@ -4695,18 +4722,24 @@ try {
 } catch { Write-Host ('  ' + ($_msgWingetFailed -f $_.Exception.Message)) -ForegroundColor Yellow }
 
 try {
-    $_miosTomlText = Resolve-MiosTomlText
-    if ($_miosTomlText) {
-        foreach ($_tomlDst in @('M:\usr\share\mios\mios.toml', 'M:\etc\mios\mios.toml')) {
-            $_tomlDstDir = Split-Path -Parent $_tomlDst
-            if (-not (Test-Path -LiteralPath $_tomlDstDir)) {
-                New-Item -ItemType Directory -Path $_tomlDstDir -Force | Out-Null
-            }
-            [IO.File]::WriteAllText($_tomlDst, $_miosTomlText, (New-Object System.Text.UTF8Encoding($false)))
+    $_miosVendorToml = Resolve-MiosVendorTomlText
+    $_miosHostToml = Resolve-MiosTomlText
+    if ($_miosVendorToml) {
+        $_vendorDst = 'M:\usr\share\mios\mios.toml'
+        $_vendorDir = Split-Path -Parent $_vendorDst
+        if (-not (Test-Path -LiteralPath $_vendorDir)) { New-Item -ItemType Directory -Path $_vendorDir -Force | Out-Null }
+        [IO.File]::WriteAllText($_vendorDst, $_miosVendorToml, (New-Object System.Text.UTF8Encoding($false)))
+        if ($_miosHostToml) {
+            $_hostDst = 'M:\etc\mios\mios.toml'
+            $_hostDir = Split-Path -Parent $_hostDst
+            if (-not (Test-Path -LiteralPath $_hostDir)) { New-Item -ItemType Directory -Path $_hostDir -Force | Out-Null }
+            [IO.File]::WriteAllText($_hostDst, $_miosHostToml, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host "  [+] Full vendor mios.toml -> M:\usr\share\mios; operator profile -> M:\etc\mios" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  [+] Full vendor mios.toml -> M:\usr\share\mios (no host override found)" -ForegroundColor DarkGray
         }
-        Write-Host "  [+] mios.toml promoted to M:\usr\share\mios + M:\etc\mios (Windows = Linux dash parity)" -ForegroundColor DarkGray
     } else {
-        Write-Host "  [!] mios.toml fetch returned empty -- M:\ overlay not promoted (Show-MiosDashboard will use vendor defaults)" -ForegroundColor Yellow
+        Write-Host "  [!] Full vendor mios.toml could not be loaded -- M:\usr\share\mios was not overwritten" -ForegroundColor Yellow
     }
 } catch {
     Write-Host ("  [!] mios.toml promotion to M:\ failed: $($_.Exception.Message)") -ForegroundColor Yellow

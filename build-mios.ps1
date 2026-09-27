@@ -1373,6 +1373,27 @@ function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
     return $defaults
 }
 
+function New-SeededConfiguratorHtml {
+    param([string]$HtmlPath, [string]$TomlPath)
+    if (-not (Test-Path -LiteralPath $HtmlPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $TomlPath -PathType Leaf)) { return $HtmlPath }
+    try {
+        $htmlText = [IO.File]::ReadAllText($HtmlPath)
+        $tomlText = [IO.File]::ReadAllText($TomlPath, (New-Object System.Text.UTF8Encoding($false)))
+        $json = ConvertTo-Json -InputObject $tomlText -Compress
+        $json = $json.Replace('</', '<\/')
+        $seedTag = "<script>window.MIOS_BOOTSTRAP_TOML = $json;</script>`n"
+        $headEnd = $htmlText.LastIndexOf('</head>', [StringComparison]::OrdinalIgnoreCase)
+        if ($headEnd -lt 0) { return $HtmlPath }
+        $target = Join-Path $env:TEMP ('mios-configurator-seeded-' + [guid]::NewGuid().ToString('N') + '.html')
+        [IO.File]::WriteAllText($target, $htmlText.Insert($headEnd, $seedTag), (New-Object System.Text.UTF8Encoding($false)))
+        return $target
+    } catch {
+        Log-Warn "Could not stage actual mios.toml into standalone configurator: $($_.Exception.Message)"
+        return $HtmlPath
+    }
+}
+
 function Open-Configurator([string]$RepoDir) {
     if ($Unattended) { return }
     if ($env:MIOS_NO_CONFIGURATOR -eq "1") { return }
@@ -1420,8 +1441,10 @@ function Open-ConfiguratorInDev([string]$RepoDir, [string]$Html) {
     # into the dev VM's ~/Downloads/mios.toml as the working file.
     $sources = @(
         (Join-Path $env:APPDATA "MiOS\mios.toml"),
-        (Join-Path $RepoDir "mios-bootstrap\mios.toml"),
-        (Join-Path $RepoDir "mios\usr\share\mios\mios.toml")
+        (Join-Path $RepoDir "usr\share\mios\mios.toml"),
+        'C:\MiOS\usr\share\mios\mios.toml',
+        (Join-Path $RepoDir "mios\usr\share\mios\mios.toml"),
+        (Join-Path $RepoDir "mios-bootstrap\mios.toml")
     )
     $seedToml = $null
     foreach ($s in $sources) { if (Test-Path $s) { $seedToml = $s; break } }
@@ -1430,6 +1453,9 @@ function Open-ConfiguratorInDev([string]$RepoDir, [string]$Html) {
         $sd = $seedToml.Substring(0,1).ToLower()
         $seedTomlWsl = "/mnt/$sd" + ($seedToml.Substring(2) -replace '\\','/')
     }
+    $html = New-SeededConfiguratorHtml -HtmlPath $html -TomlPath $seedToml
+    $htmlDrive = $html.Substring(0,1).ToLower()
+    $htmlWsl = "/mnt/$htmlDrive" + ($html.Substring(2) -replace '\\','/')
 
     Write-Host ""
     Write-Host "  Launching Epiphany on $wslDistro (user: $devUser) ..." -ForegroundColor Cyan
@@ -1539,16 +1565,19 @@ function Open-ConfiguratorOnWindows([string]$RepoDir, [string]$Html) {
     $staging = Join-Path $stagingDir "mios-$stamp.toml"
     $sources = @(
         (Join-Path $env:APPDATA "MiOS\mios.toml"),
-        (Join-Path $RepoDir "mios-bootstrap\mios.toml"),
-        (Join-Path $RepoDir "mios\usr\share\mios\mios.toml")
+        (Join-Path $RepoDir "usr\share\mios\mios.toml"),
+        'C:\MiOS\usr\share\mios\mios.toml',
+        (Join-Path $RepoDir "mios\usr\share\mios\mios.toml"),
+        (Join-Path $RepoDir "mios-bootstrap\mios.toml")
     )
     $src = $null
     foreach ($s in $sources) { if (Test-Path $s) { $src = $s; break } }
     if ($src) { Copy-Item -Path $src -Destination $staging -Force }
     else      { New-Item -ItemType File -Path $staging -Force | Out-Null }
 
+    $seededHtml = New-SeededConfiguratorHtml -HtmlPath $Html -TomlPath $staging
     $stagingForUrl = ($staging -replace '\\', '/' -replace ' ', '%20')
-    $url = "file:///$($Html -replace '\\', '/' -replace ' ', '%20')?suggested_path=$stagingForUrl"
+    $url = "file:///$($seededHtml -replace '\\', '/' -replace ' ', '%20')?suggested_path=$stagingForUrl"
     Write-Host ""
     Write-Host "  Opening configurator: $url" -ForegroundColor Cyan
     Write-Host "  Staging file:         $staging" -ForegroundColor Cyan
