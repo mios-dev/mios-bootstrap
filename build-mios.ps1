@@ -2550,7 +2550,7 @@ get_pkgs() {
 
 # Add Fedora-version-pinned RPMFusion (free + nonfree).
 fedver=$(rpm -E %fedora 2>/dev/null || echo 43)
-sudo dnf5 install -y --skip-unavailable \
+sudo env SYSTEMD_OFFLINE=1 dnf5 install -y --skip-unavailable \
     "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${fedver}.noarch.rpm" \
     "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${fedver}.noarch.rpm" \
     >"$LOG_DIR/00-rpmfusion.log" 2>&1 || true
@@ -2565,7 +2565,7 @@ install_section() {
     [[ -z "${pkgs// }" ]] && { echo "[mios-overlay] EMPTY $sec"; return; }
     echo "[mios-overlay] INSTALL $sec"
     # shellcheck disable=SC2086
-    sudo dnf5 install -y --skip-unavailable --skip-broken --allowerasing \
+    sudo env SYSTEMD_OFFLINE=1 dnf5 install -y --skip-unavailable --skip-broken --allowerasing \
         $pkgs >"$LOG_DIR/$sec.log" 2>&1
     # rc=1 from terminal systemd scriptlets is benign on podman-machine
     # WSL distros that lack a live system D-Bus -- packages still land.
@@ -2580,7 +2580,7 @@ done
 
 # Critical safe-subset (skip kernel-core/gdm/libvirt on WSL).
 echo "[mios-overlay] INSTALL critical (WSL-safe subset)"
-sudo dnf5 install -y --skip-unavailable --skip-broken --allowerasing \
+sudo env SYSTEMD_OFFLINE=1 dnf5 install -y --skip-unavailable --skip-broken --allowerasing \
     bootc chrony cockpit firewalld NetworkManager pipewire tuned \
     >"$LOG_DIR/critical.log" 2>&1 || true
 
@@ -3230,7 +3230,11 @@ if [[ -f "$TOML_FILE" ]] && command -v awk >/dev/null 2>&1; then
             # output until the (20-40 min) transaction finishes AND masks dnf's
             # exit code (the `if` would see tail's 0 and mark success on failure).
             # shellcheck disable=SC2086
-            if sudo stdbuf -oL -eL dnf install -y --skip-unavailable $PKG_LIST 2>&1; then
+            # This transaction runs in the Podman machine's provisioning
+            # environment, where RPM scriptlets cannot reach a live systemd
+            # manager. SYSTEMD_OFFLINE keeps systemctl scriptlets from trying
+            # to contact PID 1; the overlay enables/starts selected units below.
+            if sudo env SYSTEMD_OFFLINE=1 stdbuf -oL -eL dnf install -y --skip-unavailable $PKG_LIST 2>&1; then
                 installed_via="dnf"
             fi
         fi
@@ -3240,7 +3244,7 @@ if [[ -f "$TOML_FILE" ]] && command -v awk >/dev/null 2>&1; then
             sudo rpm-ostree usroverlay 2>&1 | tail -3 || true
             # Stream live; no `tail` (see dnf note above -- buffers + masks exit).
             # shellcheck disable=SC2086
-            if sudo stdbuf -oL -eL dnf5 install -y --skip-unavailable $PKG_LIST 2>&1; then
+            if sudo env SYSTEMD_OFFLINE=1 stdbuf -oL -eL dnf5 install -y --skip-unavailable $PKG_LIST 2>&1; then
                 installed_via="dnf5"
             fi
         fi
@@ -3577,7 +3581,7 @@ function Invoke-WslBuild([string]$Distro, [string]$BaseImage, [string]$AiModel,
                                           -AiModel $AiModel -EmbedModel $EmbedModel -BakeModels $BakeModels
     }
 
-    $justCheck = "command -v just &>/dev/null || dnf install -y just"
+    $justCheck = "command -v just &>/dev/null || SYSTEMD_OFFLINE=1 dnf install -y just"
     if ($useSsh) {
         & podman machine ssh $Distro -- bash -c $justCheck 2>$null | Out-Null
     } else {
@@ -6732,7 +6736,7 @@ $miosRepo = $MiosRepoDir
         if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
         }
-        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dnf install -y --quiet $miosEssentials" 2>&1 |
+        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "SYSTEMD_OFFLINE=1 dnf install -y --quiet $miosEssentials" 2>&1 |
             ForEach-Object { Write-Log "mios-essentials: $_" }
         $script:_essentialsRc = $LASTEXITCODE
     }
@@ -6826,7 +6830,7 @@ $miosRepo = $MiosRepoDir
                         if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                             $PSNativeCommandUseErrorActionPreference = $false
                         }
-                        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dnf install -y --skip-unavailable --skip-broken --quiet $($_chunk -join ' ')" 2>&1 |
+                        & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "SYSTEMD_OFFLINE=1 dnf install -y --skip-unavailable --skip-broken --quiet $($_chunk -join ' ')" 2>&1 |
                             ForEach-Object { Write-Log "mios-overlay: $_" }
                     }
                 }
@@ -6866,7 +6870,7 @@ $miosRepo = $MiosRepoDir
                             if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                 $PSNativeCommandUseErrorActionPreference = $false
                             }
-                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "command -v dbus-launch >/dev/null 2>&1 || dnf install -y --quiet dbus-x11 xorg-x11-xauth 2>&1 | tail -5" 2>&1 |
+                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "command -v dbus-launch >/dev/null 2>&1 || SYSTEMD_OFFLINE=1 dnf install -y --quiet dbus-x11 xorg-x11-xauth 2>&1 | tail -5" 2>&1 |
                                 ForEach-Object { Write-Log "mios-flatpak-dbus-prereq: $_" }
                         }
                         & {
