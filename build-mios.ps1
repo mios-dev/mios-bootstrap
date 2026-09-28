@@ -5728,8 +5728,19 @@ $endMark
     $wallpaperd_exe = Join-Path $MiosBinDir 'mios-wallpaperd.exe'
     if (Get-Command cargo -ErrorAction SilentlyContinue) {
         Log-Info "Compiling mios-wallpaperd via cargo..."
-        $cargoOut = & cargo build --manifest-path "$wallpaperd_src\Cargo.toml" --release 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        # PowerShell 7.6 can promote native stderr records to terminating
+        # errors under the script's global Stop preference. Cargo emits
+        # workspace-profile warnings on stderr even when the build succeeds;
+        # keep those as captured diagnostics and decide from cargo's exit code.
+        $cargoOut = & {
+            $ErrorActionPreference = 'Continue'
+            if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                $PSNativeCommandUseErrorActionPreference = $false
+            }
+            & cargo build --manifest-path "$wallpaperd_src\Cargo.toml" --release 2>&1
+            $script:_WallpaperCargoExit = $LASTEXITCODE
+        }
+        if ($script:_WallpaperCargoExit -eq 0) {
             $builtExe = Join-Path $MiosRepoDir 'tools\native\target\release\mios-wallpaperd.exe'
             if (Test-Path $builtExe) {
                 Copy-Item -Path $builtExe -Destination $wallpaperd_exe -Force
