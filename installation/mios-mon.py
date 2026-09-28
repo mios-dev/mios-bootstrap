@@ -28,6 +28,7 @@ def _install_deps():
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as e:
         print(f"\033[31mFATAL: Failed to auto-install dependencies: {e}\033[0m")
+        print("Please manually run: pip install rich textual psutil")
         if sys.stdin and hasattr(sys.stdin, 'isatty') and sys.stdin.isatty():
             try:
                 input("Press Enter to exit...")
@@ -35,7 +36,6 @@ def _install_deps():
                 pass
         sys.exit(1)
 
-# --- RICH IMPORTS (For static renders) ---
 try:
     from rich.console import Console, Group
     from rich.panel import Panel
@@ -47,7 +47,6 @@ try:
 except ImportError:
     _install_deps()
 
-# --- TEXTUAL IMPORTS (For live TUI) ---
 try:
     from textual.app import App, ComposeResult
     from textual.widgets import Header, Footer, Static, RichLog, TabbedContent, TabPane, DataTable, Sparkline, Label
@@ -63,13 +62,10 @@ except ImportError:
 IS_WINDOWS = platform.system() == 'Windows'
 console = Console(safe_box=False)
 
-# ---------------------------------------------------------------------------
-# CORE DATA FETCHING (Shared between Rich and Textual)
-# ---------------------------------------------------------------------------
-
 _SYS_INFO_CACHE = None
 _USB_INFO_CACHE = "Scanning USB..."
 _GIT_STATUS_CACHE = "[dim]Git state loading...[/]"
+PIPELINE_MODE = False
 
 def check_port(host, port):
     if not port or port <= 0:
@@ -101,15 +97,17 @@ def get_services():
                         if "ports" in data:
                             ports.update(data["ports"])
                 except Exception: pass
-    
+
     wsl_online = IS_WINDOWS or "WSL" in platform.release()
     for svc_name, port in ports.items():
         if isinstance(port, int) and svc_name != "stack_id":
             offset = ports.get("stack_id", 0) * 10000
             actual_port = port + offset
             is_up = check_port("127.0.0.1", actual_port)
+            if not is_up and wsl_online and actual_port in [8222, 8300, 8301, 8091, 8642, 8119, 8443, 8080, 8444, 8389, 8450, 8053, 8633, 8442, 8641, 8650, 8645, 11437]:
+                is_up = check_port("127.0.0.1", actual_port)
             svcs.append((svc_name, actual_port, is_up))
-    
+
     svcs.append(("wsl-engine", 0, wsl_online))
     svcs.append(("podman-machine", 0, True))
     return svcs
@@ -135,11 +133,11 @@ def get_sys_info():
 
     host = platform.node() or 'localhost'
     kernel = platform.release()
-    os_name = platform.system()
-    user = os.environ.get("USERNAME", os.environ.get("USER", "mios"))
+    user = os.environ.get("USER", os.environ.get("USERNAME", "mios"))
+    os_name = "Linux"
     uptime_str = "0h 0m"
     cpu_model = "Unknown CPU"
-    
+
     if not IS_WINDOWS:
         try:
             with open("/etc/os-release") as f:
@@ -148,9 +146,14 @@ def get_sys_info():
                         os_name = line.split("=")[1].strip().strip('"')
         except: pass
         try:
+            with open("/proc/uptime") as f:
+                u_sec = float(f.read().split()[0])
+                uptime_str = f"{int(u_sec // 3600)}h {int((u_sec % 3600) // 60)}m"
+        except: pass
+        try:
             with open("/proc/cpuinfo") as f:
                 for line in f:
-                    if line.startswith("model name"):
+                    if "model name" in line:
                         cpu_model = line.split(":")[1].strip()
                         break
         except: pass
@@ -173,12 +176,13 @@ def get_telemetry():
     c_pct = m_pct = 0
     try:
         c_pct = psutil.disk_usage('C:\\' if IS_WINDOWS else '/').percent
-        if IS_WINDOWS and os.path.exists('M:\\'): m_pct = psutil.disk_usage('M:\\').percent
+        m_path = 'M:\\' if IS_WINDOWS else '/mnt/m'
+        if os.path.exists(m_path):
+            m_pct = psutil.disk_usage(m_path).percent
     except: pass
-    load_avg = "0.00 0.00 0.00"
-    if not IS_WINDOWS:
-        try:
-            with open("/proc/loadavg", "r") as f: load_avg = " ".join(f.read().split()[:3])
+    load_avg = "-"
+    if not IS_WINDOWS and hasattr(os, "getloadavg"):
+        try: load_avg = f"{os.getloadavg()[0]:.2f}"
         except: pass
     return cpu, ram, c_pct, m_pct, load_avg
 
@@ -200,33 +204,39 @@ def _bg_update_usb():
                 else:
                     _USB_INFO_CACHE = "No USB Drive Detected"
             else:
-                _USB_INFO_CACHE = "USB Monitor (Linux)"
+                _USB_INFO_CACHE = "No USB Drive Detected"
         except Exception:
             _USB_INFO_CACHE = "No USB Drive Detected"
         time.sleep(10)
 
-def _bg_update_git():
+def _resolve_git_dir():
+    for c in [os.environ.get("MIOS_ROOT"), os.getcwd(), "/workspaces/MiOS", "/", "/mnt/m", "C:\\MiOS", "C:\\mios-bootstrap"]:
+        if c and os.path.isdir(os.path.join(c, ".git")): return c
+    return None
+
+def _resolve_git_status():
     global _GIT_STATUS_CACHE
+    d = _resolve_git_dir()
+    if not d:
+        _GIT_STATUS_CACHE = "[dim]Git repo not found[/]"
+        return _GIT_STATUS_CACHE
+    try:
+        out = subprocess.check_output(["git", "status", "--porcelain", "-b"], cwd=d, text=True, timeout=2.0, stderr=subprocess.DEVNULL)
+        lines = out.splitlines()
+        branch = lines[0].replace("##", "").strip() if lines and "##" in lines[0] else (lines[0].strip() if lines else "unknown")
+        staged = sum(1 for l in lines[1:] if l and l[0] not in (" ", "?"))
+        mod = sum(1 for l in lines[1:] if l and l[:2] != "??" and l[1] != " ")
+        untr = sum(1 for l in lines[1:] if l and l[:2] == "??")
+        _GIT_STATUS_CACHE = f"Branch: {branch} | [green]{staged} staged[/] | [yellow]{mod} mod[/] | [dim]{untr} untracked[/]"
+    except Exception:
+        _GIT_STATUS_CACHE = "[dim]Git state unavailable[/]"
+    return _GIT_STATUS_CACHE
+
+def _bg_update_git():
     while True:
-        target_dir = "C:\\MiOS" if IS_WINDOWS else "/mnt/m"
-        if not os.path.isdir(target_dir):
-            target_dir = "C:\\mios-bootstrap"
-        if os.path.isdir(os.path.join(target_dir, ".git")):
-            try:
-                out = subprocess.check_output(["git", "status", "--porcelain", "-b"], cwd=target_dir, text=True, timeout=2.0)
-                lines = out.splitlines()
-                branch = lines[0].replace("##", "").strip() if "##" in lines[0] else lines[0].strip()
-                staged = sum(1 for l in lines[1:] if l[0] not in (" ", "?"))
-                modified = sum(1 for l in lines[1:] if l[:2] != "??" and l[1] != " ")
-                untracked = sum(1 for l in lines[1:] if l[:2] == "?")
-                _GIT_STATUS_CACHE = f"Branch: {branch} | [green]{staged} staged[/] | [yellow]{modified} mod[/] | [dim]{untracked} untracked[/]"
-            except Exception:
-                _GIT_STATUS_CACHE = "[dim]Git state unavailable[/]"
-        else:
-            _GIT_STATUS_CACHE = "[dim]Git repo not found[/]"
+        _resolve_git_status()
         time.sleep(5)
 
-# Start background async threads for slow I/O
 threading.Thread(target=_bg_update_usb, daemon=True).start()
 threading.Thread(target=_bg_update_git, daemon=True).start()
 
@@ -236,68 +246,118 @@ def get_usb_drive_info():
 def get_git_tree_status():
     return _GIT_STATUS_CACHE
 
+def get_credentials_text():
+    u = "mios"
+    lp = "mios"
+    fp = "mios"
+    lp_file = "/etc/mios/login-password"
+    fp_file = "/var/lib/mios/forge/admin-password"
+    if os.path.isfile(lp_file):
+        try:
+            with open(lp_file, "r") as f: lp = f.read().strip() or lp
+        except Exception: pass
+    if os.path.isfile(fp_file):
+        try:
+            with open(fp_file, "r") as f: fp = f.read().strip() or lp
+        except Exception: pass
+    return f"[dim]login[/] [cyan]{u}[/]/[yellow]{lp}[/]    [dim]forge[/] [cyan]{u}[/]/[yellow]{fp}[/]"
+
 def get_ascii_logo():
-    logo_path = "C:\\MiOS\\usr\\share\\mios\\branding\\mios.txt" if IS_WINDOWS else "/usr/share/mios/branding/mios.txt"
-    if os.path.exists(logo_path):
-        with open(logo_path, 'r', encoding='utf-8') as f:
-            return "\n".join([l for l in f.read().splitlines() if not l.startswith('#')])
-    return "MiOS"
+    p = "C:\\MiOS\\usr\\share\\mios\\branding\\mios.txt" if IS_WINDOWS else "/usr/share/mios/branding/mios.txt"
+    if os.path.exists(p):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                lines = [l for l in f.read().splitlines() if not l.strip().startswith("#")]
+                while lines and not lines[0].strip(): lines.pop(0)
+                while lines and not lines[-1].strip(): lines.pop()
+                return "\n".join(lines)
+        except Exception: pass
+    return r"""\
+  __  __ _  ___  ____
+ |  \/  (_)/ _ \/ ___|
+ | |\/| | | | | \___ \
+ | |  | | | |_| |___) |
+ |_|  |_|_|\___/|____/
+"""
 
 def run_fastfetch():
     try:
-        out = subprocess.check_output(["fastfetch", "--logo", "none"], text=True, stderr=subprocess.DEVNULL, timeout=2.0)
-        return Text.from_ansi(out)
-    except Exception:
-        return Text("[dim]fastfetch unavailable[/]")
+        cfg = "C:\\MiOS\\usr\\share\\mios\\fastfetch\\config.jsonc" if IS_WINDOWS else "/usr/share/mios/fastfetch/config.jsonc"
+        cmd = ["fastfetch", "-c", cfg, "--logo", "none"] if os.path.exists(cfg) else ["fastfetch", "--logo", "none"]
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=2.0)
+        sh = os.path.basename(os.environ.get("SHELL", "bash"))
+        clean, skip = [], False
+        for line in out.splitlines():
+            if skip:
+                if any(line.strip().startswith(p) for p in ("CPU", "GPU", "Memory", "Swap", "Disk", "Local IP", "Locale", "Battery", "Power")):
+                    skip = False; clean.append(line)
+                continue
+            if "Shell" in line and not any(line.strip().startswith(p) for p in ("CPU", "GPU", "OS", "Kernel", "Memory")):
+                clean.append(f"\033[33mShell\033[0m  \033[36m{sh}\033[0m")
+                skip = True; continue
+            clean.append(line)
+        return Text.from_ansi("\n".join(clean))
+    except Exception: return None
 
-def create_mini_layout():
+def get_sys_info_table():
+    sys_info, telem = get_sys_info(), get_telemetry()
+    t = Table(box=box.ROUNDED, border_style="dim cyan", show_header=False, expand=True, padding=(0, 1))
+    for col, rat in [("yellow bold", 1), ("white", 3), ("yellow bold", 1), ("white", 3)]:
+        t.add_column(style=col, ratio=rat)
+    sh = os.path.basename(os.environ.get("SHELL", "bash"))
+    ip = "127.0.0.1"
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(("10.255.255.255", 1)); ip = s.getsockname()[0]; s.close()
+    except Exception: pass
+    if isinstance(telem, dict):
+        mem_str = f"{telem.get('ram', 0)} GiB ({telem.get('m_pct', 0)}%)"
+        load_str = str(telem.get("load_avg", "-"))
+    else:
+        mem_str = f"{telem[1]}%"
+        load_str = str(telem[4])
+    t.add_row("OS", sys_info.get("os", "Linux"), "CPU", f"{sys_info.get('cpu_model', 'CPU')}")
+    t.add_row("Kernel", sys_info.get("kernel", "Linux"), "Memory", mem_str)
+    t.add_row("Uptime", sys_info.get("uptime", "0m"), "Load", load_str)
+    t.add_row("Shell", sh, "Host", f"{sys_info.get('host', 'localhost')} ({ip})")
+    return t
+
+def create_metal_layout():
     sys_info = get_sys_info()
     services = get_services()
-    up = sum(1 for s in services if s[2])
-    down = len(services) - up
-
     t = Table(show_header=False, box=box.SIMPLE, expand=True)
     for i in range(0, len(services), 2):
         s1 = services[i]
-        st1 = "*" if s1[2] else "x"
         c1 = "green" if s1[2] else "red"
-        m1 = f"[{c1}]{st1}[/] {s1[0]}"
+        m1 = f"[{c1}]{'*' if s1[2] else 'x'}[/] {s1[0]}"
         m2 = ""
         if i + 1 < len(services):
             s2 = services[i+1]
-            st2 = "*" if s2[2] else "x"
             c2 = "green" if s2[2] else "red"
-            m2 = f"[{c2}]{st2}[/] {s2[0]}"
+            m2 = f"[{c2}]{'*' if s2[2] else 'x'}[/] {s2[0]}"
         t.add_row(m1, m2)
+    up = sum(1 for s in services if s[2])
+    return Align.center(Panel(t, title=f"[cyan bold]MiOS Mini[/] - [dim]{sys_info['host']} ({sys_info['os']})[/]", subtitle=f"[green]{up} UP[/] | [red]{len(services) - up} DOWN[/]", border_style="cyan"))
 
-    return Align.center(Panel(t, title=f"[cyan bold]MiOS Mini[/] - [dim]{sys_info['host']} ({sys_info['os']})[/]", subtitle=f"[green]{up} UP[/] | [red]{down} DOWN[/]", border_style="cyan"))
+create_mini_layout = create_metal_layout
 
 def create_dash_layout():
     services = get_services()
-    header = Columns([Align.right(Text(get_ascii_logo(), style="cyan bold")), Align.left(run_fastfetch())], expand=True)
-
+    logo = Align.center(Text(get_ascii_logo(), style="cyan bold", no_wrap=True))
+    fetch = run_fastfetch()
     svcs = Table(box=box.SIMPLE, expand=True)
     for _ in range(2):
-        svcs.add_column("Service", style="cyan")
-        svcs.add_column("Port", style="dim")
-        svcs.add_column("Status")
-    
+        svcs.add_column("Service", style="cyan"); svcs.add_column("Port", style="dim", justify="right"); svcs.add_column("Status", justify="center")
     for i in range(0, len(services), 2):
         s1 = services[i]
         st1 = "[green bold]*[/]" if s1[2] else "[red bold]x[/]"
         s2_row = ["", "", ""]
         if i + 1 < len(services):
             s2 = services[i+1]
-            st2 = "[green bold]*[/]" if s2[2] else "[red bold]x[/]"
-            s2_row = [s2[0], str(s2[1]) if s2[1] else "-", st2]
+            s2_row = [s2[0], str(s2[1]) if s2[1] else "-", "[green bold]*[/]" if s2[2] else "[red bold]x[/]"]
         svcs.add_row(s1[0], str(s1[1]) if s1[1] else "-", st1, *s2_row)
-    
-    footer_text = f"User: login mios/mios   Host: forge mios/\n\nTree\n{get_git_tree_status()}"
-    return Panel(Group(Panel(header, box=box.SIMPLE, border_style="cyan"), Panel(svcs, title="[yellow]UNIFIED SYSTEM STACK & SERVICES[/]", border_style="cyan"), Panel(Align.center(footer_text), box=box.SIMPLE, border_style="cyan")), border_style="blue", padding=1)
-
-# ---------------------------------------------------------------------------
-# FULL TEXTUAL TUI APPLICATION (btop-style)
-# ---------------------------------------------------------------------------
+    footer = Align.center(f"{get_credentials_text()}\n\n[bold]Tree:[/] {get_git_tree_status()}")
+    header_box = Panel(Group(logo, Text(""), Align.center(fetch) if fetch else get_sys_info_table()), box=box.SIMPLE, border_style="cyan")
+    return Panel(Group(header_box, Panel(svcs, title="[yellow]UNIFIED SYSTEM STACK & SERVICES[/]", border_style="cyan"), Panel(footer, box=box.SIMPLE, border_style="cyan")), border_style="blue", title="[bold cyan]MiOS Dashboard[/]", padding=(1, 1))
 
 if TEXTUAL_AVAILABLE:
     def load_ssot_colors():
@@ -344,67 +404,65 @@ if TEXTUAL_AVAILABLE:
         return f"[{color}]{'█' * filled}[/][dim]{'░' * empty}[/]"
 
     class MiosMonitorApp(App):
-        TITLE = "MiOS Unified Monitor"
-        CSS = f"""
+        TITLE = "MiOS Unified System & AI Monitor"
+        refresh_interval = reactive(0.5)
+
+        DEFAULT_CSS = f"""
         Screen {{
-            layout: vertical;
             background: {SSOT['bg']};
             color: {SSOT['fg']};
-            padding: 0;
-            margin: 0;
         }}
         TabbedContent {{
             height: 1fr;
-            width: 100%;
         }}
         #main-container, #build-container, #flash-container, #ai-container {{
             height: 1fr;
             width: 100%;
-            layout: horizontal;
         }}
-        #left-pane {{
-            width: 1fr;
-            height: 100%;
-        }}
-        #right-pane {{
-            width: 1fr;
-            height: 100%;
+        .box {{
+            background: {SSOT['surface']};
+            border: round {SSOT['accent']};
+            padding: 0 1;
         }}
         #build-stats-pane, #flash-stats-pane, #ai-stats-pane {{
-            width: 38;
+            width: 32;
             height: 100%;
             border: round {SSOT['accent']};
-            content-align: center top;
+            background: {SSOT['surface']};
+            padding: 1 1;
         }}
         #build-log-box, #flash-log-box, #ai-log-box {{
             width: 1fr;
             height: 100%;
             border: round {SSOT['success']};
-        }}
-        #top-right-bar {{
-            height: 6;
-            width: 100%;
-        }}
-        .box {{
             background: {SSOT['surface']};
-            color: {SSOT['fg']};
-            margin: 0;
-            padding: 0 1;
+        }}
+        #left-pane {{
+            width: 48;
+            height: 100%;
         }}
         #hw-box {{
-            height: 2fr;
-            border: round {SSOT['subtle']};
+            height: 16;
+            margin-bottom: 1;
         }}
         #svc-table {{
             height: 1fr;
-            width: 100%;
             border: round {SSOT['accent']};
+        }}
+        #right-pane {{
+            width: 1fr;
+            height: 100%;
+            margin-left: 1;
+        }}
+        #top-right-bar {{
+            height: 5;
+            margin-bottom: 1;
         }}
         #sys-identity {{
             width: 1fr;
             height: 100%;
             border: round {SSOT['subtle']};
-            content-align: center middle;
+            margin-right: 1;
         }}
         #forge-box {{
             width: 1fr;
@@ -434,14 +492,18 @@ if TEXTUAL_AVAILABLE:
             ("q", "quit", "Quit"),
             ("d", "toggle_dark", "Toggle Dark Mode"),
             ("minus", "speed_up", "Decrease Delay (-)"),
+            ("underscore", "speed_up", "Decrease Delay (-)"),
+            ("kp_minus", "speed_up", "Decrease Delay (-)"),
             ("up", "speed_up", "Decrease Delay"),
             ("plus", "slow_down", "Increase Delay (+)"),
+            ("equals", "slow_down", "Increase Delay (+)"),
+            ("kp_plus", "slow_down", "Increase Delay (+)"),
             ("down", "slow_down", "Increase Delay"),
         ]
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
-            with TabbedContent(initial="tab-global"):
+            with TabbedContent(initial="tab-build" if PIPELINE_MODE else "tab-global"):
                 with TabPane("Global Systems", id="tab-global"):
                     with Horizontal(id="main-container"):
                         with Vertical(id="left-pane"):
@@ -484,26 +546,23 @@ if TEXTUAL_AVAILABLE:
                 background=SSOT['bg'],
                 surface=SSOT['surface'],
                 panel=SSOT['surface'],
-                dark=True,
             )
             self.register_theme(custom_theme)
             self.theme = "mios-ssot"
-            
-            self.refresh_interval = 1.0  # Smooth 1s refresh interval
-            self.update_titles()
-            
-            svc_table = self.query_one("#svc-table", DataTable)
-            svc_table.add_columns("Service Name", "Port", "Status")
-            
-            self.cpu_history = [0.0] * 60
-            self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
-            self.set_interval(3.0, self.async_update_services)
-            
+
+            table = self.query_one("#svc-table", DataTable)
+            table.add_columns("Service", "Port", "Status")
+            table.zebra_stripes = True
+
+            self.cpu_history = []
             self.tailing = True
             self.log_thread = threading.Thread(target=self.tail_all_logs, daemon=True)
             self.log_thread.start()
-            
-            threading.Thread(target=self.update_services, daemon=True).start()
+
+            self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
+            self.set_interval(3.0, self.async_update_services)
+            self.async_update_services()
+            self.update_titles()
 
         def update_titles(self):
             ms = int(self.refresh_interval * 1000)
@@ -516,19 +575,18 @@ if TEXTUAL_AVAILABLE:
             try:
                 self.query_one("#build-log-box").border_title = "MiOS Build / Install Pipeline (Live)"
                 self.query_one("#flash-log-box").border_title = "MiOS-Cat USB Flash Stream (Live)"
+                self.query_one("#ai-log-box").border_title = "MiOS AI Forge & Container Stream (Live)"
             except Exception: pass
 
         def action_speed_up(self):
-            new_val = max(0.2, round(self.refresh_interval - 0.2, 2))
-            self.refresh_interval = new_val
+            self.refresh_interval = max(0.1, self.refresh_interval - 0.1)
             if hasattr(self, "telemetry_timer"):
                 self.telemetry_timer.stop()
             self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
             self.update_titles()
 
         def action_slow_down(self):
-            new_val = min(5.0, round(self.refresh_interval + 0.2, 2))
-            self.refresh_interval = new_val
+            self.refresh_interval = min(5.0, self.refresh_interval + 0.1)
             if hasattr(self, "telemetry_timer"):
                 self.telemetry_timer.stop()
             self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
@@ -546,6 +604,29 @@ if TEXTUAL_AVAILABLE:
                 build_log_box = self.query_one("#build-log-box", RichLog)
             except Exception:
                 build_log_box = None
+
+            def stream_proc(cmd):
+                try:
+                    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1, errors="ignore")
+                    while self.tailing:
+                        if proc.poll() is not None:
+                            break
+                        line = proc.stdout.readline()
+                        if not line:
+                            time.sleep(0.05)
+                            continue
+                        line = line.strip()
+                        if not line: continue
+                        if re.search(r'\b(error|failed|critical|fatal)\b', line, re.I): line = f"[{SSOT['error']}]{line}[/]"
+                        elif re.search(r'\bwarn(ing)?\b', line, re.I): line = f"[{SSOT['warning']}]{line}[/]"
+                        elif 'podman' in line.lower() or 'container' in line.lower():
+                            line = f"[{SSOT['subtle']}]{line}[/]"
+                            if ai_log_box: self.call_from_thread(ai_log_box.write, line)
+                        self.call_from_thread(log_box.write, line)
+                    try:
+                        proc.kill()
+                    except Exception: pass
+                except Exception: pass
 
             def _find_flash_logs():
                 candidates = [
@@ -569,13 +650,13 @@ if TEXTUAL_AVAILABLE:
                 if not flash_log_box: return
                 current_log = None
                 file_obj = None
-                
+
                 while self.tailing:
                     logs = _find_flash_logs()
                     if not logs:
                         time.sleep(1)
                         continue
-                    
+
                     newest_log = logs[0]
                     if newest_log != current_log:
                         current_log = newest_log
@@ -656,13 +737,13 @@ if TEXTUAL_AVAILABLE:
                 if not build_log_box: return
                 current_log = None
                 file_obj = None
-                
+
                 while self.tailing:
                     logs = _find_build_logs()
                     if not logs:
                         time.sleep(1)
                         continue
-                    
+
                     newest_log = logs[0]
                     if newest_log != current_log:
                         current_log = newest_log
@@ -712,19 +793,24 @@ if TEXTUAL_AVAILABLE:
                                         file_obj.seek(0)
                                 except Exception: pass
 
+            j_cmd = ["stdbuf", "-oL", "journalctl", "-fa", "-n", "0", "--no-pager"]
+            if IS_WINDOWS:
+                j_cmd = ["wsl.exe", "-d", "podman-MiOS-DEV", "-u", "root", "--", "stdbuf", "-oL", "journalctl", "-fa", "-n", "0", "--no-pager"]
+
+            threading.Thread(target=stream_proc, args=(j_cmd,), daemon=True).start()
             if flash_log_box: threading.Thread(target=stream_flash_log, daemon=True).start()
             if build_log_box: threading.Thread(target=stream_build_log, daemon=True).start()
 
         def update_telemetry(self):
             cpu, ram, root, m_disk, load = get_telemetry()
             sys_info = get_sys_info()
-            
+
             self.cpu_history.append(float(cpu))
             if len(self.cpu_history) > 60: self.cpu_history.pop(0)
             try:
                 self.query_one("#spark-widget", Sparkline).data = list(self.cpu_history)
             except Exception: pass
-            
+
             hw_lines = [
                 f"[{SSOT['subtle']} bold]CPU Model:[/] {sys_info['cpu_model'][:36]}",
                 f"[{SSOT['subtle']} bold]Load:[/] {load} | [{SSOT['subtle']} bold]Usage:[/] {make_bar(cpu, 18)} [{SSOT['subtle']} bold]{cpu:.1f}%[/]",
@@ -737,7 +823,7 @@ if TEXTUAL_AVAILABLE:
                     c1_num = i
                     c1_val = cpu_percs[c1_num]
                     c1_str = f"C{c1_num:02d} {make_bar(c1_val, 8)} [dim]{c1_val:4.1f}%[/]"
-                    
+
                     c2_num = i + half
                     if c2_num < len(cpu_percs):
                         c2_val = cpu_percs[c2_num]
@@ -745,7 +831,7 @@ if TEXTUAL_AVAILABLE:
                     else:
                         c2_str = ""
                     hw_lines.append(f"  {c1_str:<32}  {c2_str}")
-                
+
                 hw_lines.append("")
                 mem = psutil.virtual_memory()
                 swap = psutil.swap_memory()
@@ -753,19 +839,25 @@ if TEXTUAL_AVAILABLE:
                 hw_lines.append(f"[{SSOT['warning']} bold]Swap:[/] {make_bar(swap.percent, 16)} {swap.used/(1024**3):.1f}/{swap.total/(1024**3):.1f} GB ({swap.percent}%)")
                 hw_lines.append("")
                 hw_lines.append(f"[{SSOT['subtle']} bold]Disk C:[/] {make_bar(root, 12)} {root}%   |   [{SSOT['subtle']} bold]Disk M:[/] {make_bar(m_disk, 12)} {m_disk}%")
-                
-                net = psutil.net_io_counters()
-                hw_lines.append(f"[{SSOT['success']} bold]Net Sent:[/] {net.bytes_sent/(1024**2):.1f} MB   |   [{SSOT['success']} bold]Net Recv:[/] {net.bytes_recv/(1024**2):.1f} MB")
-            
+
+                try:
+                    net = psutil.net_io_counters()
+                except Exception:
+                    net = None
+                if net is None:
+                    hw_lines.append(f"[{SSOT['success']} bold]Network I/O:[/] unavailable")
+                else:
+                    hw_lines.append(f"[{SSOT['success']} bold]Net Sent:[/] {net.bytes_sent/(1024**2):.1f} MB   |   [{SSOT['success']} bold]Net Recv:[/] {net.bytes_recv/(1024**2):.1f} MB")
+
             self.query_one("#hw-box", Static).update("\n".join(hw_lines))
-            
+
             t_lines = [
                 f"[black on {SSOT['subtle']}]  USER [/] {sys_info['user']}@{sys_info['host']}",
                 f"[black on {SSOT['success']}]  KERNEL [/] {sys_info['kernel']}",
                 f"[black on {SSOT['warning']}] ⏱ UPTIME [/] {sys_info['uptime']}"
             ]
             self.query_one("#sys-identity", Static).update("\n".join(t_lines))
-            
+
             u_lines = [
                 f"[{SSOT['warning']} bold]USB:[/] {get_usb_drive_info()}",
                 f"[{SSOT['success']} bold]GIT:[/] {get_git_tree_status()}"
@@ -775,14 +867,14 @@ if TEXTUAL_AVAILABLE:
             try:
                 ai_lines = [
                     f"[{SSOT['success']} bold]AI Forge Status[/]",
-                    f"[{SSOT['subtle']}]Podman Engine:[/] {'[green]ONLINE[/]' if IS_WINDOWS else '[red]OFFLINE[/]'}",
-                    f"[{SSOT['subtle']}]LLM Inference:[/] {'[green]READY[/]'}",
+                    f"[{SSOT['subtle']}]Podman Engine:[/] {'[green]ONLINE[/]' if check_port('127.0.0.1', 8888) or check_port('127.0.0.1', 8080) or IS_WINDOWS else '[red]OFFLINE[/]'}",
+                    f"[{SSOT['subtle']}]LLM Inference:[/] {'[green]READY[/]' if check_port('127.0.0.1', 11450) or check_port('127.0.0.1', 11434) else '[dim]STANDBY[/]'}",
                     "",
                     f"[{SSOT['warning']}]System Memory:[/] {make_bar(psutil.virtual_memory().percent, 18)}",
                     f"[{SSOT['warning']}]System CPU:[/] {make_bar(float(cpu), 18)}"
                 ]
                 self.query_one("#ai-stats", Static).update("\n".join(ai_lines))
-                
+
                 last_log_t = getattr(self, 'last_flash_log_time', None)
                 if last_log_t:
                     elapsed = int(time.time() - last_log_t)
@@ -851,53 +943,35 @@ if TEXTUAL_AVAILABLE:
             except Exception: pass
 
         def on_resize(self, event) -> None:
-            try:
-                main_c = self.query_one("#main-container")
-                build_c = self.query_one("#build-container")
-                flash_c = self.query_one("#flash-container")
-                ai_c = self.query_one("#ai-container")
-                left_p = self.query_one("#left-pane")
-                right_p = self.query_one("#right-pane")
-
-                if event.size.width < 120:
-                    main_c.styles.layout = "vertical"
-                    build_c.styles.layout = "vertical"
-                    flash_c.styles.layout = "vertical"
-                    ai_c.styles.layout = "vertical"
-                    left_p.styles.width = "100%"
-                    left_p.styles.height = "1fr"
-                    right_p.styles.width = "100%"
-                    right_p.styles.height = "1fr"
-                else:
-                    main_c.styles.layout = "horizontal"
-                    build_c.styles.layout = "horizontal"
-                    flash_c.styles.layout = "horizontal"
-                    ai_c.styles.layout = "horizontal"
-                    left_p.styles.width = "1fr"
-                    left_p.styles.height = "100%"
-                    right_p.styles.width = "1fr"
-                    right_p.styles.height = "100%"
-            except Exception: pass
+            pass
 
         def action_toggle_dark(self) -> None:
             self.dark = not self.dark
+
         def on_unmount(self) -> None:
             self.tailing = False
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mini", action="store_true")
-    parser.add_argument("--dash", action="store_true")
-    parser.add_argument("--monitor", action="store_true")
-    parser.add_argument("--once", action="store_true")
+    global PIPELINE_MODE
+    parser = argparse.ArgumentParser(description="MiOS-Mon -- Unified TUI & System Monitor")
+    parser.add_argument("--mini", "--metal", action="store_true", help="compact mini/metal service layout")
+    parser.add_argument("--dash", action="store_true", help="full system dashboard layout")
+    parser.add_argument("--monitor", action="store_true", help="fullscreen interactive TUI monitor")
+    parser.add_argument("--pipeline", action="store_true",
+                        help="open directly on the live installer/build log tab")
+    parser.add_argument("--once", action="store_true", help="print snapshot once and exit")
     args, unknown = parser.parse_known_args()
+    PIPELINE_MODE = args.pipeline
 
     mode = "monitor"
-    if args.mini or "-mini" in [a.lower() for a in unknown]: mode = "mini"
-    elif args.dash or "-dash" in [a.lower() for a in unknown]: mode = "dash"
-    
+    unknown_lower = [a.lower() for a in unknown]
+    if args.mini or "-mini" in unknown_lower or "--metal" in unknown_lower or "-metal" in unknown_lower or os.environ.get("MIOS_COMPACT") == "1":
+        mode = "mini"
+    elif args.dash or "-dash" in unknown_lower or os.environ.get("MIOS_DASH_SERVICES") == "1":
+        mode = "dash"
+
     if mode == "mini":
-        console.print(create_mini_layout())
+        console.print(create_metal_layout())
         sys.exit(0)
     elif mode == "dash":
         console.print(create_dash_layout())
