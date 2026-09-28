@@ -4919,6 +4919,7 @@ if ($true) {
     # WT_SESSION-or-TERM_PROGRAM=mios gate fires Show-MiosDashboard
     # (the elevated pwsh runs in conhost; WT_SESSION is unset).
     $env:TERM_PROGRAM = 'mios'
+    $env:MIOS_SKIP_MOTD = '1'
 
     try {
         if ($PROFILE.CurrentUserAllHosts -and (Test-Path -LiteralPath $PROFILE.CurrentUserAllHosts)) {
@@ -4927,6 +4928,8 @@ if ($true) {
         }
     } catch {
         Write-Host "  [!] Profile reload failed (will take effect on next pwsh launch): $($_.Exception.Message)" -ForegroundColor Yellow
+    } finally {
+        Remove-Item env:MIOS_SKIP_MOTD -ErrorAction SilentlyContinue
     }
 
     Write-Host ''

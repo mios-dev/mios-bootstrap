@@ -28,7 +28,11 @@ def _install_deps():
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as e:
         print(f"\033[31mFATAL: Failed to auto-install dependencies: {e}\033[0m")
-        input("Press Enter to exit...")
+        if sys.stdin and hasattr(sys.stdin, 'isatty') and sys.stdin.isatty():
+            try:
+                input("Press Enter to exit...")
+            except (EOFError, KeyboardInterrupt):
+                pass
         sys.exit(1)
 
 # --- RICH IMPORTS (For static renders) ---
