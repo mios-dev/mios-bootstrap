@@ -260,22 +260,50 @@ public static class MiosDeskLauncher {
         }
         if (-not $python) { return }
 
-        $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
-        $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-        $cmdLine = "conhost.exe `"$termExe`" -NoProfile -NoExit -Command `"$command`""
-
-        $launched = $false
-        if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-            $pidSpawned = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
-            if ($pidSpawned -gt 0) { $launched = $true }
+        $wtExe = Get-Command wt.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+        if (-not $wtExe) {
+            foreach ($candidate in @(
+                "$env:LOCALAPPDATA\Microsoft\WindowsApps\wt.exe",
+                "$env:ProgramFiles\WindowsApps\Microsoft.WindowsTerminal*\wt.exe"
+            )) {
+                $found = Get-Item $candidate -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($found) { $wtExe = $found.FullName; break }
+            }
         }
 
-        if (-not $launched) {
-            $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
-            if (Test-Path -LiteralPath $conhost) {
-                Start-Process -FilePath $conhost -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
-            } else {
-                Start-Process -FilePath $termExe -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
+        $spawnedPid = -1
+        if ($wtExe -and (Test-Path -LiteralPath $wtExe)) {
+            $cmdLine = "`"$wtExe`" -M -w new --title `"MiOS Build Monitor`" `"$python`" `"$monitorScript`" --pipeline"
+            if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+                $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
+            }
+            if ($spawnedPid -le 0) {
+                $monitorProcess = Start-Process -FilePath $wtExe `
+                    -ArgumentList @('-M', '-w', 'new', '--title', 'MiOS Build Monitor', $python, $monitorScript, '--pipeline') `
+                    -WindowStyle Normal -PassThru -ErrorAction SilentlyContinue
+                if ($monitorProcess) { $spawnedPid = $monitorProcess.Id }
+            }
+        }
+
+        if ($spawnedPid -le 0) {
+            $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+            $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
+            $cmdLine = "conhost.exe `"$termExe`" -NoProfile -NoExit -Command `"$command`""
+            if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+                $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
+            }
+            if ($spawnedPid -le 0) {
+                $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+                if (Test-Path -LiteralPath $conhost) {
+                    $monitorProcess = Start-Process -FilePath $conhost `
+                        -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) `
+                        -WindowStyle Normal -PassThru -ErrorAction Stop
+                } else {
+                    $monitorProcess = Start-Process -FilePath $termExe `
+                        -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) `
+                        -WindowStyle Normal -PassThru -ErrorAction Stop
+                }
+                $spawnedPid = $monitorProcess.Id
             }
         }
     } catch {}

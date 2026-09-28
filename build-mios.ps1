@@ -714,29 +714,55 @@ public static class MiosDeskLauncher {
             )) { if (Test-Path -LiteralPath $c) { $python = $c; break } }
         }
         if (-not $python) { throw 'python.exe was not found on PATH' }
-        $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
-        $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-        $cmdLine = "conhost.exe `"$termExe`" -NoProfile -NoExit -Command `"$command`""
+
+        $wtExe = Get-Command wt.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+        if (-not $wtExe) {
+            foreach ($candidate in @(
+                "$env:LOCALAPPDATA\Microsoft\WindowsApps\wt.exe",
+                "$env:ProgramFiles\WindowsApps\Microsoft.WindowsTerminal*\wt.exe"
+            )) {
+                $found = Get-Item $candidate -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($found) { $wtExe = $found.FullName; break }
+            }
+        }
 
         $spawnedPid = -1
-        if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-            $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
+        if ($wtExe -and (Test-Path -LiteralPath $wtExe)) {
+            $cmdLine = "`"$wtExe`" -M -w new --title `"MiOS Build Monitor`" `"$python`" `"$monitorScript`" --pipeline"
+            if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+                $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
+            }
+            if ($spawnedPid -le 0) {
+                $monitorProcess = Start-Process -FilePath $wtExe `
+                    -ArgumentList @('-M', '-w', 'new', '--title', 'MiOS Build Monitor', $python, $monitorScript, '--pipeline') `
+                    -WindowStyle Normal -PassThru -ErrorAction SilentlyContinue
+                if ($monitorProcess) { $spawnedPid = $monitorProcess.Id }
+            }
         }
 
         if ($spawnedPid -gt 0) {
-            Write-Log "launched mios mon on interactive desktop (pid $spawnedPid); following $LogFile"
+            Write-Log "launched mios mon in Windows Terminal on interactive desktop (pid $spawnedPid); following $LogFile"
         } else {
-            $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
-            if (Test-Path -LiteralPath $conhost) {
-                $monitorProcess = Start-Process -FilePath $conhost `
-                    -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) `
-                    -WindowStyle Normal -PassThru -ErrorAction Stop
-            } else {
-                $monitorProcess = Start-Process -FilePath $termExe `
-                    -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) `
-                    -WindowStyle Normal -PassThru -ErrorAction Stop
+            $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+            $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
+            $cmdLine = "conhost.exe `"$termExe`" -NoProfile -NoExit -Command `"$command`""
+            if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+                $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
             }
-            Write-Log "launched mios mon in its own desktop terminal (pid $($monitorProcess.Id)); following $LogFile"
+            if ($spawnedPid -le 0) {
+                $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+                if (Test-Path -LiteralPath $conhost) {
+                    $monitorProcess = Start-Process -FilePath $conhost `
+                        -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) `
+                        -WindowStyle Normal -PassThru -ErrorAction Stop
+                } else {
+                    $monitorProcess = Start-Process -FilePath $termExe `
+                        -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) `
+                        -WindowStyle Normal -PassThru -ErrorAction Stop
+                }
+                $spawnedPid = $monitorProcess.Id
+            }
+            Write-Log "launched mios mon in console host (pid $spawnedPid); following $LogFile"
         }
     } catch {
         Write-Log "mios mon auto-launch failed: $($_.Exception.Message)" 'WARN'

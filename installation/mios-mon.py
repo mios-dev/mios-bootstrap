@@ -456,11 +456,24 @@ if TEXTUAL_AVAILABLE:
 
         DEFAULT_CSS = f"""
         Screen {{
+            height: 100%;
+            width: 100%;
             background: {SSOT['bg']};
             color: {SSOT['fg']};
+            overflow: hidden;
         }}
         TabbedContent {{
             height: 1fr;
+            width: 100%;
+        }}
+        ContentSwitcher {{
+            height: 1fr;
+            width: 100%;
+        }}
+        TabPane {{
+            height: 1fr;
+            width: 100%;
+            padding: 0;
         }}
         #main-container, #build-container, #flash-container, #ai-container {{
             height: 1fr;
@@ -532,6 +545,10 @@ if TEXTUAL_AVAILABLE:
             height: 1fr;
             width: 100%;
             border: round {SSOT['success']};
+        }}
+        Footer {{
+            dock: bottom;
+            height: 1;
         }}
         """
 
@@ -669,12 +686,20 @@ if TEXTUAL_AVAILABLE:
                         if not line: continue
                         if "Unexpected output from PTY master" in line or "InitCreateProcessUtilityVm" in line or "Relay(" in line:
                             continue
-                        if re.search(r'\b(error|failed|critical|fatal)\b', line, re.I): line = f"[{SSOT['error']}]{line}[/]"
-                        elif re.search(r'\bwarn(ing)?\b', line, re.I): line = f"[{SSOT['warning']}]{line}[/]"
+                        if "pam_unix(sudo:session)" in line or "session opened for user root" in line or "session closed for user root" in line or "COMMAND=/bin/sh" in line or "COMMAND=/usr/bin/sh" in line:
+                            continue
+                        if "Created slice" in line or "Removed slice" in line or "user-0.slice" in line or "session-" in line:
+                            continue
+                        is_err = bool(re.search(r'\b(error|failed|critical|fatal)\b', line, re.I))
+                        is_warn = bool(re.search(r'\bwarn(ing)?\b', line, re.I))
+                        if is_err: line = f"[{SSOT['error']}]{line}[/]"
+                        elif is_warn: line = f"[{SSOT['warning']}]{line}[/]"
                         elif 'podman' in line.lower() or 'container' in line.lower():
                             line = f"[{SSOT['subtle']}]{line}[/]"
                             if ai_log_box: self.call_from_thread(ai_log_box.write, line)
-                        self.call_from_thread(log_box.write, line)
+                        # On Windows during pipeline builds, only surface real system warnings/errors to log_box
+                        if not IS_WINDOWS or is_err or is_warn:
+                            self.call_from_thread(log_box.write, f"[dim cyan][sys][/] {line}")
                     try:
                         proc.kill()
                     except Exception: pass
@@ -786,7 +811,7 @@ if TEXTUAL_AVAILABLE:
                 return l
 
             def stream_build_log():
-                if not build_log_box: return
+                if not build_log_box and not log_box: return
                 current_log = None
                 file_obj = None
 
@@ -804,13 +829,17 @@ if TEXTUAL_AVAILABLE:
                             try: file_obj.close()
                             except Exception: pass
                         try:
-                            self.call_from_thread(build_log_box.write, f"[{SSOT['success']}]Streaming build log: {os.path.basename(current_log)}[/]")
+                            banner = f"[{SSOT['success']}]Streaming build log: {os.path.basename(current_log)}[/]"
+                            if build_log_box: self.call_from_thread(build_log_box.write, banner)
+                            if log_box: self.call_from_thread(log_box.write, banner)
                             file_obj = open(current_log, 'r', encoding='utf-8', errors='ignore')
                             lines = file_obj.readlines()
-                            for line in lines[-40:]:
+                            for line in lines[-150:]:
                                 line = line.strip()
                                 if line:
-                                    self.call_from_thread(build_log_box.write, _bcolor(line))
+                                    formatted = _bcolor(line)
+                                    if build_log_box: self.call_from_thread(build_log_box.write, formatted)
+                                    if log_box: self.call_from_thread(log_box.write, formatted)
                             file_obj.seek(0, 2)
                         except Exception:
                             file_obj = None
@@ -828,8 +857,9 @@ if TEXTUAL_AVAILABLE:
                             line = line.rstrip("\n")
                             if line.strip():
                                 self.last_build_log_time = time.time()
-                                self.call_from_thread(build_log_box.write, _bcolor(line))
-                                self.call_from_thread(log_box.write, f"[dim]build[/] {_bcolor(line)}")
+                                formatted = _bcolor(line)
+                                if build_log_box: self.call_from_thread(build_log_box.write, formatted)
+                                if log_box: self.call_from_thread(log_box.write, formatted)
                             idle_count = 0
                         else:
                             idle_count += 1
@@ -851,7 +881,7 @@ if TEXTUAL_AVAILABLE:
 
             threading.Thread(target=stream_proc, args=(j_cmd,), daemon=True).start()
             if flash_log_box: threading.Thread(target=stream_flash_log, daemon=True).start()
-            if build_log_box: threading.Thread(target=stream_build_log, daemon=True).start()
+            if build_log_box or log_box: threading.Thread(target=stream_build_log, daemon=True).start()
 
         def update_telemetry(self):
             cpu, ram, root, m_disk, load = get_telemetry()
