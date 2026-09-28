@@ -261,7 +261,7 @@ if ($env:MIOS_NO_MONITOR -ne '1') {
     $monScript = Resolve-MiosMonitorScript
     if ($monScript) {
         $monPy = if (Test-Path "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe") { "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" } else { 'python' }
-        try { Start-Process -FilePath $monPy -ArgumentList "`"$monScript`"" -WindowStyle Normal; Write-MiosLine 'info' 'live monitor launched (mios mon) -- watching the install pipeline' }
+        try { Start-Process -FilePath $monPy -ArgumentList "`"$monScript`" --pipeline" -WindowStyle Normal; Write-MiosLine 'info' 'live monitor launched on the MiOS Build tab (mios mon)' }
         catch { Write-MiosLine 'warn' "could not launch live monitor: $($_.Exception.Message)" }
     }
 }
