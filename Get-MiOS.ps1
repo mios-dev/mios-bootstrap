@@ -3813,29 +3813,38 @@ function Enable-MiOSWindowsFeatures {
     $rebootPending = $false
     foreach ($name in $features.Keys) {
         $label = $features[$name]
+        $isEnabled = $false
         try {
-            $state = Get-WindowsOptionalFeature -Online -FeatureName $name -ErrorAction Stop
-        } catch {
-            $_wslOk = $false
-            try { & wsl.exe --version *> $null; if ($LASTEXITCODE -eq 0) { $_wslOk = $true } } catch {}
-            if ($_wslOk -and ($name -like '*Subsystem-Linux*')) {
-                Write-Host "  [+] $label satisfied (wsl.exe present; Store-based WSL needs no optional feature)." -ForegroundColor DarkGray
-            } else {
-                Write-Host "  [-] $label not available on this Windows edition -- skipping." -ForegroundColor DarkGray
+            $info = & dism.exe /online /get-featureinfo /featurename:$name 2>$null
+            if ($LASTEXITCODE -eq 0 -and ($info -match 'State\s*:\s*Enabled')) {
+                $isEnabled = $true
             }
-            continue
-        }
-        if ($state.State -eq 'Enabled') {
+        } catch {}
+
+        if ($isEnabled) {
             Write-Host "  [+] $label already enabled." -ForegroundColor DarkGray
             continue
         }
+
+        if ($name -like '*Subsystem-Linux*') {
+            $_wslOk = $false
+            try { & wsl.exe --version *> $null; if ($LASTEXITCODE -eq 0) { $_wslOk = $true } } catch {}
+            if ($_wslOk) {
+                Write-Host "  [+] $label satisfied (wsl.exe present; Store-based WSL needs no optional feature)." -ForegroundColor DarkGray
+                continue
+            }
+        }
+
         Write-Host "  [*] Enabling $label..." -ForegroundColor Cyan
         try {
-            $r = Enable-WindowsOptionalFeature -Online -FeatureName $name -NoRestart -ErrorAction Stop
-            if ($r.RestartNeeded) { $rebootPending = $true }
-            Write-Host "  [+] $label enabled." -ForegroundColor Green
+            $r = & dism.exe /online /enable-feature /featurename:$name /all /norestart
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  [+] $label enabled." -ForegroundColor Green
+            } else {
+                Write-Host "  [-] $label not available on this Windows edition -- skipping." -ForegroundColor DarkGray
+            }
         } catch {
-            Write-Host "  [!] Enable-WindowsOptionalFeature $name failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "  [!] dism /enable-feature $name failed: $($_.Exception.Message)" -ForegroundColor Yellow
         }
     }
 
