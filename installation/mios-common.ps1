@@ -3,6 +3,9 @@
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+if (-not (Get-Variable -Name Root -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:Root = Split-Path -Parent $PSScriptRoot
+}
 
 function Enable-MiosVt {
     if ($env:MIOS_NO_COLOR -or $env:NO_COLOR) { return $false }
@@ -234,11 +237,67 @@ function Ensure-MiosRepo {
 }
 
 function Resolve-MiosMonitorScript {
-    # mios-mon.py first, MiOS-Mon.py second: this repo renamed it, the
-    # bootstrap repo has not yet, and the resolver must work in both.
-    @((Join-Path (Split-Path $script:Root -Parent) 'MiOS\usr\libexec\mios\mios-mon.py'), 'C:\MiOS\usr\libexec\mios\mios-mon.py',
-      (Join-Path (Split-Path $script:Root -Parent) 'MiOS\usr\libexec\mios\MiOS-Mon.py'), 'C:\MiOS\usr\libexec\mios\MiOS-Mon.py') |
+    @((Join-Path (Split-Path $script:Root -Parent) 'MiOS\usr\libexec\mios\mios-mon.py'),
+      'C:\MiOS\usr\libexec\mios\mios-mon.py', 'M:\usr\libexec\mios\mios-mon.py') |
         Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+}
+
+function Center-MiosMonitorWindow {
+    if (-not ([System.Management.Automation.PSTypeName]'MiosMonitorCenter').Type) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class MiosMonitorCenter {
+    public delegate bool EnumProc(IntPtr hwnd, IntPtr param);
+    [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] public struct MonitorInfo { public int cbSize; public Rect monitor, work; public uint flags; }
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr param);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int length);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+    [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    public static bool Center() {
+        bool centered = false;
+        EnumWindows((hwnd, param) => {
+            if (!IsWindowVisible(hwnd)) return true;
+            StringBuilder title = new StringBuilder(256);
+            if (GetWindowText(hwnd, title, title.Capacity) <= 0 ||
+                title.ToString().IndexOf("MiOS Build Monitor", StringComparison.OrdinalIgnoreCase) < 0) return true;
+            IntPtr previous = IntPtr.Zero;
+            try { previous = SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) {}
+            try {
+                ShowWindow(hwnd, 9);
+                Rect rect;
+                MonitorInfo info = new MonitorInfo();
+                info.cbSize = Marshal.SizeOf(typeof(MonitorInfo));
+                IntPtr monitor = MonitorFromWindow(hwnd, 2);
+                if (monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info) && GetWindowRect(hwnd, out rect)) {
+                    int width = Math.Min(rect.Right - rect.Left, info.work.Right - info.work.Left);
+                    int height = Math.Min(rect.Bottom - rect.Top, info.work.Bottom - info.work.Top);
+                    if (width > 0 && height > 0) {
+                        int x = info.work.Left + (info.work.Right - info.work.Left - width) / 2;
+                        int y = info.work.Top + (info.work.Bottom - info.work.Top - height) / 2;
+                        centered = SetWindowPos(hwnd, IntPtr.Zero, x, y, width, height, 0x14);
+                        SetWindowPos(hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x03);
+                        SetWindowPos(hwnd, new IntPtr(-2), 0, 0, 0, 0, 0x03);
+                        SetForegroundWindow(hwnd);
+                    }
+                }
+            } finally { if (previous != IntPtr.Zero) SetThreadDpiAwarenessContext(previous); }
+            return false;
+        }, IntPtr.Zero);
+        return centered;
+    }
+}
+'@ -ErrorAction Stop
+    }
+    return [MiosMonitorCenter]::Center()
 }
 
 function Start-MiosMonitor {
@@ -253,7 +312,7 @@ function Start-MiosMonitor {
     $alreadyRunning = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -match $escapedPath -and ($_.CommandLine -match '--pipeline' -or $_.CommandLine -match 'mios-mon') } |
         Select-Object -First 1
-    if ($alreadyRunning) { return $alreadyRunning }
+    if ($alreadyRunning -and (Center-MiosMonitorWindow)) { return $alreadyRunning }
 
     $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
     if (-not $python) { return $null }
@@ -264,10 +323,38 @@ function Start-MiosMonitor {
         return $null
     }
 
-    $cmd = "& '$($python.Replace("'", "''"))' '$($mon.Replace("'", "''"))' --pipeline"
-    $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+    $wtExe = Get-Command wt.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+    if (-not $wtExe) { return $null }
+    $profile = Get-MiosSsotValue -Section 'theme.terminal' -Key 'profile_name' -Default 'MiOS-WIN'
+    $scheme = Get-MiosSsotValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS'
+    $mode = Get-MiosSsotValue -Section 'theme' -Key 'launch_mode' -Default 'focus'
+    $cols = [int](Get-MiosSsotValue -Section 'terminal.install' -Key 'cols' -Default '80')
+    $rows = [int](Get-MiosSsotValue -Section 'terminal.install' -Key 'rows' -Default '40')
+    $cellW = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'cell_w_px' -Default '10')
+    $cellH = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'cell_h_px' -Default '20')
+    $chromeW = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'chrome_w_px' -Default '20')
+    $chromeH = [int](Get-MiosSsotValue -Section 'theme.font' -Key 'chrome_h_px' -Default '12')
+    Add-Type -AssemblyName System.Windows.Forms
+    $work = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
+    $x = [int]($work.X + [Math]::Max(0, $work.Width - (($cols * $cellW) + $chromeW)) / 2)
+    $y = [int]($work.Y + [Math]::Max(0, $work.Height - (($rows * $cellH) + $chromeH)) / 2)
+    $modeArgs = switch ($mode) {
+        'focus' { @('--focus') }
+        'maximized' { @('--maximized') }
+        'maximizedFocus' { @('--maximized', '--focus') }
+        'fullscreen' { @('--fullscreen') }
+        'focusFullscreen' { @('--fullscreen', '--focus') }
+        default { @() }
+    }
+    $modeText = @($modeArgs) -join ' '
+    $wtArgs = "$modeText --pos `"$x,$y`" --size `"$cols,$rows`" -w new new-tab --profile `"$profile`" --colorScheme `"$scheme`" --title `"MiOS Build Monitor`" `"$python`" `"$mon`" --pipeline"
     try {
-        $p = Start-Process -FilePath $termExe -ArgumentList @('-NoProfile','-NoExit','-Command',$cmd) -WindowStyle Normal -PassThru -ErrorAction Stop
+        $p = Start-Process -FilePath $wtExe -ArgumentList $wtArgs -WindowStyle Normal -PassThru -ErrorAction Stop
+        $deadline = (Get-Date).AddSeconds(6)
+        while ((Get-Date) -lt $deadline) {
+            [void](Center-MiosMonitorWindow)
+            Start-Sleep -Milliseconds 250
+        }
         return $p
     } catch { return $null }
 }

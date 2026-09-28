@@ -4656,7 +4656,7 @@ function mios-mini {
 
 function mios-mon {
     $py = if (Test-Path "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe") { "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" } else { "python.exe" }
-    $mon = if (Test-Path "C:\MiOS\usr\libexec\mios\MiOS-Mon.py") { "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" } else { "C:\mios-bootstrap\installation\MiOS-Mon.py" }
+    $mon = if (Test-Path "C:\MiOS\usr\libexec\mios\mios-mon.py") { "C:\MiOS\usr\libexec\mios\mios-mon.py" } else { "M:\usr\libexec\mios\mios-mon.py" }
     & $py $mon @Args
 }
 
@@ -4666,7 +4666,7 @@ function mios-monitor {
 
 function mios-dash {
     $py = if (Test-Path "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe") { "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" } else { "python.exe" }
-    $mon = if (Test-Path "C:\MiOS\usr\libexec\mios\MiOS-Mon.py") { "C:\MiOS\usr\libexec\mios\MiOS-Mon.py" } else { "C:\mios-bootstrap\installation\MiOS-Mon.py" }
+    $mon = if (Test-Path "C:\MiOS\usr\libexec\mios\mios-mon.py") { "C:\MiOS\usr\libexec\mios\mios-mon.py" } else { "M:\usr\libexec\mios\mios-mon.py" }
     & $py $mon --dash @Args
 }
     # FULL MiOS dashboard -- ASCII banner + fastfetch (full width,

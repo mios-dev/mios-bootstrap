@@ -596,12 +596,7 @@ function Start-MiosBuildMonitor {
     $monitorScript = @(
         $env:MIOS_MONITOR_SCRIPT,
         'C:\MiOS\usr\libexec\mios\mios-mon.py',
-        'C:\MiOS\installation\mios-mon.py',
-        'C:\mios-bootstrap\installation\mios-mon.py',
-        'M:\usr\libexec\mios\mios-mon.py',
-        'M:\MiOS\repo\mios-bootstrap\installation\mios-mon.py',
-        (Join-Path $PSScriptRoot 'installation\mios-mon.py'),
-        (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'usr\libexec\mios\mios-mon.py')
+        'M:\usr\libexec\mios\mios-mon.py'
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
     if (-not $monitorScript) {
         Write-Log 'mios mon auto-launch skipped: mios-mon.py was not found' 'WARN'
@@ -642,6 +637,13 @@ public static class MiosDeskLauncher {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+    [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT monitor; public RECT work; public uint flags; }
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int w, int h, uint flags);
 
     public static bool HasVisibleMonitorWindow() {
         IntPtr hDesk = OpenDesktop("Default", 0, false, 0x01FF);
@@ -658,6 +660,47 @@ public static class MiosDeskLauncher {
                         SetForegroundWindow(hWnd);
                         return false;
                     }
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+        CloseDesktop(hDesk);
+        return found;
+    }
+
+    public static bool CenterVisibleMonitorWindow() {
+        IntPtr hDesk = OpenDesktop("Default", 0, false, 0x01FF);
+        if (hDesk == IntPtr.Zero) return false;
+        bool found = false;
+        EnumDesktopWindows(hDesk, (hWnd, lParam) => {
+            if (IsWindowVisible(hWnd)) {
+                StringBuilder sb = new StringBuilder(256);
+                if (GetWindowText(hWnd, sb, 256) > 0 &&
+                    sb.ToString().IndexOf("MiOS Build Monitor", StringComparison.OrdinalIgnoreCase) >= 0) {
+                    ShowWindow(hWnd, 9);
+                    IntPtr oldDpi = IntPtr.Zero;
+                    try { oldDpi = SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) {}
+                    try {
+                        RECT rect;
+                        MONITORINFO info = new MONITORINFO();
+                        info.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
+                        IntPtr monitor = MonitorFromWindow(hWnd, 2);
+                        if (GetWindowRect(hWnd, out rect) && monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info)) {
+                            int width = Math.Min(rect.Right - rect.Left, info.work.Right - info.work.Left);
+                            int height = Math.Min(rect.Bottom - rect.Top, info.work.Bottom - info.work.Top);
+                            if (width > 0 && height > 0) {
+                                int x = info.work.Left + ((info.work.Right - info.work.Left - width) / 2);
+                                int y = info.work.Top + ((info.work.Bottom - info.work.Top - height) / 2);
+                                SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, 0x14);
+                                SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, 0x03);
+                                SetWindowPos(hWnd, new IntPtr(-2), 0, 0, 0, 0, 0x03);
+                            }
+                        }
+                    } finally { if (oldDpi != IntPtr.Zero) SetThreadDpiAwarenessContext(oldDpi); }
+                    BringWindowToTop(hWnd);
+                    SetForegroundWindow(hWnd);
+                    found = true;
+                    return false;
                 }
             }
             return true;
@@ -685,7 +728,7 @@ public static class MiosDeskLauncher {
         }
 
         if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-            if ([MiosDeskLauncher]::HasVisibleMonitorWindow()) {
+            if ([MiosDeskLauncher]::CenterVisibleMonitorWindow()) {
                 Write-Log "mios mon is already visible on interactive desktop; it will follow this unified log"
                 return
             }
@@ -728,41 +771,61 @@ public static class MiosDeskLauncher {
 
         $spawnedPid = -1
         if ($wtExe -and (Test-Path -LiteralPath $wtExe)) {
-            $cmdLine = "`"$wtExe`" -M -w new --title `"MiOS Build Monitor`" `"$python`" `"$monitorScript`" --pipeline"
+            $monitorProfile = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'profile_name' -Default 'MiOS-WIN')
+            if ([string]::IsNullOrWhiteSpace($monitorProfile)) { $monitorProfile = 'MiOS-WIN' }
+            $monitorScheme = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
+            if ([string]::IsNullOrWhiteSpace($monitorScheme)) { $monitorScheme = 'MiOS' }
+            $monitorLaunchMode = [string](Get-MiosTomlValue -Section 'theme' -Key 'launch_mode' -Default 'focus')
+            $monitorCols = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'cols' -Default 80)
+            $monitorRows = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'rows' -Default 40)
+            $cellWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px' -Default 10)
+            $cellHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px' -Default 20)
+            $chromeWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px' -Default 20)
+            $chromeHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px' -Default 12)
+            $monitorWidthPx = ($monitorCols * $cellWidth) + $chromeWidth
+            $monitorHeightPx = ($monitorRows * $cellHeight) + $chromeHeight
+            $monitorX = 0; $monitorY = 0
+            try {
+                Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+                $cursor = [System.Windows.Forms.Cursor]::Position
+                $workArea = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
+                $monitorX = [int]($workArea.X + (($workArea.Width - $monitorWidthPx) / 2))
+                $monitorY = [int]($workArea.Y + (($workArea.Height - $monitorHeightPx) / 2))
+                if ($monitorX -lt $workArea.X) { $monitorX = $workArea.X }
+                if ($monitorY -lt $workArea.Y) { $monitorY = $workArea.Y }
+            } catch {}
+            $wtWindowArgs = switch ($monitorLaunchMode) {
+                'focus'          { @('--focus') }
+                'maximized'      { @('--maximized') }
+                'maximizedFocus' { @('--maximized','--focus') }
+                'fullscreen'     { @('--fullscreen') }
+                'focusFullscreen'{ @('--fullscreen','--focus') }
+                default          { @() }
+            }
+            $wtArgsString = "$($wtWindowArgs -join ' ') --pos `"$monitorX,$monitorY`" --size `"$monitorCols,$monitorRows`" -w new new-tab --profile `"$monitorProfile`" --colorScheme `"$monitorScheme`" --title `"MiOS Build Monitor`" `"$python`" `"$monitorScript`" --pipeline"
+            $cmdLine = "`"$wtExe`" $wtArgsString"
             if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
                 $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
             }
             if ($spawnedPid -le 0) {
                 $monitorProcess = Start-Process -FilePath $wtExe `
-                    -ArgumentList @('-M', '-w', 'new', '--title', 'MiOS Build Monitor', $python, $monitorScript, '--pipeline') `
+                    -ArgumentList $wtArgsString `
                     -WindowStyle Normal -PassThru -ErrorAction SilentlyContinue
                 if ($monitorProcess) { $spawnedPid = $monitorProcess.Id }
+            }
+            if ($spawnedPid -gt 0 -and ([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+                $centerDeadline = (Get-Date).AddSeconds(6)
+                while ((Get-Date) -lt $centerDeadline) {
+                    [void][MiosDeskLauncher]::CenterVisibleMonitorWindow()
+                    Start-Sleep -Milliseconds 250
+                }
             }
         }
 
         if ($spawnedPid -gt 0) {
             Write-Log "launched mios mon in Windows Terminal on interactive desktop (pid $spawnedPid); following $LogFile"
         } else {
-            $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-            $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
-            $cmdLine = "conhost.exe `"$termExe`" -NoProfile -NoExit -Command `"$command`""
-            if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-                $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
-            }
-            if ($spawnedPid -le 0) {
-                $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
-                if (Test-Path -LiteralPath $conhost) {
-                    $monitorProcess = Start-Process -FilePath $conhost `
-                        -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) `
-                        -WindowStyle Normal -PassThru -ErrorAction Stop
-                } else {
-                    $monitorProcess = Start-Process -FilePath $termExe `
-                        -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) `
-                        -WindowStyle Normal -PassThru -ErrorAction Stop
-                }
-                $spawnedPid = $monitorProcess.Id
-            }
-            Write-Log "launched mios mon in console host (pid $spawnedPid); following $LogFile"
+            Write-Log 'mios mon auto-launch failed: SSOT Windows Terminal profile launch was unavailable' 'WARN'
         }
     } catch {
         Write-Log "mios mon auto-launch failed: $($_.Exception.Message)" 'WARN'
@@ -5987,7 +6050,7 @@ Start-Process $url | Out-Null
 # <MiOSRoot>\bin\mios-mon.ps1 -- the `mios mon` verb.
 param([Parameter(ValueFromRemainingArguments)] $Args)
 $py = if (Get-Command python.exe -ErrorAction SilentlyContinue) { 'python.exe' } else { 'python3' }
-$mon = @('M:\usr\libexec\mios\mios-mon.py','C:\MiOS\usr\libexec\mios\mios-mon.py','C:\mios-bootstrap\installation\mios-mon.py','M:\MiOS\repo\mios\usr\libexec\mios\mios-mon.py') | Where-Object { Test-Path $_ } | Select-Object -First 1
+$mon = @('M:\usr\libexec\mios\mios-mon.py','C:\MiOS\usr\libexec\mios\mios-mon.py','M:\MiOS\repo\mios\usr\libexec\mios\mios-mon.py') | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($mon) {
     if ($Args.Count -eq 0) {
         & $py $mon --monitor
@@ -6385,8 +6448,18 @@ $endMark
         # total reference for all functions and calls".
         $_lnchCols = [int](Get-MiosTomlValue -Section 'terminal' -Key 'cols' -Default 80)
         $_lnchRows = [int](Get-MiosTomlValue -Section 'terminal' -Key 'rows' -Default 20)
+        $_lnchCellW = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px' -Default 10)
+        $_lnchCellH = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px' -Default 20)
+        $_lnchChromeW = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px' -Default 20)
+        $_lnchChromeH = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px' -Default 12)
+        $_lnchScheme = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
         $launcherSrc = $launcherSrc -replace '__MIOS_COLS__', [string]$_lnchCols
         $launcherSrc = $launcherSrc -replace '__MIOS_ROWS__', [string]$_lnchRows
+        $launcherSrc = $launcherSrc -replace '__MIOS_CELL_W__', [string]$_lnchCellW
+        $launcherSrc = $launcherSrc -replace '__MIOS_CELL_H__', [string]$_lnchCellH
+        $launcherSrc = $launcherSrc -replace '__MIOS_CHROME_W__', [string]$_lnchChromeW
+        $launcherSrc = $launcherSrc -replace '__MIOS_CHROME_H__', [string]$_lnchChromeH
+        $launcherSrc = $launcherSrc -replace '__MIOS_SCHEME__', $_lnchScheme
         $launcherSrc = $launcherSrc -replace '__MIOS_DRIVE__', $_stagingDrive
         if (-not (Test-Path $MiosBinDir)) { New-Item -ItemType Directory -Path $MiosBinDir -Force | Out-Null }
         Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
@@ -6572,11 +6645,11 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
         # Native .exe launcher with subsystem:Windows -- ZERO console
         # flash + post-launch SetWindowPos centering. Best of both worlds.
         $hubTarget = $miosLauncherExe
-        $hubArgs   = "MiOS $($script:MiosAppCols) $($script:MiosAppRows)"
+        $hubArgs   = "`"$($script:MiosProfileName)`" $($script:MiosAppCols) $($script:MiosAppRows) `"$($script:MiosSchemeName)`""
     } elseif ($wtExe) {
         # Fallback: wt.exe direct (no flash but no centering).
         $hubTarget = $wtExe
-        $hubArgs   = "-w MiOS --size $($script:MiosAppCols),$($script:MiosAppRows) --focus -p MiOS"
+        $hubArgs   = "-w MiOS --size $($script:MiosAppCols),$($script:MiosAppRows) --focus new-tab --profile `"$($script:MiosProfileName)`" --colorScheme `"$($script:MiosSchemeName)`" --title MiOS"
     } else {
         $hubTarget = $pwshExe
         $hubArgs   = "-NoExit -ExecutionPolicy Bypass -Command `"& { $hubResizePrelude; & '$hubPath' }`""
@@ -6683,10 +6756,12 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
             }
             $_lnk = Join-Path $linuxAppsDir ("{0}.lnk" -f $_friendly)
             $_isWslg = $wslExe -match 'wslg\.exe$'
+            # mios-gui dispatches through flatpak-launch, which arms the
+            # SSOT Windows window-centering observer before mapping WSLg UI.
             $_args   = if ($_isWslg) {
-                ("-d {0} --user mios --cd `"~`" -- /usr/bin/flatpak run {1}" -f $linuxDistro, $_appId)
+                ("-d {0} --user mios --cd `"~`" -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_appId)
             } else {
-                ("-d {0} --user mios -- flatpak run {1}" -f $linuxDistro, $_appId)
+                ("-d {0} --user mios -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_appId)
             }
             try {
                 New-Shortcut -Path $_lnk `
@@ -6703,17 +6778,15 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
         # System apps that aren't flatpaks but should still appear in
         # the Linux Apps folder (control center, system monitor).
         $sysApps = @(
-            @{ Name = 'System Monitor'; Cmd = 'btop' },
-            @{ Name = 'Settings';       Cmd = 'gnome-control-center' }
+            @{ Name = 'Settings'; Cmd = 'gnome-control-center' }
         )
         foreach ($_sa in $sysApps) {
             $_lnk = Join-Path $linuxAppsDir ("{0}.lnk" -f $_sa.Name)
             $_isWslg = $wslExe -match 'wslg\.exe$'
             $_sysArgs = if ($_isWslg) {
-                # wslg.exe needs the full bin path (no login shell).
-                ("-d {0} --user mios --cd `"~`" -- /usr/bin/bash -lc `"{1}`"" -f $linuxDistro, $_sa.Cmd)
+                ("-d {0} --user mios --cd `"~`" -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_sa.Cmd)
             } else {
-                ("-d {0} --user mios -- bash -lc `"{1}`"" -f $linuxDistro, $_sa.Cmd)
+                ("-d {0} --user mios -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_sa.Cmd)
             }
             try {
                 New-Shortcut -Path $_lnk `
@@ -6724,6 +6797,14 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
                 $linuxShortcutsCreated++
             } catch {}
         }
+
+        # btop is a TUI. Run its existing Windows-side MiOS verb in the
+        # centered, SSOT-themed Windows Terminal profile instead of WSLg.
+        $_btopLnk = Join-Path $linuxAppsDir 'System Monitor.lnk'
+        $_btopProfile = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'profile_name' -Default 'MiOS-WIN')
+        $_btopArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$miosLauncher`" -Profile `"$_btopProfile`" -Verb btop"
+        New-Shortcut -Path $_btopLnk -Target $pwshExe -ArgList $_btopArgs -Desc 'MiOS System Monitor (btop)' -Dir ([Environment]::GetFolderPath('Desktop'))
+        $linuxShortcutsCreated++
 
         Log-Ok ("MiOS Linux Apps: {0} Start Menu shortcuts -> {1}" -f $linuxShortcutsCreated, $linuxAppsDir)
     } catch {
@@ -6941,73 +7022,6 @@ try {
 $script:DW = Get-MiosFrameWidth
 
 Show-Dashboard -Force   # draw initial (all phases pending)
-
-function Start-MiosBuildMonitor {
-    if ($env:MIOS_NO_MONITOR -in @('1','true','yes','on') -or
-        $env:MIOS_HEADLESS -in @('1','true','yes','on')) { return }
-
-    $monitorScript = @(
-        $env:MIOS_MONITOR_SCRIPT,
-        'C:\MiOS\usr\libexec\mios\mios-mon.py',
-        'C:\MiOS\installation\mios-mon.py',
-        'C:\mios-bootstrap\installation\mios-mon.py',
-        'M:\usr\libexec\mios\mios-mon.py',
-        'M:\MiOS\repo\mios-bootstrap\installation\mios-mon.py',
-        (Join-Path $PSScriptRoot 'installation\mios-mon.py')
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
-    if (-not $monitorScript) { return }
-
-    try {
-        if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-            if ([MiosDeskLauncher]::HasVisibleMonitorWindow()) {
-                Log-Ok "MiOS Build Monitor is active and visible on interactive desktop"
-                return
-            }
-        } else {
-            $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match '^python' -and $_.CommandLine -match 'mios-mon\.py' })
-            $hasActive = $false
-            foreach ($rp in $runningProcs) {
-                $p = Get-Process -Id $rp.ProcessId -ErrorAction SilentlyContinue
-                if ($p -and -not $p.HasExited) { $hasActive = $true; break }
-            }
-            if ($hasActive) { return }
-        }
-
-        $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
-        if (-not $python) {
-            foreach ($c in @(
-                'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe',
-                'C:\Users\Administrator\AppData\Local\Programs\Python\Python313\python.exe',
-                'C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe',
-                'C:\Python314\python.exe',
-                'C:\Python312\python.exe'
-            )) { if (Test-Path -LiteralPath $c) { $python = $c; break } }
-        }
-        if (-not $python) { return }
-
-        $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
-        $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-        $cmdLine = "conhost.exe `"$termExe`" -NoProfile -NoExit -Command `"$command`""
-
-        $spawnedPid = -1
-        if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-            $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
-        }
-
-        if ($spawnedPid -gt 0) {
-            Log-Ok "Launched MiOS Build Monitor on interactive desktop (pid $spawnedPid)"
-        } else {
-            $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
-            if (Test-Path -LiteralPath $conhost) {
-                Start-Process -FilePath $conhost -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
-            } else {
-                Start-Process -FilePath $termExe -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
-            }
-            Log-Ok "Launched MiOS Build Monitor in foreground terminal window"
-        }
-    } catch {}
-}
 
 # ── Phase 0 -- Hardware + Prerequisites ──────────────────────────────────────
 Start-Phase 0

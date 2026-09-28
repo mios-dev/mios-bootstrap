@@ -269,12 +269,11 @@ if (-not (Confirm-MiosProceed -Entry $entry -Unattended $Unattended -Drive 'D:')
 # the early-exit special targets (configure/repos/update) never reach here. Suppressed by
 # MIOS_NO_MONITOR=1 (headless/CI/nested).
 if ($env:MIOS_NO_MONITOR -ne '1' -and -not $DryRun) {
-    $monScript = Resolve-MiosMonitorScript
-    if ($monScript) {
-        $monPy = if (Test-Path "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe") { "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" } else { 'python' }
-        try { Start-Process -FilePath $monPy -ArgumentList "`"$monScript`" --pipeline" -WindowStyle Normal; Write-MiosLine 'info' 'live monitor launched on the MiOS Build tab (mios mon)' }
-        catch { Write-MiosLine 'warn' "could not launch live monitor: $($_.Exception.Message)" }
-    }
+    try {
+        $monProc = Start-MiosMonitor -Title 'MiOS Build Monitor'
+        if ($monProc) { Write-MiosLine 'info' 'live monitor launched in the SSOT Windows Terminal profile' }
+        else { Write-MiosLine 'warn' 'live monitor could not launch in Windows Terminal' }
+    } catch { Write-MiosLine 'warn' "could not launch live monitor: $($_.Exception.Message)" }
 }
 
 function Get-MiosElevateArgs {

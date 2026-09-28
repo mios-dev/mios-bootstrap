@@ -151,11 +151,7 @@ function Start-MiosBuildMonitor {
     $monitorScript = @(
         $env:MIOS_MONITOR_SCRIPT,
         'C:\MiOS\usr\libexec\mios\mios-mon.py',
-        'C:\MiOS\installation\mios-mon.py',
-        'C:\mios-bootstrap\installation\mios-mon.py',
-        'M:\usr\libexec\mios\mios-mon.py',
-        'M:\MiOS\repo\mios-bootstrap\installation\mios-mon.py',
-        (Join-Path $PSScriptRoot 'installation\mios-mon.py')
+        'M:\usr\libexec\mios\mios-mon.py'
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
     if (-not $monitorScript) { return }
 
@@ -189,10 +185,17 @@ public static class MiosDeskLauncher {
     [DllImport("user32.dll")] public static extern bool EnumDesktopWindows(IntPtr hDesktop, EnumDesktopWindowsProc lpfn, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr hDesktop);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder strText, int maxCount);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+    [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT monitor; public RECT work; public uint flags; }
 
     public static bool HasVisibleMonitorWindow() {
         IntPtr hDesk = OpenDesktop("Default", 0, false, 0x01FF);
@@ -209,6 +212,47 @@ public static class MiosDeskLauncher {
                         SetForegroundWindow(hWnd);
                         return false;
                     }
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+        CloseDesktop(hDesk);
+        return found;
+    }
+
+    public static bool CenterVisibleMonitorWindow() {
+        IntPtr hDesk = OpenDesktop("Default", 0, false, 0x01FF);
+        if (hDesk == IntPtr.Zero) return false;
+        bool found = false;
+        EnumDesktopWindows(hDesk, (hWnd, lParam) => {
+            if (IsWindowVisible(hWnd)) {
+                StringBuilder sb = new StringBuilder(256);
+                if (GetWindowText(hWnd, sb, 256) > 0 &&
+                    sb.ToString().IndexOf("MiOS Build Monitor", StringComparison.OrdinalIgnoreCase) >= 0) {
+                    ShowWindow(hWnd, 9);
+                    IntPtr oldDpi = IntPtr.Zero;
+                    try { oldDpi = SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) {}
+                    try {
+                        RECT rect;
+                        MONITORINFO info = new MONITORINFO();
+                        info.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
+                        IntPtr monitor = MonitorFromWindow(hWnd, 2);
+                        if (GetWindowRect(hWnd, out rect) && monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info)) {
+                            int width = Math.Min(rect.Right - rect.Left, info.work.Right - info.work.Left);
+                            int height = Math.Min(rect.Bottom - rect.Top, info.work.Bottom - info.work.Top);
+                            if (width > 0 && height > 0) {
+                                int x = info.work.Left + ((info.work.Right - info.work.Left - width) / 2);
+                                int y = info.work.Top + ((info.work.Bottom - info.work.Top - height) / 2);
+                                SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, 0x14);
+                                SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, 0x03);
+                                SetWindowPos(hWnd, new IntPtr(-2), 0, 0, 0, 0, 0x03);
+                            }
+                        }
+                    } finally { if (oldDpi != IntPtr.Zero) SetThreadDpiAwarenessContext(oldDpi); }
+                    BringWindowToTop(hWnd);
+                    SetForegroundWindow(hWnd);
+                    found = true;
+                    return false;
                 }
             }
             return true;
@@ -236,7 +280,7 @@ public static class MiosDeskLauncher {
         }
 
         if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-            if ([MiosDeskLauncher]::HasVisibleMonitorWindow()) { return }
+            if ([MiosDeskLauncher]::CenterVisibleMonitorWindow()) { return }
         } else {
             $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name -match '^python' -and $_.CommandLine -match 'mios-mon\.py' })
@@ -270,46 +314,95 @@ public static class MiosDeskLauncher {
                 if ($found) { $wtExe = $found.FullName; break }
             }
         }
+        # Windows Terminal is required by the bootstrap. If it is not ready
+        # yet, wait for the post-profile-setup invocation below instead of
+        # opening a plain conhost window that can mask the SSOT terminal.
+        if (-not $wtExe -or -not (Test-Path -LiteralPath $wtExe)) { return }
 
         $spawnedPid = -1
         if ($wtExe -and (Test-Path -LiteralPath $wtExe)) {
-            $cmdLine = "`"$wtExe`" -M -w new --title `"MiOS Build Monitor`" `"$python`" `"$monitorScript`" --pipeline"
+            $monitorProfile = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'profile_name' -Default 'MiOS-WIN')
+            if ([string]::IsNullOrWhiteSpace($monitorProfile)) { $monitorProfile = 'MiOS-WIN' }
+            $monitorScheme = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
+            if ([string]::IsNullOrWhiteSpace($monitorScheme)) { $monitorScheme = 'MiOS' }
+            $monitorLaunchMode = [string](Get-MiosTomlValue -Section 'theme' -Key 'launch_mode' -Default 'focus')
+            $monitorCols = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'cols' -Default 80)
+            $monitorRows = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'rows' -Default 40)
+            $cellWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px' -Default 10)
+            $cellHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px' -Default 20)
+            $chromeWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px' -Default 20)
+            $chromeHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px' -Default 12)
+            $monitorWidthPx = ($monitorCols * $cellWidth) + $chromeWidth
+            $monitorHeightPx = ($monitorRows * $cellHeight) + $chromeHeight
+            $monitorX = 0; $monitorY = 0
+            try {
+                Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+                $cursor = [System.Windows.Forms.Cursor]::Position
+                $workArea = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
+                $monitorX = [int]($workArea.X + (($workArea.Width - $monitorWidthPx) / 2))
+                $monitorY = [int]($workArea.Y + (($workArea.Height - $monitorHeightPx) / 2))
+                if ($monitorX -lt $workArea.X) { $monitorX = $workArea.X }
+                if ($monitorY -lt $workArea.Y) { $monitorY = $workArea.Y }
+            } catch {}
+            $wtWindowArgs = switch ($monitorLaunchMode) {
+                'focus'          { @('--focus') }
+                'maximized'      { @('--maximized') }
+                'maximizedFocus' { @('--maximized','--focus') }
+                'fullscreen'     { @('--fullscreen') }
+                'focusFullscreen'{ @('--fullscreen','--focus') }
+                default          { @() }
+            }
+            $profileReady = $false
+            foreach ($settingsPath in @(
+                (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
+                (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json')
+            )) {
+                if (-not (Test-Path -LiteralPath $settingsPath)) { continue }
+                try {
+                    $settingsText = [IO.File]::ReadAllText($settingsPath)
+                    $settingsText = [regex]::Replace($settingsText, '(?ms)/\*.*?\*/', '')
+                    $settingsText = [regex]::Replace($settingsText, '(?m)^\s*//.*$', '')
+                    $settingsText = [regex]::Replace($settingsText, ',(\s*[\}\]])', '$1')
+                    $settings = $settingsText | ConvertFrom-Json -ErrorAction Stop
+                    if (@($settings.profiles.list | Where-Object { $_.name -eq $monitorProfile }).Count) {
+                        $profileReady = $true
+                        break
+                    }
+                } catch {}
+            }
+            # On a first install, wait until Install-MiOSTerminalProfile has
+            # created the SSOT profile; the caller invokes this launcher again
+            # immediately after that setup step. This avoids a plain-profile
+            # monitor that masks a failed themed launch.
+            if (-not $profileReady) { return }
+            $wtWindowArgsText = $wtWindowArgs -join ' '
+            $wtArgsString = "$wtWindowArgsText --pos `"$monitorX,$monitorY`" --size `"$monitorCols,$monitorRows`" -w new new-tab --profile `"$monitorProfile`" --colorScheme `"$monitorScheme`" --title `"MiOS Build Monitor`" `"$python`" `"$monitorScript`" --pipeline"
+            $cmdLine = "`"$wtExe`" $wtArgsString"
             if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
                 $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
             }
             if ($spawnedPid -le 0) {
                 $monitorProcess = Start-Process -FilePath $wtExe `
-                    -ArgumentList @('-M', '-w', 'new', '--title', 'MiOS Build Monitor', $python, $monitorScript, '--pipeline') `
+                    -ArgumentList $wtArgsString `
                     -WindowStyle Normal -PassThru -ErrorAction SilentlyContinue
                 if ($monitorProcess) { $spawnedPid = $monitorProcess.Id }
+            }
+            if ($spawnedPid -gt 0 -and ([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+                $centerDeadline = (Get-Date).AddSeconds(6)
+                while ((Get-Date) -lt $centerDeadline) {
+                    [void][MiosDeskLauncher]::CenterVisibleMonitorWindow()
+                    Start-Sleep -Milliseconds 250
+                }
             }
         }
 
         if ($spawnedPid -le 0) {
-            $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-            $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
-            $cmdLine = "conhost.exe `"$termExe`" -NoProfile -NoExit -Command `"$command`""
-            if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-                $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
-            }
-            if ($spawnedPid -le 0) {
-                $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
-                if (Test-Path -LiteralPath $conhost) {
-                    $monitorProcess = Start-Process -FilePath $conhost `
-                        -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) `
-                        -WindowStyle Normal -PassThru -ErrorAction Stop
-                } else {
-                    $monitorProcess = Start-Process -FilePath $termExe `
-                        -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) `
-                        -WindowStyle Normal -PassThru -ErrorAction Stop
-                }
-                $spawnedPid = $monitorProcess.Id
-            }
+            Write-Host '  [!] MiOS monitor could not launch in the SSOT Windows Terminal profile.' -ForegroundColor Yellow
         }
-    } catch {}
+    } catch {
+        Write-Host "  [!] MiOS monitor launch failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
 }
-Start-MiosBuildMonitor
-
 function Ensure-MiosBootstrapRepo {
     param(
         [string]$TargetDir = 'C:\mios-bootstrap',
@@ -691,6 +784,11 @@ function Get-MiosTomlValue {
     # Bare value, no surrounding quotes -- return as-is.
     return $raw
 }
+
+# The monitor must use the profile named by the operator SSOT. Delay launch
+# until the TOML resolver exists so the WT profile is not inferred from a
+# stale global default.
+Start-MiosBuildMonitor
 
 function ConvertTo-MiosRawBase {
     param([Parameter(Mandatory)][string]$GitUrl, [Parameter(Mandatory)][string]$Ref)
@@ -1855,9 +1953,9 @@ function Install-MiOSTerminalProfile {
     }
     foreach ($k in $commonProfileProps.Keys) { $miosDevProfile[$k] = $commonProfileProps[$k] }
 
-    # Read existing settings.json -- preserve EVERY existing global
-    # (launchMode, defaultProfile, theme, keybindings, etc.). We touch
-    # only schemes[] and profiles.list[] entries that are ours.
+    # Read existing settings.json -- preserve operator globals except the
+    # system default profile, which MiOS intentionally owns per bootstrap
+    # contract. Other global settings and keybindings remain untouched.
     # WT writes JSONC; ConvertFrom-Json on PS5.1 chokes on it, so strip
     # comments + trailing commas before parsing.
     $raw = ''
@@ -1950,6 +2048,11 @@ function Install-MiOSTerminalProfile {
     $existingList += $miosDevProfileObj
     $wtJson.profiles.list = [object[]]$existingList
 
+    # Make the SSOT Windows profile the default terminal surface. WT accepts
+    # the profile GUID here; using the same value in the monitor launcher
+    # keeps new windows themed even before WT reloads its settings.
+    $wtJson | Add-Member -NotePropertyName defaultProfile -NotePropertyValue $miosProfile.guid -Force
+
     # Write back, then VERIFY by re-reading and parsing. ConvertTo-Json
     # has a long history of unwrapping single-element arrays to bare
     # objects -- which makes WT's scheme lookup miss MiOS entirely
@@ -1970,15 +2073,20 @@ function Install-MiOSTerminalProfile {
         if ($vJson.schemes) { $schemeNames = @($vJson.schemes | ForEach-Object { $_.name }) }
         $profileNames = @()
         if ($vJson.profiles -and $vJson.profiles.list) { $profileNames = @($vJson.profiles.list | ForEach-Object { $_.name }) }
+        $defaultProfileGuid = [string]$vJson.defaultProfile
+        $defaultProfile = @($vJson.profiles.list | Where-Object { $_.guid -eq $defaultProfileGuid } | Select-Object -First 1)
+        $defaultProfileName = if ($defaultProfile.Count) { [string]$defaultProfile[0].name } else { '' }
 
-        if ($schemeNames -contains 'MiOS' -and $profileNames -contains $_miosProfileName -and $profileNames -contains $_miosDevProfileName) {
+        if ($schemeNames -contains 'MiOS' -and $profileNames -contains $_miosProfileName -and $profileNames -contains $_miosDevProfileName -and $defaultProfileGuid -eq $miosGuid) {
             Write-Host "  [+] MiOS scheme + $_miosProfileName + $_miosDevProfileName profiles upserted." -ForegroundColor Green
             Write-Host "      schemes:  $($schemeNames -join ', ')" -ForegroundColor DarkGray
             Write-Host "      profiles: $($profileNames -join ', ')" -ForegroundColor DarkGray
+            Write-Host "      default:  $defaultProfileName" -ForegroundColor DarkGray
         } else {
-            Write-Host "  [!] settings.json verify FAILED -- expected schemes contains 'MiOS' AND profiles contains '$_miosProfileName' + '$_miosDevProfileName'." -ForegroundColor Red
+            Write-Host "  [!] settings.json verify FAILED -- expected MiOS scheme, both MiOS profiles, and $_miosProfileName as default." -ForegroundColor Red
             Write-Host "      schemes:  $($schemeNames -join ', ')" -ForegroundColor DarkGray
             Write-Host "      profiles: $($profileNames -join ', ')" -ForegroundColor DarkGray
+            Write-Host "      default:  $defaultProfileName ($defaultProfileGuid)" -ForegroundColor DarkGray
             # Fallback: hand-write the schemes + profiles arrays as raw
             # JSON-array literals so PS singleton-unwrap can't bite.
             $miosSchemeJson  = $miosSchemeObj  | ConvertTo-Json -Depth 16 -Compress
@@ -2029,8 +2137,8 @@ param(
 $ErrorActionPreference = 'SilentlyContinue'
 
 try {
-    Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Dpi' -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
-    [MiOSLaunch.Native.Dpi]::SetProcessDPIAware() | Out-Null
+    Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Dpi' -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr context);'
+    [MiOSLaunch.Native.Dpi]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) | Out-Null
 } catch {}
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -2039,6 +2147,7 @@ Add-Type -AssemblyName System.Windows.Forms
 # at launcher install time. Edit M:\usr\share\mios\mios.toml + re-run
 # Get-MiOS.ps1 to regenerate.
 $Cols = __MIOS_COLS__; $Rows = __MIOS_ROWS__
+$Scheme = '__MIOS_SCHEME__'
 $winW = ($Cols * __MIOS_CELL_W__) + __MIOS_CHROME_W__
 $winH = ($Rows * __MIOS_CELL_H__) + __MIOS_CHROME_H__
 
@@ -2067,7 +2176,7 @@ if (-not $wtExe) {
 if ([string]::IsNullOrWhiteSpace($Verb) -or $Profile -eq 'MiOS-DEV') {
     # Bare profile launch (or dev VM -- bash login takes no verb).
     # The WT profile's bound commandline runs as-is.
-    $wtArgs = @('-w',$winName,'--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile)
+    $wtArgs = "-w `"$winName`" --pos `"$x,$y`" --size `"$Cols,$Rows`" --focus new-tab --profile `"$Profile`" --colorScheme `"$Scheme`" --title `"$winName`""
 } else {
     # Verb dispatch on a Windows-side profile (MiOS-WIN, or legacy 'MiOS').
     # Override the WT profile commandline with pwsh.exe loading the MiOS
@@ -2082,35 +2191,60 @@ if ([string]::IsNullOrWhiteSpace($Verb) -or $Profile -eq 'MiOS-DEV') {
     $verbSafe = $Verb -replace "'","''"
     $miosProfileSafe = $miosProfile -replace "'","''"
     $cmd = "`$env:MIOS_APP_CONTEXT='1'; if (Test-Path '$miosProfileSafe') { . '$miosProfileSafe' }; mios $verbSafe"
-    $wtArgs = @('-w',$winName,'--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile,$pwshExe,'-NoLogo','-NoExit','-NoProfile','-Command',$cmd)
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+    $wtArgs = "-w `"$winName`" --pos `"$x,$y`" --size `"$Cols,$Rows`" --focus new-tab --profile `"$Profile`" --colorScheme `"$Scheme`" --title `"$winName`" -- `"$pwshExe`" -NoLogo -NoExit -NoProfile -EncodedCommand $encoded"
 }
 $spawnedAt = Get-Date
 Start-Process -FilePath $wtExe -ArgumentList $wtArgs
 
 # Post-launch retry-center + always-on-top via Win32.
 try {
-    Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Win' -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out RECT lpRect); [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags); [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd); public struct RECT { public int Left, Top, Right, Bottom; }'
+    Add-Type -Namespace 'MiOSLaunch.Native' -Name 'Win' -MemberDefinition @"
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out RECT lpRect);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, System.IntPtr value);
+[System.Runtime.InteropServices.DllImport("user32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr hWnd, System.Text.StringBuilder text, int count);
+public delegate bool EnumProc(System.IntPtr hWnd, System.IntPtr value);
+public struct RECT { public int Left, Top, Right, Bottom; }
+public static System.IntPtr FindWindowByTitle(string expected) {
+    System.IntPtr found = System.IntPtr.Zero;
+    EnumWindows((hWnd, value) => {
+        if (!IsWindowVisible(hWnd)) return true;
+        var title = new System.Text.StringBuilder(256);
+        if (GetWindowText(hWnd, title, title.Capacity) > 0 &&
+            title.ToString().Equals(expected, System.StringComparison.OrdinalIgnoreCase)) {
+            found = hWnd;
+            return false;
+        }
+        return true;
+    }, System.IntPtr.Zero);
+    return found;
+}
+"@
 } catch {}
 
 $deadline = (Get-Date).AddMilliseconds(8000)
 $hwnd = [IntPtr]::Zero
 while ((Get-Date) -lt $deadline) {
-    $proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
-            Where-Object { $_.StartTime -ge $spawnedAt.AddSeconds(-1) } |
-            Sort-Object StartTime -Descending | Select-Object -First 1
-    if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero -and [MiOSLaunch.Native.Win]::IsWindowVisible($proc.MainWindowHandle)) {
-        $hwnd = $proc.MainWindowHandle; break
-    }
+    $hwnd = [MiOSLaunch.Native.Win]::FindWindowByTitle($winName)
+    if ($hwnd -ne [IntPtr]::Zero) { break }
     Start-Sleep -Milliseconds 150
 }
 if ($hwnd -ne [IntPtr]::Zero) {
-    $topmost = [IntPtr]::new(-1)
-    $cx = [int]($work.X + ($work.Width  - $winW) / 2); if ($cx -lt $work.X) { $cx = $work.X }
-    $cy = [int]($work.Y + ($work.Height - $winH) / 2); if ($cy -lt $work.Y) { $cy = $work.Y }
-    for ($i = 0; $i -lt 3; $i++) {
-        [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, $topmost,           $cx, $cy, $winW, $winH, 0x40)
-        [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero,     $cx, $cy, $winW, $winH, 0x04)
-        Start-Sleep -Milliseconds 350
+    for ($i = 0; $i -lt 24; $i++) {
+        $rect = New-Object MiOSLaunch.Native.Win+RECT
+        if ([MiOSLaunch.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) {
+            $liveWork = [System.Windows.Forms.Screen]::FromHandle($hwnd).WorkingArea
+            $liveW = [Math]::Min($rect.Right - $rect.Left, $liveWork.Width)
+            $liveH = [Math]::Min($rect.Bottom - $rect.Top, $liveWork.Height)
+            if ($liveW -gt 0 -and $liveH -gt 0) {
+                $cx = [int]($liveWork.X + ($liveWork.Width - $liveW) / 2)
+                $cy = [int]($liveWork.Y + ($liveWork.Height - $liveH) / 2)
+                [void][MiOSLaunch.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $cx, $cy, $liveW, $liveH, 0x14)
+            }
+        }
+        Start-Sleep -Milliseconds 250
     }
 }
 '@
@@ -2120,13 +2254,15 @@ if ($hwnd -ne [IntPtr]::Zero) {
     $_lnchCellH   = Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px'    -Default 20
     $_lnchChromeW = Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px'  -Default 20
     $_lnchChromeH = Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px'  -Default 12
+    $_lnchScheme  = Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS'
     $launcherBody = $launcherBody `
         -replace '__MIOS_COLS__',     [string]$_lnchCols `
         -replace '__MIOS_ROWS__',     [string]$_lnchRows `
         -replace '__MIOS_CELL_W__',   [string]$_lnchCellW `
         -replace '__MIOS_CELL_H__',   [string]$_lnchCellH `
         -replace '__MIOS_CHROME_W__', [string]$_lnchChromeW `
-        -replace '__MIOS_CHROME_H__', [string]$_lnchChromeH
+        -replace '__MIOS_CHROME_H__', [string]$_lnchChromeH `
+        -replace '__MIOS_SCHEME__', [string]$_lnchScheme
     Set-Content -Path $launcherPath -Value $launcherBody -Encoding UTF8
     Write-Host "  [+] MiOS launcher staged: $launcherPath" -ForegroundColor DarkGray
 
@@ -5065,6 +5201,7 @@ if ($true) {
     Install-MiOSPwsh7               | Out-Null
     Write-Host "  $_msgStep3" -ForegroundColor Cyan
     Install-MiOSTerminalProfile     | Out-Null
+    Start-MiosBuildMonitor
     Write-Host "  $_msgStep4" -ForegroundColor Cyan
     Install-MiOSGeistFont           | Out-Null
     Install-MiOSBibataCursor        | Out-Null

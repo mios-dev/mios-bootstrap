@@ -46,13 +46,16 @@ Add-Type -AssemblyName System.Windows.Forms
 # in the toml for all verbs GLOBALLY". Vendor defaults: 80x20.
 $Cols   = __MIOS_COLS__
 $Rows   = __MIOS_ROWS__
+$Scheme = '__MIOS_SCHEME__'
 
 $cur    = [System.Windows.Forms.Cursor]::Position
 $work   = [System.Windows.Forms.Screen]::FromPoint($cur).WorkingArea
-$_cellW = 10
-$_cellH = 20
-$x = [int]($work.X + [math]::Max(0, $work.Width  - ($Cols * $_cellW + 20)) / 2)
-$y = [int]($work.Y + [math]::Max(0, $work.Height - ($Rows * $_cellH + 12)) / 2)
+$_cellW = __MIOS_CELL_W__
+$_cellH = __MIOS_CELL_H__
+$_chromeW = __MIOS_CHROME_W__
+$_chromeH = __MIOS_CHROME_H__
+$x = [int]($work.X + [math]::Max(0, $work.Width  - ($Cols * $_cellW + $_chromeW)) / 2)
+$y = [int]($work.Y + [math]::Max(0, $work.Height - ($Rows * $_cellH + $_chromeH)) / 2)
 if ($x -lt $work.X) { $x = $work.X }
 if ($y -lt $work.Y) { $y = $work.Y }
 
@@ -75,7 +78,7 @@ if (-not $wtExe) {
 # should launch nested inside one-another as a new tab".
 if ([string]::IsNullOrWhiteSpace($Verb) -or $Profile -eq 'MiOS-DEV') {
     # Bare profile launch (or dev VM -- bash login takes no verb).
-    $wtArgs = @('-w','MiOS','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile)
+    $wtArgs = "-w MiOS --pos `"$x,$y`" --size `"$Cols,$Rows`" --focus new-tab --profile `"$Profile`" --colorScheme `"$Scheme`" --title MiOS"
 } else {
     # Verb dispatch on a Windows-side profile (MiOS-WIN, or legacy 'MiOS').
     $_pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
@@ -85,7 +88,8 @@ if ([string]::IsNullOrWhiteSpace($Verb) -or $Profile -eq 'MiOS-DEV') {
     # (SSOT) -- same placeholder convention as __MIOS_COLS__/__MIOS_ROWS__ above.
     $_profileBody = '__MIOS_DRIVE__:\MiOS\powershell\profile.ps1'
     $_inner = "if (Test-Path '$_profileBody') { . '$_profileBody' }; mios $Verb"
-    $wtArgs = @('-w','MiOS','--pos',"$x,$y",'--size',"$Cols,$Rows",'--focus','-p',$Profile,'--',$_pwsh,'-NoLogo','-NoExit','-NoProfile','-Command',$_inner)
+    $_encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_inner))
+    $wtArgs = "-w MiOS --pos `"$x,$y`" --size `"$Cols,$Rows`" --focus new-tab --profile `"$Profile`" --colorScheme `"$Scheme`" --title MiOS -- `"$_pwsh`" -NoLogo -NoExit -NoProfile -EncodedCommand $_encoded"
 }
 Start-Process -FilePath $wtExe -ArgumentList $wtArgs
 
@@ -94,22 +98,32 @@ try {
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out RECT lpRect);
 [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, System.IntPtr value);
+[System.Runtime.InteropServices.DllImport("user32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr hWnd, System.Text.StringBuilder text, int count);
+public delegate bool EnumProc(System.IntPtr hWnd, System.IntPtr value);
 public struct RECT { public int Left, Top, Right, Bottom; }
+public static System.IntPtr FindMiosWindow() {
+    System.IntPtr found = System.IntPtr.Zero;
+    EnumWindows((hWnd, value) => {
+        if (!IsWindowVisible(hWnd)) return true;
+        var title = new System.Text.StringBuilder(256);
+        if (GetWindowText(hWnd, title, title.Capacity) > 0 &&
+            title.ToString().Equals("MiOS", System.StringComparison.OrdinalIgnoreCase)) {
+            found = hWnd;
+            return false;
+        }
+        return true;
+    }, System.IntPtr.Zero);
+    return found;
+}
 "@
 } catch {}
 
 $deadline = (Get-Date).AddMilliseconds(4000)
 $hwnd = [IntPtr]::Zero
 while ((Get-Date) -lt $deadline) {
-    $proc = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
-            Sort-Object StartTime -Descending |
-            Select-Object -First 1
-    if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
-        if ([MiOSLaunch.Native.Win]::IsWindowVisible($proc.MainWindowHandle)) {
-            $hwnd = $proc.MainWindowHandle
-            break
-        }
-    }
+    $hwnd = [MiOSLaunch.Native.Win]::FindMiosWindow()
+    if ($hwnd -ne [IntPtr]::Zero) { break }
     Start-Sleep -Milliseconds 150
 }
 
@@ -125,8 +139,9 @@ if ($hwnd -ne [IntPtr]::Zero) {
             $rw = $rect.Right - $rect.Left
             $rh = $rect.Bottom - $rect.Top
             if ($rw -gt 0 -and $rh -gt 0) {
-                $_curNow  = [System.Windows.Forms.Cursor]::Position
-                $_workNow = [System.Windows.Forms.Screen]::FromPoint($_curNow).WorkingArea
+                $_workNow = [System.Windows.Forms.Screen]::FromHandle($hwnd).WorkingArea
+                $rw = [Math]::Min($rw, $_workNow.Width)
+                $rh = [Math]::Min($rh, $_workNow.Height)
                 $cx = [int]($_workNow.X + ($_workNow.Width  - $rw) / 2)
                 $cy = [int]($_workNow.Y + ($_workNow.Height - $rh) / 2)
                 # SWP_NOZORDER (0x4) + SWP_NOACTIVATE (0x10) = 0x14

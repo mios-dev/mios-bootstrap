@@ -14,6 +14,7 @@ class MiOSLaunch {
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
+    [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr v);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
     delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
@@ -23,9 +24,10 @@ class MiOSLaunch {
 
     static int Main(string[] args) {
         try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch {}
-        string profile = (args.Length > 0) ? args[0] : "MiOS";
+        string profile = (args.Length > 0) ? args[0] : "MiOS-WIN";
         string cols = (args.Length > 1) ? args[1] : "80";
         string rows = (args.Length > 2) ? args[2] : "20";
+        string scheme = (args.Length > 3) ? args[3] : "MiOS";
         // Resolve wt.exe via APPX install location (preferred) or PATH.
         string wt = null;
         try {
@@ -56,7 +58,9 @@ class MiOSLaunch {
         // a separate hwnd that the centering loop sometimes missed).
         DateTime spawnAt = DateTime.UtcNow;
         try {
-            var psi = new ProcessStartInfo(wt, "-w MiOS --size " + cols + "," + rows + " --focus -p " + profile);
+            var psi = new ProcessStartInfo(wt, "-w MiOS --size " + cols + "," + rows +
+                " --focus new-tab --profile \"" + profile.Replace("\"", "\\\"") +
+                "\" --colorScheme \"" + scheme.Replace("\"", "\\\"") + "\" --title MiOS");
             psi.UseShellExecute = false; psi.CreateNoWindow = true;
             Process.Start(psi);
         } catch (Exception ex) { MessageBox.Show("wt.exe spawn failed: " + ex.Message,"MiOS",MessageBoxButtons.OK,MessageBoxIcon.Error); return 2; }
@@ -73,21 +77,25 @@ class MiOSLaunch {
             if (hwnd == IntPtr.Zero) Thread.Sleep(150);
         }
         if (hwnd == IntPtr.Zero) return 0;
-        Point cur = Cursor.Position;
-        Screen scr = Screen.FromPoint(cur);
+        IntPtr previousDpi = IntPtr.Zero;
+        try { previousDpi = SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) {}
         for (int i = 0; i < 12; i++) {
             RECT r;
             if (GetWindowRect(hwnd, out r)) {
                 int w = r.R - r.L, h = r.B - r.T;
                 if (w > 0 && h > 0) {
-                    int x = scr.WorkingArea.X + Math.Max(0, scr.WorkingArea.Width  - w) / 2;
-                    int y = scr.WorkingArea.Y + Math.Max(0, scr.WorkingArea.Height - h) / 2;
+                    Rectangle work = Screen.FromHandle(hwnd).WorkingArea;
+                    w = Math.Min(w, work.Width);
+                    h = Math.Min(h, work.Height);
+                    int x = work.X + (work.Width - w) / 2;
+                    int y = work.Y + (work.Height - h) / 2;
                     // SWP_NOZORDER | SWP_NOACTIVATE = 0x14
                     SetWindowPos(hwnd, IntPtr.Zero, x, y, w, h, 0x14);
                 }
             }
             Thread.Sleep(500);
         }
+        if (previousDpi != IntPtr.Zero) SetThreadDpiAwarenessContext(previousDpi);
         return 0;
     }
 
@@ -109,12 +117,9 @@ class MiOSLaunch {
                         StringBuilder text = new StringBuilder(256);
                         GetWindowText(h, text, 256);
                         string title = text.ToString();
-                        if (title.Contains("MiOS")) {
+                        if (title.Equals("MiOS", StringComparison.OrdinalIgnoreCase)) {
                             foundHwnd = h;
                             return false; // stop enumeration
-                        }
-                        if (foundHwnd == IntPtr.Zero) {
-                            foundHwnd = h;
                         }
                     }
                 }
