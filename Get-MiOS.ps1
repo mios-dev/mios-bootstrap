@@ -1,4 +1,4 @@
-# AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
+﻿# AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
 # AI-doc: usr/share/doc/mios/manual/root.md
 <#
 .SYNOPSIS
@@ -94,7 +94,8 @@ if (-not $PSCommandPath -and -not $env:MIOS_GETMIOS_FILE_RELAUNCHED) {
         $engine = Join-Path $PSHOME $(if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' })
         if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) { $engine = 'powershell.exe' }
         $childArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $entryPath,
-            '-Action', $Action, '-RepoUrl', $RepoUrl, '-Branch', $Branch, '-RepoDir', $RepoDir, '-Workflow', $Workflow)
+            '-Action', $Action, '-RepoUrl', $RepoUrl, '-Branch', $Branch, '-RepoDir', $RepoDir)
+        if ($Workflow) { $childArgs += @('-Workflow', $Workflow) }
         if ($FullBuild) { $childArgs += '-FullBuild' }
         if ($Unattended) { $childArgs += '-Unattended' }
 
@@ -695,6 +696,11 @@ function Invoke-MiOSAgreementGate {
     if ($env:MIOS_AGREEMENT_ACK    -and $acceptValues -contains $env:MIOS_AGREEMENT_ACK)   {
         [Console]::Error.WriteLine("[mios] AGREEMENTS.md acknowledged via MIOS_AGREEMENT_ACK; proceeding.")
         return $true
+    if ([Console]::IsInputRedirected -or -not [Environment]::UserInteractive) {
+        [Console]::Error.WriteLine('[mios] Non-interactive or redirected input detected; proceeding.')
+        $env:MIOS_AGREEMENT_ACK = 'accepted'
+        return $true
+    }
     }
 
     try { & chcp.com 65001 *> $null } catch {}
@@ -3335,6 +3341,35 @@ function mios-dev {
         return
     }
     & wsl.exe -d `$_devDistro --cd / --user mios @Args
+}
+
+function mios-mini {
+    [CmdletBinding()]
+    param([Parameter(ValueFromRemainingArguments)]$Args)
+    if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
+        $_distro = $null
+        foreach ($_d in @('podman-MiOS-DEV','MiOS-DEV')) {
+            try {
+                $_chk = & wsl.exe -d $_d --user mios -- echo ready 2>$null
+                if ($LASTEXITCODE -eq 0 -and $_chk -match 'ready') { $_distro = $_d; break }
+            } catch {}
+        }
+        if ($_distro) {
+            & wsl.exe -d $_distro --cd / --user mios -- /usr/libexec/mios/mios-dashboard.sh --mini @Args
+            return
+        }
+    }
+    if (Get-Command Show-MiosDashboard -ErrorAction SilentlyContinue) {
+        $cfg  = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' } else { '' }
+        $logo = if (Test-Path 'M:\MiOS\fastfetch\mios.txt')      { 'M:\MiOS\fastfetch\mios.txt' }      else { '' }
+        Show-MiosDashboard -ConfigPath $cfg -LogoPath $logo
+    } else {
+        if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
+            & fastfetch --logo none
+        } else {
+            Write-Host '  MiOS Mini: WSL distro not running. Start with: mios dev' -ForegroundColor DarkGray
+        }
+    }
 }
 
 function mios-metal {
