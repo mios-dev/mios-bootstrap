@@ -161,7 +161,7 @@ function Start-MiosBuildMonitor {
 
     try {
         $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -match 'mios-mon\.py' -and ($_.CommandLine -match '--pipeline' -or $_.CommandLine -match '--monitor') })
+            Where-Object { $_.Name -match '^python' -and $_.CommandLine -match 'mios-mon\.py' })
         $hasActive = $false
         foreach ($rp in $runningProcs) {
             $p = Get-Process -Id $rp.ProcessId -ErrorAction SilentlyContinue
@@ -183,20 +183,11 @@ function Start-MiosBuildMonitor {
 
         $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
         $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-        $wt = Get-Command wt.exe -ErrorAction SilentlyContinue
-        $launched = $false
-        if ($wt) {
-            try {
-                $p = Start-Process -FilePath $wt.Source `
-                    -ArgumentList @('-w','MiOS-Mon','--title','\"MiOS Build Monitor\"',$termExe,'-NoProfile','-NoExit','-Command',$command) `
-                    -WindowStyle Normal -PassThru -ErrorAction Stop
-                if ($p -and -not $p.HasExited) { $launched = $true }
-            } catch {}
-        }
-        if (-not $launched) {
-            Start-Process -FilePath $termExe `
-                -ArgumentList @('-NoProfile','-NoExit','-Command',$command) `
-                -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
+        $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+        if (Test-Path -LiteralPath $conhost) {
+            Start-Process -FilePath $conhost -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
+        } else {
+            Start-Process -FilePath $termExe -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
         }
     } catch {}
 }
