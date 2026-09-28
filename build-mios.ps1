@@ -6906,7 +6906,9 @@ $miosRepo = $MiosRepoDir
                             & wsl.exe -d $_wslDistroForTerm --user root -- bash -c $_remotesScript 2>&1 | ForEach-Object { Write-Log "mios-flatpak-remotes: $_" }
                         }
                         $_fpOk = 0; $_fpFail = 0
+                        $_fpIndex = 0
                         foreach ($_fpEntry in $_flatpaks) {
+                            $_fpIndex++
                             if ($_fpEntry -match '^([a-zA-Z0-9_-]+):(.+)$') {
                                 $_fpRemote = $matches[1]
                                 $_fp       = $matches[2]
@@ -6914,14 +6916,29 @@ $miosRepo = $MiosRepoDir
                                 $_fpRemote = 'flathub'
                                 $_fp       = $_fpEntry
                             }
-                            Set-Step ("[overlay] flatpak install {0}:{1}..." -f $_fpRemote, $_fp)
+                            # Ref names come from mios.toml, but are embedded in
+                            # a bash command below. Reject shell metacharacters
+                            # before constructing that command.
+                            if ($_fpRemote -notmatch '^[A-Za-z0-9_-]+$' -or
+                                $_fp -notmatch '^[A-Za-z0-9._/-]+$') {
+                                Log-Warn "[overlay] skipping invalid Flatpak ref from mios.toml: remote='$_fpRemote' ref='$_fp'"
+                                $_fpFail++
+                                continue
+                            }
+                            Set-Step ("[overlay] flatpak install {0}/{1}: {2}:{3}..." -f $_fpIndex, $_flatpaks.Count, $_fpRemote, $_fp)
+                            $_fpShellTemplate = 'set -o pipefail; _fp_started=$SECONDS; dbus-run-session -- stdbuf -oL -eL flatpak install __FLATPAK_ARGS__ 2>&1 & _fp_pid=$!; while kill -0 "$_fp_pid" 2>/dev/null; do sleep 10; kill -0 "$_fp_pid" 2>/dev/null || break; printf "[flatpak-progress] __FLATPAK_REF__ still installing; elapsed=%ss\n" "$((SECONDS - _fp_started))"; done; wait "$_fp_pid"; _fp_rc=$?; printf "[flatpak-exit] __FLATPAK_REF__ exit=%s\n" "$_fp_rc"; exit "$_fp_rc"'
+                            $_fpLabel = "$_fpIndex/$($_flatpaks.Count) $_fpRemote/$_fp"
+                            $_fpCommand = $_fpShellTemplate.Replace('__FLATPAK_ARGS__', "-y --or-update --verbose `"$_fpRemote`" `"$_fp`"").Replace('__FLATPAK_REF__', $_fpLabel)
                             $_fpStderrLog = New-Object System.Collections.Generic.List[string]
                             & {
                                 $ErrorActionPreference = 'Continue'
                                 if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                     $PSNativeCommandUseErrorActionPreference = $false
                                 }
-                                & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- flatpak install -y --noninteractive --or-update $_fpRemote $_fp 2>&1" 2>&1 |
+                                # Feed the script over stdin. Passing it as a native `bash -c`
+                                # argument lets PowerShell/WSL argument parsing rewrite Bash
+                                # expansions such as `$!`, breaking process tracking.
+                                $_fpCommand | & wsl.exe -d $_wslDistroForTerm --user root -- bash 2>&1 |
                                     ForEach-Object { Write-Log "mios-flatpak: $_"; [void]$_fpStderrLog.Add($_) }
                                 $script:_fpLastRc = $LASTEXITCODE
                             }
@@ -6936,7 +6953,8 @@ $miosRepo = $MiosRepoDir
                                     if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                         $PSNativeCommandUseErrorActionPreference = $false
                                     }
-                                    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- flatpak install -y --noninteractive --or-update --system --arch=x86_64 -v $_fpRemote $_fp 2>&1" 2>&1 |
+                                    $_fpRetryCommand = $_fpShellTemplate.Replace('__FLATPAK_ARGS__', "-y --or-update --system --arch=x86_64 --verbose `"$_fpRemote`" `"$_fp`"").Replace('__FLATPAK_REF__', $_fpLabel)
+                                    $_fpRetryCommand | & wsl.exe -d $_wslDistroForTerm --user root -- bash 2>&1 |
                                         ForEach-Object { Write-Log "mios-flatpak-retry: $_"; [void]$_fpRetryLog.Add($_) }
                                     $script:_fpRetryRc = $LASTEXITCODE
                                 }
@@ -6944,17 +6962,10 @@ $miosRepo = $MiosRepoDir
                                     Log-Ok "[overlay] flatpak install OK on retry: $_fp"
                                     $_fpOk++
                                 } else {
-                                    # Dump verbose output to its own log file
-                                    # for grep-friendly diagnostic.
-                                    $_fpFailLog = Join-Path $MiosLogDir ("flatpak-fail-$($_fp -replace '[^A-Za-z0-9._-]','_')-$LogStamp.log")
-                                    try {
-                                        $_fpAllLines = @($_fpStderrLog) + @('---retry---') + @($_fpRetryLog)
-                                        Set-Content -LiteralPath $_fpFailLog -Value ($_fpAllLines -join "`n") -Encoding UTF8
-                                    } catch {}
                                     $_fpTail = ($_fpRetryLog | Select-Object -Last 5) -join ' | '
                                     Log-Warn "[overlay] flatpak install FAILED both attempts (last exit $($script:_fpRetryRc)): $_fp"
                                     Log-Warn "  diagnostic tail: $_fpTail"
-                                    Log-Warn "  full verbose log: $_fpFailLog"
+                                    Log-Warn "  full Flatpak output is in unified installer log: $LogFile"
                                     Log-Warn "  OCI image build (mios build -> automation/61-flatpak-bake.sh) retries at bake time; first-boot service mios-flatpak-install also retries on every host boot."
                                     $_fpFail++
                                 }
