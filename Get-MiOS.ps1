@@ -693,7 +693,7 @@ function Invoke-MiOSAgreementGate {
     $quietValues   = @('quiet','silent','off','0','false','FALSE')
     $acceptValues  = @('accepted','ACCEPTED','yes','YES','y','1','true','TRUE')
     if ($env:MIOS_AGREEMENT_BANNER -and $quietValues -contains $env:MIOS_AGREEMENT_BANNER) { return $true }
-    if ( -and  -contains ) {
+    if ($env:MIOS_AGREEMENT_ACK -and $acceptValues -contains $env:MIOS_AGREEMENT_ACK) {
         [Console]::Error.WriteLine('[mios] AGREEMENTS.md acknowledged via MIOS_AGREEMENT_ACK; proceeding.')
         return $true
     }
