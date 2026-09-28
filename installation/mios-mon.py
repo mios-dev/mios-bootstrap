@@ -20,21 +20,18 @@ from datetime import datetime
 import argparse
 import threading
 
-def _install_deps():
-    print("\033[33m[MiOS-Mon] Missing required libraries (rich, textual, psutil). Installing them now...\033[0m")
+def _install_deps(pkgs=None):
+    if pkgs is None:
+        pkgs = ["rich", "textual", "psutil"]
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "rich", "textual", "psutil"])
-        print("\033[32m[MiOS-Mon] Dependencies installed successfully. Restarting...\033[0m")
-        os.execv(sys.executable, [sys.executable] + sys.argv)
-    except Exception as e:
-        print(f"\033[31mFATAL: Failed to auto-install dependencies: {e}\033[0m")
-        print("Please manually run: pip install rich textual psutil")
-        if sys.stdin and hasattr(sys.stdin, 'isatty') and sys.stdin.isatty():
-            try:
-                input("Press Enter to exit...")
-            except (EOFError, KeyboardInterrupt):
-                pass
-        sys.exit(1)
+        import pip  # noqa: F401
+    except ImportError:
+        return False
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", *pkgs])
+        return True
+    except Exception:
+        return False
 
 try:
     from rich.console import Console, Group
@@ -44,8 +41,21 @@ try:
     from rich.align import Align
     from rich.columns import Columns
     from rich import box
+    RICH_AVAILABLE = True
 except ImportError:
-    _install_deps()
+    RICH_AVAILABLE = False
+    if _install_deps(["rich"]):
+        try:
+            from rich.console import Console, Group
+            from rich.panel import Panel
+            from rich.text import Text
+            from rich.table import Table
+            from rich.align import Align
+            from rich.columns import Columns
+            from rich import box
+            RICH_AVAILABLE = True
+        except ImportError:
+            pass
 
 try:
     from textual.app import App, ComposeResult
@@ -57,10 +67,18 @@ try:
     TEXTUAL_AVAILABLE = True
 except ImportError:
     TEXTUAL_AVAILABLE = False
-    _install_deps()
 
 IS_WINDOWS = platform.system() == 'Windows'
-console = Console(safe_box=False)
+if RICH_AVAILABLE:
+    console = Console(safe_box=False)
+else:
+    class FallbackConsole:
+        def print(self, *args, **kwargs):
+            for a in args:
+                print(str(a))
+        def clear(self):
+            os.system('cls' if os.name == 'nt' else 'clear')
+    console = FallbackConsole()
 
 _SYS_INFO_CACHE = None
 _USB_INFO_CACHE = "Scanning USB..."
@@ -362,7 +380,7 @@ def create_dash_layout():
     except Exception:
         term_cols, term_lines = 80, 24
 
-    is_portrait = term_cols < 90 or term_lines > term_cols
+    is_portrait = term_cols < 75 or term_lines > term_cols
 
     svcs = Table(box=box.SIMPLE, expand=True)
     if is_portrait:
@@ -649,6 +667,8 @@ if TEXTUAL_AVAILABLE:
                             continue
                         line = line.strip()
                         if not line: continue
+                        if "Unexpected output from PTY master" in line or "InitCreateProcessUtilityVm" in line or "Relay(" in line:
+                            continue
                         if re.search(r'\b(error|failed|critical|fatal)\b', line, re.I): line = f"[{SSOT['error']}]{line}[/]"
                         elif re.search(r'\bwarn(ing)?\b', line, re.I): line = f"[{SSOT['warning']}]{line}[/]"
                         elif 'podman' in line.lower() or 'container' in line.lower():
@@ -991,14 +1011,17 @@ if TEXTUAL_AVAILABLE:
                 f_log = self.query_one("#flash-log-box")
                 a_log = self.query_one("#ai-log-box")
 
-                # Portrait/vertical layout if terminal width < 120 or height > width (vertical monitor)
-                is_portrait = width < 120 or (height > width)
+                # Responsive orientation detection:
+                # Portrait if vertical monitor (height > width) or narrow terminal (width < 90)
+                is_portrait = (height > width) or (width < 90)
 
                 if is_portrait:
                     for c in (main_c, build_c, flash_c, ai_c):
                         c.styles.layout = "vertical"
                     left_p.styles.width = "100%"
-                    left_p.styles.height = "auto"
+                    left_p.styles.height = "1fr"
+                    left_p.styles.margin_left = 0
+                    left_p.styles.margin_top = 0
                     right_p.styles.width = "100%"
                     right_p.styles.height = "1fr"
                     right_p.styles.margin_left = 0
@@ -1014,15 +1037,17 @@ if TEXTUAL_AVAILABLE:
                 else:
                     for c in (main_c, build_c, flash_c, ai_c):
                         c.styles.layout = "horizontal"
-                    left_p.styles.width = 48 if width >= 140 else "1fr"
+                    left_p.styles.width = 48 if width >= 130 else "1fr"
                     left_p.styles.height = "100%"
+                    left_p.styles.margin_left = 0
+                    left_p.styles.margin_top = 0
                     right_p.styles.width = "1fr"
                     right_p.styles.height = "100%"
                     right_p.styles.margin_left = 1
                     right_p.styles.margin_top = 0
 
                     for stats in (b_stats, f_stats, a_stats):
-                        stats.styles.width = 34
+                        stats.styles.width = 38
                         stats.styles.height = "100%"
 
                     for lbox in (b_log, f_log, a_log):
@@ -1073,9 +1098,21 @@ def main():
         sys.exit(0)
 
     if not TEXTUAL_AVAILABLE:
-        print("\033[31mFATAL: 'textual' and 'psutil' libraries are required for full monitor mode.\033[0m")
-        print("Please install them: pip install textual psutil")
-        sys.exit(1)
+        if _install_deps(["textual", "psutil"]):
+            try:
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            except Exception:
+                pass
+        print("\033[33m[MiOS-Mon] Interactive monitor mode requires 'textual' and 'psutil'.\033[0m")
+        print("\033[33m[MiOS-Mon] Falling back to live dashboard refresh mode. Press Ctrl+C to exit.\033[0m")
+        import time
+        try:
+            while True:
+                console.clear()
+                console.print(create_dash_layout())
+                time.sleep(2)
+        except KeyboardInterrupt:
+            sys.exit(0)
 
     app = MiosMonitorApp()
     app.run()

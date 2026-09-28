@@ -160,19 +160,44 @@ function Start-MiosBuildMonitor {
     if (-not $monitorScript) { return }
 
     try {
-        $escapedPath = [regex]::Escape($monitorScript)
-        $alreadyRunning = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -match $escapedPath -and ($_.CommandLine -match '--pipeline' -or $_.CommandLine -match 'mios-mon') } |
-            Select-Object -First 1
-        if ($alreadyRunning) { return }
+        $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -match 'mios-mon\.py' -and ($_.CommandLine -match '--pipeline' -or $_.CommandLine -match '--monitor') })
+        $hasActive = $false
+        foreach ($rp in $runningProcs) {
+            $p = Get-Process -Id $rp.ProcessId -ErrorAction SilentlyContinue
+            if ($p -and -not $p.HasExited) { $hasActive = $true; break }
+        }
+        if ($hasActive) { return }
 
         $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+        if (-not $python) {
+            foreach ($c in @(
+                'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe',
+                'C:\Users\Administrator\AppData\Local\Programs\Python\Python313\python.exe',
+                'C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe',
+                'C:\Python314\python.exe',
+                'C:\Python312\python.exe'
+            )) { if (Test-Path -LiteralPath $c) { $python = $c; break } }
+        }
         if (-not $python) { return }
-        $command = "& '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
+
+        $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
         $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-        Start-Process -FilePath $termExe `
-            -ArgumentList @('-NoProfile','-NoExit','-Command',$command) `
-            -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
+        $wt = Get-Command wt.exe -ErrorAction SilentlyContinue
+        $launched = $false
+        if ($wt) {
+            try {
+                $p = Start-Process -FilePath $wt.Source `
+                    -ArgumentList @('-w','MiOS-Mon','--title','\"MiOS Build Monitor\"',$termExe,'-NoProfile','-NoExit','-Command',$command) `
+                    -WindowStyle Normal -PassThru -ErrorAction Stop
+                if ($p -and -not $p.HasExited) { $launched = $true }
+            } catch {}
+        }
+        if (-not $launched) {
+            Start-Process -FilePath $termExe `
+                -ArgumentList @('-NoProfile','-NoExit','-Command',$command) `
+                -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
+        }
     } catch {}
 }
 Start-MiosBuildMonitor

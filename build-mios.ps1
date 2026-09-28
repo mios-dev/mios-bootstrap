@@ -5843,6 +5843,33 @@ Start-Process $url | Out-Null
 '@
     Set-Content -Path $aiPath -Value $aiScript -Encoding UTF8
 
+    # mios-mon.ps1 -- the `mios mon` verb.
+    $monPath = Join-Path $MiosBinDir 'mios-mon.ps1'
+    $monScript = @'
+# <MiOSRoot>\bin\mios-mon.ps1 -- the `mios mon` verb.
+param([Parameter(ValueFromRemainingArguments)] $Args)
+$py = if (Get-Command python.exe -ErrorAction SilentlyContinue) { 'python.exe' } else { 'python3' }
+$mon = @('M:\usr\libexec\mios\mios-mon.py','C:\MiOS\usr\libexec\mios\mios-mon.py','C:\mios-bootstrap\installation\mios-mon.py','M:\MiOS\repo\mios\usr\libexec\mios\mios-mon.py') | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($mon) {
+    if ($Args.Count -eq 0) {
+        & $py $mon --monitor
+    } else {
+        & $py $mon @Args
+    }
+} else {
+    Write-Host "  [!] mios mon: mios-mon.py not found on M:\ or C:\" -ForegroundColor Yellow
+}
+'@
+    Set-Content -Path $monPath -Value $monScript -Encoding UTF8
+
+    $monitorPath = Join-Path $MiosBinDir 'mios-monitor.ps1'
+    $monitorScript = @'
+# <MiOSRoot>\bin\mios-monitor.ps1 -- alias for `mios mon` verb.
+param([Parameter(ValueFromRemainingArguments)] $Args)
+& (Join-Path $PSScriptRoot 'mios-mon.ps1') @Args
+'@
+    Set-Content -Path $monitorPath -Value $monitorScript -Encoding UTF8
+
     # System verbs -- forward to the dev VM via wsl.exe.
     $systemVerbs = @('xbox','virt','vfio','tune','summary','profile','assess','iommu','theme','user')
     foreach ($v in $systemVerbs) {
@@ -5974,12 +6001,14 @@ try {
     $dashFn = @"
 $marker
 `$Global:MiosBin = "$miosBinForProfile"
-function mios-dev     { & (Join-Path `$Global:MiosBin 'mios-dev.ps1')    @args }
-function mios-pull    { & (Join-Path `$Global:MiosBin 'mios-pull.ps1')   @args }
-function mios-update  { & (Join-Path `$Global:MiosBin 'mios-update.ps1') @args }
-function mios-config  { & (Join-Path `$Global:MiosBin 'mios-config.ps1') @args }
-function mios-code    { & (Join-Path `$Global:MiosBin 'mios-code.ps1')   @args }
-function mios-ask     { & (Join-Path `$Global:MiosBin 'mios-ask.ps1')    @args }
+function mios-dev     { & (Join-Path `$Global:MiosBin 'mios-dev.ps1')     @args }
+function mios-pull    { & (Join-Path `$Global:MiosBin 'mios-pull.ps1')    @args }
+function mios-update  { & (Join-Path `$Global:MiosBin 'mios-update.ps1')  @args }
+function mios-config  { & (Join-Path `$Global:MiosBin 'mios-config.ps1')  @args }
+function mios-code    { & (Join-Path `$Global:MiosBin 'mios-code.ps1')    @args }
+function mios-mon     { & (Join-Path `$Global:MiosBin 'mios-mon.ps1')     @args }
+function mios-monitor { & (Join-Path `$Global:MiosBin 'mios-monitor.ps1') @args }
+function mios-ask     { & (Join-Path `$Global:MiosBin 'mios-ask.ps1')     @args }
 
 function Set-MiosWindow {
     [CmdletBinding()]
@@ -6775,6 +6804,64 @@ $script:DW = Get-MiosFrameWidth
 
 Show-Dashboard -Force   # draw initial (all phases pending)
 
+function Start-MiosBuildMonitor {
+    if ($env:MIOS_NO_MONITOR -in @('1','true','yes','on') -or
+        $env:MIOS_HEADLESS -in @('1','true','yes','on')) { return }
+
+    $monitorScript = @(
+        $env:MIOS_MONITOR_SCRIPT,
+        'C:\MiOS\usr\libexec\mios\mios-mon.py',
+        'C:\MiOS\installation\mios-mon.py',
+        'C:\mios-bootstrap\installation\mios-mon.py',
+        'M:\usr\libexec\mios\mios-mon.py',
+        'M:\MiOS\repo\mios-bootstrap\installation\mios-mon.py',
+        (Join-Path $PSScriptRoot 'installation\mios-mon.py')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+    if (-not $monitorScript) { return }
+
+    try {
+        $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -match 'mios-mon\.py' -and ($_.CommandLine -match '--pipeline' -or $_.CommandLine -match '--monitor') })
+        $hasActive = $false
+        foreach ($rp in $runningProcs) {
+            $p = Get-Process -Id $rp.ProcessId -ErrorAction SilentlyContinue
+            if ($p -and -not $p.HasExited) { $hasActive = $true; break }
+        }
+        if ($hasActive) { return }
+
+        $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+        if (-not $python) {
+            foreach ($c in @(
+                'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe',
+                'C:\Users\Administrator\AppData\Local\Programs\Python\Python313\python.exe',
+                'C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe',
+                'C:\Python314\python.exe',
+                'C:\Python312\python.exe'
+            )) { if (Test-Path -LiteralPath $c) { $python = $c; break } }
+        }
+        if (-not $python) { return }
+
+        $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
+        $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+        $wt = Get-Command wt.exe -ErrorAction SilentlyContinue
+        $launched = $false
+        if ($wt) {
+            try {
+                $p = Start-Process -FilePath $wt.Source `
+                    -ArgumentList @('-w','MiOS-Mon','--title','\"MiOS Build Monitor\"',$termExe,'-NoProfile','-NoExit','-Command',$command) `
+                    -WindowStyle Normal -PassThru -ErrorAction Stop
+                if ($p -and -not $p.HasExited) { $launched = $true }
+            } catch {}
+        }
+        if (-not $launched) {
+            Start-Process -FilePath $termExe `
+                -ArgumentList @('-NoProfile','-NoExit','-Command',$command) `
+                -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
+        }
+        Log-Ok "Launched MiOS Build Monitor in foreground terminal window"
+    } catch {}
+}
+
 # ── Phase 0 -- Hardware + Prerequisites ──────────────────────────────────────
 Start-Phase 0
 $HW = Get-Hardware
@@ -6961,6 +7048,7 @@ function Invoke-GitFetchWithRetry {
 
 # ── Phase 1 -- Detecting existing build environment ──────────────────────────
 Start-Phase 1
+Start-MiosBuildMonitor
 $activeDistro = Find-ActiveDistro
 
 if ($activeDistro) {
