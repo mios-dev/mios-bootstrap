@@ -144,6 +144,54 @@ function Disable-ConsoleQuickEdit {
 }
 Disable-ConsoleQuickEdit
 
+function Center-MiosBootstrapWindow {
+    try {
+        if (-not ([System.Management.Automation.PSTypeName]'MiosBootstrapWindow').Type) {
+            Add-Type -TypeDefinition @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class MiosBootstrapWindow {
+    [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] public struct MonitorInfo { public int cbSize; public Rect monitor, work; public uint flags; }
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder name, int count);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Rect rect);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
+    [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern bool GetMonitorInfo(IntPtr h, ref MonitorInfo info);
+    [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int width, int height, uint flags);
+    public static bool CenterForegroundTerminal() {
+        IntPtr h = GetForegroundWindow();
+        if (h == IntPtr.Zero) return false;
+        StringBuilder cls = new StringBuilder(128);
+        GetClassName(h, cls, cls.Capacity);
+        string name = cls.ToString();
+        if (name != "CASCADIA_HOSTING_WINDOW_CLASS" && name != "ConsoleWindowClass") return false;
+        IntPtr previous = IntPtr.Zero;
+        try { previous = SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) {}
+        try {
+            Rect rect;
+            MonitorInfo info = new MonitorInfo();
+            info.cbSize = Marshal.SizeOf(typeof(MonitorInfo));
+            IntPtr monitor = MonitorFromWindow(h, 2);
+            if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info) || !GetWindowRect(h, out rect)) return false;
+            int width = Math.Min(rect.Right - rect.Left, info.work.Right - info.work.Left);
+            int height = Math.Min(rect.Bottom - rect.Top, info.work.Bottom - info.work.Top);
+            if (width <= 0 || height <= 0) return false;
+            int x = info.work.Left + (info.work.Right - info.work.Left - width) / 2;
+            int y = info.work.Top + (info.work.Bottom - info.work.Top - height) / 2;
+            return SetWindowPos(h, IntPtr.Zero, x, y, width, height, 0x14);
+        } finally { if (previous != IntPtr.Zero) SetThreadDpiAwarenessContext(previous); }
+    }
+}
+"@ -ErrorAction Stop
+        }
+        [void][MiosBootstrapWindow]::CenterForegroundTerminal()
+    } catch {}
+}
+Center-MiosBootstrapWindow
+
 function Start-MiosBuildMonitor {
     if ($env:MIOS_NO_MONITOR -in @('1','true','yes','on') -or
         $env:MIOS_HEADLESS -in @('1','true','yes','on')) { return }
@@ -5201,6 +5249,7 @@ if ($true) {
     Install-MiOSPwsh7               | Out-Null
     Write-Host "  $_msgStep3" -ForegroundColor Cyan
     Install-MiOSTerminalProfile     | Out-Null
+    Center-MiosBootstrapWindow
     Start-MiosBuildMonitor
     Write-Host "  $_msgStep4" -ForegroundColor Cyan
     Install-MiOSGeistFont           | Out-Null
