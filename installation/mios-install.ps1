@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [string]$Target = '',
     [string]$Type = '',
@@ -64,6 +64,14 @@ function Get-MiosCatalog {
             what = 'Builds all export formats: WSL2, Hyper-V, QEMU qcow2, live ISO.'
             produces = 'All MiOS deployment artifacts.'
             cost = '45-90 min'; needs = 'WSL2 + podman + Administrator.' }
+        'wsl' = @{ title = 'Import pre-built MiOS WSL2 distro rootfs/VHDX'; platform='windows'; needsAdmin=$true; destructive=$false
+            what = 'Imports a pre-built MiOS rootfs tarball or .vhdx archive into WSL2 without running the full bootstrap compiler.'
+            produces = 'Registered MiOS WSL2 distribution.'
+            cost = '1-3 min'; needs = 'WSL2 + Administrator.' }
+        'import' = @{ title = 'Import pre-built MiOS WSL2 distro (alias for wsl)'; platform='windows'; needsAdmin=$true; destructive=$false
+            what = 'Imports a pre-built MiOS rootfs tarball or .vhdx archive into WSL2 without running the full bootstrap compiler.'
+            produces = 'Registered MiOS WSL2 distribution.'
+            cost = '1-3 min'; needs = 'WSL2 + Administrator.' }
         'configure' = @{ title = 'Open the MiOS Portal / configurator (edit SSOT)'; platform='windows'; needsAdmin=$false; destructive=$false; special='configure'
             what = 'Opens the MiOS Portal at http://localhost:<ports.agent_pipe>/configure to edit mios.toml.'
             produces = 'Live SSOT configurator.'
@@ -185,6 +193,9 @@ function Resolve-Target {
             $r.Exe=$script:BuildPs; $r.NeedsAdmin=$true; $r.Args=@('-Unattended') + $Passthrough
         }
         'build' { $r.Exe=$script:BuildPs; $r.NeedsAdmin=$true; $r.Args=@('-Unattended') + $Passthrough }
+        { $_ -in 'wsl', 'import' } {
+            $r.Exe=$script:BuildPs; $r.NeedsAdmin=$true; $r.Args=@('-ImportWsl', '-Unattended') + $Passthrough
+        }
         'configure' {
             $r.Kind='special'; $r.Special='configure'
         }
@@ -257,7 +268,7 @@ if (-not (Confirm-MiosProceed -Entry $entry -Unattended $Unattended -Drive 'D:')
 # pipeline live -- matches MiOS-Cat.bat's ensure_live_monitor. The 'monitor' target itself and
 # the early-exit special targets (configure/repos/update) never reach here. Suppressed by
 # MIOS_NO_MONITOR=1 (headless/CI/nested).
-if ($env:MIOS_NO_MONITOR -ne '1') {
+if ($env:MIOS_NO_MONITOR -ne '1' -and -not $DryRun) {
     $monScript = Resolve-MiosMonitorScript
     if ($monScript) {
         $monPy = if (Test-Path "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe") { "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" } else { 'python' }
@@ -266,8 +277,66 @@ if ($env:MIOS_NO_MONITOR -ne '1') {
     }
 }
 
+function Get-MiosElevateArgs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$BoundParameters,
+
+        [Parameter()]
+        [string]$Target = ''
+    )
+
+    $elevateArgs = @()
+    if (-not $BoundParameters.ContainsKey('Target') -and $Target) {
+        $elevateArgs += @('-Target', $Target)
+    }
+
+    foreach ($entry in $BoundParameters.GetEnumerator()) {
+        $paramName = "-$($entry.Key)"
+        if ($entry.Value -is [switch] -or $entry.Value -is [bool]) {
+            if ($entry.Value) {
+                $elevateArgs += $paramName
+            }
+        } elseif ($entry.Key -ieq 'Passthrough') {
+            if ($entry.Value -is [System.Collections.IEnumerable] -and $entry.Value -isnot [string]) {
+                foreach ($p in $entry.Value) { $elevateArgs += [string]$p }
+            } else {
+                $elevateArgs += [string]$entry.Value
+            }
+        } elseif ($entry.Value -is [System.Collections.IEnumerable] -and $entry.Value -isnot [string]) {
+            $elevateArgs += $paramName
+            foreach ($val in $entry.Value) {
+                $elevateArgs += [string]$val
+            }
+        } else {
+            $elevateArgs += $paramName
+            $elevateArgs += [string]$entry.Value
+        }
+    }
+    return ,$elevateArgs
+}
+
 $plan = Resolve-Target -Target $Target -Type $Type -Stage $Stage -Unattended $Unattended -Passthrough $Passthrough
-if ($plan.NeedsAdmin) { Invoke-MiosSelfElevate -ArgList $PSBoundParameters.Values }
+if ($plan.NeedsAdmin) {
+    $elevateArgs = Get-MiosElevateArgs -BoundParameters $PSBoundParameters -Target $Target
+    if ($DryRun) {
+        return [PSCustomObject]@{
+            Plan        = $plan
+            ElevateArgs = $elevateArgs
+            NeedsAdmin  = $true
+        }
+    }
+    Invoke-MiosSelfElevate -ArgList $elevateArgs
+}
+
+if ($DryRun) {
+    return [PSCustomObject]@{
+        Plan        = $plan
+        ElevateArgs = @()
+        NeedsAdmin  = $false
+    }
+}
 
 if ($plan.Kind -eq 'ps') {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $plan.Exe @($plan.Args)

@@ -41,6 +41,10 @@ switch -Regex ($Verb) {
     "^(install)$" {
         Invoke-MiOSCatInstall @VerbArgs
     }
+    "^(wsl|import)$" {
+        $importArgs = @('-Target', $Verb) + $VerbArgs
+        Invoke-MiOSCatInstall @importArgs
+    }
     "^(build)$" {
         Invoke-MiOSCatBuild @VerbArgs
     }
@@ -54,7 +58,7 @@ switch -Regex ($Verb) {
         Invoke-MiOSCatManual @VerbArgs
     }
     default {
-        Write-Error "Unknown verb: $Verb. Valid verbs: stage, install, build, update, provision, manual."
+        Write-Error "Unknown verb: $Verb. Valid verbs: stage, install, build, update, provision, manual, wsl, import."
         exit 1
     }
 }

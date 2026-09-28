@@ -8,6 +8,7 @@ function Show-MiOSCatMenu {
     Write-Host " 4) Update (Self-update scripts)"
     Write-Host " 5) Provision (Offline model provisioning)"
     Write-Host " 6) Manual (Interactive shell)"
+    Write-Host " 7) WSL Import (Import pre-built rootfs/VHDX)"
     Write-Host " 0) Exit"
     Write-Host "==========================================================" -ForegroundColor Cyan
 
@@ -19,6 +20,7 @@ function Show-MiOSCatMenu {
         "4" { Invoke-MiOSCatUpdate }
         "5" { Invoke-MiOSCatProvision }
         "6" { Invoke-MiOSCatManual }
+        "7" { Invoke-MiOSCatInstall @('-Target', 'wsl') }
         "0" { return }
         default { Write-Host "Invalid choice."; Show-MiOSCatMenu }
     }
@@ -117,10 +119,11 @@ function Invoke-MiOSCatInstall {
     Write-Host "[MiOS-Cat] Executing verb: install" -ForegroundColor Green
     $ps1Path = Join-Path $PSScriptRoot "..\..\installation\mios-install.ps1"
     if (Test-Path $ps1Path) {
+        $psBin = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
         if ($ArgsList -and $ArgsList.Count -gt 0) {
-            & $ps1Path @ArgsList
+            & $psBin -NoProfile -ExecutionPolicy Bypass -File $ps1Path @ArgsList
         } else {
-            & $ps1Path
+            & $psBin -NoProfile -ExecutionPolicy Bypass -File $ps1Path
         }
     } else {
         Write-Host "installation\mios-install.ps1 not found." -ForegroundColor Red
@@ -132,7 +135,12 @@ function Invoke-MiOSCatBuild {
     Write-Host "[MiOS-Cat] Executing verb: build" -ForegroundColor Green
     $ps1Path = Join-Path $PSScriptRoot "..\..\build-mios.ps1"
     if (Test-Path $ps1Path) {
-        & $ps1Path $ArgsList
+        $psBin = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+        if ($ArgsList -and $ArgsList.Count -gt 0) {
+            & $psBin -NoProfile -ExecutionPolicy Bypass -File $ps1Path @ArgsList
+        } else {
+            & $psBin -NoProfile -ExecutionPolicy Bypass -File $ps1Path
+        }
     } else {
         Write-Host "build-mios.ps1 not found." -ForegroundColor Red
     }
