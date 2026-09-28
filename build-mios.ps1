@@ -7628,7 +7628,7 @@ $miosRepo = $MiosRepoDir
                             if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                 $PSNativeCommandUseErrorActionPreference = $false
                             }
-                            & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- sh -c 'flatpak update --system --appstream flathub 2>&1 | tail -3 || true' 2>&1 | tail -20" 2>&1 |
+                            '' | & wsl.exe -d $_wslDistroForTerm --user root --exec env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS FLATPAK_FANCY_OUTPUT=0 FLATPAK_TTY_PROGRESS=0 dbus-run-session -- flatpak update --system --appstream flathub 2>&1 |
                                 ForEach-Object { Write-Log "mios-flatpak-runtime: $_" }
                         }
                         # Ensure ALL configured remotes are added before the
@@ -7665,14 +7665,17 @@ $miosRepo = $MiosRepoDir
                                 $_fp       = $_fpEntry
                             }
                             Set-Step ("[overlay] flatpak install {0}:{1}..." -f $_fpRemote, $_fp)
-                            $_fpStderrLog = New-Object System.Collections.Generic.List[string]
                             & {
                                 $ErrorActionPreference = 'Continue'
                                 if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                     $PSNativeCommandUseErrorActionPreference = $false
                                 }
-                                & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- flatpak install -y --noninteractive --or-update $_fpRemote $_fp 2>&1" 2>&1 |
-                                    ForEach-Object { Write-Log "mios-flatpak: $_"; [void]$_fpStderrLog.Add($_) }
+                                # --noninteractive selects Flatpak's quiet transaction and
+                                # suppresses progress. --assumeyes plus closed stdin keeps
+                                # automation unattended; plain output emits progress lines.
+                                # Root must not inherit WSLg's uid-1000 runtime/session bus.
+                                '' | & wsl.exe -d $_wslDistroForTerm --user root --exec env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS FLATPAK_FANCY_OUTPUT=0 FLATPAK_TTY_PROGRESS=0 dbus-run-session -- flatpak install --system --assumeyes --or-update $_fpRemote $_fp 2>&1 |
+                                    ForEach-Object { Write-Log "mios-flatpak: $_" }
                                 $script:_fpLastRc = $LASTEXITCODE
                             }
                             if ($script:_fpLastRc -eq 0) {
@@ -7686,7 +7689,7 @@ $miosRepo = $MiosRepoDir
                                     if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
                                         $PSNativeCommandUseErrorActionPreference = $false
                                     }
-                                    & wsl.exe -d $_wslDistroForTerm --user root -- bash -c "dbus-run-session -- flatpak install -y --noninteractive --or-update --system --arch=x86_64 -v $_fpRemote $_fp 2>&1" 2>&1 |
+                                    '' | & wsl.exe -d $_wslDistroForTerm --user root --exec env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS FLATPAK_FANCY_OUTPUT=0 FLATPAK_TTY_PROGRESS=0 dbus-run-session -- flatpak install --assumeyes --or-update --system --arch=x86_64 -v $_fpRemote $_fp 2>&1 |
                                         ForEach-Object { Write-Log "mios-flatpak-retry: $_"; [void]$_fpRetryLog.Add($_) }
                                     $script:_fpRetryRc = $LASTEXITCODE
                                 }
@@ -7694,23 +7697,17 @@ $miosRepo = $MiosRepoDir
                                     Log-Ok "[overlay] flatpak install OK on retry: $_fp"
                                     $_fpOk++
                                 } else {
-                                    # Dump verbose output to its own log file
-                                    # for grep-friendly diagnostic.
-                                    $_fpFailLog = Join-Path $MiosLogDir ("flatpak-fail-$($_fp -replace '[^A-Za-z0-9._-]','_')-$LogStamp.log")
-                                    try {
-                                        $_fpAllLines = @($_fpStderrLog) + @('---retry---') + @($_fpRetryLog)
-                                        Set-Content -LiteralPath $_fpFailLog -Value ($_fpAllLines -join "`n") -Encoding UTF8
-                                    } catch {}
                                     $_fpTail = ($_fpRetryLog | Select-Object -Last 5) -join ' | '
                                     Log-Warn "[overlay] flatpak install FAILED both attempts (last exit $($script:_fpRetryRc)): $_fp"
                                     Log-Warn "  diagnostic tail: $_fpTail"
-                                    Log-Warn "  full verbose log: $_fpFailLog"
+                                    Log-Warn "  full output is in the unified log: $LogFile"
                                     Log-Warn "  OCI image build (mios build -> automation/61-flatpak-bake.sh) retries at bake time; first-boot service mios-flatpak-install also retries on every host boot."
                                     $_fpFail++
                                 }
                             }
                         }
-                        Log-Ok "[desktop].flatpaks install pass: $_fpOk OK / $_fpFail failed (of $($_flatpaks.Count) total)"
+                        $_fpSummary = "[desktop].flatpaks install pass: $_fpOk OK / $_fpFail failed (of $($_flatpaks.Count) total)"
+                        if ($_fpFail -gt 0) { Log-Warn $_fpSummary } else { Log-Ok $_fpSummary }
                     }
                 }
             }
