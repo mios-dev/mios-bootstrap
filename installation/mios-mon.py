@@ -324,17 +324,30 @@ def get_sys_info_table():
 def create_metal_layout():
     sys_info = get_sys_info()
     services = get_services()
+    try:
+        term_cols, term_lines = shutil.get_terminal_size((80, 24))
+    except Exception:
+        term_cols, term_lines = 80, 24
+
+    is_portrait = term_cols < 60 or term_lines > term_cols
+
     t = Table(show_header=False, box=box.SIMPLE, expand=True)
-    for i in range(0, len(services), 2):
-        s1 = services[i]
-        c1 = "green" if s1[2] else "red"
-        m1 = f"[{c1}]{'*' if s1[2] else 'x'}[/] {s1[0]}"
-        m2 = ""
-        if i + 1 < len(services):
-            s2 = services[i+1]
-            c2 = "green" if s2[2] else "red"
-            m2 = f"[{c2}]{'*' if s2[2] else 'x'}[/] {s2[0]}"
-        t.add_row(m1, m2)
+    if is_portrait:
+        for s in services:
+            c = "green" if s[2] else "red"
+            m = f"[{c}]{'*' if s[2] else 'x'}[/] {s[0]}"
+            t.add_row(m)
+    else:
+        for i in range(0, len(services), 2):
+            s1 = services[i]
+            c1 = "green" if s1[2] else "red"
+            m1 = f"[{c1}]{'*' if s1[2] else 'x'}[/] {s1[0]}"
+            m2 = ""
+            if i + 1 < len(services):
+                s2 = services[i+1]
+                c2 = "green" if s2[2] else "red"
+                m2 = f"[{c2}]{'*' if s2[2] else 'x'}[/] {s2[0]}"
+            t.add_row(m1, m2)
     up = sum(1 for s in services if s[2])
     return Align.center(Panel(t, title=f"[cyan bold]MiOS Mini[/] - [dim]{sys_info['host']} ({sys_info['os']})[/]", subtitle=f"[green]{up} UP[/] | [red]{len(services) - up} DOWN[/]", border_style="cyan"))
 
@@ -344,17 +357,33 @@ def create_dash_layout():
     services = get_services()
     logo = Align.center(Text(get_ascii_logo(), style="cyan bold", no_wrap=True))
     fetch = run_fastfetch()
+    try:
+        term_cols, term_lines = shutil.get_terminal_size((80, 24))
+    except Exception:
+        term_cols, term_lines = 80, 24
+
+    is_portrait = term_cols < 90 or term_lines > term_cols
+
     svcs = Table(box=box.SIMPLE, expand=True)
-    for _ in range(2):
-        svcs.add_column("Service", style="cyan"); svcs.add_column("Port", style="dim", justify="right"); svcs.add_column("Status", justify="center")
-    for i in range(0, len(services), 2):
-        s1 = services[i]
-        st1 = "[green bold]*[/]" if s1[2] else "[red bold]x[/]"
-        s2_row = ["", "", ""]
-        if i + 1 < len(services):
-            s2 = services[i+1]
-            s2_row = [s2[0], str(s2[1]) if s2[1] else "-", "[green bold]*[/]" if s2[2] else "[red bold]x[/]"]
-        svcs.add_row(s1[0], str(s1[1]) if s1[1] else "-", st1, *s2_row)
+    if is_portrait:
+        svcs.add_column("Service", style="cyan")
+        svcs.add_column("Port", style="dim", justify="right")
+        svcs.add_column("Status", justify="center")
+        for s in services:
+            st = "[green bold]*[/]" if s[2] else "[red bold]x[/]"
+            svcs.add_row(s[0], str(s[1]) if s[1] else "-", st)
+    else:
+        for _ in range(2):
+            svcs.add_column("Service", style="cyan"); svcs.add_column("Port", style="dim", justify="right"); svcs.add_column("Status", justify="center")
+        for i in range(0, len(services), 2):
+            s1 = services[i]
+            st1 = "[green bold]*[/]" if s1[2] else "[red bold]x[/]"
+            s2_row = ["", "", ""]
+            if i + 1 < len(services):
+                s2 = services[i+1]
+                s2_row = [s2[0], str(s2[1]) if s2[1] else "-", "[green bold]*[/]" if s2[2] else "[red bold]x[/]"]
+            svcs.add_row(s1[0], str(s1[1]) if s1[1] else "-", st1, *s2_row)
+
     footer = Align.center(f"{get_credentials_text()}\n\n[bold]Tree:[/] {get_git_tree_status()}")
     header_box = Panel(Group(logo, Text(""), Align.center(fetch) if fetch else get_sys_info_table()), box=box.SIMPLE, border_style="cyan")
     return Panel(Group(header_box, Panel(svcs, title="[yellow]UNIFIED SYSTEM STACK & SERVICES[/]", border_style="cyan"), Panel(footer, box=box.SIMPLE, border_style="cyan")), border_style="blue", title="[bold cyan]MiOS Dashboard[/]", padding=(1, 1))
@@ -563,6 +592,9 @@ if TEXTUAL_AVAILABLE:
             self.set_interval(3.0, self.async_update_services)
             self.async_update_services()
             self.update_titles()
+            try:
+                self.apply_responsive_layout(self.size.width, self.size.height)
+            except Exception: pass
 
         def update_titles(self):
             ms = int(self.refresh_interval * 1000)
@@ -942,8 +974,64 @@ if TEXTUAL_AVAILABLE:
                 self.call_from_thread(apply_updates)
             except Exception: pass
 
+        def apply_responsive_layout(self, width: int, height: int) -> None:
+            try:
+                main_c = self.query_one("#main-container")
+                build_c = self.query_one("#build-container")
+                flash_c = self.query_one("#flash-container")
+                ai_c = self.query_one("#ai-container")
+                left_p = self.query_one("#left-pane")
+                right_p = self.query_one("#right-pane")
+
+                b_stats = self.query_one("#build-stats-pane")
+                f_stats = self.query_one("#flash-stats-pane")
+                a_stats = self.query_one("#ai-stats-pane")
+
+                b_log = self.query_one("#build-log-box")
+                f_log = self.query_one("#flash-log-box")
+                a_log = self.query_one("#ai-log-box")
+
+                # Portrait/vertical layout if terminal width < 120 or height > width (vertical monitor)
+                is_portrait = width < 120 or (height > width)
+
+                if is_portrait:
+                    for c in (main_c, build_c, flash_c, ai_c):
+                        c.styles.layout = "vertical"
+                    left_p.styles.width = "100%"
+                    left_p.styles.height = "auto"
+                    right_p.styles.width = "100%"
+                    right_p.styles.height = "1fr"
+                    right_p.styles.margin_left = 0
+                    right_p.styles.margin_top = 1
+
+                    for stats in (b_stats, f_stats, a_stats):
+                        stats.styles.width = "100%"
+                        stats.styles.height = "auto"
+
+                    for lbox in (b_log, f_log, a_log):
+                        lbox.styles.width = "100%"
+                        lbox.styles.height = "1fr"
+                else:
+                    for c in (main_c, build_c, flash_c, ai_c):
+                        c.styles.layout = "horizontal"
+                    left_p.styles.width = 48 if width >= 140 else "1fr"
+                    left_p.styles.height = "100%"
+                    right_p.styles.width = "1fr"
+                    right_p.styles.height = "100%"
+                    right_p.styles.margin_left = 1
+                    right_p.styles.margin_top = 0
+
+                    for stats in (b_stats, f_stats, a_stats):
+                        stats.styles.width = 34
+                        stats.styles.height = "100%"
+
+                    for lbox in (b_log, f_log, a_log):
+                        lbox.styles.width = "1fr"
+                        lbox.styles.height = "100%"
+            except Exception: pass
+
         def on_resize(self, event) -> None:
-            pass
+            self.apply_responsive_layout(event.size.width, event.size.height)
 
         def action_toggle_dark(self) -> None:
             self.dark = not self.dark
@@ -969,6 +1057,13 @@ def main():
         mode = "mini"
     elif args.dash or "-dash" in unknown_lower or os.environ.get("MIOS_DASH_SERVICES") == "1":
         mode = "dash"
+
+    if args.once:
+        if mode == "dash":
+            console.print(create_dash_layout())
+        else:
+            console.print(create_metal_layout())
+        sys.exit(0)
 
     if mode == "mini":
         console.print(create_metal_layout())

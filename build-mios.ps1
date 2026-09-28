@@ -589,6 +589,50 @@ function Write-Log {
     if ($L -eq "WARN")  { $script:WarnCount++ }
 }
 
+function Start-MiosBuildMonitor {
+    if ($env:MIOS_NO_MONITOR -in @('1','true','yes','on') -or
+        $env:MIOS_HEADLESS -in @('1','true','yes','on')) { return }
+
+    $monitorScript = @(
+        $env:MIOS_MONITOR_SCRIPT,
+        'C:\MiOS\usr\libexec\mios\mios-mon.py',
+        'C:\MiOS\installation\mios-mon.py',
+        'C:\mios-bootstrap\installation\mios-mon.py',
+        'M:\usr\libexec\mios\mios-mon.py',
+        'M:\MiOS\repo\mios-bootstrap\installation\mios-mon.py',
+        (Join-Path $PSScriptRoot 'installation\mios-mon.py'),
+        (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'usr\libexec\mios\mios-mon.py')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+    if (-not $monitorScript) {
+        Write-Log 'mios mon auto-launch skipped: mios-mon.py was not found' 'WARN'
+        return
+    }
+
+    try {
+        $escapedPath = [regex]::Escape($monitorScript)
+        $alreadyRunning = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -match $escapedPath -and ($_.CommandLine -match '--pipeline' -or $_.CommandLine -match 'mios-mon') } |
+            Select-Object -First 1
+        if ($alreadyRunning) {
+            Write-Log "mios mon is already running (pid $($alreadyRunning.ProcessId)); it will follow this unified log"
+            return
+        }
+
+        $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+        if (-not $python) { throw 'python.exe was not found on PATH' }
+        $command = "& '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
+        $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+        $monitorProcess = Start-Process -FilePath $termExe `
+            -ArgumentList @('-NoProfile','-NoExit','-Command',$command) `
+            -WindowStyle Normal -PassThru -ErrorAction Stop
+        Write-Log "launched mios mon in its own desktop terminal (pid $($monitorProcess.Id)); following $LogFile"
+    } catch {
+        Write-Log "mios mon auto-launch failed: $($_.Exception.Message)" 'WARN'
+    }
+}
+
+Start-MiosBuildMonitor
+
 function Initialize-MiosGlobals {
     $script:MiosFrameW     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'frame_width'     -Default 80)
     $script:MiosFrameH     = [int](Get-MiosTomlValue -Section 'terminal' -Key 'frame_height'    -Default 19)

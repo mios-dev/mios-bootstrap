@@ -244,17 +244,32 @@ function Resolve-MiosMonitorScript {
 function Start-MiosMonitor {
     param([string]$LogPath, [string]$MarkerPath, [string]$Title = 'MiOS-Cat', [switch]$InProcess)
     if ("$($env:MIOS_NO_MONITOR)".ToLower() -in @('1','true','yes','on') -or
-        "$($env:MIOS_UNIFIED)".ToLower() -in @('1','true','yes','on') -or
-        "$($env:MIOS_HEADLESS)".ToLower() -in @('1','true','yes','on') -or
-        "$($env:MIOS_MONITOR_RUNNING)".ToLower() -in @('1','true','yes','on')) { return $null }
+        "$($env:MIOS_HEADLESS)".ToLower() -in @('1','true','yes','on')) { return $null }
 
     $mon = Resolve-MiosMonitorScript
     if (-not $mon) { return $null }
 
-    # Single-console, in-process execution: render live monitor directly without background windows
-    $env:MIOS_MONITOR_RUNNING = '1'
-    & python $mon
-    return $null
+    $escapedPath = [regex]::Escape($mon)
+    $alreadyRunning = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match $escapedPath -and ($_.CommandLine -match '--pipeline' -or $_.CommandLine -match 'mios-mon') } |
+        Select-Object -First 1
+    if ($alreadyRunning) { return $alreadyRunning }
+
+    $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+    if (-not $python) { return $null }
+
+    if ($InProcess) {
+        $env:MIOS_MONITOR_RUNNING = '1'
+        & $python $mon --pipeline
+        return $null
+    }
+
+    $cmd = "& '$($python.Replace("'", "''"))' '$($mon.Replace("'", "''"))' --pipeline"
+    $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
+    try {
+        $p = Start-Process -FilePath $termExe -ArgumentList @('-NoProfile','-NoExit','-Command',$cmd) -WindowStyle Normal -PassThru -ErrorAction Stop
+        return $p
+    } catch { return $null }
 }
 
 function Read-MiosSecret {
