@@ -1044,6 +1044,7 @@ function Set-Step([string]$T) {
 }
 
 function Log-Ok([string]$T)   { Write-Log $T;          Set-Step $T }
+function Log-Info([string]$T) { Write-Log $T;          Set-Step $T }
 function Log-Warn([string]$T) { Write-Log $T "WARN";  Set-Step "WARN: $T" }
 function Log-Fail([string]$T) { Write-Log $T "ERROR"; Set-Step "FAIL: $T" }
 
