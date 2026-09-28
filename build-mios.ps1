@@ -5478,7 +5478,7 @@ function Note {
     Write-Host "  $T" -ForegroundColor $muted
 }
 
-Clear-Host
+try { Clear-Host } catch {}
 Write-Host ''
 Write-Host ("  $([char]0x256D)" + ("$([char]0x2500)" * 74) + "$([char]0x256E)") -ForegroundColor $accent
 Write-Host "  $([char]0x2502)                   MiOS  --  Help / Verb Reference                        $([char]0x2502)" -ForegroundColor $accent
@@ -6640,7 +6640,7 @@ $script:DashboardMode = if ($env:MIOS_DASHBOARD_MODE -eq 'interactive' -and (Tes
 }
 
 # ── Banner ───────────────────────────────────────────────────────────────────
-Clear-Host
+try { Clear-Host } catch {}
 $bTop = [char]0x256D + (([char]0x2500).ToString() * ($script:DW - 2)) + [char]0x256E
 $bBot = [char]0x2570 + (([char]0x2500).ToString() * ($script:DW - 2)) + [char]0x256F
 
