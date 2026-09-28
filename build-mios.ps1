@@ -528,9 +528,8 @@ function Try-ResizeConsole {
 $null = New-Item -ItemType Directory -Path $MiosLogDir -Force -ErrorAction SilentlyContinue
 $LogStamp       = [datetime]::Now.ToString("yyyyMMdd-HHmmss")
 $LogFile        = Join-Path $MiosLogDir "mios-install-$LogStamp.log"
-$BuildDetailLog = Join-Path $MiosLogDir "mios-build-$LogStamp.log"
 [Environment]::SetEnvironmentVariable("MIOS_UNIFIED_LOG", $LogFile)
-[Environment]::SetEnvironmentVariable("MIOS_BUILD_LOG",   $BuildDetailLog)
+[Environment]::SetEnvironmentVariable("MIOS_BUILD_LOG",   $LogFile)
 
 # Initialize the unified log with a session header so post-mortem readers
 # can identify the run boundary the same way Start-Transcript used to.
@@ -897,7 +896,7 @@ function Show-Dashboard {
     }
     $rows.Add($sepD)
 
-    # Log footer -- unified log only ($BuildDetailLog is merged in at exit)
+    # Log footer -- installer and build output share the unified log.
     $logLeaf = try { Split-Path $LogFile -Leaf } catch { "?" }
     $rows.Add((& $mkRow "Log: $logLeaf"))
     $rows.Add($sepBot)
@@ -3534,10 +3533,9 @@ function Invoke-WindowsPodmanBuild([string]$BaseImage, [string]$MiosUser, [strin
     while (-not $proc.StandardOutput.EndOfStream) {
         $line = $proc.StandardOutput.ReadLine()
         if ($null -eq $line) { break }
-        # Write to detail log only -- no Write-Host here.
-        # Printing raw build lines to the console scrolls the terminal buffer
-        # and drifts the dashboard position on every tick.
-        try { [System.IO.File]::AppendAllText($BuildDetailLog, $line + "`n", [Text.Encoding]::UTF8) } catch {}
+        # Append build output to the same canonical log without writing raw
+        # build lines to the dashboard terminal.
+        Write-Log "[build] $line"
         Update-BuildSubPhase $line
         if ($sw.ElapsedMilliseconds -ge 150) { Show-Dashboard; $sw.Restart() }
     }
@@ -3641,7 +3639,7 @@ fi
     while (-not $proc.StandardOutput.EndOfStream) {
         $line = $proc.StandardOutput.ReadLine()
         if ($null -eq $line) { break }
-        try { [System.IO.File]::AppendAllText($BuildDetailLog, $line + "`n", [Text.Encoding]::UTF8) } catch {}
+        Write-Log "[build] $line"
         Update-BuildSubPhase $line
         if ($sw.ElapsedMilliseconds -ge 150) { Show-Dashboard; $sw.Restart() }
     }
@@ -8069,16 +8067,6 @@ if (`$Purge) {
         if ($script:BgPs)  { try { $script:BgPs.Stop() }    catch {}; try { $script:BgPs.Dispose() }  catch {} }
         if ($script:BgRs)  { try { $script:BgRs.Close() }   catch {} }
     } catch {}
-    # Merge raw build output (BuildDetailLog) into the unified log so a
-    # post-mortem reader has a single file with the full picture.
-    if (Test-Path $BuildDetailLog) {
-        try {
-            [System.IO.File]::AppendAllText($LogFile, "`n`n---- BUILD OUTPUT ----`n", [Text.Encoding]::UTF8)
-            $detail = [System.IO.File]::ReadAllText($BuildDetailLog, [Text.Encoding]::UTF8)
-            [System.IO.File]::AppendAllText($LogFile, $detail, [Text.Encoding]::UTF8)
-            Remove-Item $BuildDetailLog -Force -ErrorAction SilentlyContinue
-        } catch {}
-    }
     # Inject unified log into OCI image at /usr/share/mios/build-log.txt
     if ($ExitCode -eq 0) {
         try {
