@@ -938,7 +938,8 @@ function Show-Dashboard {
     }
 
     } catch {
-        Write-Host "[$([datetime]::Now.ToString('HH:mm:ss.fff'))][WARN] dashboard render error: $_"
+        Write-Host "[$([datetime]::Now.ToString('HH:mm:ss.fff'))][WARN] dashboard render error: $_ -- falling back to linear log mode"
+        $script:DashboardMode = 'log'
     }
 }
 

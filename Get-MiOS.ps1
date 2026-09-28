@@ -693,16 +693,15 @@ function Invoke-MiOSAgreementGate {
     $quietValues   = @('quiet','silent','off','0','false','FALSE')
     $acceptValues  = @('accepted','ACCEPTED','yes','YES','y','1','true','TRUE')
     if ($env:MIOS_AGREEMENT_BANNER -and $quietValues -contains $env:MIOS_AGREEMENT_BANNER) { return $true }
-    if ($env:MIOS_AGREEMENT_ACK    -and $acceptValues -contains $env:MIOS_AGREEMENT_ACK)   {
-        [Console]::Error.WriteLine("[mios] AGREEMENTS.md acknowledged via MIOS_AGREEMENT_ACK; proceeding.")
+    if ( -and  -contains ) {
+        [Console]::Error.WriteLine('[mios] AGREEMENTS.md acknowledged via MIOS_AGREEMENT_ACK; proceeding.')
         return $true
+    }
     if ([Console]::IsInputRedirected -or -not [Environment]::UserInteractive) {
-        [Console]::Error.WriteLine('[mios] Non-interactive or redirected input detected; proceeding.')
+        [Console]::Error.WriteLine('[mios] Non-interactive or redirected input detected; auto-acknowledging AGREEMENTS.md.')
         $env:MIOS_AGREEMENT_ACK = 'accepted'
         return $true
     }
-    }
-
     try { & chcp.com 65001 *> $null } catch {}
     try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
     try {
@@ -827,13 +826,18 @@ function Invoke-MiOSAgreementGate {
         Write-Host (($pages[$p]) -join "`n")
         Write-Host ''
         if (-not $isLast) {
-            Read-Host "[mios] Press Enter for page $($pageNum + 1) of $($pages.Count)" | Out-Null
+            if (-not ([Console]::IsInputRedirected -or -not [Environment]::UserInteractive)) { Read-Host '[mios] Press Enter for page 1 of 0' | Out-Null }
         }
     }
 
     # Prompt loop.
     while ($true) {
         $reply = Read-Host -Prompt "`n[mios] Type 'Acknowledged' to proceed, or 'No thanks' to abort"
+        if ($null -eq $reply -or [string]::IsNullOrWhiteSpace($reply)) {
+            [Console]::Error.WriteLine('[mios] Non-interactive input detected; auto-acknowledging AGREEMENTS.md.')
+            $env:MIOS_AGREEMENT_ACK = 'accepted'
+            return $true
+        }
         switch -Regex ($reply) {
             '^(Acknowledged|acknowledged|ACKNOWLEDGED|accept|ACCEPT|y|Y|yes|YES)$' {
                 [Console]::Error.WriteLine("[mios] AGREEMENTS.md acknowledged; proceeding.")
@@ -3345,24 +3349,24 @@ function mios-dev {
 
 function mios-mini {
     [CmdletBinding()]
-    param([Parameter(ValueFromRemainingArguments)]$Args)
+    param([Parameter(ValueFromRemainingArguments)]`$Args)
     if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
-        $_distro = $null
-        foreach ($_d in @('podman-MiOS-DEV','MiOS-DEV')) {
+        `$_distro = `$null
+        foreach (`$_d in @('podman-MiOS-DEV','MiOS-DEV')) {
             try {
-                $_chk = & wsl.exe -d $_d --user mios -- echo ready 2>$null
-                if ($LASTEXITCODE -eq 0 -and $_chk -match 'ready') { $_distro = $_d; break }
+                `$_chk = & wsl.exe -d `$_d --user mios -- echo ready 2>`$null
+                if (`$LASTEXITCODE -eq 0 -and `$_chk -match 'ready') { `$_distro = `$_d; break }
             } catch {}
         }
-        if ($_distro) {
-            & wsl.exe -d $_distro --cd / --user mios -- /usr/libexec/mios/mios-dashboard.sh --mini @Args
+        if (`$_distro) {
+            & wsl.exe -d `$_distro --cd / --user mios -- /usr/libexec/mios/mios-dashboard.sh --mini @Args
             return
         }
     }
     if (Get-Command Show-MiosDashboard -ErrorAction SilentlyContinue) {
-        $cfg  = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' } else { '' }
-        $logo = if (Test-Path 'M:\MiOS\fastfetch\mios.txt')      { 'M:\MiOS\fastfetch\mios.txt' }      else { '' }
-        Show-MiosDashboard -ConfigPath $cfg -LogoPath $logo
+        `$cfg  = if (Test-Path 'M:\MiOS\fastfetch\config.jsonc') { 'M:\MiOS\fastfetch\config.jsonc' } else { '' }
+        `$logo = if (Test-Path 'M:\MiOS\fastfetch\mios.txt')      { 'M:\MiOS\fastfetch\mios.txt' }      else { '' }
+        Show-MiosDashboard -ConfigPath `$cfg -LogoPath `$logo
     } else {
         if (Get-Command fastfetch -ErrorAction SilentlyContinue) {
             & fastfetch --logo none
