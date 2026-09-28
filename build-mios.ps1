@@ -609,16 +609,98 @@ function Start-MiosBuildMonitor {
     }
 
     try {
-        $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^python' -and $_.CommandLine -match 'mios-mon\.py' })
-        $hasActive = $false
-        foreach ($rp in $runningProcs) {
-            $p = Get-Process -Id $rp.ProcessId -ErrorAction SilentlyContinue
-            if ($p -and -not $p.HasExited) { $hasActive = $true; break }
+        if (-not ([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+            $typeDef = @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class MiosDeskLauncher {
+    public delegate bool EnumDesktopWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct STARTUPINFO {
+        public int cb; public string lpReserved; public string lpDesktop; public string lpTitle;
+        public int dwX; public int dwY; public int dwXSize; public int dwYSize;
+        public int dwXCountChars; public int dwYCountChars; public int dwFillAttribute;
+        public int dwFlags; public short wShowWindow; public short cbReserved2;
+        public IntPtr lpReserved2; public IntPtr hStdInput; public IntPtr hStdOutput; public IntPtr hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_INFORMATION {
+        public IntPtr hProcess; public IntPtr hThread; public int dwProcessId; public int dwThreadId;
+    }
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool CreateProcess(
+        string lpApp, string lpCmd, IntPtr pAttr, IntPtr tAttr, bool bInherit,
+        uint flags, IntPtr env, string dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr h);
+    [DllImport("user32.dll")] public static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
+    [DllImport("user32.dll")] public static extern bool EnumDesktopWindows(IntPtr hDesktop, EnumDesktopWindowsProc lpfn, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr hDesktop);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder strText, int maxCount);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+
+    public static bool HasVisibleMonitorWindow() {
+        IntPtr hDesk = OpenDesktop("Default", 0, false, 0x01FF);
+        if (hDesk == IntPtr.Zero) return false;
+        bool found = false;
+        EnumDesktopWindows(hDesk, (hWnd, lParam) => {
+            if (IsWindowVisible(hWnd)) {
+                StringBuilder sb = new StringBuilder(256);
+                if (GetWindowText(hWnd, sb, 256) > 0) {
+                    if (sb.ToString().IndexOf("MiOS Build Monitor", StringComparison.OrdinalIgnoreCase) >= 0) {
+                        found = true;
+                        ShowWindow(hWnd, 9);
+                        BringWindowToTop(hWnd);
+                        SetForegroundWindow(hWnd);
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+        CloseDesktop(hDesk);
+        return found;
+    }
+
+    public static int Launch(string cmd, string title) {
+        STARTUPINFO si = new STARTUPINFO();
+        si.cb = Marshal.SizeOf(si);
+        si.lpDesktop = @"winsta0\default";
+        si.lpTitle = title;
+        PROCESS_INFORMATION pi;
+        if (CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, false, 0x00000010, IntPtr.Zero, null, ref si, out pi)) {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            return pi.dwProcessId;
         }
-        if ($hasActive) {
-            Write-Log "mios mon is already running; it will follow this unified log"
-            return
+        return -1;
+    }
+}
+"@
+            Add-Type -TypeDefinition $typeDef -ErrorAction SilentlyContinue
+        }
+
+        if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+            if ([MiosDeskLauncher]::HasVisibleMonitorWindow()) {
+                Write-Log "mios mon is already visible on interactive desktop; it will follow this unified log"
+                return
+            }
+        } else {
+            $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^python' -and $_.CommandLine -match 'mios-mon\.py' })
+            $hasActive = $false
+            foreach ($rp in $runningProcs) {
+                $p = Get-Process -Id $rp.ProcessId -ErrorAction SilentlyContinue
+                if ($p -and -not $p.HasExited) { $hasActive = $true; break }
+            }
+            if ($hasActive) {
+                Write-Log "mios mon is already running; it will follow this unified log"
+                return
+            }
         }
 
         $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
@@ -634,17 +716,28 @@ function Start-MiosBuildMonitor {
         if (-not $python) { throw 'python.exe was not found on PATH' }
         $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
         $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-        $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
-        if (Test-Path -LiteralPath $conhost) {
-            $monitorProcess = Start-Process -FilePath $conhost `
-                -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) `
-                -WindowStyle Normal -PassThru -ErrorAction Stop
-        } else {
-            $monitorProcess = Start-Process -FilePath $termExe `
-                -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) `
-                -WindowStyle Normal -PassThru -ErrorAction Stop
+        $cmdLine = "conhost.exe `"$termExe`" -NoProfile -NoExit -Command `"$command`""
+
+        $spawnedPid = -1
+        if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+            $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
         }
-        Write-Log "launched mios mon in its own desktop terminal (pid $($monitorProcess.Id)); following $LogFile"
+
+        if ($spawnedPid -gt 0) {
+            Write-Log "launched mios mon on interactive desktop (pid $spawnedPid); following $LogFile"
+        } else {
+            $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+            if (Test-Path -LiteralPath $conhost) {
+                $monitorProcess = Start-Process -FilePath $conhost `
+                    -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) `
+                    -WindowStyle Normal -PassThru -ErrorAction Stop
+            } else {
+                $monitorProcess = Start-Process -FilePath $termExe `
+                    -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) `
+                    -WindowStyle Normal -PassThru -ErrorAction Stop
+            }
+            Write-Log "launched mios mon in its own desktop terminal (pid $($monitorProcess.Id)); following $LogFile"
+        }
     } catch {
         Write-Log "mios mon auto-launch failed: $($_.Exception.Message)" 'WARN'
     }
@@ -6839,14 +6932,21 @@ function Start-MiosBuildMonitor {
     if (-not $monitorScript) { return }
 
     try {
-        $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^python' -and $_.CommandLine -match 'mios-mon\.py' })
-        $hasActive = $false
-        foreach ($rp in $runningProcs) {
-            $p = Get-Process -Id $rp.ProcessId -ErrorAction SilentlyContinue
-            if ($p -and -not $p.HasExited) { $hasActive = $true; break }
+        if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+            if ([MiosDeskLauncher]::HasVisibleMonitorWindow()) {
+                Log-Ok "MiOS Build Monitor is active and visible on interactive desktop"
+                return
+            }
+        } else {
+            $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^python' -and $_.CommandLine -match 'mios-mon\.py' })
+            $hasActive = $false
+            foreach ($rp in $runningProcs) {
+                $p = Get-Process -Id $rp.ProcessId -ErrorAction SilentlyContinue
+                if ($p -and -not $p.HasExited) { $hasActive = $true; break }
+            }
+            if ($hasActive) { return }
         }
-        if ($hasActive) { return }
 
         $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
         if (-not $python) {
@@ -6862,13 +6962,24 @@ function Start-MiosBuildMonitor {
 
         $command = "`$Host.UI.RawUI.WindowTitle = 'MiOS Build Monitor'; & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline"
         $termExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
-        $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
-        if (Test-Path -LiteralPath $conhost) {
-            Start-Process -FilePath $conhost -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
-        } else {
-            Start-Process -FilePath $termExe -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
+        $cmdLine = "conhost.exe `"$termExe`" -NoProfile -NoExit -Command `"$command`""
+
+        $spawnedPid = -1
+        if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
+            $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
         }
-        Log-Ok "Launched MiOS Build Monitor in foreground terminal window"
+
+        if ($spawnedPid -gt 0) {
+            Log-Ok "Launched MiOS Build Monitor on interactive desktop (pid $spawnedPid)"
+        } else {
+            $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+            if (Test-Path -LiteralPath $conhost) {
+                Start-Process -FilePath $conhost -ArgumentList @($termExe, '-NoProfile', '-NoExit', '-Command', $command) -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
+            } else {
+                Start-Process -FilePath $termExe -ArgumentList @('-NoProfile', '-NoExit', '-Command', $command) -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
+            }
+            Log-Ok "Launched MiOS Build Monitor in foreground terminal window"
+        }
     } catch {}
 }
 
