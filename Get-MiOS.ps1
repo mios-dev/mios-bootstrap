@@ -5013,6 +5013,14 @@ $($_keyLines -join "`r`n")
     & wsl.exe --shutdown 2>$null | Out-Null
 }
 
+$_freshVendorToml = Resolve-MiosVendorTomlText
+if (-not $_freshVendorToml -or
+    $_freshVendorToml -notmatch '(?m)^\[meta\]\s*$' -or
+    $_freshVendorToml -notmatch '(?m)^\[identity\]\s*$' -or
+    $_freshVendorToml -notmatch '(?m)^\[packages\.windows\]\s*$') {
+    Write-Host '  [!!] Fresh system mios.toml unavailable or incomplete; Phase 0 was not started.' -ForegroundColor Red
+    exit 1
+}
 try { Invoke-MiOSFullReap } catch { Write-Host "  [!] Invoke-MiOSFullReap failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 
 $_trapFmtFailed = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'install_failed_template' -Default '[!!] Install failed: {0}'
@@ -5109,6 +5117,11 @@ try {
     }
 } catch {
     Write-Host ("  [!] mios.toml promotion to M:\ failed: $($_.Exception.Message)") -ForegroundColor Yellow
+}
+$_vendorDst = 'M:\usr\share\mios\mios.toml'
+if (-not (Test-Path -LiteralPath $_vendorDst -PathType Leaf) -or
+    [IO.File]::ReadAllText($_vendorDst, (New-Object System.Text.UTF8Encoding($false))) -cne $_freshVendorToml) {
+    throw 'Full fetched system mios.toml was not staged exactly on M:\; refusing to continue the installer.'
 }
 
 $_msgStep06 = Get-MiosTomlValue -Section 'messages.steps' -Key 'step_0_6_features' -Default '[*] Step 0.6: Enabling Windows features (WSL + VirtualMachinePlatform + Hyper-V)...'
