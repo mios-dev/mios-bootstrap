@@ -1198,6 +1198,16 @@ volume_label      = "MIOS-DEV"
 [bootstrap.dev_vm]
 base_image        = "quay.io/podman/machine-os:6.0"
 
+[bootstrap.dev_vm.host_reserve]
+# Host-side reserve policy; the MiOS-DEV WSL2 VM receives the remainder
+# (~60% of host RAM). Mirrors MiOS usr/share/mios/mios.toml and the
+# build-mios.ps1 defaults (memReservePct 40 / memReserveGB 6).
+cpu_pct             = 15      # reserve 15% of logical CPUs for Windows host
+cpu_min             = 2       # always reserve at least 2 cores
+memory_pct          = 40      # reserve 40% of host RAM for Windows host
+memory_gb           = 6       # always reserve at least 6 GB
+disk_gb             = 32      # always keep 32 GB free on M:\ for Windows-side artifacts
+
 [bootstrap.prereqs]
 install_podman_desktop = false
 podman_pkg             = "RedHat.Podman-Desktop"
