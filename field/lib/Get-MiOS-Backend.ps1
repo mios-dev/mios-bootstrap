@@ -1,4 +1,4 @@
-﻿# AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
+# AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
 # AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, /etc/mios/., /usr/share/mios/branding/mios.txt, /usr/share/mios/branding/mios, mios-dev, mios-bootstrap, mios-pull, mios-launch, mios-install
 # AI-functions: Disable-ConsoleQuickEdit, Resolve-MiosTomlText, Get-MiosTomlValue, Show-MiOSBanner, Show-MiOSAgreement, Invoke-MiOSAgreementGate, _Center-MiOSGateConsole, Get-MiosPalette, _hex, Test-MiOSFontInstalled, Wait-MiOSWindowsTerminalReady, Ensure-MiOSWinget
 <#
@@ -4423,9 +4423,9 @@ if (`$true) {
         # (`powershell` for 5.1 / Desktop, `pwsh` for 7+ / Core).
         `$_ompShell = if (`$PSVersionTable.PSEdition -eq 'Desktop') { 'powershell' } else { 'pwsh' }
         `$ompInit = if (`$miosOmp -and (Test-Path -LiteralPath `$miosOmp)) {
-            (oh-my-posh init `$_ompShell --config `$miosOmp) -join "``n"
+            (oh-my-posh init `$_ompShell --config `$miosOmp --print) -join "``n"
         } else {
-            (oh-my-posh init `$_ompShell) -join "``n"
+            (oh-my-posh init `$_ompShell --print) -join "``n"
         }
         if (`$ompInit) {
             `$ompInit = [regex]::Replace(`$ompInit, 'Get-PSReadLineKeyHandler\s+(?!-)([A-Za-z][\w+]*)', 'Get-PSReadLineKeyHandler -Chord ''`$1''')
