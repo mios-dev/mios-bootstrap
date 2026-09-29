@@ -301,8 +301,8 @@ public static class MiosDeskLauncher {
                             try { dpi = GetDpiForWindow(hWnd); } catch (EntryPointNotFoundException) {}
                             int requestedWidth = (int)Math.Round(wantedWidth * dpi / 96.0);
                             int requestedHeight = (int)Math.Round(wantedHeight * dpi / 96.0);
-                            int width = Math.Min(requestedWidth, info.work.Right - info.work.Left);
-                            int height = Math.Min(requestedHeight, info.work.Bottom - info.work.Top);
+                            int width = Math.Min(Math.Min(rect.Right - rect.Left, requestedWidth), info.work.Right - info.work.Left);
+                            int height = Math.Min(Math.Min(rect.Bottom - rect.Top, requestedHeight), info.work.Bottom - info.work.Top);
                             if (width > 0 && height > 0) {
                                 int x = info.work.Left + ((info.work.Right - info.work.Left - width) / 2);
                                 int y = info.work.Top + ((info.work.Bottom - info.work.Top - height) / 2);
@@ -388,10 +388,15 @@ public static class MiosDeskLauncher {
             if ([string]::IsNullOrWhiteSpace($monitorScheme)) { $monitorScheme = 'MiOS' }
             $monitorLaunchMode = [string](Get-MiosTomlValue -Section 'theme' -Key 'launch_mode' -Default 'focus')
             $monitorX = 0; $monitorY = 0
+            $displayCols = $monitorCols; $displayRows = $monitorRows
             try {
                 Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
                 $cursor = [System.Windows.Forms.Cursor]::Position
                 $workArea = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
+                $displayCols = [math]::Min($monitorCols, [math]::Max(40, [math]::Floor(($workArea.Width - $chromeWidth - 28) / $cellWidth)))
+                $displayRows = [math]::Min($monitorRows, [math]::Max(12, [math]::Floor(($workArea.Height - $chromeHeight - 32) / $cellHeight)))
+                $monitorWidthPx = ($displayCols * $cellWidth) + $chromeWidth
+                $monitorHeightPx = ($displayRows * $cellHeight) + $chromeHeight
                 $monitorX = [int]($workArea.X + (($workArea.Width - $monitorWidthPx) / 2))
                 $monitorY = [int]($workArea.Y + (($workArea.Height - $monitorHeightPx) / 2))
                 if ($monitorX -lt $workArea.X) { $monitorX = $workArea.X }
@@ -429,7 +434,10 @@ public static class MiosDeskLauncher {
             # monitor that masks a failed themed launch.
             if (-not $profileReady) { return }
             $wtWindowArgsText = $wtWindowArgs -join ' '
-            $wtArgsString = "$wtWindowArgsText --pos `"$monitorX,$monitorY`" --size `"$monitorCols,$monitorRows`" -w new new-tab --profile `"$monitorProfile`" --colorScheme `"$monitorScheme`" --title `"MiOS Build Monitor`" `"$python`" `"$monitorScript`" --pipeline"
+            $monitorCommand = "while (`$true) { & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline; if (`$LASTEXITCODE -eq 0) { break }; Write-Host 'MiOS monitor exited unexpectedly; restarting in 2 seconds' -ForegroundColor Yellow; Start-Sleep -Seconds 2 }"
+            $monitorEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($monitorCommand))
+            $monitorShell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+            $wtArgsString = "$wtWindowArgsText --pos `"$monitorX,$monitorY`" --size `"$displayCols,$displayRows`" -w `"MiOS-Monitor`" new-tab --profile `"$monitorProfile`" --colorScheme `"$monitorScheme`" --title `"MiOS Build Monitor`" `"$monitorShell`" -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand $monitorEncoded"
             $cmdLine = "`"$wtExe`" $wtArgsString"
             if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
                 $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
