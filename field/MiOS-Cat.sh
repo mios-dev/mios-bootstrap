@@ -10,7 +10,7 @@ VERBARGS=("$@")
 
 LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/cat.sh"
 if [[ ! -f "$LIB_PATH" ]]; then
-    echo "Backend library not found at $LIB_PATH"
+    echo "Backend library not found at $LIB_PATH" >&2
     exit 1
 fi
 source "$LIB_PATH"
@@ -24,8 +24,14 @@ case "$VERB" in
     stage)
         Invoke_MiOSCatStage "${VERBARGS[@]}"
         ;;
+    verify)
+        Invoke_MiOSCatVerify "${VERBARGS[@]}"
+        ;;
     install)
         Invoke_MiOSCatInstall "${VERBARGS[@]}"
+        ;;
+    wsl|import)
+        Invoke_MiOSCatInstall -Target "$VERB" "${VERBARGS[@]}"
         ;;
     build)
         Invoke_MiOSCatBuild "${VERBARGS[@]}"
@@ -40,7 +46,7 @@ case "$VERB" in
         Invoke_MiOSCatManual "${VERBARGS[@]}"
         ;;
     *)
-        echo "Unknown verb: $VERB. Valid verbs: stage, install, build, update, provision, manual." >&2
+        echo "Unknown verb: $VERB. Valid verbs: stage, verify, install, build, update, provision, manual, wsl, import." >&2
         exit 1
         ;;
 esac
