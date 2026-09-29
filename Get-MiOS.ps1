@@ -523,11 +523,11 @@ if ($Action -ne 'Default') {
     }
 
     if ($Action -eq 'FlashUSB') {
-        Write-Host "[*] Action: FlashUSB. Staging and launching interactive MiOS-Cat installer..." -ForegroundColor Cyan
+        Write-Host "[*] Action: FlashUSB. Staging and launching interactive MiOS-Field installer..." -ForegroundColor Cyan
         # 1. Locate source folder
         $srcDir = Join-Path (Ensure-MiosBootstrapRepo) "field"
         if (-not (Test-Path $srcDir)) {
-            Write-Error "MiOS-Cat (field) folder not found after fetch -- check network / GitHub access."
+            Write-Error "MiOS-Field (field) folder not found after fetch -- check network / GitHub access."
             exit 1
         }
         # 2. Resolve staging directory
@@ -540,9 +540,17 @@ if ($Action -ne 'Default') {
         New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
         Copy-Item -Path "$srcDir\*" -Destination $targetDir -Recurse -Force
 
-        $catScript = Join-Path $targetDir "MiOS-Cat.bat"
-        Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Cat`" cmd.exe /k `"$catScript`""
-        Write-Host "[+] Interactive MiOS-Cat launcher spawned from staged directory." -ForegroundColor Green
+        # Canonical launcher first; the defunct MiOS-Cat.bat shim keeps older trees working.
+        $launchScript = Join-Path $targetDir "MiOS-Field.ps1"
+        $launchBat    = Join-Path $targetDir "MiOS-Cat.bat"
+        if (-not (Test-Path $launchScript) -and (Test-Path $launchBat)) { $launchScript = $launchBat }
+        if (Test-Path $launchScript) {
+            Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Field`" powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$launchScript`""
+            Write-Host "[+] Interactive MiOS-Field launcher spawned from staged directory." -ForegroundColor Green
+        } else {
+            Write-Error "MiOS-Field launcher not found in staged directory: $targetDir"
+            exit 1
+        }
         exit 0
     }
 
@@ -5619,26 +5627,29 @@ if ($_bootstrapExit -eq 0) {
 
 if ($_bootstrapExit -eq 0 -and -not $Unattended) {
     try {
-        $_catSrc = Join-Path $RepoDir 'field'
-        if (-not (Test-Path $_catSrc)) { $_catSrc = 'C:\mios-bootstrap\field' }
-        $_catBat = Join-Path $_catSrc 'MiOS-Cat.bat'
-        if (Test-Path $_catBat) {
+        $_fieldSrc = Join-Path $RepoDir 'field'
+        if (-not (Test-Path $_fieldSrc)) { $_fieldSrc = 'C:\mios-bootstrap\field' }
+        # Canonical executor is installation/MiOS-Field.bat; the defunct field/MiOS-Cat.bat
+        # shim (and the field copy on older trees) remain as fallbacks.
+        $_fieldBat = Join-Path (Split-Path $_fieldSrc -Parent) 'installation\MiOS-Field.bat'
+        if (-not (Test-Path $_fieldBat)) { $_fieldBat = Join-Path $_fieldSrc 'MiOS-Cat.bat' }
+        if (Test-Path $_fieldBat) {
             Write-Host ''
-            Write-Host '  MiOS is provisioned. MiOS-Cat can now build a bootable USB that deploys' -ForegroundColor Cyan
+            Write-Host '  MiOS is provisioned. MiOS-Field can now build a bootable USB that deploys' -ForegroundColor Cyan
             Write-Host '  MiOS (and MiOS-Xbox) onto any machine -- recovery tools, the offline Fedora' -ForegroundColor Cyan
             Write-Host '  installer, and the repo, all on one stick.' -ForegroundColor Cyan
-            $_ans = Read-Host '  Launch MiOS-Cat to build a deploy USB now? [y/N]'
+            $_ans = Read-Host '  Launch MiOS-Field to build a deploy USB now? [y/N]'
             if ($_ans -match '^(y|yes)$') {
-                Write-Host '  [*] Launching MiOS-Cat (canonical .bat)...' -ForegroundColor Cyan
+                Write-Host '  [*] Launching MiOS-Field (canonical .bat)...' -ForegroundColor Cyan
                 # Already elevated -- launch the canonical .bat directly in a new
                 # interactive console (no hardcoded-principal scheduled task).
-                Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Cat`" cmd.exe /k `"$_catBat`""
+                Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Field`" cmd.exe /k `"$_fieldBat`""
             } else {
-                Write-Host "  You can run it any time:  `"$_catBat`"" -ForegroundColor DarkGray
+                Write-Host "  You can run it any time:  `"$_fieldBat`"" -ForegroundColor DarkGray
             }
         }
     } catch {
-        Write-Host "  [!] MiOS-Cat handoff prompt skipped (non-fatal): $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "  [!] MiOS-Field handoff prompt skipped (non-fatal): $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 

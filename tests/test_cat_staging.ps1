@@ -1,5 +1,7 @@
 # tests/test_cat_staging.ps1
-# Two-sided unit and integration tests for MiOS-Cat OCI data staging (Task T-261).
+# Two-sided unit and integration tests for MiOS-Field (formerly MiOS-Cat) OCI data staging
+# (Task T-261, T-1118 fold). Imports via the defunct Cat shim ON PURPOSE so the compat
+# surface is exercised; asserts the canonical MiOS-Field surface exists and is identical.
 # Verifies positive controls (large disk stages OCI archive, extracts layout, small disk skips MiOS-Data)
 # and negative controls (invalid media path, insufficient disk space, corrupted OCI archive).
 
@@ -17,6 +19,15 @@ if (-not (Test-Path -LiteralPath $libPath)) {
 }
 
 Import-Module (Resolve-Path $libPath) -Force
+
+# --- T-1118 fold gate: canonical surface exists and the shim aliases bind to it losslessly ---
+$canonicalPsm1 = Join-Path $testRoot "lib\MiOS-Field.psm1"
+$canonicalPs1  = Join-Path $testRoot "MiOS-Field.ps1"
+$canonicalSh   = Join-Path $testRoot "MiOS-Field.sh"
+if (-not (Test-Path -LiteralPath $canonicalPsm1)) {
+    Write-Error "Canonical MiOS-Field.psm1 not found at $canonicalPsm1"
+    exit 1
+}
 
 $passedCount = 0
 $failedCount = 0
@@ -205,14 +216,41 @@ try {
     $cliScript = Join-Path $PSScriptRoot "..\field\MiOS-Cat.ps1"
     $shimScript = Join-Path $PSScriptRoot "..\cat\MiOS-Cat.ps1"
 
-    Assert-Condition "field/MiOS-Cat.ps1 exists" (Test-Path -LiteralPath $cliScript)
-    Assert-Condition "cat/MiOS-Cat.ps1 exists" (Test-Path -LiteralPath $shimScript)
+    Assert-Condition "field/MiOS-Cat.ps1 (defunct shim) exists" (Test-Path -LiteralPath $cliScript)
+    Assert-Condition "cat/MiOS-Cat.ps1 (defunct shim) exists" (Test-Path -LiteralPath $shimScript)
+    Assert-Condition "field/MiOS-Field.ps1 (canonical) exists" (Test-Path -LiteralPath (Join-Path $testRoot "MiOS-Field.ps1"))
+    Assert-Condition "field/MiOS-Field.sh (canonical) exists" (Test-Path -LiteralPath (Join-Path $testRoot "MiOS-Field.sh"))
+    Assert-Condition "field/lib/MiOS-Field.psm1 (canonical) exists" (Test-Path -LiteralPath (Join-Path $testRoot "lib\MiOS-Field.psm1"))
+    Assert-Condition "field/lib/field.sh (canonical) exists" (Test-Path -LiteralPath (Join-Path $testRoot "lib\field.sh"))
+    Assert-Condition "installation/MiOS-Field.bat (canonical flash executor) exists" (Test-Path -LiteralPath (Join-Path $PSScriptRoot "..\installation\MiOS-Field.bat"))
 
-    # Test field/MiOS-Cat.ps1 stage with -NoElevate
+    # Alias equality: every MiOS-Cat name the shim exports must resolve to the SAME command
+    # as its MiOS-Field counterpart (lossless delegation, not a reimplementation).
+    foreach ($pair in @(
+        @{ Cat = 'Show-MiOSCatMenu';    Field = 'Show-MiOSFieldMenu' },
+        @{ Cat = 'Invoke-MiOSCatStage';  Field = 'Invoke-MiOSFieldStage' },
+        @{ Cat = 'Invoke-MiOSCatInstall'; Field = 'Invoke-MiOSFieldInstall' },
+        @{ Cat = 'Invoke-MiOSCatBuild';  Field = 'Invoke-MiOSFieldBuild' },
+        @{ Cat = 'Invoke-MiOSCatUpdate'; Field = 'Invoke-MiOSFieldUpdate' },
+        @{ Cat = 'Invoke-MiOSCatProvision'; Field = 'Invoke-MiOSFieldProvision' },
+        @{ Cat = 'Invoke-MiOSCatVerify'; Field = 'Invoke-MiOSFieldVerify' },
+        @{ Cat = 'Invoke-MiOSCatManual'; Field = 'Invoke-MiOSFieldManual' }
+    )) {
+        $catCmd = Get-Command $pair.Cat -ErrorAction SilentlyContinue
+        $fieldCmd = Get-Command $pair.Field -ErrorAction SilentlyContinue
+        $bound = ($null -ne $catCmd) -and ($null -ne $fieldCmd) -and ($catCmd.CommandType -eq 'Alias') -and (($catCmd.ResolvedCommand ?? $catCmd.Definition) -match [regex]::Escape($pair.Field))
+        Assert-Condition ("alias {0} -> {1} binds losslessly" -f $pair.Cat, $pair.Field) ([bool]$bound)
+    }
+
+    # Test canonical field/MiOS-Field.ps1 stage with -NoElevate
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $testRoot "MiOS-Field.ps1") stage -DriveLetter $tempDrive6 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 50 -NoElevate 2>&1 | Out-Null
+    Assert-Condition "field/MiOS-Field.ps1 stage executed with exit code 0" ($LASTEXITCODE -eq 0)
+
+    # Test field/MiOS-Cat.ps1 (defunct shim) stage with -NoElevate
     & pwsh -NoProfile -ExecutionPolicy Bypass -File $cliScript stage -DriveLetter $tempDrive6 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 50 -NoElevate 2>&1 | Out-Null
     Assert-Condition "field/MiOS-Cat.ps1 stage executed with exit code 0" ($LASTEXITCODE -eq 0)
 
-    # Test cat/MiOS-Cat.ps1 verify
+    # Test cat/MiOS-Cat.ps1 verify (double-shim chain cat/ -> field/ -> canonical)
     & pwsh -NoProfile -ExecutionPolicy Bypass -File $shimScript verify -DriveLetter $tempDrive6 -MinDiskGB 512 2>&1 | Out-Null
     Assert-Condition "cat/MiOS-Cat.ps1 verify executed with exit code 0" ($LASTEXITCODE -eq 0)
 } finally {

@@ -1,4 +1,4 @@
-# cat/MiOS-Cat.ps1 -- DEFUNCT legacy entrypoint.
+# MiOS-Cat.ps1 -- DEFUNCT shim in cat/. Delegates to canonical field/MiOS-Field.ps1.
 # Folded losslessly to canonical installation conventions (ADR-0013, Task T-1118).
 # Delegates directly to installation/mios-install.ps1.
 [CmdletBinding()]
@@ -12,7 +12,7 @@ param(
 
 $targetScript = Join-Path $PSScriptRoot "..\installation\mios-install.ps1"
 if (-not (Test-Path -LiteralPath $targetScript)) {
-    $targetScript = Join-Path $PSScriptRoot "..\field\MiOS-Cat.ps1"
+    $targetScript = Join-Path $PSScriptRoot "..\field\MiOS-Field.ps1"
 }
 if (-not (Test-Path -LiteralPath $targetScript)) {
     Write-Error "[FATAL] Canonical installation script not found at: $targetScript"

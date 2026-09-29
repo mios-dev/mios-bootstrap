@@ -451,6 +451,17 @@ function Resolve-MiosDistro {
 #  MiOS-Data & OCI Bulk Staging (T-261 / T-1118)
 # ============================================================================
 
+function Get-MiosTarCommand {
+    # Prefer the Windows-native bsdtar: MSYS/Git tar.exe interprets "C:\..." as a
+    # remote host spec ("Cannot connect to C:") and exits 128. Resolve the real
+    # System32 tar explicitly before trusting PATH order.
+    $sysTar = Join-Path $env:SystemRoot "System32\tar.exe"
+    if (Test-Path -LiteralPath $sysTar) { return $sysTar }
+    $c = Get-Command tar.exe -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    return $null
+}
+
 function New-MiosOCIArchive {
     param([string]$DestinationTarPath)
     $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("oci_tmp_" + [System.Guid]::NewGuid().ToString("N"))
@@ -502,13 +513,24 @@ function New-MiosOCIArchive {
 "@
     $indexContent | Out-File -FilePath (Join-Path $tmpDir "index.json") -Encoding utf8 -NoNewline
 
-    # Create tar
+    # Create tar (checked: a missing/failed tar must NOT read as a staged archive)
     $tarDir = Split-Path -Parent $DestinationTarPath
     if (-not (Test-Path -LiteralPath $tarDir)) { $null = New-Item -ItemType Directory -Force -Path $tarDir }
-    if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
-        & tar.exe -cf $DestinationTarPath -C $tmpDir oci-layout index.json blobs 2>&1 | Out-Null
+    $tarBin = Get-MiosTarCommand
+    if (-not $tarBin) {
+        Write-Error "New-MiosOCIArchive: no tar.exe available (looked in System32 and PATH); cannot stage $DestinationTarPath"
+        Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
     }
+    & $tarBin -cf $DestinationTarPath -C $tmpDir oci-layout index.json blobs 2>&1 | Out-Null
+    $tarExit = $LASTEXITCODE
     Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($tarExit -ne 0 -or -not (Test-Path -LiteralPath $DestinationTarPath) -or (Get-Item -LiteralPath $DestinationTarPath).Length -eq 0) {
+        Write-Error "New-MiosOCIArchive: tar exited $tarExit and the archive at $DestinationTarPath is missing or empty"
+        if (Test-Path -LiteralPath $DestinationTarPath) { Remove-Item -LiteralPath $DestinationTarPath -Force -ErrorAction SilentlyContinue }
+        return $false
+    }
+    return $true
 }
 
 function Expand-MiosOCIImage {
@@ -526,9 +548,13 @@ function Expand-MiosOCIImage {
     }
     $null = New-Item -ItemType Directory -Force -Path $DestinationPath
     try {
-        if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
-            & tar.exe -xf $ArchiveFilePath -C $DestinationPath 2>&1 | Out-Null
+        $tarBin = Get-MiosTarCommand
+        if (-not $tarBin) {
+            Write-Error "Expand-MiosOCIImage: no tar.exe available (looked in System32 and PATH); cannot extract $ArchiveFilePath"
+            $global:LASTEXITCODE = 1
+            return $false
         }
+        & $tarBin -xf $ArchiveFilePath -C $DestinationPath 2>&1 | Out-Null
         $hasLayout = Test-Path -LiteralPath (Join-Path $DestinationPath "oci-layout")
         $hasIndex = Test-Path -LiteralPath (Join-Path $DestinationPath "index.json")
         $hasBlobs = Test-Path -LiteralPath (Join-Path $DestinationPath "blobs")
@@ -787,7 +813,12 @@ function Invoke-MiosStage {
             }
             if (-not (Test-Path -LiteralPath $stagedArchive) -or (Get-Item -LiteralPath $stagedArchive).Length -eq 0) {
                 Write-Host "Generating standard OCI image archive structure -> $stagedArchive..." -ForegroundColor Cyan
-                New-MiosOCIArchive -DestinationTarPath $stagedArchive
+                $genOk = New-MiosOCIArchive -DestinationTarPath $stagedArchive
+                if (-not $genOk -or -not (Test-Path -LiteralPath $stagedArchive) -or (Get-Item -LiteralPath $stagedArchive).Length -eq 0) {
+                    Write-Host "[MiOS-Install] FATAL: OCI archive could not be staged at $stagedArchive (generator failed)." -ForegroundColor Red
+                    $global:LASTEXITCODE = 1
+                    return $false
+                }
             }
         }
 
@@ -938,9 +969,12 @@ function Invoke-MiosVerify {
 # ============================================================================
 #  Backward Compatibility Aliases (T-1118)
 # ============================================================================
+# NOTE: PowerShell command names are case-insensitive, so an alias whose name
+# differs from the target ONLY by casing (e.g. Test-MiOSMediaLayout wrapping
+# Test-MiosMediaLayout) redefines the base function as a self-recursive wrapper
+# and overflows the call stack. Only map names that differ by more than casing.
 function Invoke-MiOSCatStage { Invoke-MiosStage @args }
 function Invoke-MiOSCatVerify { Invoke-MiosVerify @args }
-function Test-MiOSMediaLayout { Test-MiosMediaLayout @args }
-function New-MiOSOCIArchive { New-MiosOCIArchive @args }
-function Expand-MiOSOCIImage { Expand-MiosOCIImage @args }
+function Invoke-MiOSFieldStage { Invoke-MiosStage @args }
+function Invoke-MiOSFieldVerify { Invoke-MiosVerify @args }
 

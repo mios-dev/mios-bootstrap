@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
 # AI-hint: Thin Linux bash dispatcher for the mios-install unified provisioning
-# AI-related: mios-common.sh, build-mios.sh, field/MiOS-Cat.sh, field/MiOS-Cat.bat
+# AI-related: mios-common.sh, build-mios.sh, field/MiOS-Field.sh, installation/MiOS-Field.bat
 # AI-functions: usage, resolve_flash_or_live, resolve_live, resolve_flash
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CAT_DIR="${ROOT}/field"
-if [[ ! -d "$CAT_DIR" && -d "${ROOT}/../mios-bootstrap/field" ]]; then
-    CAT_DIR="$(cd "${ROOT}/../mios-bootstrap/field" && pwd)"
+FIELD_DIR="${ROOT}/field"
+if [[ ! -d "$FIELD_DIR" && -d "${ROOT}/../mios-bootstrap/field" ]]; then
+    FIELD_DIR="$(cd "${ROOT}/../mios-bootstrap/field" && pwd)"
 fi
-MIOS_CAT_SH="${CAT_DIR}/MiOS-Cat.sh"
+# Canonical launcher first; the defunct MiOS-Cat.sh shim keeps older checkouts working.
+if [[ -f "${FIELD_DIR}/MiOS-Field.sh" ]]; then
+    FIELD_LAUNCHER="MiOS-Field.sh"
+elif [[ -f "${FIELD_DIR}/MiOS-Cat.sh" ]]; then
+    FIELD_LAUNCHER="MiOS-Cat.sh"
+else
+    FIELD_LAUNCHER="MiOS-Field.sh"
+fi
+MIOS_FIELD_SH="${FIELD_DIR}/${FIELD_LAUNCHER}"
 
 _MIOS_REPO_ROOT="$ROOT"
 . "${SCRIPT_DIR}/mios-common.sh"
@@ -93,16 +101,16 @@ resolve_flash_or_live() {
         usb|live) ;;
         *) die "Target '${target_name}' only supports" ;;
     esac
-    [[ -f "$MIOS_CAT_SH" ]] || die "Cat/MiOS-Cat.sh not found at ${MIOS_CAT_SH}"
+    [[ -f "$MIOS_FIELD_SH" ]] || die "Field launcher not found at ${MIOS_FIELD_SH}"
     FORBIDS_ROOT=1
-    CMD=(env -C "$CAT_DIR" bash ./MiOS-Cat.sh "${PASSTHROUGH[@]}")
-    STAGE_NOTES+=("stage isolation: NONE -- MiOS-Cat.sh is one monolithic interactive pipeline; --stage is documentation-only here.")
+    CMD=(env -C "$FIELD_DIR" bash "./${FIELD_LAUNCHER}" "${PASSTHROUGH[@]}")
+    STAGE_NOTES+=("stage isolation: NONE -- ${FIELD_LAUNCHER} is one monolithic interactive pipeline; --stage is documentation-only here.")
     [[ -n "$STAGE" ]] && STAGE_NOTES+=("--stage ${STAGE} requested but not isolable; running the full pipeline.")
     if (( UNATTENDED )); then
-        STAGE_NOTES+=("--unattended requested but MiOS-Cat.sh has no non-interactive mode on Linux -- it WILL prompt for the USB device, Medicat source, and partition-scheme choice.")
+        STAGE_NOTES+=("--unattended requested but ${FIELD_LAUNCHER} has no non-interactive mode on Linux -- it WILL prompt for the USB device, Medicat source, and partition-scheme choice.")
     fi
     if [[ "$target_name" == "live" ]]; then
-        STAGE_NOTES+=("'live' and 'flash' resolve to the SAME call today -- MiOS-Cat.sh has no lighter zero-install mode exposed via flag/env yet (documented open design question, not solved here).")
+        STAGE_NOTES+=("'live' and 'flash' resolve to the SAME call today -- ${FIELD_LAUNCHER} has no lighter zero-install mode exposed via flag/env yet (documented open design question, not solved here).")
     fi
 }
 resolve_live()  { resolve_flash_or_live live; }
