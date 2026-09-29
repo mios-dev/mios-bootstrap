@@ -704,56 +704,31 @@ if (Test-Path $installModuleDir) {
 $script:_MiosTomlCache = @{}
 
 function Resolve-MiosTomlText {
-    if ($script:_MiosTomlCache.ContainsKey('_text') -and $script:_MiosTomlCache['_text']) {
+    if ($script:_MiosTomlCache.ContainsKey('_text')) {
         return $script:_MiosTomlCache['_text']
     }
-    # Local fallback for development/testing
-    $localToml = "C:\mios-bootstrap\mios.toml"
-    if (Test-Path $localToml) {
-        try {
-            $script:_MiosTomlCache['_text'] = [IO.File]::ReadAllText($localToml, (New-Object System.Text.UTF8Encoding($false)))
-            $script:_MiosTomlCache['_source'] = "local ($localToml)"
-            return $script:_MiosTomlCache['_text']
-        } catch {}
-    }
-    # Web only -- no local fallback.  See header comment for the rule.
-    try {
-        $cb  = [int][double]::Parse((Get-Date -UFormat %s))
-        $url = "https://raw.githubusercontent.com/mios-dev/MiOS/main/usr/share/mios/mios.toml?cb=$cb"
-        # Use IWR not IRM so the response body comes back as raw text
-        # regardless of Content-Type (raw.githubusercontent.com sometimes
-        # serves .toml as application/octet-stream which IRM can't decode).
-        $resp = Invoke-WebRequest -Uri $url `
-            -Headers @{ 'Cache-Control'='no-cache, no-store, max-age=0'; 'Pragma'='no-cache' } `
-            -UseBasicParsing -ErrorAction Stop
-        if ($resp.Content -is [byte[]]) {
-            $script:_MiosTomlCache['_text'] = [System.Text.Encoding]::UTF8.GetString($resp.Content)
-        } else {
-            $script:_MiosTomlCache['_text'] = [string]$resp.Content
+    # Only a saved operator file is a host layer. The bootstrap checkout's
+    # mios.toml is a template and must never shadow the full system SSOT.
+    foreach ($path in @(
+        (Join-Path $env:USERPROFILE '.config\mios\mios.toml')
+    )) {
+        if ($path -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+            try {
+                $script:_MiosTomlCache['_text'] = [IO.File]::ReadAllText($path, (New-Object System.Text.UTF8Encoding($false)))
+                $script:_MiosTomlCache['_source'] = $path
+                return $script:_MiosTomlCache['_text']
+            } catch {}
         }
-        $script:_MiosTomlCache['_source'] = "origin/main (web)"
-        return $script:_MiosTomlCache['_text']
-    } catch {
-        $script:_MiosTomlCache['_text']   = ''
-        $script:_MiosTomlCache['_source'] = '(unreachable -- vendor defaults only)'
-        return ''
     }
+    $script:_MiosTomlCache['_text'] = ''
+    $script:_MiosTomlCache['_source'] = '(no operator override)'
+    return ''
 }
 
 function Resolve-MiosVendorTomlText {
-    # The system repo owns the complete vendor TOML. The bootstrap repo's
-    # root mios.toml is the operator profile overlay, not a replacement for
-    # the much larger vendor document.
-    $vendorPaths = @(
-        'C:\MiOS\usr\share\mios\mios.toml',
-        'M:\usr\share\mios\mios.toml',
-        (Join-Path $PSScriptRoot 'usr\share\mios\mios.toml')
-    )
-    foreach ($path in $vendorPaths) {
-        if (Test-Path -LiteralPath $path -PathType Leaf) {
-            try { return [IO.File]::ReadAllText($path, (New-Object System.Text.UTF8Encoding($false))) } catch {}
-        }
-    }
+    if ($script:_MiosTomlCache.ContainsKey('_vendor_text')) { return $script:_MiosTomlCache['_vendor_text'] }
+    # Phase 0 discards local install state; fetch the complete system SSOT
+    # from the current repository ref used by this fresh bootstrap run.
     try {
         $cb = [int][double]::Parse((Get-Date -UFormat %s))
         $rawBase = if ($Script:MiosRawBase) { $Script:MiosRawBase } else { 'https://raw.githubusercontent.com/mios-dev/MiOS/main' }
@@ -761,45 +736,49 @@ function Resolve-MiosVendorTomlText {
         $resp = Invoke-WebRequest -Uri $url `
             -Headers @{ 'Cache-Control'='no-cache, no-store, max-age=0'; 'Pragma'='no-cache' } `
             -UseBasicParsing -ErrorAction Stop
-        if ($resp.Content -is [byte[]]) { return [System.Text.Encoding]::UTF8.GetString($resp.Content) }
-        return [string]$resp.Content
-    } catch { return '' }
+        if ($resp.Content -is [byte[]]) { $script:_MiosTomlCache['_vendor_text'] = [System.Text.Encoding]::UTF8.GetString($resp.Content) }
+        else { $script:_MiosTomlCache['_vendor_text'] = [string]$resp.Content }
+        return $script:_MiosTomlCache['_vendor_text']
+    } catch {
+        $script:_MiosTomlCache['_vendor_text'] = ''
+        return ''
+    }
 }
 
 function Get-MiosTomlValue {
     param(
         [Parameter(Mandatory)] [string]$Section,   # e.g. "terminal" or "bootstrap.host_storage"
         [Parameter(Mandatory)] [string]$Key,       # e.g. "cols"
-        [Parameter(Mandatory)] $Default            # returned if not found / unparseable
+        [Parameter(Mandatory)] [AllowEmptyString()] $Default  # returned if not found / unparseable
     )
-    $txt = Resolve-MiosTomlText
-    if (-not $txt) { return $Default }
+    foreach ($txt in @((Resolve-MiosTomlText), (Resolve-MiosVendorTomlText))) {
+    if (-not $txt) { continue }
     # Slice the section body: from `[Section]` (line-anchored) to the next
     # `[other.section]` header or EOF.
     $rxSec = '(?ms)^\[' + [regex]::Escape($Section) + '\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)'
     $mSec  = [regex]::Match($txt, $rxSec)
-    if (-not $mSec.Success) { return $Default }
+    if (-not $mSec.Success) { continue }
     $body  = $mSec.Groups['body'].Value
     # Within the body, find `key = value` (TOML allows leading whitespace).
     $rxKey = '(?m)^[ \t]*' + [regex]::Escape($Key) + '[ \t]*=[ \t]*(?<val>.+?)[ \t]*(?:#.*)?$'
     $mKey  = [regex]::Match($body, $rxKey)
-    if (-not $mKey.Success) { return $Default }
+    if (-not $mKey.Success) { continue }
     $raw   = $mKey.Groups['val'].Value.Trim()
     # Coerce by Default's type. Strings get unquoted; arrays get split.
     if ($Default -is [int]) {
         $n = 0
         if ([int]::TryParse(($raw -replace '_',''), [ref]$n)) { return $n }
-        return $Default
+        continue
     }
     if ($Default -is [bool]) {
         if ($raw -match '^(?i)true$')  { return $true }
         if ($raw -match '^(?i)false$') { return $false }
-        return $Default
+        continue
     }
     if ($Default -is [double] -or $Default -is [single]) {
         $d = 0.0
         if ([double]::TryParse($raw, [ref]$d)) { return $d }
-        return $Default
+        continue
     }
     if ($Default -is [array]) {
         if ($raw -match '^\[(.*)\]$') {
@@ -816,13 +795,14 @@ function Get-MiosTomlValue {
                 $coerced = @()
                 foreach ($it in $items) {
                     $n = 0
-                    if ([int]::TryParse($it, [ref]$n)) { $coerced += $n } else { return $Default }
+                    if ([int]::TryParse($it, [ref]$n)) { $coerced += $n } else { $coerced = $null; break }
                 }
-                return $coerced
+                if ($null -ne $coerced) { return $coerced }
+                continue
             }
             return $items
         }
-        return $Default
+        continue
     }
     if ($raw.Length -ge 2) {
         $first = $raw[0]; $last = $raw[$raw.Length - 1]
@@ -835,15 +815,20 @@ function Get-MiosTomlValue {
             $inner = $inner -replace '\\t', "`t"
             $inner = $inner -replace '\\r', "`r"
             $inner = $inner -replace [regex]::Escape($_bs), '\'
-            return $inner
+            if (-not [string]::IsNullOrWhiteSpace($inner)) { return $inner }
+            continue
         }
         if ($first -eq "'" -and $last -eq "'") {
             # Literal string: strip; no unescaping (TOML literal-string semantics).
-            return $raw.Substring(1, $raw.Length - 2)
+            $inner = $raw.Substring(1, $raw.Length - 2)
+            if (-not [string]::IsNullOrWhiteSpace($inner)) { return $inner }
+            continue
         }
     }
     # Bare value, no surrounding quotes -- return as-is.
-    return $raw
+    if (-not [string]::IsNullOrWhiteSpace($raw)) { return $raw }
+    }
+    return $Default
 }
 
 # The monitor must use the profile named by the operator SSOT. Delay launch
@@ -2753,31 +2738,8 @@ foreach ($mod in $psModules) {
     }
     $wingetTools = @()
     $tomlFetchOk = $false
-    $tomlSource  = ''
-    $tomlText    = $null
-    foreach ($cand in @(
-        @{ Path='C:\mios-bootstrap\mios.toml'; Source='C:\mios-bootstrap (local dev)' },
-        @{ Path='M:\etc\mios\mios.toml';       Source='M:\etc\mios (host overlay)' },
-        @{ Path='M:\usr\share\mios\mios.toml'; Source='M:\usr\share\mios (vendor on M:)' }
-    )) {
-        if (Test-Path -LiteralPath $cand.Path) {
-            try {
-                $tomlText   = [IO.File]::ReadAllText($cand.Path, (New-Object System.Text.UTF8Encoding($false)))
-                $tomlSource = $cand.Source
-                break
-            } catch {}
-        }
-    }
-    if (-not $tomlText) {
-        try {
-            $cb       = [int][double]::Parse((Get-Date -UFormat %s))
-            $tomlUrl  = "$($Script:MiosRawBase)/usr/share/mios/mios.toml?cb=$cb"
-            $tomlText = Invoke-RestMethod -Uri $tomlUrl `
-                -Headers @{ 'Cache-Control' = 'no-cache, no-store, max-age=0'; 'Pragma' = 'no-cache' } `
-                -ErrorAction Stop
-            $tomlSource = 'origin/main (cold first-run)'
-        } catch {}
-    }
+    $tomlSource  = 'fresh system repository SSOT'
+    $tomlText    = Resolve-MiosVendorTomlText
     try {
         if (-not $tomlText) { throw 'no toml source resolved' }
         # Regex-extract `[packages.windows] ... pkgs = [ ... ]`. Multiline

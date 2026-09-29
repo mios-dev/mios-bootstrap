@@ -50,6 +50,7 @@ function Resolve-MiosTomlLayers {
     $layers = @()
     foreach ($p in @(
         (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
+        (Join-Path $env:APPDATA 'MiOS\mios.toml'),
         'M:\etc\mios\mios.toml',
         'M:\usr\share\mios\mios.toml'
         # C:\MiOS deliberately excluded -- dev working tree, not a consumer install path
@@ -1730,11 +1731,12 @@ function Open-ConfiguratorInDev([string]$RepoDir, [string]$Html) {
     # the highest-precedence existing layer; the bash side will copy it
     # into the dev VM's ~/Downloads/mios.toml as the working file.
     $sources = @(
+        (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
         (Join-Path $env:APPDATA "MiOS\mios.toml"),
+        'M:\usr\share\mios\mios.toml',
         (Join-Path $RepoDir "usr\share\mios\mios.toml"),
         'C:\MiOS\usr\share\mios\mios.toml',
-        (Join-Path $RepoDir "mios\usr\share\mios\mios.toml"),
-        (Join-Path $RepoDir "mios-bootstrap\mios.toml")
+        (Join-Path $RepoDir "mios\usr\share\mios\mios.toml")
     )
     $seedToml = $null
     foreach ($s in $sources) { if (Test-Path $s) { $seedToml = $s; break } }
@@ -1833,18 +1835,12 @@ echo "[configurator] save target: $DL_DIR/mios.toml"
         return $true
     }
 
-    $userLayer = Join-Path $env:APPDATA "MiOS\mios.toml"
+    $userLayer = Join-Path $env:USERPROFILE '.config\mios\mios.toml'
     $userDir   = Split-Path -Parent $userLayer
     if (-not (Test-Path $userDir)) { New-Item -ItemType Directory -Path $userDir -Force | Out-Null }
     [System.IO.File]::WriteAllText($userLayer, $tomlContent, [Text.UTF8Encoding]::new($false))
 
-    $bootstrapToml = Join-Path $RepoDir "mios-bootstrap\mios.toml"
-    if (Test-Path (Split-Path -Parent $bootstrapToml)) {
-        [System.IO.File]::WriteAllText($bootstrapToml, $tomlContent, [Text.UTF8Encoding]::new($false))
-        Log-Ok "Saved mios.toml -> $userLayer + $bootstrapToml (build pipeline picks up on next pass)"
-    } else {
-        Log-Ok "Saved mios.toml -> $userLayer"
-    }
+    Log-Ok "Saved mios.toml -> $userLayer"
     return $true
 }
 
@@ -1854,11 +1850,12 @@ function Open-ConfiguratorOnWindows([string]$RepoDir, [string]$Html) {
     $stamp   = [datetime]::Now.ToString("yyyyMMdd-HHmmss")
     $staging = Join-Path $stagingDir "mios-$stamp.toml"
     $sources = @(
+        (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
         (Join-Path $env:APPDATA "MiOS\mios.toml"),
+        'M:\usr\share\mios\mios.toml',
         (Join-Path $RepoDir "usr\share\mios\mios.toml"),
         'C:\MiOS\usr\share\mios\mios.toml',
-        (Join-Path $RepoDir "mios\usr\share\mios\mios.toml"),
-        (Join-Path $RepoDir "mios-bootstrap\mios.toml")
+        (Join-Path $RepoDir "mios\usr\share\mios\mios.toml")
     )
     $src = $null
     foreach ($s in $sources) { if (Test-Path $s) { $src = $s; break } }
@@ -1877,15 +1874,11 @@ function Open-ConfiguratorOnWindows([string]$RepoDir, [string]$Html) {
     $null = Read-Host "  Press Enter when finished editing in the browser"
 
     if ((Test-Path $staging) -and ((Get-Item $staging).Length -gt 0)) {
-        $userLayer = Join-Path $env:APPDATA "MiOS\mios.toml"
+        $userLayer = Join-Path $env:USERPROFILE '.config\mios\mios.toml'
         $userDir   = Split-Path -Parent $userLayer
         if (-not (Test-Path $userDir)) { New-Item -ItemType Directory -Path $userDir -Force | Out-Null }
         Copy-Item -Path $staging -Destination $userLayer -Force
-        $bootstrapToml = Join-Path $RepoDir "mios-bootstrap\mios.toml"
-        if (Test-Path (Split-Path -Parent $bootstrapToml)) {
-            Copy-Item -Path $staging -Destination $bootstrapToml -Force
-        }
-        Log-Ok "Staged $staging -> $userLayer (+ bootstrap clone if present)"
+        Log-Ok "Staged $staging -> $userLayer"
     }
 }
 
