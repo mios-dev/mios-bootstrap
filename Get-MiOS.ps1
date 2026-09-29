@@ -248,6 +248,7 @@ public static class MiosDeskLauncher {
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int x, int y, int width, int height, bool repaint);
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
     [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
@@ -287,7 +288,7 @@ public static class MiosDeskLauncher {
                 StringBuilder sb = new StringBuilder(256);
                 if (GetWindowText(hWnd, sb, 256) > 0 &&
                     sb.ToString().IndexOf("MiOS Build Monitor", StringComparison.OrdinalIgnoreCase) >= 0) {
-                    ShowWindow(hWnd, 9);
+                    ShowWindow(hWnd, 1);
                     IntPtr oldDpi = IntPtr.Zero;
                     try { oldDpi = SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) {}
                     try {
@@ -305,14 +306,12 @@ public static class MiosDeskLauncher {
                             if (width > 0 && height > 0) {
                                 int x = info.work.Left + ((info.work.Right - info.work.Left - width) / 2);
                                 int y = info.work.Top + ((info.work.Bottom - info.work.Top - height) / 2);
-                                SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, 0x14);
-                                SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, 0x03);
-                                SetWindowPos(hWnd, new IntPtr(-2), 0, 0, 0, 0, 0x03);
+                                BringWindowToTop(hWnd);
+                                SetForegroundWindow(hWnd);
+                                MoveWindow(hWnd, x, y, width, height, true);
                             }
                         }
                     } finally { if (oldDpi != IntPtr.Zero) SetThreadDpiAwarenessContext(oldDpi); }
-                    BringWindowToTop(hWnd);
-                    SetForegroundWindow(hWnd);
                     found = true;
                     return false;
                 }
