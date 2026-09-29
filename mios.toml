@@ -174,6 +174,8 @@ height            = 1000
 [theme]
 acrylic           = true
 opacity           = 50
+unfocused_acrylic = false
+unfocused_opacity = 50
 system_backdrop   = "acrylic"
 scrollbar_state   = "hidden"   # EVERY terminal surface (WT, code-server, VTE, Portal); mirrored from mios.git [theme]
 padding           = "0"        # EVERY terminal surface, WT grammar; "0" = edge to edge; mirrored from mios.git [theme]

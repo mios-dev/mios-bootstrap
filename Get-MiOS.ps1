@@ -1918,6 +1918,12 @@ function Install-MiOSTerminalProfile {
     if ($_themeAcrylic -isnot [bool]) { $_themeAcrylic = $true }
     $_themeOpacity     = Get-MiosTomlValue -Section 'theme'      -Key 'opacity'            -Default 50
     if (-not ($_themeOpacity -is [int]) -or $_themeOpacity -lt 0 -or $_themeOpacity -gt 100) { $_themeOpacity = 50 }
+    # Windows disables Acrylic when Terminal loses focus. Keep the MiOS pane
+    # translucent while the operator reads another window on the desktop.
+    $_themeUnfocusedAcrylic = Get-MiosTomlValue -Section 'theme' -Key 'unfocused_acrylic' -Default $false
+    if ($_themeUnfocusedAcrylic -isnot [bool]) { $_themeUnfocusedAcrylic = $false }
+    $_themeUnfocusedOpacity = Get-MiosTomlValue -Section 'theme' -Key 'unfocused_opacity' -Default $_themeOpacity
+    if (-not ($_themeUnfocusedOpacity -is [int]) -or $_themeUnfocusedOpacity -lt 0 -or $_themeUnfocusedOpacity -gt 100) { $_themeUnfocusedOpacity = $_themeOpacity }
     $_themeBackdrop    = Get-MiosTomlValue -Section 'theme'      -Key 'system_backdrop'    -Default 'acrylic'
     if ($_themeBackdrop -notin @('acrylic','mica','tab','default','disable')) { $_themeBackdrop = 'acrylic' }
     # filledBox = full-cell block, Linux terminal default.
@@ -1964,6 +1970,7 @@ function Install-MiOSTerminalProfile {
         antialiasingMode         = 'cleartype'
         useAcrylic               = $_themeAcrylic
         opacity                  = $_themeOpacity
+        unfocusedAppearance      = [ordered]@{ useAcrylic = $_themeUnfocusedAcrylic; opacity = $_themeUnfocusedOpacity }
         systemBackdrop           = $_themeBackdrop
         padding                  = $_themePadding
         suppressApplicationTitle = $_themeSuppress
