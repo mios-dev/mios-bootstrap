@@ -2861,7 +2861,7 @@ get_pkgs() {
 
 # Add Fedora-version-pinned RPMFusion (free + nonfree).
 fedver=$(rpm -E %fedora 2>/dev/null || echo 43)
-sudo dnf5 install -y --skip-unavailable \
+sudo env SYSTEMD_OFFLINE=1 dnf5 install -y --skip-unavailable \
     "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${fedver}.noarch.rpm" \
     "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${fedver}.noarch.rpm" \
     >"$LOG_DIR/00-rpmfusion.log" 2>&1 || true
@@ -2876,10 +2876,10 @@ install_section() {
     [[ -z "${pkgs// }" ]] && { echo "[mios-overlay] EMPTY $sec"; return; }
     echo "[mios-overlay] INSTALL $sec"
     # shellcheck disable=SC2086
-    sudo dnf5 install -y --skip-unavailable --skip-broken --allowerasing \
+    sudo env SYSTEMD_OFFLINE=1 dnf5 install -y --skip-unavailable --skip-broken --allowerasing \
         $pkgs >"$LOG_DIR/$sec.log" 2>&1
-    # rc=1 from terminal systemd scriptlets is benign on podman-machine
-    # WSL distros that lack a live system D-Bus -- packages still land.
+    # RPM scriptlet presets must operate on unit files without contacting the
+    # WSL machine's transitional systemd bus (SYSTEMD_OFFLINE survives sudo).
 }
 
 # Foundation (repos must be first), then user-selected sections.
@@ -2891,7 +2891,7 @@ done
 
 # Critical safe-subset (skip kernel-core/gdm/libvirt on WSL).
 echo "[mios-overlay] INSTALL critical (WSL-safe subset)"
-sudo dnf5 install -y --skip-unavailable --skip-broken --allowerasing \
+sudo env SYSTEMD_OFFLINE=1 dnf5 install -y --skip-unavailable --skip-broken --allowerasing \
     bootc chrony cockpit firewalld NetworkManager pipewire tuned \
     >"$LOG_DIR/critical.log" 2>&1 || true
 
@@ -3541,7 +3541,7 @@ if [[ -f "$TOML_FILE" ]] && command -v awk >/dev/null 2>&1; then
             # output until the (20-40 min) transaction finishes AND masks dnf's
             # exit code (the `if` would see tail's 0 and mark success on failure).
             # shellcheck disable=SC2086
-            if sudo stdbuf -oL -eL dnf install -y --skip-unavailable $PKG_LIST 2>&1; then
+            if sudo env SYSTEMD_OFFLINE=1 stdbuf -oL -eL dnf install -y --skip-unavailable $PKG_LIST 2>&1; then
                 installed_via="dnf"
             fi
         fi
@@ -3551,7 +3551,7 @@ if [[ -f "$TOML_FILE" ]] && command -v awk >/dev/null 2>&1; then
             sudo rpm-ostree usroverlay 2>&1 | tail -3 || true
             # Stream live; no `tail` (see dnf note above -- buffers + masks exit).
             # shellcheck disable=SC2086
-            if sudo stdbuf -oL -eL dnf5 install -y --skip-unavailable $PKG_LIST 2>&1; then
+            if sudo env SYSTEMD_OFFLINE=1 stdbuf -oL -eL dnf5 install -y --skip-unavailable $PKG_LIST 2>&1; then
                 installed_via="dnf5"
             fi
         fi
