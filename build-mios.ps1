@@ -1965,11 +1965,11 @@ function Get-Hardware {
     # mios.toml by tools/lib/userenv.sh); fall back to sane defaults.
     $cpuReservePct = if ($env:MIOS_DEV_VM_CPU_RESERVE_PCT)    { [int]$env:MIOS_DEV_VM_CPU_RESERVE_PCT }    else { 15 }
     $cpuReserveMin = if ($env:MIOS_DEV_VM_CPU_RESERVE_MIN)    { [int]$env:MIOS_DEV_VM_CPU_RESERVE_MIN }    else { 2 }
-    $memReservePct = if ($env:MIOS_DEV_VM_MEMORY_RESERVE_PCT) { [int]$env:MIOS_DEV_VM_MEMORY_RESERVE_PCT } else { 15 }
-    $memReserveGB  = if ($env:MIOS_DEV_VM_MEMORY_RESERVE_GB)  { [int]$env:MIOS_DEV_VM_MEMORY_RESERVE_GB }  else { 4 }
+    $memReservePct = if ($env:MIOS_DEV_VM_MEMORY_RESERVE_PCT) { [int]$env:MIOS_DEV_VM_MEMORY_RESERVE_PCT } else { 40 }
+    $memReserveGB  = if ($env:MIOS_DEV_VM_MEMORY_RESERVE_GB)  { [int]$env:MIOS_DEV_VM_MEMORY_RESERVE_GB }  else { 6 }
     $diskReserveGB = if ($env:MIOS_DEV_VM_DISK_RESERVE_GB)    { [int]$env:MIOS_DEV_VM_DISK_RESERVE_GB }    else { 32 }
 
-    # Compute maximalist dev-VM allocation = host - reserve.
+    # Compute dev-VM allocation = 60% of host RAM (40% reserved for host OS).
     $reservedCpus = [math]::Max($cpuReserveMin, [math]::Floor($hostCpus * $cpuReservePct / 100))
     $devCpus = [math]::Max(1, $hostCpus - $reservedCpus)
     $reservedRamGB = [math]::Max($memReserveGB, [math]::Floor($hostRamGB * $memReservePct / 100))
