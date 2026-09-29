@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
 # AI-hint: Thin Linux bash dispatcher for the mios-install unified provisioning
-# AI-related: mios-common.sh, build-mios.sh, field/MiOS-Cat.sh, field/MiOS-Cat.bat
+# AI-related: mios-common.sh, build-mios.sh, field/MiOS-Field.sh, installation/MiOS-Field.bat
 # AI-functions: usage, resolve_flash_or_live, resolve_live, resolve_flash
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CAT_DIR="${ROOT}/field"
-if [[ ! -d "$CAT_DIR" && -d "${ROOT}/../mios-bootstrap/field" ]]; then
-    CAT_DIR="$(cd "${ROOT}/../mios-bootstrap/field" && pwd)"
+FIELD_DIR="${ROOT}/field"
+if [[ ! -d "$FIELD_DIR" && -d "${ROOT}/../mios-bootstrap/field" ]]; then
+    FIELD_DIR="$(cd "${ROOT}/../mios-bootstrap/field" && pwd)"
 fi
-MIOS_CAT_SH="${CAT_DIR}/MiOS-Cat.sh"
+# Canonical launcher first; the defunct MiOS-Cat.sh shim keeps older checkouts working.
+if [[ -f "${FIELD_DIR}/MiOS-Field.sh" ]]; then
+    FIELD_LAUNCHER="MiOS-Field.sh"
+elif [[ -f "${FIELD_DIR}/MiOS-Cat.sh" ]]; then
+    FIELD_LAUNCHER="MiOS-Cat.sh"
+else
+    FIELD_LAUNCHER="MiOS-Field.sh"
+fi
+MIOS_FIELD_SH="${FIELD_DIR}/${FIELD_LAUNCHER}"
 
 _MIOS_REPO_ROOT="$ROOT"
 . "${SCRIPT_DIR}/mios-common.sh"
@@ -22,7 +30,7 @@ mios-install.sh -- unified MiOS provisioning dispatcher (Linux)
 
   mios-install.sh <target> [--type <name>] [--stage <name>] [--dry-run] [--unattended] [-- <native args>]
 
-  <target>      live | xbox | fedora | bootc | oci | seed | flash | build | update
+  <target>      live | xbox | fedora | bootc | oci | seed | flash | build | update | stage | verify
   --type NAME   narrows the target to a concrete flavor (per-target; omit for the default)
   --stage NAME  prereqs | fetch | service | iso | flash (best-effort unless the target's
                 row in installation/README.md marks it REAL; omit to run the whole pipeline)
@@ -93,16 +101,16 @@ resolve_flash_or_live() {
         usb|live) ;;
         *) die "Target '${target_name}' only supports" ;;
     esac
-    [[ -f "$MIOS_CAT_SH" ]] || die "Cat/MiOS-Cat.sh not found at ${MIOS_CAT_SH}"
+    [[ -f "$MIOS_FIELD_SH" ]] || die "Field launcher not found at ${MIOS_FIELD_SH}"
     FORBIDS_ROOT=1
-    CMD=(env -C "$CAT_DIR" bash ./MiOS-Cat.sh "${PASSTHROUGH[@]}")
-    STAGE_NOTES+=("stage isolation: NONE -- MiOS-Cat.sh is one monolithic interactive pipeline; --stage is documentation-only here.")
+    CMD=(env -C "$FIELD_DIR" bash "./${FIELD_LAUNCHER}" "${PASSTHROUGH[@]}")
+    STAGE_NOTES+=("stage isolation: NONE -- ${FIELD_LAUNCHER} is one monolithic interactive pipeline; --stage is documentation-only here.")
     [[ -n "$STAGE" ]] && STAGE_NOTES+=("--stage ${STAGE} requested but not isolable; running the full pipeline.")
     if (( UNATTENDED )); then
-        STAGE_NOTES+=("--unattended requested but MiOS-Cat.sh has no non-interactive mode on Linux -- it WILL prompt for the USB device, Medicat source, and partition-scheme choice.")
+        STAGE_NOTES+=("--unattended requested but ${FIELD_LAUNCHER} has no non-interactive mode on Linux -- it WILL prompt for the USB device, Medicat source, and partition-scheme choice.")
     fi
     if [[ "$target_name" == "live" ]]; then
-        STAGE_NOTES+=("'live' and 'flash' resolve to the SAME call today -- MiOS-Cat.sh has no lighter zero-install mode exposed via flag/env yet (documented open design question, not solved here).")
+        STAGE_NOTES+=("'live' and 'flash' resolve to the SAME call today -- ${FIELD_LAUNCHER} has no lighter zero-install mode exposed via flag/env yet (documented open design question, not solved here).")
     fi
 }
 resolve_live()  { resolve_flash_or_live live; }
@@ -290,6 +298,14 @@ resolve_config() {
         log_warn "No browser launcher found -- open ${url} manually."
         CMD=(true)
     fi
+}
+
+resolve_stage() {
+    CMD=("$0" _stage "${PASSTHROUGH[@]}")
+}
+
+resolve_verify() {
+    CMD=("$0" _verify "${PASSTHROUGH[@]}")
 }
 
 DEFAULT_USER="user"
@@ -1500,13 +1516,17 @@ case "$TARGET" in
     build)  resolve_build ;;
     update) resolve_update ;;
     config|configure) resolve_config ;;
+    stage)  resolve_stage ;;
+    verify) resolve_verify ;;
+    _stage) invoke_mios_stage "${PASSTHROUGH[@]}"; exit $? ;;
+    _verify) invoke_mios_verify "${PASSTHROUGH[@]}"; exit $? ;;
     # ${PASSTHROUGH[0]} carries the positional mode from the internal re-entry
     # above; --type still wins when a caller sets it explicitly.
     _install_core) resolve_install_core "${TYPE:-${PASSTHROUGH[0]:-fhs}}" ;;
     default|Default|offlinesync|OfflineSync|buildxboxiso|BuildXboxISO|flashusb|FlashUSB)
         die "'${TARGET}' is a Get-MiOS.ps1 -Action value, not a mios-install target. mios-install only runs AFTER Get-MiOS.ps1 has already cloned this repo locally" ;;
     *)
-        die "Unknown target '${TARGET}'. Valid targets: live xbox fedora bootc oci seed flash build update config" ;;
+        die "Unknown target '${TARGET}'. Valid targets: live xbox fedora bootc oci seed flash build update config stage verify" ;;
 esac
 
 resolve_target_prereqs() {

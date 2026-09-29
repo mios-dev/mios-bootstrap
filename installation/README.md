@@ -5,11 +5,20 @@
      the right args -- it never moves, renames, or reimplements them.
      AI-related: installation/mios-install.ps1, installation/mios-install.sh,
      installation/mios-install.bat, installation/mios-common.ps1,
-     installation/mios-common.sh, installation/UNIFY.md, field/MiOS-Cat.bat, field/MiOS-Cat.ps1,
-     field/MiOS-Cat.sh, build-mios.ps1, build-mios.sh, Get-MiOS.ps1,
+     installation/mios-common.sh, installation/UNIFY.md, installation/MiOS-Field.bat,
+     field/MiOS-Field.ps1, field/MiOS-Field.sh, build-mios.ps1, build-mios.sh, Get-MIOS.ps1,
+     (defunct lossless shims, T-1118 fold: field/MiOS-Cat.{bat,ps1,sh}, field/lib/MiOS-Cat.psm1,
+     field/lib/cat.sh, cat/),
      field/autounattend/Build-MiOSXboxISO.ps1, field/autounattend/New-MiOSISO.ps1,
      field/autounattend/Deploy-MiOSXbox.ps1, field/autounattend/Invoke-MiOSProvision.ps1,
      field/autounattend/Build-MiOSSeed.ps1, mios-build, mios-update, mios.toml -->
+
+> **Naming (T-1118 fold, ADR-0013).** The canonical names are `field/MiOS-Field.{ps1,sh}`
+> (launchers), `field/lib/{MiOS-Field.psm1,field.sh}` (backend), and
+> `installation/MiOS-Field.bat` (flash executor). Every `MiOS-Cat.*` path -- and the
+> top-level `cat/` folder -- is a DEFUNCT lossless shim that forwards to the canonical
+> surface; tables below may still cite the historical names where they describe legacy
+> behaviour. Do not build new call sites against the Cat names.
 
 # installation/ — the `mios-install` dispatcher
 

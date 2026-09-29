@@ -1,126 +1,43 @@
 #!/usr/bin/env bash
-# AI-hint: The ONE shared library for every Linux MiOS entrypoint (mios-install.sh, build-mios.sh,
-# AI-related: mios-common.ps1, mios-install.sh, build-mios.sh, field/MiOS-Cat.sh, usr/lib/mios/mios_toml.py, mios.toml
+# field/lib/field.sh -- shared backend for MiOS-Field Linux/WSL launcher.
+# Implements Law 9 (ONE-CANONICAL-NAME) and Task T-261 parity with MiOS-Field.psm1.
+# Folded losslessly with installation/mios-common.sh (Task T-1118).
 
-mios_ssot_layers() {
-    local p
-    for p in \
-        "${HOME}/.config/mios/mios.toml" \
-        "/etc/mios/mios.toml" \
-        "${_MIOS_REPO_ROOT:-}/mios.toml" \
-        "/usr/share/mios/mios.toml"; do
-        [[ -n "$p" && "$p" != "/mios.toml" && -f "$p" ]] && printf '%s\n' "$p"
-    done
-    return 0   # never let a false final [[ -f ]] make the loop exit non-zero (breaks callers under set -o pipefail)
-}
-mios_ssot_value() {
-    local section="$1" key="$2" default="${3:-}" path v
-    while IFS= read -r path; do
-        [[ -z "$path" ]] && continue
-        v="$(awk -v section="$section" -v key="$key" '
-            /^[[:space:]]*\[/ { h=$0; gsub(/^[[:space:]]*\[|\][[:space:]]*$/,"",h); insec=(h==section); next }
-            insec && $0 ~ ("^[[:space:]]*" key "[[:space:]]*=") {
-                line=$0
-                if (match(line, /"[^"]*"/)) { print substr(line, RSTART+1, RLENGTH-2); exit }
-                sub(/^[^=]*=[[:space:]]*/,"",line); sub(/[[:space:]]+#.*$/,"",line); sub(/[[:space:]]+$/,"",line)
-                print line; exit
-            }
-        ' "$path" 2>/dev/null || true)"
-        if [[ -n "$v" ]]; then printf '%s\n' "$v"; return 0; fi
-    done < <(mios_ssot_layers)
-    [[ -n "$default" ]] && printf '%s\n' "$default"
-    return 0
-}
-mios_ssot_path() {
-    if [[ -f "/usr/share/mios/mios.toml" ]]; then printf '/usr/share/mios/mios.toml\n'; return 0; fi
-    mios_ssot_layers | tail -n1 || true
-    return 0
-}
+COMMON_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../installation" && pwd)/mios-common.sh"
+if [[ -f "$COMMON_SH" ]]; then
+    source "$COMMON_SH"
+fi
 
-_mios_rgb() { local h="${1#\#}"; [[ "$h" =~ ^[0-9A-Fa-f]{6}$ ]] || { printf ''; return; }; printf '%d;%d;%d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"; }
-mios_init_theme() {
-    _bold=''; _reset=''; _cInfo=''; _cOk=''; _cWarn=''; _cErr=''; _cAccent=''
-    if [[ -n "${MIOS_NO_COLOR:-}${NO_COLOR:-}" ]] || [[ ! -t 1 && "${MIOS_FORCE_COLOR:-0}" != 1 ]]; then return 0; fi
-    local info ok warn err accent
-    info="$(_mios_rgb "$(mios_ssot_value colors info    '#1A407F')")"
-    ok="$(_mios_rgb   "$(mios_ssot_value colors success '#3E7765')")"
-    warn="$(_mios_rgb "$(mios_ssot_value colors warning '#F35C15')")"
-    err="$(_mios_rgb  "$(mios_ssot_value colors error   '#DC271B')")"
-    accent="$(_mios_rgb "$(mios_ssot_value colors accent '#1A407F')")"
-    _bold=$'\033[1m'; _reset=$'\033[0m'
-    [[ -n "$info" ]]   && _cInfo=$'\033[38;2;'"${info}m"
-    [[ -n "$ok" ]]     && _cOk=$'\033[38;2;'"${ok}m"
-    [[ -n "$warn" ]]   && _cWarn=$'\033[38;2;'"${warn}m"
-    [[ -n "$err" ]]    && _cErr=$'\033[38;2;'"${err}m"
-    [[ -n "$accent" ]] && _cAccent=$'\033[38;2;'"${accent}m"
-}
-mios_init_theme
-log_info()  { printf '%s[INFO]%s %s\n' "${_cInfo}"   "${_reset}" "$*"; }
-log_ok()    { printf '%s[ OK ]%s %s\n' "${_cOk}"     "${_reset}" "$*"; }
-log_warn()  { printf '%s[WARN]%s %s\n' "${_cWarn}"   "${_reset}" "$*" >&2; }
-log_err()   { printf '%s[ERR ]%s %s\n' "${_cErr}"    "${_reset}" "$*" >&2; }
-log_phase() { printf '\n%s%s== %s ==%s\n\n' "${_bold}" "${_cAccent}" "$*" "${_reset}"; }
-die()       { log_err "$*"; exit 1; }
 
-find_mios_bin() {
-    local name="$1" p
-    if command -v "$name" >/dev/null 2>&1; then command -v "$name"; return 0; fi
-    for p in "/usr/bin/${name}" "/usr/libexec/mios/${name}"; do
-        [[ -x "$p" ]] && { printf '%s\n' "$p"; return 0; }
-    done
-    return 1
+function Show_MiOSFieldMenu() {
+    echo -e "\033[36m==========================================================\033[0m"
+    echo -e "\033[36m                MiOS-Field Unified Launcher                 \033[0m"
+    echo -e "\033[36m==========================================================\033[0m"
+    echo " 1) Stage (Download artifacts to USB)"
+    echo " 2) Install (Headless deployment)"
+    echo " 3) Build (Compile MiOS from source)"
+    echo " 4) Update (Self-update scripts)"
+    echo " 5) Provision (Offline model provisioning)"
+    echo " 6) Manual (Interactive shell)"
+    echo " 7) Verify (Validate media layout)"
+    echo " 0) Exit"
+    echo -e "\033[36m==========================================================\033[0m"
+    
+    read -p "Select an option: " choice
+    case "$choice" in
+        1) Invoke_MiOSFieldStage "$@" ;;
+        2) Invoke_MiOSFieldInstall "$@" ;;
+        3) Invoke_MiOSFieldBuild "$@" ;;
+        4) Invoke_MiOSFieldUpdate "$@" ;;
+        5) Invoke_MiOSFieldProvision "$@" ;;
+        6) Invoke_MiOSFieldManual "$@" ;;
+        7) Invoke_MiOSFieldVerify "$@" ;;
+        0) exit 0 ;;
+        *) echo "Invalid choice." ; Show_MiOSFieldMenu "$@" ;;
+    esac
 }
 
-mios_self_elevate() {
-    if [[ "$(id -u)" -eq 0 ]]; then return 0; fi
-    log_info "this step needs root -- re-executing via 'sudo -E'..."
-    exec sudo -E "$@"
-}
-
-mios_ensure_repo() {
-    local root="${1:-$HOME/mios-bootstrap}"
-    [[ -f "${root}/installation/mios-install.sh" ]] && { printf '%s\n' "$root"; return 0; }
-    log_info "mios-bootstrap not present -- fetching it (git, else a GitHub tarball)..."
-    if command -v git >/dev/null 2>&1; then
-        git clone --depth 1 'https://github.com/mios-dev/mios-bootstrap.git' "$root" >/dev/null 2>&1 || true
-    fi
-    if [[ ! -f "${root}/installation/mios-install.sh" ]]; then
-        local tgz; tgz="$(mktemp -d)/mios-bootstrap.tgz"
-        if curl -fsSL 'https://codeload.github.com/mios-dev/mios-bootstrap/tar.gz/refs/heads/main' -o "$tgz" 2>/dev/null; then
-            mkdir -p "$root"; tar -xzf "$tgz" -C "$root" --strip-components=1 2>/dev/null || true
-        fi
-        rm -rf "$(dirname "$tgz")" 2>/dev/null || true
-    fi
-    printf '%s\n' "$root"
-}
-
-mios_ensure_rust() {
-    if command -v cargo >/dev/null 2>&1; then
-        log_ok "Rust already present: $(cargo --version 2>/dev/null)"
-        return 0
-    fi
-    if command -v dnf5 >/dev/null 2>&1; then
-        dnf5 install -y rust cargo >/dev/null 2>&1 || true
-    elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y rust cargo >/dev/null 2>&1 || true
-    fi
-    if ! command -v cargo >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
-        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal >/dev/null 2>&1 || true
-        [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-    fi
-    if command -v cargo >/dev/null 2>&1; then
-        log_ok "Rust installed: $(cargo --version 2>/dev/null)"
-        return 0
-    fi
-    log_warn "Rust could not be installed (no repo/network?) -- native components deferred"
-    return 1
-}
-
-# ============================================================================
-#  MiOS-Data & OCI Bulk Staging (T-261 / T-1118)
-# ============================================================================
-
-get_mios_disk_info() {
+function Get_MiOS_Disk_Info() {
     local drive="$1"
     local optSimDiskGB="${2:-0}"
     local optSimFreeGB="${3:-0}"
@@ -164,18 +81,18 @@ get_mios_disk_info() {
     return 0
 }
 
-test_mios_media_layout() {
+function Test_MiOS_Media_Layout() {
     local drive="${1:-/mnt/usb}"
     local minDiskGB="${2:-512}"
 
     if [[ ! -d "$drive" ]]; then
-        log_err "Target drive '$drive' not found or inaccessible."
+        echo -e "\033[31m[FATAL] Target drive '$drive' not found or inaccessible.\033[0m" >&2
         return 1
     fi
 
     local info
-    info=$(get_mios_disk_info "$drive") || {
-        log_err "Could not inspect target drive '$drive'."
+    info=$(Get_MiOS_Disk_Info "$drive") || {
+        echo -e "\033[31m[FATAL] Could not inspect target drive '$drive'.\033[0m" >&2
         return 1
     }
     local diskSizeGB
@@ -197,6 +114,7 @@ test_mios_media_layout() {
     if [[ "$isLargeDisk" -eq 1 ]]; then
         local dataValid=0
         if [[ -d "$dataDir" && -d "$dataDir/images" && -f "$dataDir/manifest.json" ]]; then
+            # Verify that at least one .tar exists in images
             local tarCount
             tarCount=$(find "$dataDir/images" -maxdepth 1 -name "*.tar" 2>/dev/null | wc -l)
             if (( tarCount > 0 )); then
@@ -205,10 +123,10 @@ test_mios_media_layout() {
         fi
 
         if [[ "$repoValid" -eq 1 && "$dataValid" -eq 1 ]]; then
-            log_ok "Media layout verified: large disk (${diskSizeGB} GB >= ${minDiskGB} GB), valid MiOS-Repo + MiOS-Data."
+            echo -e "\033[32m[MiOS-Field] Media layout verified: large disk (${diskSizeGB} GB >= ${minDiskGB} GB), valid MiOS-Repo + MiOS-Data.\033[0m"
             return 0
         else
-            log_err "Media layout invalid: large disk missing required MiOS-Repo or MiOS-Data structures."
+            echo -e "\033[31m[MiOS-Field] Media layout invalid: large disk missing required MiOS-Repo or MiOS-Data structures.\033[0m" >&2
             return 1
         fi
     else
@@ -218,16 +136,16 @@ test_mios_media_layout() {
         fi
 
         if [[ "$repoValid" -eq 1 && "$dataAbsent" -eq 1 ]]; then
-            log_ok "Media layout verified: small disk (${diskSizeGB} GB < ${minDiskGB} GB), valid MiOS-Repo, MiOS-Data skipped per T-261."
+            echo -e "\033[32m[MiOS-Field] Media layout verified: small disk (${diskSizeGB} GB < ${minDiskGB} GB), valid MiOS-Repo, MiOS-Data skipped per T-261.\033[0m"
             return 0
         else
-            log_err "Media layout invalid: small disk must contain MiOS-Repo and omit MiOS-Data."
+            echo -e "\033[31m[MiOS-Field] Media layout invalid: small disk must contain MiOS-Repo and omit MiOS-Data.\033[0m" >&2
             return 1
         fi
     fi
 }
 
-new_mios_oci_archive() {
+function New_MiOS_OCI_Archive() {
     local archiveFilePath="$1"
     local imageRef="${2:-localhost/mios:latest}"
 
@@ -294,31 +212,31 @@ EOF
         return 0
     else
         rm -rf "$tempDir"
-        log_err "Failed to pack OCI archive tar."
+        echo "[FATAL] Failed to pack OCI archive tar." >&2
         return 1
     fi
 }
 
-expand_mios_oci_image() {
+function Expand_MiOS_OCI_Image() {
     local archiveFilePath="$1"
     local destinationPath="$2"
 
     if [[ ! -f "$archiveFilePath" ]]; then
-        log_err "OCI archive not found: $archiveFilePath"
+        echo -e "\033[31m[FATAL] OCI archive not found: $archiveFilePath\033[0m" >&2
         return 1
     fi
 
     mkdir -p "$destinationPath"
-    log_info "Extracting OCI archive: $archiveFilePath -> $destinationPath"
+    echo -e "\033[36m[MiOS-Field] Extracting OCI archive: $archiveFilePath -> $destinationPath\033[0m"
 
     if ! tar -xf "$archiveFilePath" -C "$destinationPath" 2>/dev/null; then
         if command -v python3 >/dev/null 2>&1; then
             python3 -c "import tarfile; t=tarfile.open('$archiveFilePath'); t.extractall('$destinationPath'); t.close()" 2>/dev/null || {
-                log_err "Failed to extract archive $archiveFilePath."
+                echo -e "\033[31m[FATAL] Failed to extract archive $archiveFilePath.\033[0m" >&2
                 return 1
             }
         else
-            log_err "Failed to extract archive $archiveFilePath."
+            echo -e "\033[31m[FATAL] Failed to extract archive $archiveFilePath.\033[0m" >&2
             return 1
         fi
     fi
@@ -328,26 +246,26 @@ expand_mios_oci_image() {
     local indexJsonFile="$destinationPath/index.json"
 
     if [[ ! -f "$ociLayoutFile" ]]; then
-        log_err "Corrupted or invalid OCI archive: missing 'oci-layout' specification file."
+        echo -e "\033[31m[FATAL] Corrupted or invalid OCI archive: missing 'oci-layout' specification file.\033[0m" >&2
         return 1
     fi
 
     if [[ ! -f "$indexJsonFile" ]]; then
-        log_err "Corrupted or invalid OCI archive: missing 'index.json' manifest."
+        echo -e "\033[31m[FATAL] Corrupted or invalid OCI archive: missing 'index.json' manifest.\033[0m" >&2
         return 1
     fi
 
     if ! grep -q "imageLayoutVersion" "$ociLayoutFile" 2>/dev/null; then
-        log_err "Invalid oci-layout file: missing imageLayoutVersion."
+        echo -e "\033[31m[FATAL] Invalid oci-layout file: missing imageLayoutVersion.\033[0m" >&2
         return 1
     fi
 
-    log_ok "OCI layout verified successfully."
+    echo -e "\033[32m[MiOS-Field] OCI layout verified successfully.\033[0m"
     return 0
 }
 
-invoke_mios_stage() {
-    log_phase "Stage MiOS-Data and MiOS-Repo"
+function Invoke_MiOSFieldStage() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: stage\033[0m"
     local drive="/mnt/usb"
     local optMinDiskGB=0
     local optSimDiskGB=0
@@ -375,14 +293,14 @@ invoke_mios_stage() {
     done
 
     if [[ ! -d "$drive" ]]; then
-        log_err "Target drive '$drive' not found or inaccessible."
+        echo -e "\033[31m[FATAL] Target drive '$drive' not found or inaccessible.\033[0m" >&2
         return 1
     fi
 
     # Disk info
     local info
-    info=$(get_mios_disk_info "$drive" "$optSimDiskGB" "$optSimFreeGB") || {
-        log_err "Target drive '$drive' not found or inaccessible."
+    info=$(Get_MiOS_Disk_Info "$drive" "$optSimDiskGB" "$optSimFreeGB") || {
+        echo -e "\033[31m[FATAL] Target drive '$drive' not found or inaccessible.\033[0m" >&2
         return 1
     }
     local diskSizeGB
@@ -390,7 +308,7 @@ invoke_mios_stage() {
     diskSizeGB=$(echo "$info" | awk '{print $1}')
     freeSpaceGB=$(echo "$info" | awk '{print $2}')
 
-    # Read min_disk_gb from parameter, env, or SSOT [cat.data_partition] (default 512)
+    # Read min_disk_gb from parameter, env, or SSOT [field.data_partition] (backward compat: also [cat.data_partition]; default 512)
     local minDiskGB=512
     if [[ "$optMinDiskGB" -gt 0 ]]; then
         minDiskGB="$optMinDiskGB"
@@ -400,8 +318,8 @@ invoke_mios_stage() {
         local tomlCandidates=(
             "/usr/share/mios/mios.toml"
             "/etc/mios/mios.toml"
-            "$(dirname "${BASH_SOURCE[0]}")/../mios.toml"
-            "$(dirname "${BASH_SOURCE[0]}")/../usr/share/mios/mios.toml"
+            "$(dirname "${BASH_SOURCE[0]}")/../../mios.toml"
+            "$(dirname "${BASH_SOURCE[0]}")/../../usr/share/mios/mios.toml"
             "C:/MiOS/usr/share/mios/mios.toml"
             "C:/MiOS/mios.toml"
         )
@@ -415,7 +333,7 @@ try:
     import tomllib
     with open('$t', 'rb') as f:
         d = tomllib.load(f)
-        c = (d.get('cat') or {}).get('data_partition') or (d.get('field') or {}).get('data_partition') or {}
+        c = (d.get('field') or {}).get('data_partition') or (d.get('cat') or {}).get('data_partition') or {}
         if 'min_disk_gb' in c:
             print(c['min_disk_gb'])
             sys.exit(0)
@@ -429,7 +347,7 @@ sys.exit(1)
                     fi
                 fi
                 local awkVal
-                awkVal="$(awk '/^\[(cat|field)\.data_partition\]/{flag=1;next} /^\[/{flag=0} flag && /min_disk_gb/{gsub(/[^0-9]/,"",$0); if (length($0)>0) {print $0; exit}}' "$t" 2>/dev/null || true)"
+                awkVal="$(awk '/^\[(field|cat)\.data_partition\]/{flag=1;next} /^\[/{flag=0} flag && /min_disk_gb/{gsub(/[^0-9]/,"",$0); if (length($0)>0) {print $0; exit}}' "$t" 2>/dev/null || true)"
                 if [[ -n "$awkVal" && "$awkVal" -gt 0 ]]; then
                     minDiskGB="$awkVal"
                     break
@@ -446,7 +364,7 @@ sys.exit(1)
         requiredSpaceGB=10
     fi
     if (( freeSpaceGB > 0 && freeSpaceGB < requiredSpaceGB && optForce == 0 )); then
-        log_err "Insufficient disk space on '$drive'. Required: ${requiredSpaceGB} GB, Available: ${freeSpaceGB} GB."
+        echo -e "\033[31m[FATAL] Insufficient disk space on '$drive'. Required: ${requiredSpaceGB} GB, Available: ${freeSpaceGB} GB.\033[0m" >&2
         return 1
     fi
 
@@ -456,10 +374,18 @@ sys.exit(1)
     mkdir -p "$reposDir"
 
     # Copy shadow config into MiOS-Repo
-    for tomlPath in "/usr/share/mios/mios.toml" "C:/MiOS/usr/share/mios/mios.toml" "$(dirname "${BASH_SOURCE[0]}")/../mios.toml"; do
+    for tomlPath in "/usr/share/mios/mios.toml" "C:/MiOS/usr/share/mios/mios.toml" "$(dirname "${BASH_SOURCE[0]}")/../../mios.toml"; do
         if [[ -f "$tomlPath" ]]; then
             cp "$tomlPath" "$repoDir/"
             break
+        fi
+    done
+
+    # Copy launcher scripts into MiOS-Repo root for offline recovery
+    local scriptRoot="$(dirname "${BASH_SOURCE[0]}")/.."
+    for lf in "$scriptRoot/MiOS-Field.ps1" "$scriptRoot/MiOS-Field.sh" "$scriptRoot/MiOS-Cat.ps1" "$scriptRoot/MiOS-Cat.sh"; do
+        if [[ -f "$lf" ]]; then
+            cp "$lf" "$repoDir/"
         fi
     done
 
@@ -479,7 +405,7 @@ sys.exit(1)
 
     # T-261: Stage separate MiOS-Data bulk store ONLY on disks meeting min_disk_gb gate
     if (( diskSizeGB >= minDiskGB )); then
-        log_info "Disk >= ${minDiskGB}GB gate met ($diskSizeGB GB). Staging separate MiOS-Data bulk store..."
+        echo -e "\033[36mDisk >= ${minDiskGB}GB gate met ($diskSizeGB GB). Staging separate MiOS-Data bulk store...\033[0m"
         local dataDir="$drive/MiOS-Data"
         local imagesDir="$dataDir/images"
         local modelsDir="$dataDir/models"
@@ -487,7 +413,7 @@ sys.exit(1)
 
         # Stage OCI archive strictly into MiOS-Data/images/
         local stagedArchive="$imagesDir/mios-latest.tar"
-        log_info "Staging OCI archive to $stagedArchive..."
+        echo "Staging OCI archive to $stagedArchive..."
         local foundTar=""
         for t in build/oci-archive/*.tar build/*.tar M:/MiOS-images/*.tar; do
             if [[ -f "$t" ]]; then
@@ -497,23 +423,23 @@ sys.exit(1)
         done
 
         if [[ -n "$foundTar" ]]; then
-            log_info "Copying existing archive $foundTar -> $stagedArchive..."
+            echo "Copying existing archive $foundTar -> $stagedArchive..."
             cp "$foundTar" "$stagedArchive"
         elif command -v podman >/dev/null 2>&1 && podman image exists localhost/mios:latest 2>/dev/null; then
-            log_info "Saving localhost/mios:latest -> $stagedArchive..."
+            echo "Saving localhost/mios:latest -> $stagedArchive..."
             podman save --format oci-archive -o "$stagedArchive" localhost/mios:latest 2>/dev/null || true
         fi
 
         if [[ ! -f "$stagedArchive" ]]; then
-            log_info "Generating standard OCI image archive structure -> $stagedArchive..."
-            new_mios_oci_archive "$stagedArchive"
+            echo "Generating standard OCI image archive structure -> $stagedArchive..."
+            New_MiOS_OCI_Archive "$stagedArchive"
         fi
 
         # If extract requested, expand and verify OCI layout
         local extractedOk=false
         if [[ "$optExtract" -eq 1 ]]; then
             local extractDir="$imagesDir/extracted"
-            if expand_mios_oci_image "$stagedArchive" "$extractDir"; then
+            if Expand_MiOS_OCI_Image "$stagedArchive" "$extractDir"; then
                 extractedOk=true
             else
                 return 1
@@ -528,7 +454,7 @@ sys.exit(1)
         done
 
         # Stage model artifacts into MiOS-Data/models/
-        log_info "Staging model artifacts to $modelsDir..."
+        echo "Staging model artifacts to $modelsDir..."
         local stagedModels=0
         for msrc in "/var/lib/mios/finetune" "/usr/share/mios/vllm/model" "/usr/share/mios/models" "models" "build/models" "C:/MiOS/models"; do
             if [[ -d "$msrc" ]]; then
@@ -588,35 +514,98 @@ EOF
   }
 }
 EOF
-        log_ok "MiOS-Data bulk store staged successfully ($dataDir/manifest.json)."
+        echo -e "\033[32mMiOS-Data bulk store staged successfully ($dataDir/manifest.json).\033[0m"
     else
-        log_warn "Disk size ($diskSizeGB GB) < min_disk_gb ($minDiskGB GB) gate from [field.data_partition]/[cat.data_partition]."
-        log_warn "Skipping separate MiOS-Data bulk store staging per T-261 specification (degrade-open offline mode: small USB stick carries MiOS-Repo config brain only)."
+        echo -e "\033[33m[MiOS-Field] Disk size ($diskSizeGB GB) < min_disk_gb ($minDiskGB GB) gate from [field].data_partition.\033[0m"
+        echo -e "\033[33m[MiOS-Field] Skipping separate MiOS-Data bulk store staging per T-261 specification (degrade-open offline mode: small USB stick carries MiOS-Repo config brain only).\033[0m"
     fi
 
     return 0
 }
 
-invoke_mios_verify() {
+function Invoke_MiOSFieldVerify() {
     local drive="${1:-/mnt/usb}"
     local minDiskGB="${2:-512}"
-    log_phase "Verify Media Layout"
-    if test_mios_media_layout "$drive" "$minDiskGB"; then
-        log_ok "Verification PASS: Media layout strictly satisfies specifications."
+    echo -e "\033[32m[MiOS-Field] Executing verb: verify\033[0m"
+    if Test_MiOS_Media_Layout "$drive" "$minDiskGB"; then
+        echo -e "\033[32m[MiOS-Field] Verification PASS: Media layout strictly satisfies specifications.\033[0m"
         return 0
     else
-        log_err "Verification FAIL: Media layout does not meet specification requirements."
+        echo -e "\033[31m[FATAL] Verification FAIL: Media layout does not meet specification requirements.\033[0m" >&2
         return 1
     fi
 }
 
-# Backward Compatibility Aliases (T-1118)
-Get_MiOS_Disk_Info() { get_mios_disk_info "$@"; }
-Test_MiOS_Media_Layout() { test_mios_media_layout "$@"; }
-New_MiOSOCIArchive() { new_mios_oci_archive "$@"; }
-New_MiOS_OCI_Archive() { new_mios_oci_archive "$@"; }
-Expand_MiOSOCIImage() { expand_mios_oci_image "$@"; }
-Expand_MiOS_OCI_Image() { expand_mios_oci_image "$@"; }
-Invoke_MiOSCatStage() { invoke_mios_stage "$@"; }
-Invoke_MiOSCatVerify() { invoke_mios_verify "$@"; }
+function Invoke_MiOSFieldInstall() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: install\033[0m"
+    local bootstrap_path="$(dirname "${BASH_SOURCE[0]}")/../../bootstrap.sh"
+    if [[ -f "$bootstrap_path" ]]; then
+        bash "$bootstrap_path" "$@"
+    else
+        echo "bootstrap.sh not found." >&2
+        return 1
+    fi
+}
 
+function Invoke_MiOSFieldBuild() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: build\033[0m"
+    local build_path="$(dirname "${BASH_SOURCE[0]}")/../../build-mios.sh"
+    if [[ -f "$build_path" ]]; then
+        bash "$build_path" "$@"
+    else
+        echo "build-mios.sh not found." >&2
+        return 1
+    fi
+}
+
+function Invoke_MiOSFieldUpdate() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: update\033[0m"
+    echo "Refreshing offline payloads + manifest.json..."
+    local drive="${1:-/mnt/usb}"
+    local dataDir="$drive/MiOS-Data"
+    local manifest="$dataDir/manifest.json"
+    if [[ -d "$dataDir" ]]; then
+        local date_str
+        date_str=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2026-09-29T12:00:00Z")
+        cat <<EOF > "$manifest"
+{
+  "version": "1.0",
+  "updated": "$date_str",
+  "components": {
+    "images": "MiOS-Data/images",
+    "models": "MiOS-Data/models",
+    "dnf": "MiOS-Data/dnf",
+    "flatpak": "MiOS-Data/flatpak",
+    "pip": "MiOS-Data/pip"
+  }
+}
+EOF
+        echo "Manifest updated: $manifest"
+        return 0
+    else
+        echo -e "\033[33mNo MiOS-Data bulk store found on $drive to update.\033[0m"
+        return 0
+    fi
+}
+
+function Invoke_MiOSFieldProvision() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: provision\033[0m"
+    echo "Provisioning models from MiOS-Data..."
+    local drive="${1:-/mnt/usb}"
+    local targetDir="${2:-/usr/share/mios/vllm/model}"
+    local modelsSource="$drive/MiOS-Data/models"
+    if [[ -d "$modelsSource" ]]; then
+        mkdir -p "$targetDir"
+        cp -r "$modelsSource"/* "$targetDir"/ 2>/dev/null || true
+        echo "Provisioned models to $targetDir"
+        return 0
+    else
+        echo -e "\033[33mNo MiOS-Data/models found on $drive.\033[0m"
+        return 0
+    fi
+}
+
+function Invoke_MiOSFieldManual() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: manual\033[0m"
+    bash
+}
