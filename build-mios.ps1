@@ -3324,10 +3324,12 @@ sudo dnf config-manager setopt updates-testing.enabled=1 2>/dev/null || true
 # Refresh the appstream index so the install loop below can resolve
 # the app IDs. Without this step `flatpak install` errors with
 # "Nothing matches <ref> in remote <remote>" on a fresh remote.
-sudo flatpak update --system --appstream flathub 2>&1 | tail -3 || true
-sudo flatpak update --system --appstream flathub-beta 2>&1 | tail -3 || true
-sudo flatpak update --system --appstream fedora 2>&1 | tail -3 || true
-sudo flatpak update --system --appstream gnome-nightly 2>&1 | tail -3 || true
+for _remote in flathub flathub-beta fedora gnome-nightly; do
+    echo "[quadlet-overlay] appstream update: ${_remote}"
+    sudo env FLATPAK_FANCY_OUTPUT=0 FLATPAK_TTY_PROGRESS=0 \
+        flatpak update --system --appstream "$_remote" 2>&1 || \
+        echo "[quadlet-overlay] WARN: appstream update failed: ${_remote}"
+done
 declare -A FLATPAK_SHORT=(
     [app.devsuite.Ptyxis]=ptyxis
     [gnome-nightly:org.gnome.Nautilus.Devel]=nautilus
@@ -7664,9 +7666,12 @@ $miosRepo = $MiosRepoDir
                                 sudo flatpak remote-add --system --if-not-exists fedora oci+https://registry.fedoraproject.org 2>/dev/null || true
                                 sudo flatpak remote-add --system --if-not-exists gnome-nightly https://nightly.gnome.org/gnome-nightly.flatpakrepo 2>/dev/null || true
                                 sudo dnf config-manager setopt updates-testing.enabled=1 2>/dev/null || true
-                                sudo flatpak update --system --appstream flathub-beta 2>&1 | tail -2 || true
-                                sudo flatpak update --system --appstream fedora 2>&1 | tail -2 || true
-                                sudo flatpak update --system --appstream gnome-nightly 2>&1 | tail -2 || true
+                                echo '[appstream] updating flathub-beta'
+                                sudo env FLATPAK_FANCY_OUTPUT=0 FLATPAK_TTY_PROGRESS=0 flatpak update --system --appstream flathub-beta 2>&1 || echo '[appstream] WARN: flathub-beta update failed'
+                                echo '[appstream] updating fedora'
+                                sudo env FLATPAK_FANCY_OUTPUT=0 FLATPAK_TTY_PROGRESS=0 flatpak update --system --appstream fedora 2>&1 || echo '[appstream] WARN: fedora update failed'
+                                echo '[appstream] updating gnome-nightly'
+                                sudo env FLATPAK_FANCY_OUTPUT=0 FLATPAK_TTY_PROGRESS=0 flatpak update --system --appstream gnome-nightly 2>&1 || echo '[appstream] WARN: gnome-nightly update failed'
                             ") -replace "`r", ""
                             & wsl.exe -d $_wslDistroForTerm --user root -- bash -c $_remotesScript 2>&1 | ForEach-Object { Write-Log "mios-flatpak-remotes: $_" }
                         }
