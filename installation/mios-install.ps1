@@ -1,10 +1,16 @@
 [CmdletBinding()]
 param(
+    [Alias('Verb')]
     [string]$Target = '',
     [string]$Type = '',
     [string]$Stage = '',
     [switch]$DryRun,
     [switch]$Unattended,
+    [string]$DriveLetter = '',
+    [int]$MinDiskGB = 0,
+    [int]$SimulatedDiskSizeGB = 0,
+    [double]$SimulatedFreeSpaceGB = 0,
+    [switch]$Extract,
     [parameter(ValueFromRemainingArguments=$true)][string[]]$Passthrough = @()
 )
 
@@ -92,6 +98,14 @@ function Get-MiosCatalog {
             what = 'Opens the repository directories in Explorer.'
             produces = 'Explorer windows.'
             cost = 'instant'; needs = 'Explorer.' }
+        'stage' = @{ title = 'Stage MiOS-Data and MiOS-Repo bulk store'; platform='windows'; needsAdmin=$false; destructive=$false
+            what = 'Stages the lightweight config brain (MiOS-Repo) and bulk store (MiOS-Data) on disks meeting min_disk_gb gate.'
+            produces = 'MiOS-Repo and MiOS-Data partitions/directories with OCI archives and models.'
+            cost = '1-5 min'; needs = 'Target USB/disk.' }
+        'verify' = @{ title = 'Verify installation media layout and artifacts'; platform='windows'; needsAdmin=$false; destructive=$false
+            what = 'Validates MiOS-Repo and MiOS-Data layout, manifest checksums, and OCI image archives.'
+            produces = 'Verification pass/fail report.'
+            cost = 'instant'; needs = 'Target media path.' }
     }
 }
 
@@ -146,8 +160,9 @@ function Show-MiosTargetBrief {
 }
 
 function Confirm-MiosProceed {
-    param([hashtable]$Entry, [bool]$Unattended, [string]$Drive)
+    param([hashtable]$Entry, [bool]$Unattended, [string]$Drive, [string]$Target = '')
     if ($Unattended) { return $true }
+    if ($Target -in @('verify', 'stage')) { return $true }
     if (-not [Environment]::UserInteractive) { return $true }
     $wa=$script:Pal.warning; $cu=$script:Pal.cursor
     if ($Entry.destructive) {
@@ -205,6 +220,25 @@ function Resolve-Target {
         'repos' {
             $r.Kind='special'; $r.Special='repos'
         }
+        'stage' {
+            $r.Kind='internal'; $r.Fn='Invoke-MiosStage'; $r.NeedsAdmin=$false
+            $stageArgs = @()
+            if ($DriveLetter) { $stageArgs += @('-DriveLetter', "`"$DriveLetter`"") }
+            if ($MinDiskGB -gt 0) { $stageArgs += @('-MinDiskGB', $MinDiskGB) }
+            if ($SimulatedDiskSizeGB -gt 0) { $stageArgs += @('-SimulatedDiskSizeGB', $SimulatedDiskSizeGB) }
+            if ($SimulatedFreeSpaceGB -gt 0) { $stageArgs += @('-SimulatedFreeSpaceGB', $SimulatedFreeSpaceGB) }
+            if ($Extract) { $stageArgs += '-Extract' }
+            if ($Passthrough) { $stageArgs += $Passthrough }
+            $r.Args = $stageArgs
+        }
+        'verify' {
+            $r.Kind='internal'; $r.Fn='Invoke-MiosVerify'; $r.NeedsAdmin=$false
+            $verifyArgs = @()
+            if ($DriveLetter) { $verifyArgs += @('-DriveLetter', "`"$DriveLetter`"") }
+            if ($MinDiskGB -gt 0) { $verifyArgs += @('-MinDiskGB', $MinDiskGB) }
+            if ($Passthrough) { $verifyArgs += $Passthrough }
+            $r.Args = $verifyArgs
+        }
         default  { throw "unknown target '$Target'." }
     }
     return $r
@@ -261,14 +295,14 @@ if ($entry.Contains('special')) {
 }
 
 Show-MiosTargetBrief -Target $Target -Entry $entry -Type $Type -Stage $Stage
-if (-not (Confirm-MiosProceed -Entry $entry -Unattended $Unattended -Drive 'D:')) { exit 0 }
+if ($Target -notin @('verify', 'monitor') -and -not $DryRun -and -not (Confirm-MiosProceed -Entry $entry -Unattended $Unattended -Drive 'D:')) { exit 0 }
 
 # Consolidated installer surface: EVERY install/build target comes WITH the live monitor.
 # Launch mios mon (the unified TUI) in its own window so the operator watches the whole
 # pipeline live -- matches MiOS-Cat.bat's ensure_live_monitor. The 'monitor' target itself and
 # the early-exit special targets (configure/repos/update) never reach here. Suppressed by
 # MIOS_NO_MONITOR=1 (headless/CI/nested).
-if ($env:MIOS_NO_MONITOR -ne '1' -and -not $DryRun) {
+if ($env:MIOS_NO_MONITOR -ne '1' -and -not $DryRun -and $Target -notin @('stage', 'verify')) {
     try {
         $monProc = Start-MiosMonitor -Title 'MiOS Build Monitor'
         if ($monProc) { Write-MiosLine 'info' 'live monitor launched in the SSOT Windows Terminal profile' }
@@ -335,6 +369,18 @@ if ($DryRun) {
         ElevateArgs = @()
         NeedsAdmin  = $false
     }
+}
+
+if ($plan.Kind -eq 'internal') {
+    $res = if ($plan.Args.Count -gt 0) {
+        & ([scriptblock]::Create("$($plan.Fn) " + ($plan.Args -join ' ')))
+    } else {
+        & $plan.Fn
+    }
+    if ($res -eq $false -or $global:LASTEXITCODE -ne 0) {
+        exit 1
+    }
+    exit 0
 }
 
 if ($plan.Kind -eq 'ps') {

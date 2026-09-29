@@ -221,6 +221,34 @@ try {
     }
 }
 
+# -------------------------------------------------------------------------
+# Test Suite 7: Canonical installation/mios-install.ps1 Invocation (T-1118)
+# -------------------------------------------------------------------------
+Write-Host "`n[Suite 7] Canonical installation/mios-install.ps1 Invocation (T-1118)" -ForegroundColor Yellow
+$tempDrive7 = Join-Path ([System.IO.Path]::GetTempPath()) ("mios_test_install_" + [System.Guid]::NewGuid().ToString("N"))
+$null = New-Item -ItemType Directory -Force -Path $tempDrive7
+
+try {
+    $installScript = Join-Path $PSScriptRoot "..\installation\mios-install.ps1"
+    Assert-Condition "installation/mios-install.ps1 exists" (Test-Path -LiteralPath $installScript)
+
+    # Test mios-install.ps1 stage with -Unattended
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $installScript -Target stage -DriveLetter $tempDrive7 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 50 -Unattended 2>&1 | Out-Null
+    Assert-Condition "installation/mios-install.ps1 stage executed with exit code 0" ($LASTEXITCODE -eq 0)
+
+    # Test mios-install.ps1 verify
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $installScript -Target verify -DriveLetter $tempDrive7 -MinDiskGB 512 -Unattended 2>&1 | Out-Null
+    Assert-Condition "installation/mios-install.ps1 verify executed with exit code 0" ($LASTEXITCODE -eq 0)
+
+    # Verify media layout
+    $layoutOk = Test-MiosMediaLayout -TargetPath $tempDrive7
+    Assert-Condition "Test-MiosMediaLayout passes for installation/mios-install.ps1 staged media" ($layoutOk -eq $true)
+} finally {
+    if (Test-Path -LiteralPath $tempDrive7) {
+        Remove-Item -LiteralPath $tempDrive7 -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "`n==========================================================" -ForegroundColor Cyan
 Write-Host "  Test Summary: Passed = $passedCount, Failed = $failedCount" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
@@ -230,3 +258,4 @@ if ($failedCount -gt 0) {
 } else {
     exit 0
 }
+

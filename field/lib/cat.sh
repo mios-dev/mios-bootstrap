@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Shared backend for MiOS-Cat Linux/WSL launcher.
 # Implements Law 9 (ONE-CANONICAL-NAME) and Task T-261 parity with MiOS-Cat.psm1.
+# Folded losslessly with installation/mios-common.sh (Task T-1118).
+
+COMMON_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../installation" && pwd)/mios-common.sh"
+if [[ -f "$COMMON_SH" ]]; then
+    source "$COMMON_SH"
+fi
+
 
 function Show_MiOSCatMenu() {
     echo -e "\033[36m==========================================================\033[0m"

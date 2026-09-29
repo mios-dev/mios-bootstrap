@@ -1,5 +1,12 @@
 # field/lib/MiOS-Cat.psm1 -- shared backend for MiOS-Cat.
 # Implements T-261: Separate MiOS-Data bulk store staging on disks meeting min_disk_gb gate.
+# Folded losslessly with installation/mios-common.ps1 (Task T-1118).
+
+$commonPath = Join-Path $PSScriptRoot "..\..\installation\mios-common.ps1"
+if (Test-Path -LiteralPath $commonPath) {
+    . $commonPath
+}
+
 
 function Show-MiOSCatMenu {
     Write-Host "==========================================================" -ForegroundColor Cyan
@@ -171,7 +178,7 @@ function Invoke-MiOSCatStage {
     $drivePath = if ($isPath) { $DriveLetter } else { "${cleanLetter}:\" }
 
     if (-not (Test-Path -LiteralPath $drivePath)) {
-        Write-Error "Drive or directory $drivePath not found!"
+        Write-Host "  [FAIL] Drive or directory $drivePath not found!" -ForegroundColor Red
         $global:LASTEXITCODE = 1
         return $false
     }
@@ -237,7 +244,7 @@ function Invoke-MiOSCatStage {
     }
 
     if ($freeSpaceGB -gt 0 -and $freeSpaceGB -lt $minRequiredFreeGB) {
-        Write-Error "Insufficient free disk space on $drivePath ($freeSpaceGB GB available, $minRequiredFreeGB GB required)."
+        Write-Host "  [FAIL] Insufficient free disk space on $drivePath ($freeSpaceGB GB available, $minRequiredFreeGB GB required)." -ForegroundColor Red
         $global:LASTEXITCODE = 1
         return $false
     }
