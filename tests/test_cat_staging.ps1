@@ -206,9 +206,9 @@ try {
 }
 
 # -------------------------------------------------------------------------
-# Test Suite 6: CLI Parity & Shim Invocation (cat/MiOS-Cat.ps1 and field/MiOS-Cat.ps1)
+# Test Suite 6: Canonical surface, compat shims, and cat/ retirement (T-1118)
 # -------------------------------------------------------------------------
-Write-Host "`n[Suite 6] CLI Invocation Parity: cat/MiOS-Cat.ps1 and field/MiOS-Cat.ps1" -ForegroundColor Yellow
+Write-Host "`n[Suite 6] Canonical Field surface + compat shims + cat/ retirement (T-1118)" -ForegroundColor Yellow
 $tempDrive6 = Join-Path ([System.IO.Path]::GetTempPath()) ("mios_test_cli_" + [System.Guid]::NewGuid().ToString("N"))
 $null = New-Item -ItemType Directory -Force -Path $tempDrive6
 
@@ -217,7 +217,8 @@ try {
     $shimScript = Join-Path $PSScriptRoot "..\cat\MiOS-Cat.ps1"
 
     Assert-Condition "field/MiOS-Cat.ps1 (defunct shim) exists" (Test-Path -LiteralPath $cliScript)
-    Assert-Condition "cat/MiOS-Cat.ps1 (defunct shim) exists" (Test-Path -LiteralPath $shimScript)
+    # T-1118 retirement gate: the top-level cat/ folder tracks no launchers.
+    Assert-Condition "cat/ is retired (no tracked cat/MiOS-Cat.ps1 launcher)" (-not (Test-Path -LiteralPath $shimScript))
     Assert-Condition "field/MiOS-Field.ps1 (canonical) exists" (Test-Path -LiteralPath (Join-Path $testRoot "MiOS-Field.ps1"))
     Assert-Condition "field/MiOS-Field.sh (canonical) exists" (Test-Path -LiteralPath (Join-Path $testRoot "MiOS-Field.sh"))
     Assert-Condition "field/lib/MiOS-Field.psm1 (canonical) exists" (Test-Path -LiteralPath (Join-Path $testRoot "lib\MiOS-Field.psm1"))
@@ -250,9 +251,9 @@ try {
     & pwsh -NoProfile -ExecutionPolicy Bypass -File $cliScript stage -DriveLetter $tempDrive6 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 50 -NoElevate 2>&1 | Out-Null
     Assert-Condition "field/MiOS-Cat.ps1 stage executed with exit code 0" ($LASTEXITCODE -eq 0)
 
-    # Test cat/MiOS-Cat.ps1 verify (double-shim chain cat/ -> field/ -> canonical)
-    & pwsh -NoProfile -ExecutionPolicy Bypass -File $shimScript verify -DriveLetter $tempDrive6 -MinDiskGB 512 2>&1 | Out-Null
-    Assert-Condition "cat/MiOS-Cat.ps1 verify executed with exit code 0" ($LASTEXITCODE -eq 0)
+    # field/MiOS-Cat.ps1 (defunct shim) verify -- single-hop chain field/ -> canonical
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $cliScript verify -DriveLetter $tempDrive6 -MinDiskGB 512 2>&1 | Out-Null
+    Assert-Condition "field/MiOS-Cat.ps1 verify executed with exit code 0" ($LASTEXITCODE -eq 0)
 } finally {
     if (Test-Path -LiteralPath $tempDrive6) {
         Remove-Item -LiteralPath $tempDrive6 -Recurse -Force -ErrorAction SilentlyContinue
