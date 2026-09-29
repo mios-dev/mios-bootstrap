@@ -196,6 +196,15 @@ function Start-MiosBuildMonitor {
     if ($env:MIOS_NO_MONITOR -in @('1','true','yes','on') -or
         $env:MIOS_HEADLESS -in @('1','true','yes','on')) { return }
 
+    $monitorCols = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'cols' -Default 80)
+    $monitorRows = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'rows' -Default 40)
+    $cellWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px' -Default 10)
+    $cellHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px' -Default 20)
+    $chromeWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px' -Default 20)
+    $chromeHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px' -Default 12)
+    $monitorWidthPx = ($monitorCols * $cellWidth) + $chromeWidth
+    $monitorHeightPx = ($monitorRows * $cellHeight) + $chromeHeight
+
     $monitorScript = @(
         $env:MIOS_MONITOR_SCRIPT,
         'C:\MiOS\usr\libexec\mios\mios-mon.py',
@@ -242,6 +251,7 @@ public static class MiosDeskLauncher {
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
     [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT monitor; public RECT work; public uint flags; }
 
@@ -268,7 +278,7 @@ public static class MiosDeskLauncher {
         return found;
     }
 
-    public static bool CenterVisibleMonitorWindow() {
+    public static bool CenterVisibleMonitorWindow(int wantedWidth, int wantedHeight) {
         IntPtr hDesk = OpenDesktop("Default", 0, false, 0x01FF);
         if (hDesk == IntPtr.Zero) return false;
         bool found = false;
@@ -286,8 +296,12 @@ public static class MiosDeskLauncher {
                         info.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
                         IntPtr monitor = MonitorFromWindow(hWnd, 2);
                         if (GetWindowRect(hWnd, out rect) && monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info)) {
-                            int width = Math.Min(rect.Right - rect.Left, info.work.Right - info.work.Left);
-                            int height = Math.Min(rect.Bottom - rect.Top, info.work.Bottom - info.work.Top);
+                            uint dpi = 96;
+                            try { dpi = GetDpiForWindow(hWnd); } catch (EntryPointNotFoundException) {}
+                            int requestedWidth = (int)Math.Round(wantedWidth * dpi / 96.0);
+                            int requestedHeight = (int)Math.Round(wantedHeight * dpi / 96.0);
+                            int width = Math.Min(requestedWidth, info.work.Right - info.work.Left);
+                            int height = Math.Min(requestedHeight, info.work.Bottom - info.work.Top);
                             if (width > 0 && height > 0) {
                                 int x = info.work.Left + ((info.work.Right - info.work.Left - width) / 2);
                                 int y = info.work.Top + ((info.work.Bottom - info.work.Top - height) / 2);
@@ -328,7 +342,7 @@ public static class MiosDeskLauncher {
         }
 
         if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-            if ([MiosDeskLauncher]::CenterVisibleMonitorWindow()) { return }
+            if ([MiosDeskLauncher]::CenterVisibleMonitorWindow($monitorWidthPx, $monitorHeightPx)) { return }
         } else {
             $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name -match '^python' -and $_.CommandLine -match 'mios-mon\.py' })
@@ -374,14 +388,6 @@ public static class MiosDeskLauncher {
             $monitorScheme = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
             if ([string]::IsNullOrWhiteSpace($monitorScheme)) { $monitorScheme = 'MiOS' }
             $monitorLaunchMode = [string](Get-MiosTomlValue -Section 'theme' -Key 'launch_mode' -Default 'focus')
-            $monitorCols = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'cols' -Default 80)
-            $monitorRows = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'rows' -Default 40)
-            $cellWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px' -Default 10)
-            $cellHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px' -Default 20)
-            $chromeWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px' -Default 20)
-            $chromeHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px' -Default 12)
-            $monitorWidthPx = ($monitorCols * $cellWidth) + $chromeWidth
-            $monitorHeightPx = ($monitorRows * $cellHeight) + $chromeHeight
             $monitorX = 0; $monitorY = 0
             try {
                 Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
@@ -438,7 +444,7 @@ public static class MiosDeskLauncher {
             if ($spawnedPid -gt 0 -and ([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
                 $centerDeadline = (Get-Date).AddSeconds(6)
                 while ((Get-Date) -lt $centerDeadline) {
-                    [void][MiosDeskLauncher]::CenterVisibleMonitorWindow()
+                    [void][MiosDeskLauncher]::CenterVisibleMonitorWindow($monitorWidthPx, $monitorHeightPx)
                     Start-Sleep -Milliseconds 250
                 }
             }
