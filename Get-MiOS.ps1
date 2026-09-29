@@ -3547,8 +3547,8 @@ function mios-build {
         `$dlDir = Join-Path `$env:USERPROFILE 'Downloads'
         if (Test-Path -LiteralPath `$dlDir) {
             `$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-            # mios.toml -> M:\etc\mios\mios.toml (+ /usr/share copy for
-            # the dev VM via /mnt/m/etc/mios)
+            # Operator edits are a host overlay. Keep the fetched vendor
+            # mios.toml in M:\usr\share\mios intact for layered resolution.
             `$tomlSrc = Get-ChildItem -LiteralPath `$dlDir -Filter 'mios*.toml' -File -ErrorAction SilentlyContinue |
                 Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
             if (`$tomlSrc) {
@@ -3559,13 +3559,6 @@ function mios-build {
                 }
                 Copy-Item -LiteralPath `$tomlSrc.FullName -Destination `$tomlDst -Force
                 Write-Host ('         [+] '+`$tomlSrc.Name+' -> '+`$tomlDst) -ForegroundColor Green
-                # Also copy to M:\usr\share\mios so the layered overlay
-                # picks it up even before mios-pull runs.
-                `$tomlDst2 = 'M:\usr\share\mios\mios.toml'
-                if (Test-Path -LiteralPath (Split-Path -Parent `$tomlDst2)) {
-                    Copy-Item -LiteralPath `$tomlSrc.FullName -Destination `$tomlDst2 -Force
-                    Write-Host ('         [+] '+`$tomlSrc.Name+' -> '+`$tomlDst2) -ForegroundColor Green
-                }
                 `$archive = Join-Path `$dlDir (`$tomlSrc.BaseName+'.imported-'+`$stamp+'.toml')
                 Move-Item -LiteralPath `$tomlSrc.FullName -Destination `$archive -Force
             } else {
