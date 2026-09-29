@@ -45,8 +45,9 @@ if (Test-Path $buildModuleDir) {
 }
 
 $script:_MiosTomlCache = @{}
-function Resolve-MiosTomlText {
-    if ($script:_MiosTomlCache['_text']) { return $script:_MiosTomlCache['_text'] }
+function Resolve-MiosTomlLayers {
+    if ($script:_MiosTomlCache.ContainsKey('_layers')) { return $script:_MiosTomlCache['_layers'] }
+    $layers = @()
     foreach ($p in @(
         (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
         'M:\etc\mios\mios.toml',
@@ -55,50 +56,52 @@ function Resolve-MiosTomlText {
     )) {
         if ($p -and (Test-Path -LiteralPath $p)) {
             try {
-                $script:_MiosTomlCache['_text']   = [IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false)))
-                $script:_MiosTomlCache['_source'] = $p
-                return $script:_MiosTomlCache['_text']
+                $layers += [pscustomobject]@{ Path = $p; Text = [IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false))) }
             } catch {
                 try {
-                    $script:_MiosTomlCache['_text']   = Get-Content -LiteralPath $p -Raw -Encoding UTF8 -ErrorAction Stop
-                    $script:_MiosTomlCache['_source'] = $p
-                    return $script:_MiosTomlCache['_text']
+                    $layers += [pscustomobject]@{ Path = $p; Text = Get-Content -LiteralPath $p -Raw -Encoding UTF8 -ErrorAction Stop }
                 } catch {}
             }
         }
     }
-    try {
-        $cb  = [int][double]::Parse((Get-Date -UFormat %s))
-        $ref = if ($null -ne $MiosRef) { $MiosRef } else { 'main' }
-        $url = "https://raw.githubusercontent.com/mios-dev/MiOS/$ref/usr/share/mios/mios.toml?cb=$cb"
-        $script:_MiosTomlCache['_text'] = Invoke-RestMethod -Uri $url `
-            -Headers @{ 'Cache-Control'='no-cache, no-store, max-age=0'; 'Pragma'='no-cache' } `
-            -ErrorAction Stop
-        return $script:_MiosTomlCache['_text']
-    } catch {
-        $script:_MiosTomlCache['_text'] = ''
-        return ''
+    if ($layers.Count -eq 0) {
+        try {
+            $cb  = [int][double]::Parse((Get-Date -UFormat %s))
+            $ref = if ($null -ne $MiosRef) { $MiosRef } else { 'main' }
+            $url = "https://raw.githubusercontent.com/mios-dev/MiOS/$ref/usr/share/mios/mios.toml?cb=$cb"
+            $layers += [pscustomobject]@{ Path = $url; Text = (Invoke-RestMethod -Uri $url `
+                -Headers @{ 'Cache-Control'='no-cache, no-store, max-age=0'; 'Pragma'='no-cache' } `
+                -ErrorAction Stop) }
+        } catch {}
     }
+    $script:_MiosTomlCache['_layers'] = $layers
+    return $layers
+}
+function Resolve-MiosTomlText {
+    $layers = @(Resolve-MiosTomlLayers)
+    if ($layers.Count -gt 0) { return $layers[0].Text }
+    return ''
 }
 function Get-MiosTomlValue {
     param([Parameter(Mandatory)][string]$Section, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)]$Default)
-    $txt = Resolve-MiosTomlText
-    if (-not $txt) { return $Default }
-    $rxSec = '(?ms)^\[' + [regex]::Escape($Section) + '\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)'
-    $mSec  = [regex]::Match($txt, $rxSec)
-    if (-not $mSec.Success) { return $Default }
-    $rxKey = '(?m)^[ \t]*' + [regex]::Escape($Key) + '[ \t]*=[ \t]*(?<val>.+?)[ \t]*(?:#.*)?$'
-    $mKey  = [regex]::Match($mSec.Groups['body'].Value, $rxKey)
-    if (-not $mKey.Success) { return $Default }
-    $raw = $mKey.Groups['val'].Value.Trim()
+    foreach ($layer in @(Resolve-MiosTomlLayers)) {
+        $txt = $layer.Text
+        if (-not $txt) { continue }
+        $rxSec = '(?ms)^\[' + [regex]::Escape($Section) + '\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)'
+        $mSec  = [regex]::Match($txt, $rxSec)
+        if (-not $mSec.Success) { continue }
+        $rxKey = '(?m)^[ \t]*' + [regex]::Escape($Key) + '[ \t]*=[ \t]*(?<val>.+?)[ \t]*(?:#.*)?$'
+        $mKey  = [regex]::Match($mSec.Groups['body'].Value, $rxKey)
+        if (-not $mKey.Success) { continue }
+        $raw = $mKey.Groups['val'].Value.Trim()
     if ($Default -is [int]) {
         $n = 0; if ([int]::TryParse(($raw -replace '_',''), [ref]$n)) { return $n }
-        return $Default
+        continue
     }
     if ($Default -is [bool]) {
         if ($raw -match '^(?i)true$')  { return $true }
         if ($raw -match '^(?i)false$') { return $false }
-        return $Default
+        continue
     }
     if ($Default -is [array]) {
         if ($raw -match '^\[(.*)\]$') {
@@ -116,7 +119,7 @@ function Get-MiosTomlValue {
             }
             return $items
         }
-        return $Default
+        continue
     }
     if ($raw.Length -ge 2) {
         $first = $raw[0]; $last = $raw[$raw.Length - 1]
@@ -130,13 +133,18 @@ function Get-MiosTomlValue {
             $inner = $inner -replace '\\t', "`t"
             $inner = $inner -replace '\\r', "`r"
             $inner = $inner -replace [regex]::Escape($_bs), '\'
-            return $inner
+            if (-not [string]::IsNullOrWhiteSpace($inner)) { return $inner }
+            continue
         }
         if ($first -eq "'" -and $last -eq "'") {
-            return $raw.Substring(1, $raw.Length - 2)
+            $inner = $raw.Substring(1, $raw.Length - 2)
+            if (-not [string]::IsNullOrWhiteSpace($inner)) { return $inner }
+            continue
         }
     }
-    return $raw
+        if (-not [string]::IsNullOrWhiteSpace($raw)) { return $raw }
+    }
+    return $Default
 }
 
 $script:MiosInstCols = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols' -Default 80
@@ -1620,59 +1628,13 @@ function Read-Model([string]$Default = "qwen3.5:2b") {
 }
 
 function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
-    $defaults = @{
-        Model               = "qwen3.5:2b"
-        EmbedModel          = "nomic-embed-text"
-        BakeModels          = "qwen3.5:2b,nomic-embed-text"
-        LlamacppBakeModels  = "granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf"
-        VllmBakeModel       = "Qwen/Qwen2.5-0.5B-Instruct"
+    return @{
+        Model              = [string](Get-MiosTomlValue -Section 'ai' -Key 'model' -Default 'qwen3.5:2b')
+        EmbedModel         = [string](Get-MiosTomlValue -Section 'ai' -Key 'embed_model' -Default 'nomic-embed-text')
+        BakeModels         = [string](Get-MiosTomlValue -Section 'ai' -Key 'bake_models' -Default 'qwen3.5:2b,nomic-embed-text')
+        LlamacppBakeModels = [string](Get-MiosTomlValue -Section 'llamacpp' -Key 'bake_models' -Default 'granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf')
+        VllmBakeModel      = [string](Get-MiosTomlValue -Section 'ai.vllm' -Key 'bake_model' -Default 'Qwen/Qwen2.5-0.5B-Instruct')
     }
-    $layers = @()
-    foreach ($p in @(
-        (Join-Path $RepoDir       "mios-bootstrap\mios.toml"),
-        (Join-Path $env:APPDATA   "MiOS\mios.toml"),
-        (Join-Path $env:USERPROFILE ".config\mios\mios.toml")
-    )) { if (Test-Path $p) { $layers += $p } }
-
-    foreach ($card in $layers) {
-        try {
-            $text = Get-Content -Raw -Path $card -ErrorAction Stop
-        } catch { continue }
-
-        # 1. Parse [ai] section
-        $m = [regex]::Match($text, '(?ms)^\[ai\]\s*$(.*?)(?=^\[|\z)')
-        if ($m.Success) {
-            $body = $m.Groups[1].Value
-            foreach ($kv in @(
-                @{ Key='model';        Slot='Model' },
-                @{ Key='embed_model';  Slot='EmbedModel' },
-                @{ Key='bake_models';  Slot='BakeModels' }
-            )) {
-                $rx = [regex]::new('(?m)^\s*' + [regex]::Escape($kv.Key) + '\s*=\s*"([^"]*)"')
-                $hit = $rx.Match($body)
-                if ($hit.Success) { $defaults[$kv.Slot] = $hit.Groups[1].Value }
-            }
-        }
-
-        # 2. Parse [llamacpp] section
-        $m = [regex]::Match($text, '(?ms)^\[llamacpp\]\s*$(.*?)(?=^\[|\z)')
-        if ($m.Success) {
-            $body = $m.Groups[1].Value
-            $rx = [regex]::new('(?m)^\s*bake_models\s*=\s*"([^"]*)"')
-            $hit = $rx.Match($body)
-            if ($hit.Success) { $defaults['LlamacppBakeModels'] = $hit.Groups[1].Value }
-        }
-
-        # 3. Parse [ai.vllm] section
-        $m = [regex]::Match($text, '(?ms)^\[ai\.vllm\]\s*$(.*?)(?=^\[|\z)')
-        if ($m.Success) {
-            $body = $m.Groups[1].Value
-            $rx = [regex]::new('(?m)^\s*bake_model\s*=\s*"([^"]*)"')
-            $hit = $rx.Match($body)
-            if ($hit.Success) { $defaults['VllmBakeModel'] = $hit.Groups[1].Value }
-        }
-    }
-    return $defaults
 }
 
 function New-SeededConfiguratorHtml {
