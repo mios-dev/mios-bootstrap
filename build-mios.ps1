@@ -3280,6 +3280,7 @@ for script in /automation/56-fonts.sh \
     fi
 done
 
+install_gnome_flatpaks() {
 echo "[quadlet-overlay] installing GNOME Flatpaks for WSLg portal (one-time, ~600MB)..."
 sudo install -d -m 0700 -o root -g root /run/user/0 2>/dev/null || true
 export XDG_RUNTIME_DIR=/run/user/0
@@ -3373,6 +3374,7 @@ WRAPPER
         sudo chmod 0755 "/usr/local/bin/$short"
     fi
 done
+}
 
 DEV_USER=$(getent passwd 1000 | cut -d: -f1)
 [[ -z "$DEV_USER" ]] && DEV_USER=user
@@ -3556,6 +3558,12 @@ if [[ -f "$TOML_FILE" ]] && command -v awk >/dev/null 2>&1; then
     fi
 else
     echo "[quadlet-overlay] WARN: $TOML_FILE absent or awk missing; cannot resolve package list"
+fi
+
+if command -v flatpak >/dev/null 2>&1; then
+    install_gnome_flatpaks
+else
+    echo "[quadlet-overlay] Flatpak is not installed after package provisioning; deferring desktop apps to the later installer pass"
 fi
 
 sudo install -d -m 0755 /var/lib/mios
