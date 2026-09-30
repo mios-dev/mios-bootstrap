@@ -1198,6 +1198,14 @@ volume_label      = "MIOS-DEV"
 [bootstrap.dev_vm]
 base_image        = "quay.io/podman/machine-os:6.0"
 
+[bootstrap.dev_vm.host_reserve]
+# Reserve at least half of host memory for Windows while MiOS-DEV builds.
+cpu_pct             = 15
+cpu_min             = 2
+memory_pct          = 50
+memory_gb           = 8
+disk_gb             = 32
+
 [bootstrap.prereqs]
 install_podman_desktop = false
 podman_pkg             = "RedHat.Podman-Desktop"
