@@ -22,7 +22,7 @@ mios-install.sh -- unified MiOS provisioning dispatcher (Linux)
 
   mios-install.sh <target> [--type <name>] [--stage <name>] [--dry-run] [--unattended] [-- <native args>]
 
-  <target>      live | xbox | fedora | bootc | oci | seed | flash | build | update
+  <target>      live | xbox | fedora | bootc | oci | seed | flash | build | update | stage | verify
   --type NAME   narrows the target to a concrete flavor (per-target; omit for the default)
   --stage NAME  prereqs | fetch | service | iso | flash (best-effort unless the target's
                 row in installation/README.md marks it REAL; omit to run the whole pipeline)
@@ -290,6 +290,14 @@ resolve_config() {
         log_warn "No browser launcher found -- open ${url} manually."
         CMD=(true)
     fi
+}
+
+resolve_stage() {
+    CMD=("$0" _stage "${PASSTHROUGH[@]}")
+}
+
+resolve_verify() {
+    CMD=("$0" _verify "${PASSTHROUGH[@]}")
 }
 
 DEFAULT_USER="user"
@@ -1500,13 +1508,17 @@ case "$TARGET" in
     build)  resolve_build ;;
     update) resolve_update ;;
     config|configure) resolve_config ;;
+    stage)  resolve_stage ;;
+    verify) resolve_verify ;;
+    _stage) invoke_mios_stage "${PASSTHROUGH[@]}"; exit $? ;;
+    _verify) invoke_mios_verify "${PASSTHROUGH[@]}"; exit $? ;;
     # ${PASSTHROUGH[0]} carries the positional mode from the internal re-entry
     # above; --type still wins when a caller sets it explicitly.
     _install_core) resolve_install_core "${TYPE:-${PASSTHROUGH[0]:-fhs}}" ;;
     default|Default|offlinesync|OfflineSync|buildxboxiso|BuildXboxISO|flashusb|FlashUSB)
         die "'${TARGET}' is a Get-MiOS.ps1 -Action value, not a mios-install target. mios-install only runs AFTER Get-MiOS.ps1 has already cloned this repo locally" ;;
     *)
-        die "Unknown target '${TARGET}'. Valid targets: live xbox fedora bootc oci seed flash build update config" ;;
+        die "Unknown target '${TARGET}'. Valid targets: live xbox fedora bootc oci seed flash build update config stage verify" ;;
 esac
 
 resolve_target_prereqs() {

@@ -18,6 +18,41 @@ if (-not (Test-Path -LiteralPath $libPath)) {
 
 Import-Module (Resolve-Path $libPath) -Force
 
+function New-TestOCIArchive {
+    param([string]$ArchivePath)
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ('mios-oci-fixture-' + [guid]::NewGuid().ToString('N'))
+    $blobDir = Join-Path $root 'blobs/sha256'
+    $null = New-Item -ItemType Directory -Path $blobDir -Force
+    $payload = Join-Path $root 'payload.txt'
+    [IO.File]::WriteAllText($payload, 'MiOS test filesystem layer', [Text.UTF8Encoding]::new($false))
+    & tar.exe -cf (Join-Path $root 'layer.tar') -C $root payload.txt
+    $layer = Join-Path $root 'layer.tar'
+    $layerHash = (Get-FileHash -LiteralPath $layer -Algorithm SHA256).Hash.ToLower()
+    Move-Item -LiteralPath $layer -Destination (Join-Path $blobDir $layerHash)
+    $config = @{ architecture='amd64'; os='linux'; rootfs=@{ type='layers'; diff_ids=@("sha256:$layerHash") } } | ConvertTo-Json -Depth 5 -Compress
+    $configBytes = [Text.Encoding]::UTF8.GetBytes($config)
+    $configHash = -join ([Security.Cryptography.SHA256]::HashData($configBytes) | ForEach-Object { $_.ToString('x2') })
+    [IO.File]::WriteAllBytes((Join-Path $blobDir $configHash), $configBytes)
+    $manifest = @{ schemaVersion=2; mediaType='application/vnd.oci.image.manifest.v1+json'; config=@{ mediaType='application/vnd.oci.image.config.v1+json'; digest="sha256:$configHash"; size=$configBytes.Length }; layers=@(@{ mediaType='application/vnd.oci.image.layer.v1.tar'; digest="sha256:$layerHash"; size=(Get-Item -LiteralPath (Join-Path $blobDir $layerHash)).Length }) } | ConvertTo-Json -Depth 6 -Compress
+    $manifestBytes = [Text.Encoding]::UTF8.GetBytes($manifest)
+    $manifestHash = -join ([Security.Cryptography.SHA256]::HashData($manifestBytes) | ForEach-Object { $_.ToString('x2') })
+    [IO.File]::WriteAllBytes((Join-Path $blobDir $manifestHash), $manifestBytes)
+    [IO.File]::WriteAllText((Join-Path $root 'oci-layout'), '{"imageLayoutVersion":"1.0.0"}', [Text.UTF8Encoding]::new($false))
+    $index = @{ schemaVersion=2; manifests=@(@{ mediaType='application/vnd.oci.image.manifest.v1+json'; digest="sha256:$manifestHash"; size=$manifestBytes.Length }) } | ConvertTo-Json -Depth 5 -Compress
+    [IO.File]::WriteAllText((Join-Path $root 'index.json'), $index, [Text.UTF8Encoding]::new($false))
+    & tar.exe -cf $ArchivePath -C $root oci-layout index.json blobs
+    Remove-Item -LiteralPath $root -Recurse -Force
+}
+
+function Initialize-TestRepoDirs {
+    param([string]$Root)
+    $null = New-Item -ItemType Directory -Force -Path (Join-Path $Root 'MiOS-Repo/repos/MiOS')
+    $null = New-Item -ItemType Directory -Force -Path (Join-Path $Root 'MiOS-Repo/repos/mios-bootstrap')
+}
+
+$fixtureArchive = Join-Path ([System.IO.Path]::GetTempPath()) ('mios-oci-fixture-' + [guid]::NewGuid().ToString('N') + '.tar')
+New-TestOCIArchive -ArchivePath $fixtureArchive
+
 $passedCount = 0
 $failedCount = 0
 
@@ -49,9 +84,10 @@ Write-Host "==========================================================" -Foregro
 Write-Host "`n[Suite 1] Positive Control: Large disk (>= 512GB) stages Repo + Data + OCI Layout" -ForegroundColor Yellow
 $tempDrive1 = Join-Path ([System.IO.Path]::GetTempPath()) ("mios_test_large_" + [System.Guid]::NewGuid().ToString("N"))
 $null = New-Item -ItemType Directory -Force -Path $tempDrive1
+Initialize-TestRepoDirs -Root $tempDrive1
 
 try {
-    $res1 = Invoke-MiOSCatStage -DriveLetter $tempDrive1 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 100 -Extract
+    $res1 = Invoke-MiOSCatStage -DriveLetter $tempDrive1 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 100 -ArchivePath $fixtureArchive -Extract
     Assert-Condition "Stage returns success ($res1)" ($res1 -eq $true)
     Assert-Condition "Global LASTEXITCODE is 0" ($global:LASTEXITCODE -eq 0)
 
@@ -106,6 +142,7 @@ try {
 Write-Host "`n[Suite 2] Positive Control: Small disk (< 512GB) stages Repo and SKIPS MiOS-Data per T-261" -ForegroundColor Yellow
 $tempDrive2 = Join-Path ([System.IO.Path]::GetTempPath()) ("mios_test_small_" + [System.Guid]::NewGuid().ToString("N"))
 $null = New-Item -ItemType Directory -Force -Path $tempDrive2
+Initialize-TestRepoDirs -Root $tempDrive2
 
 try {
     $res2 = Invoke-MiOSCatStage -DriveLetter $tempDrive2 -SimulatedDiskSizeGB 64 -SimulatedFreeSpaceGB 30
@@ -123,7 +160,7 @@ try {
     Assert-Condition "T-261 Invariant: MiOS-Data is SKIPPED on <512GB disk" $dataAbsent
 
     # Verify media layout check
-    $verifySmall = Invoke-MiOSCatVerify -DriveLetter $tempDrive2 -MinDiskGB 512
+    $verifySmall = Invoke-MiOSCatVerify -DriveLetter $tempDrive2 -MinDiskGB 512 -SimulatedDiskSizeGB 64
     Assert-Condition "Invoke-MiOSCatVerify passes on valid small media layout" ($verifySmall -eq $true)
 } finally {
     if (Test-Path -LiteralPath $tempDrive2) {
@@ -200,6 +237,7 @@ try {
 Write-Host "`n[Suite 6] CLI Invocation Parity: cat/MiOS-Cat.ps1 and field/MiOS-Cat.ps1" -ForegroundColor Yellow
 $tempDrive6 = Join-Path ([System.IO.Path]::GetTempPath()) ("mios_test_cli_" + [System.Guid]::NewGuid().ToString("N"))
 $null = New-Item -ItemType Directory -Force -Path $tempDrive6
+Initialize-TestRepoDirs -Root $tempDrive6
 
 try {
     $cliScript = Join-Path $PSScriptRoot "..\field\MiOS-Cat.ps1"
@@ -209,7 +247,7 @@ try {
     Assert-Condition "cat/MiOS-Cat.ps1 exists" (Test-Path -LiteralPath $shimScript)
 
     # Test field/MiOS-Cat.ps1 stage with -NoElevate
-    & pwsh -NoProfile -ExecutionPolicy Bypass -File $cliScript stage -DriveLetter $tempDrive6 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 50 -NoElevate 2>&1 | Out-Null
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $cliScript stage -DriveLetter $tempDrive6 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 50 -ArchivePath $fixtureArchive -NoElevate 2>&1 | Out-Null
     Assert-Condition "field/MiOS-Cat.ps1 stage executed with exit code 0" ($LASTEXITCODE -eq 0)
 
     # Test cat/MiOS-Cat.ps1 verify
@@ -221,9 +259,39 @@ try {
     }
 }
 
+# -------------------------------------------------------------------------
+# Test Suite 7: Canonical installation/mios-install.ps1 Invocation (T-1118)
+# -------------------------------------------------------------------------
+Write-Host "`n[Suite 7] Canonical installation/mios-install.ps1 Invocation (T-1118)" -ForegroundColor Yellow
+$tempDrive7 = Join-Path ([System.IO.Path]::GetTempPath()) ("mios_test_install_" + [System.Guid]::NewGuid().ToString("N"))
+$null = New-Item -ItemType Directory -Force -Path $tempDrive7
+Initialize-TestRepoDirs -Root $tempDrive7
+
+try {
+    $installScript = Join-Path $PSScriptRoot "..\installation\mios-install.ps1"
+    Assert-Condition "installation/mios-install.ps1 exists" (Test-Path -LiteralPath $installScript)
+
+    # Test mios-install.ps1 stage with -Unattended
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $installScript -Target stage -DriveLetter $tempDrive7 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 50 -ArchivePath $fixtureArchive -Unattended 2>&1 | Out-Null
+    Assert-Condition "installation/mios-install.ps1 stage executed with exit code 0" ($LASTEXITCODE -eq 0)
+
+    # Test mios-install.ps1 verify
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $installScript -Target verify -DriveLetter $tempDrive7 -MinDiskGB 512 -Unattended 2>&1 | Out-Null
+    Assert-Condition "installation/mios-install.ps1 verify executed with exit code 0" ($LASTEXITCODE -eq 0)
+
+    # Verify media layout
+    $layoutOk = Test-MiosMediaLayout -TargetPath $tempDrive7
+    Assert-Condition "Test-MiosMediaLayout passes for installation/mios-install.ps1 staged media" ($layoutOk -eq $true)
+} finally {
+    if (Test-Path -LiteralPath $tempDrive7) {
+        Remove-Item -LiteralPath $tempDrive7 -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "`n==========================================================" -ForegroundColor Cyan
 Write-Host "  Test Summary: Passed = $passedCount, Failed = $failedCount" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
+if (Test-Path -LiteralPath $fixtureArchive) { Remove-Item -LiteralPath $fixtureArchive -Force }
 
 if ($failedCount -gt 0) {
     exit 1

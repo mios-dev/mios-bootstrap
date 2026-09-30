@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# MiOS-Cat.sh -- canonical launcher shim for MiOS in cat/
-# Implements Law 9 (ONE-CANONICAL-NAME). Delegates to field/MiOS-Cat.sh.
+# Legacy path retained for existing media. The canonical launcher is field/MiOS-Cat.sh.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

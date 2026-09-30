@@ -446,3 +446,570 @@ function Resolve-MiosDistro {
     } catch {}
     return $Default
 }
+
+# ============================================================================
+#  MiOS-Data & OCI Bulk Staging (T-261 / T-1118)
+# ============================================================================
+
+function Read-MiosTarEntry {
+    param([string]$ArchivePath, [string]$Entry, [switch]$KeepBytes)
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = (Get-Command tar.exe -ErrorAction Stop).Source
+    $start.Arguments = '-xOf "' + $ArchivePath + '" "' + $Entry + '"'
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.CreateNoWindow = $true
+    $process = [System.Diagnostics.Process]::Start($start)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $memory = if ($KeepBytes) { New-Object IO.MemoryStream } else { $null }
+    $buffer = New-Object byte[] (1024 * 1024)
+    [long]$size = 0
+    try {
+        while (($count = $process.StandardOutput.BaseStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $null = $sha.TransformBlock($buffer, 0, $count, $buffer, 0)
+            if ($memory) { $memory.Write($buffer, 0, $count) }
+            $size += $count
+        }
+        $null = $sha.TransformFinalBlock([byte[]]@(), 0, 0)
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw "Cannot read OCI tar entry $Entry" }
+        return [pscustomobject]@{
+            Size = $size
+            Sha256 = (-join ($sha.Hash | ForEach-Object { $_.ToString('x2') }))
+            Bytes = if ($memory) { $memory.ToArray() } else { $null }
+        }
+    } finally {
+        if ($memory) { $memory.Dispose() }
+        $sha.Dispose()
+        $process.Dispose()
+    }
+}
+
+function Assert-MiosOCIBlob {
+    param([string]$ArchivePath, [hashtable]$Entries, $Descriptor, [switch]$KeepBytes)
+    if ($Descriptor.digest -notmatch '^sha256:([a-fA-F0-9]{64})$') { throw 'Invalid OCI descriptor digest' }
+    $expected = $Matches[1]
+    $key = "blobs/sha256/$expected"
+    if (-not $Entries.ContainsKey($key)) { throw "Missing OCI blob $key" }
+    $blob = Read-MiosTarEntry -ArchivePath $ArchivePath -Entry $Entries[$key] -KeepBytes:$KeepBytes
+    if ($blob.Size -ne [long]$Descriptor.size -or $blob.Sha256 -ine $expected) { throw "OCI blob mismatch: $key" }
+    return $blob
+}
+
+function Test-MiosOCIArchive {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ArchiveFilePath)
+    if (-not (Test-Path -LiteralPath $ArchiveFilePath -PathType Leaf) -or
+        (Get-Item -LiteralPath $ArchiveFilePath).Length -eq 0 -or
+        -not (Get-Command tar.exe -ErrorAction SilentlyContinue)) { return $false }
+    try {
+        $entries = @{}
+        foreach ($entry in @(& tar.exe -tf $ArchiveFilePath 2>$null)) {
+            if ($entry -match '(^/|^[A-Za-z]:|(^|/|\\)\.\.(/|\\|$))') { return $false }
+            $key = $entry -replace '^\./', ''
+            if ($entries.ContainsKey($key)) { return $false }
+            $entries[$key] = $entry
+        }
+        if ($LASTEXITCODE -ne 0 -or -not $entries.ContainsKey('oci-layout') -or -not $entries.ContainsKey('index.json')) { return $false }
+        $layoutBytes = (Read-MiosTarEntry -ArchivePath $ArchiveFilePath -Entry $entries['oci-layout'] -KeepBytes).Bytes
+        $indexBytes = (Read-MiosTarEntry -ArchivePath $ArchiveFilePath -Entry $entries['index.json'] -KeepBytes).Bytes
+        $layout = [Text.Encoding]::UTF8.GetString($layoutBytes) | ConvertFrom-Json
+        $index = [Text.Encoding]::UTF8.GetString($indexBytes) | ConvertFrom-Json
+        if ($layout.imageLayoutVersion -ne '1.0.0' -or $index.schemaVersion -ne 2 -or @($index.manifests).Count -eq 0) { return $false }
+        foreach ($descriptor in @($index.manifests)) {
+            if ($descriptor.mediaType -ne 'application/vnd.oci.image.manifest.v1+json') { return $false }
+            $manifestBlob = Assert-MiosOCIBlob -ArchivePath $ArchiveFilePath -Entries $entries -Descriptor $descriptor -KeepBytes
+            $manifest = [Text.Encoding]::UTF8.GetString($manifestBlob.Bytes) | ConvertFrom-Json
+            if ($manifest.schemaVersion -ne 2 -or @($manifest.layers).Count -eq 0) { return $false }
+            $configBlob = Assert-MiosOCIBlob -ArchivePath $ArchiveFilePath -Entries $entries -Descriptor $manifest.config -KeepBytes
+            $config = [Text.Encoding]::UTF8.GetString($configBlob.Bytes) | ConvertFrom-Json
+            if ($config.os -ne 'linux' -or @($config.rootfs.diff_ids).Count -ne @($manifest.layers).Count) { return $false }
+            foreach ($layer in @($manifest.layers)) {
+                if ([long]$layer.size -le 0) { return $false }
+                $null = Assert-MiosOCIBlob -ArchivePath $ArchiveFilePath -Entries $entries -Descriptor $layer
+            }
+        }
+        return $true
+    } catch { return $false }
+}
+
+function New-MiosOCIArchive {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$DestinationTarPath,
+          [Parameter(Mandatory)][string]$SourceArchivePath)
+    if (-not (Test-MiosOCIArchive -ArchiveFilePath $SourceArchivePath)) { throw "No valid bootable MiOS OCI archive at $SourceArchivePath" }
+    Copy-Item -LiteralPath $SourceArchivePath -Destination $DestinationTarPath -Force
+}
+
+function Expand-MiosOCIImage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ArchiveFilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+    if (-not (Test-Path -LiteralPath $ArchiveFilePath)) {
+        $global:LASTEXITCODE = 1
+        return $false
+    }
+    if (-not (Test-MiosOCIArchive -ArchiveFilePath $ArchiveFilePath)) { $global:LASTEXITCODE = 1; return $false }
+    $null = New-Item -ItemType Directory -Force -Path $DestinationPath
+    try {
+        if (Get-Command tar.exe -ErrorAction SilentlyContinue) {
+            & tar.exe -xf $ArchiveFilePath -C $DestinationPath 2>&1 | Out-Null
+        }
+        $hasLayout = Test-Path -LiteralPath (Join-Path $DestinationPath "oci-layout")
+        $hasIndex = Test-Path -LiteralPath (Join-Path $DestinationPath "index.json")
+        $hasBlobs = Test-Path -LiteralPath (Join-Path $DestinationPath "blobs")
+        if ($hasLayout -and $hasIndex -and $hasBlobs) {
+            $global:LASTEXITCODE = 0
+            return $true
+        } else {
+            $global:LASTEXITCODE = 1
+            return $false
+        }
+    } catch {
+        $global:LASTEXITCODE = 1
+        return $false
+    }
+}
+
+function Test-MiosMediaLayout {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TargetPath
+    )
+    if (-not (Test-Path -LiteralPath $TargetPath)) {
+        return $false
+    }
+    $repoDir = Join-Path $TargetPath "MiOS-Repo"
+    if (-not (Test-Path -LiteralPath $repoDir)) {
+        return $false
+    }
+    $dataDir = Join-Path $TargetPath "MiOS-Data"
+    if (Test-Path -LiteralPath $dataDir) {
+        if (-not (Test-Path -LiteralPath (Join-Path $dataDir "images"))) { return $false }
+        if (-not (Test-Path -LiteralPath (Join-Path $dataDir "models"))) { return $false }
+    }
+    return $true
+}
+
+function Invoke-MiosStage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position = 0)]
+        [string]$DriveLetter = "D",
+
+        [Parameter()]
+        [int]$MinDiskGB = 0,
+
+        [Parameter()]
+        [int]$SimulatedDiskSizeGB = 0,
+
+        [Parameter()]
+        [double]$SimulatedFreeSpaceGB = 0,
+
+        [Parameter()]
+        [switch]$Extract,
+
+        [Parameter()]
+        [string]$ArchivePath = ''
+    )
+    Write-Host "[MiOS-Install] Executing target: stage" -ForegroundColor Green
+
+    $cleanLetter = $DriveLetter.TrimEnd(':\')
+    $isPath = ($DriveLetter.Contains('\') -or $DriveLetter.Contains('/') -or (Test-Path -LiteralPath $DriveLetter))
+    $drivePath = if ($isPath) { $DriveLetter } else { "${cleanLetter}:\" }
+
+    if (-not (Test-Path -LiteralPath $drivePath)) {
+        if (Get-Command 'Write-MiosLine' -ErrorAction SilentlyContinue) {
+            Write-MiosLine 'err' "Drive or directory $drivePath not found!"
+        } else {
+            Write-Host "  [FAIL] Drive or directory $drivePath not found!" -ForegroundColor Red
+        }
+        $global:LASTEXITCODE = 1
+        return $false
+    }
+
+    # Resolve min_disk_gb threshold from parameter, environment, SSOT, or fallback to 512
+    if ($MinDiskGB -le 0) {
+        if ($env:MIOS_MIN_DISK_GB) {
+            $parsedEnv = 0
+            if ([int]::TryParse($env:MIOS_MIN_DISK_GB, [ref]$parsedEnv) -and $parsedEnv -gt 0) {
+                $MinDiskGB = $parsedEnv
+            }
+        }
+    }
+
+    if ($MinDiskGB -le 0) {
+        $candidatePaths = @(
+            "C:\MiOS\usr\share\mios\mios.toml",
+            "C:\MiOS\mios.toml",
+            (Join-Path $PSScriptRoot "..\mios.toml"),
+            (Join-Path $PSScriptRoot "..\usr\share\mios\mios.toml"),
+            (Join-Path $PSScriptRoot "..\..\usr\share\mios\mios.toml"),
+            "M:\usr\share\mios\mios.toml",
+            "M:\etc\mios\mios.toml"
+        )
+        foreach ($ssotPath in $candidatePaths) {
+            if ($ssotPath -and (Test-Path -LiteralPath $ssotPath)) {
+                try {
+                    $content = [System.IO.File]::ReadAllText($ssotPath)
+                    $rxSec = '(?ms)^\s*\[(?:cat|field)\.data_partition\][ \t]*\r?\n(?<body>.*?)(?=^\s*\[|\z)'
+                    $mSec = [regex]::Match($content, $rxSec)
+                    if ($mSec.Success) {
+                        $mKey = [regex]::Match($mSec.Groups['body'].Value, '(?m)^\s*min_disk_gb\s*=\s*(\d+)')
+                        if ($mKey.Success) {
+                            $MinDiskGB = [int]$mKey.Groups[1].Value
+                            break
+                        }
+                    }
+                    $mAny = [regex]::Match($content, '(?m)^\s*min_disk_gb\s*=\s*(\d+)')
+                    if ($mAny.Success) {
+                        $MinDiskGB = [int]$mAny.Groups[1].Value
+                        break
+                    }
+                } catch {}
+            }
+        }
+    }
+
+    if ($MinDiskGB -le 0) {
+        $MinDiskGB = 512
+    }
+
+    # Free space is checked after the physical disk gate is known.
+    $freeSpaceGB = 0.0
+    if ($SimulatedFreeSpaceGB -gt 0) {
+        $freeSpaceGB = $SimulatedFreeSpaceGB
+    } else {
+        try {
+            $root = [System.IO.Path]::GetPathRoot((Resolve-Path $drivePath).Path)
+            $driveInfo = [System.IO.DriveInfo]::new($root)
+            $freeSpaceGB = [math]::Round($driveInfo.AvailableFreeSpace / 1GB, 2)
+        } catch {}
+    }
+
+    # Total disk size check
+    $diskSizeGB = 0
+    if ($SimulatedDiskSizeGB -gt 0) {
+        $diskSizeGB = $SimulatedDiskSizeGB
+    } elseif ($env:MIOS_SIMULATED_DISK_GB) {
+        $simEnv = 0
+        if ([int]::TryParse($env:MIOS_SIMULATED_DISK_GB, [ref]$simEnv) -and $simEnv -gt 0) {
+            $diskSizeGB = $simEnv
+        }
+    }
+
+    if ($diskSizeGB -le 0) {
+        try {
+            if (-not $isPath -or $cleanLetter.Length -eq 1) {
+                $letterToProbe = if ($cleanLetter.Length -eq 1) { $cleanLetter } else { $cleanLetter.Substring(0, 1) }
+                $part = Get-Partition -DriveLetter $letterToProbe -ErrorAction SilentlyContinue
+                if ($part) {
+                    $disk = Get-Disk -Number $part.DiskNumber -ErrorAction SilentlyContinue
+                    if ($disk -and $disk.Size) { $diskSizeGB = [math]::Round($disk.Size / 1GB) }
+                }
+            } else {
+                $item = Get-Item -LiteralPath $drivePath -ErrorAction SilentlyContinue
+                if ($item) {
+                    $root = [System.IO.Path]::GetPathRoot($item.FullName)
+                    $rootLetter = $root.TrimEnd(':\')
+                    if ($rootLetter.Length -eq 1) {
+                        $part = Get-Partition -DriveLetter $rootLetter -ErrorAction SilentlyContinue
+                        if ($part) {
+                            $disk = Get-Disk -Number $part.DiskNumber -ErrorAction SilentlyContinue
+                            if ($disk -and $disk.Size) { $diskSizeGB = [math]::Round($disk.Size / 1GB) }
+                        }
+                    }
+                }
+            }
+        } catch {}
+    }
+
+    Write-Host "Target disk: $drivePath (Total: $diskSizeGB GB, Free: $freeSpaceGB GB, min_disk_gb: $MinDiskGB GB)"
+    if ($diskSizeGB -le 0) {
+        Write-Host "  [FAIL] Cannot determine physical disk size for $drivePath." -ForegroundColor Red
+        $global:LASTEXITCODE = 1; return $false
+    }
+    $minRequiredFreeGB = if ($diskSizeGB -ge $MinDiskGB) { 10 } else { 1 }
+    if ($freeSpaceGB -lt $minRequiredFreeGB) {
+        Write-Host "  [FAIL] Insufficient or unknown free disk space on $drivePath ($freeSpaceGB GB available, $minRequiredFreeGB GB required)." -ForegroundColor Red
+        $global:LASTEXITCODE = 1; return $false
+    }
+
+    # A large disk is an offline image carrier only when a real image is available.
+    # Resolve relative to this checkout, never to the caller's working directory.
+    $sourceArchive = ''
+    if ($diskSizeGB -ge $MinDiskGB) {
+        $archiveCandidates = @()
+        if ($ArchivePath) { $archiveCandidates += $ArchivePath }
+        if ($env:MIOS_OCI_ARCHIVE) { $archiveCandidates += $env:MIOS_OCI_ARCHIVE }
+        $repoRoot = Split-Path -Parent $PSScriptRoot
+        $archiveCandidates += (Join-Path $repoRoot 'build/oci-archive/mios-latest.tar')
+        $archiveCandidates += (Join-Path $repoRoot 'build/mios-latest.tar')
+        foreach ($candidate in $archiveCandidates) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                if (-not (Test-MiosOCIArchive -ArchiveFilePath $candidate)) {
+                    Write-Host "  [FAIL] Invalid OCI archive: $candidate" -ForegroundColor Red
+                    $global:LASTEXITCODE = 1; return $false
+                }
+                $sourceArchive = (Resolve-Path -LiteralPath $candidate).Path
+                break
+            }
+        }
+        if (-not $sourceArchive) {
+            Write-Host '  [FAIL] Large media requires a real MiOS OCI archive. Supply -ArchivePath or MIOS_OCI_ARCHIVE.' -ForegroundColor Red
+            $global:LASTEXITCODE = 1; return $false
+        }
+    }
+
+    # Always create MiOS-Repo (the lightweight config brain < 16GB)
+    $repoDir = Join-Path $drivePath "MiOS-Repo"
+    $reposDir = Join-Path $repoDir "repos"
+    $null = New-Item -ItemType Directory -Force -Path $reposDir
+
+    # Copy shadow config into MiOS-Repo
+    $shadowToml = Join-Path $repoDir 'mios.toml'
+    if (-not (Test-Path -LiteralPath $shadowToml)) {
+        $tomlCandidates = @(
+            (Join-Path $HOME '.config/mios/mios.toml'),
+            (Join-Path $PSScriptRoot '../mios.toml'),
+            "C:\MiOS\usr\share\mios\mios.toml"
+        )
+        foreach ($cand in $tomlCandidates) {
+            if (Test-Path -LiteralPath $cand -PathType Leaf) {
+                Copy-Item -LiteralPath $cand -Destination $shadowToml -ErrorAction Stop
+                break
+            }
+        }
+    }
+    if (-not (Test-Path -LiteralPath $shadowToml)) { $global:LASTEXITCODE = 1; return $false }
+
+    # Clone/copy repos into MiOS-Repo
+    $miosGit = Join-Path $reposDir "MiOS"
+    $bootstrapGit = Join-Path $reposDir "mios-bootstrap"
+    if (-not (Test-Path -LiteralPath $miosGit)) {
+        if (Test-Path "C:\MiOS\.git") {
+            try { git clone --depth 1 "file:///C:/MiOS" $miosGit 2>$null } catch {}
+        }
+        if (-not (Test-Path -LiteralPath $miosGit) -and $env:MIOS_OFFLINE -ne "1") {
+            try { git clone --depth 1 https://github.com/mios-dev/mios.git $miosGit 2>$null } catch {}
+        }
+    }
+    if (-not (Test-Path -LiteralPath $bootstrapGit)) {
+        if (Test-Path "C:\mios-bootstrap\.git") {
+            try { git clone --depth 1 "file:///C:/mios-bootstrap" $bootstrapGit 2>$null } catch {}
+        }
+        if (-not (Test-Path -LiteralPath $bootstrapGit) -and $env:MIOS_OFFLINE -ne "1") {
+            try { git clone --depth 1 https://github.com/mios-dev/mios-bootstrap.git $bootstrapGit 2>$null } catch {}
+        }
+    }
+
+    # T-261: Stage separate MiOS-Data bulk store ONLY on disks meeting min_disk_gb gate
+    if ($diskSizeGB -ge $MinDiskGB) {
+        Write-Host "Disk >= ${MinDiskGB}GB gate met ($diskSizeGB GB). Staging separate MiOS-Data bulk store..." -ForegroundColor Cyan
+        $dataDir = Join-Path $drivePath "MiOS-Data"
+        $imagesDir = Join-Path $dataDir "images"
+        $modelsDir = Join-Path $dataDir "models"
+        $dnfDir = Join-Path $dataDir "dnf"
+        $flatpakDir = Join-Path $dataDir "flatpak"
+        $pipDir = Join-Path $dataDir "pip"
+
+        $null = New-Item -ItemType Directory -Force -Path $imagesDir
+        $null = New-Item -ItemType Directory -Force -Path $modelsDir
+        $null = New-Item -ItemType Directory -Force -Path $dnfDir
+        $null = New-Item -ItemType Directory -Force -Path $flatpakDir
+        $null = New-Item -ItemType Directory -Force -Path $pipDir
+
+        # Stage OCI archive for tools/install.sh offline path strictly into MiOS-Data/images/
+        $stagedArchive = Join-Path $imagesDir "mios-latest.tar"
+        Write-Host "Staging OCI archive to $stagedArchive..." -ForegroundColor Cyan
+
+        if ([System.IO.Path]::GetFullPath($sourceArchive) -ine [System.IO.Path]::GetFullPath($stagedArchive)) {
+            Copy-Item -LiteralPath $sourceArchive -Destination $stagedArchive -Force -ErrorAction Stop
+        }
+        if (-not (Test-MiosOCIArchive -ArchiveFilePath $stagedArchive)) { $global:LASTEXITCODE = 1; return $false }
+
+        # Calculate sha256 of OCI archive
+        $archiveSha256 = ""
+        if (Test-Path -LiteralPath $stagedArchive) {
+            $archiveSha256 = (Get-FileHash -LiteralPath $stagedArchive -Algorithm SHA256).Hash.ToLower()
+        }
+
+        # Extract OCI Image Layout if requested
+        $extractedSuccessfully = $false
+        if ($Extract) {
+            $extractDir = Join-Path $imagesDir "extracted"
+            Write-Host "Extracting OCI Image Layout to $extractDir..." -ForegroundColor Cyan
+            $extractedSuccessfully = Expand-MiosOCIImage -ArchiveFilePath $stagedArchive -DestinationPath $extractDir
+            if (-not $extractedSuccessfully) { $global:LASTEXITCODE = 1; return $false }
+        }
+
+        # Copy build artifacts if available
+        if (Test-Path "M:\MiOS-images\") {
+            Copy-Item "M:\MiOS-images\*" -Destination $imagesDir -Recurse -Force
+        }
+        $buildDiskArtifacts = Get-ChildItem -Path "build\*.vhdx", "build\*.raw", "build\*.qcow2", "build\*.iso" -ErrorAction SilentlyContinue
+        if ($buildDiskArtifacts) {
+            foreach ($art in $buildDiskArtifacts) {
+                Copy-Item $art.FullName -Destination $imagesDir -Force
+            }
+        }
+
+        # Stage model artifacts into MiOS-Data/models/
+        Write-Host "Staging model artifacts to $modelsDir..." -ForegroundColor Cyan
+        $modelSources = @(
+            "C:\MiOS\models",
+            "M:\models",
+            "M:\MiOS-models",
+            "build\models",
+            "usr\share\mios\vllm\model",
+            "usr\share\mios\models"
+        )
+        $stagedModelCount = 0
+        foreach ($ms in $modelSources) {
+            if (Test-Path -LiteralPath $ms) {
+                $mFiles = Get-ChildItem -Path $ms -File -Include "*.gguf", "*.bin", "*.safetensors", "*.pt", "*.json" -Recurse -ErrorAction SilentlyContinue
+                if ($mFiles) {
+                    foreach ($mf in $mFiles) {
+                        Copy-Item $mf.FullName -Destination $modelsDir -Force
+                        $stagedModelCount++
+                    }
+                }
+            }
+        }
+
+        # Stamped models inventory / manifest
+        $modelsManifest = Join-Path $modelsDir "models.json"
+        $modelsList = @(Get-ChildItem -LiteralPath $modelsDir -File | Where-Object { $_.Name -ne 'models.json' } | ForEach-Object {
+            @{ name = $_.Name; size_bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower() }
+        })
+        $modelsObj = @{
+            staged_count = $stagedModelCount
+            catalog = $modelsList
+            updated = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        }
+        $modelsObj | ConvertTo-Json -Depth 4 | Out-File -FilePath $modelsManifest -Encoding utf8
+
+        # Stamp MiOS-Data manifest.json
+        $manifestPath = Join-Path $dataDir "manifest.json"
+        $manifestObj = [ordered]@{
+            version = "1.0"
+            updated = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            disk_size_gb = $diskSizeGB
+            min_disk_gb = $MinDiskGB
+            gate_passed = $true
+            oci_archive = [ordered]@{
+                path = "MiOS-Data/images/mios-latest.tar"
+                sha256 = $archiveSha256
+                extracted = [bool]$extractedSuccessfully
+            }
+            components = [ordered]@{
+                images = "MiOS-Data/images"
+                models = "MiOS-Data/models"
+                dnf = "MiOS-Data/dnf"
+                flatpak = "MiOS-Data/flatpak"
+                pip = "MiOS-Data/pip"
+            }
+        }
+        $manifestObj | ConvertTo-Json -Depth 4 | Out-File -FilePath $manifestPath -Encoding utf8
+        Write-Host "MiOS-Data bulk store staged successfully ($manifestPath)." -ForegroundColor Green
+    } else {
+        Write-Host "[MiOS-Install] Disk size ($diskSizeGB GB) < min_disk_gb ($MinDiskGB GB) gate from [field.data_partition]/[cat.data_partition]." -ForegroundColor Yellow
+        Write-Host "[MiOS-Install] Skipping separate MiOS-Data bulk store staging (degrade-open offline mode: small USB stick carries MiOS-Repo config brain only)." -ForegroundColor Yellow
+    }
+
+    $global:LASTEXITCODE = 0
+    return $true
+}
+
+function Invoke-MiosVerify {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position = 0)]
+        [string]$DriveLetter = "D",
+
+        [Parameter()]
+        [int]$MinDiskGB = 512,
+
+        [int]$SimulatedDiskSizeGB = 0
+    )
+    $cleanLetter = $DriveLetter.TrimEnd(':\')
+    $isPath = ($DriveLetter.Contains('\') -or $DriveLetter.Contains('/') -or (Test-Path -LiteralPath $DriveLetter))
+    $drivePath = if ($isPath) { $DriveLetter } else { "${cleanLetter}:\" }
+
+    if (-not (Test-Path -LiteralPath $drivePath)) {
+        $global:LASTEXITCODE = 1
+        return $false
+    }
+
+    $diskSizeGB = $SimulatedDiskSizeGB
+    if ($diskSizeGB -le 0) {
+        try {
+            $root = [IO.Path]::GetPathRoot((Resolve-Path -LiteralPath $drivePath).Path)
+            $letter = $root.TrimEnd(':\')
+            if ($letter.Length -eq 1) {
+                $part = Get-Partition -DriveLetter $letter -ErrorAction SilentlyContinue
+                if ($part) {
+                    $disk = Get-Disk -Number $part.DiskNumber -ErrorAction SilentlyContinue
+                    if ($disk) { $diskSizeGB = [math]::Round($disk.Size / 1GB) }
+                }
+            }
+        } catch {}
+    }
+    if ($diskSizeGB -le 0) { $global:LASTEXITCODE = 1; return $false }
+
+    $repoDir = Join-Path $drivePath "MiOS-Repo"
+    if (-not (Test-Path -LiteralPath $repoDir) -or -not (Test-Path -LiteralPath (Join-Path $repoDir "mios.toml"))) {
+        $global:LASTEXITCODE = 1
+        return $false
+    }
+
+    $dataDir = Join-Path $drivePath "MiOS-Data"
+    if ($diskSizeGB -ge $MinDiskGB -and -not (Test-Path -LiteralPath $dataDir)) {
+        $global:LASTEXITCODE = 1; return $false
+    }
+    if ($diskSizeGB -lt $MinDiskGB -and (Test-Path -LiteralPath $dataDir)) {
+        $global:LASTEXITCODE = 1; return $false
+    }
+    if (Test-Path -LiteralPath $dataDir) {
+        $imagesDir = Join-Path $dataDir "images"
+        $modelsDir = Join-Path $dataDir "models"
+        $manifestPath = Join-Path $dataDir "manifest.json"
+        if (-not (Test-Path -LiteralPath $imagesDir) -or
+            -not (Test-Path -LiteralPath $modelsDir) -or
+            -not (Test-Path -LiteralPath $manifestPath)) {
+            $global:LASTEXITCODE = 1
+            return $false
+        }
+        try {
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            if ($manifest.gate_passed -ne $true) {
+                $global:LASTEXITCODE = 1
+                return $false
+            }
+            $archive = Join-Path $imagesDir 'mios-latest.tar'
+            if (-not (Test-MiosOCIArchive -ArchiveFilePath $archive) -or
+                (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $manifest.oci_archive.sha256) {
+                $global:LASTEXITCODE = 1
+                return $false
+            }
+        } catch {
+            $global:LASTEXITCODE = 1
+            return $false
+        }
+    }
+
+    $global:LASTEXITCODE = 0
+    return $true
+}
+
+# ============================================================================
+#  Backward Compatibility Aliases (T-1118)
+# ============================================================================
+function Invoke-MiOSCatStage { Invoke-MiosStage @args }
+function Invoke-MiOSCatVerify { Invoke-MiosVerify @args }

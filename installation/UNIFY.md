@@ -4,6 +4,18 @@
 
 # MiOS — Unified Native Installation + Configuration
 
+## Field ownership update (T-261 / T-1118, 2026-09-29)
+
+`field/` is the canonical hardware-facing component. The old `cat/` launchers
+are compatibility paths and immediately call `field/MiOS-Cat.{ps1,sh}`. Both
+field and the guided `installation/mios-install` surface call the single
+stage/verify implementation in `installation/mios-common.{ps1,sh}`. Staging
+large media requires a real MiOS OCI archive supplied with `-ArchivePath` or
+`--archive` (or `MIOS_OCI_ARCHIVE`). The installer validates the OCI manifest,
+config, filesystem layers, blob sizes, and SHA-256 digests before marking the
+media ready. On small media the `MiOS-Repo` shadow config remains available;
+an existing `MiOS-Repo/mios.toml` is preserved on repeat staging.
+
 **Goal:** one native web-pulled entry (`irm | iex` / `curl | bash`) that pulls everything and hands
 into the single guided `mios-install` surface, which both installs *and* opens the MiOS Portal /
 configurator — all reading/writing one SSOT. Flatten every redundant elevation / repo-fetch /

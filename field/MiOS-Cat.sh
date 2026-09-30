@@ -20,6 +20,11 @@ if [[ -z "$VERB" ]]; then
     exit $?
 fi
 
+INSTALL_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/../installation/mios-install.sh"
+if [[ -f "$INSTALL_SCRIPT" ]]; then
+    exec bash "$INSTALL_SCRIPT" "$VERB" "${VERBARGS[@]}"
+fi
+
 case "$VERB" in
     stage)
         Invoke_MiOSCatStage "${VERBARGS[@]}"

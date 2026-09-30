@@ -1,5 +1,4 @@
-# MiOS-Cat.ps1 -- canonical launcher shim for MiOS in cat/
-# Implements Law 9 (ONE-CANONICAL-NAME). Delegates to field/MiOS-Cat.ps1.
+# Legacy path retained for existing media. The canonical launcher is field/MiOS-Cat.ps1.
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
