@@ -1,4 +1,4 @@
-# MiOS-Cat.ps1 -- canonical Windows launcher for MiOS.
+# MiOS-Field.ps1 -- canonical Windows launcher for MiOS.
 # Implements Law 9 (ONE-CANONICAL-NAME). Dispatches verbs.
 
 $ErrorActionPreference = "Stop"
@@ -19,7 +19,7 @@ if (-not $noElevate) {
 }
 
 # Import the shared library
-$libPath = Join-Path $PSScriptRoot "lib\MiOS-Cat.psm1"
+$libPath = Join-Path $PSScriptRoot "lib\MiOS-Field.psm1"
 if (-not (Test-Path -LiteralPath $libPath)) {
     Write-Error "Backend library not found at $libPath"
     exit 1
@@ -31,35 +31,35 @@ $VerbArgs = if ($passArgs.Count -gt 1) { $passArgs[1..($passArgs.Count - 1)] } e
 
 if ([string]::IsNullOrWhiteSpace($Verb)) {
     # Default behavior: interactive menu
-    Show-MiOSCatMenu
+    Show-MiOSFieldMenu
     exit $LASTEXITCODE
 }
 
 switch -Regex ($Verb) {
     "^(stage)$" {
-        Invoke-MiOSCatStage @VerbArgs
+        Invoke-MiOSFieldStage @VerbArgs
     }
     "^(install)$" {
-        Invoke-MiOSCatInstall @VerbArgs
+        Invoke-MiOSFieldInstall @VerbArgs
     }
     "^(wsl|import)$" {
         $importArgs = @('-Target', $Verb) + $VerbArgs
-        Invoke-MiOSCatInstall @importArgs
+        Invoke-MiOSFieldInstall @importArgs
     }
     "^(build)$" {
-        Invoke-MiOSCatBuild @VerbArgs
+        Invoke-MiOSFieldBuild @VerbArgs
     }
     "^(update)$" {
-        Invoke-MiOSCatUpdate @VerbArgs
+        Invoke-MiOSFieldUpdate @VerbArgs
     }
     "^(provision)$" {
-        Invoke-MiOSCatProvision @VerbArgs
+        Invoke-MiOSFieldProvision @VerbArgs
     }
     "^(verify)$" {
-        Invoke-MiOSCatVerify @VerbArgs
+        Invoke-MiOSFieldVerify @VerbArgs
     }
     "^(manual)$" {
-        Invoke-MiOSCatManual @VerbArgs
+        Invoke-MiOSFieldManual @VerbArgs
     }
     default {
         Write-Error "Unknown verb: $Verb. Valid verbs: stage, install, build, update, provision, verify, manual, wsl, import."

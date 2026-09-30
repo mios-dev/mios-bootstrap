@@ -34,7 +34,7 @@ call :ensure_live_monitor
 :: Resolve dynamic configuration from mios.toml (SSOT).
 :: The launcher lives at <repo>\field\, so the repo-local SSOT (which also travels
 :: with the MiOS-Repo USB) is one level up; fall back to the canonical MiOS SSOT
-:: on a MiOS-equipped host. (Future [cat] SSOT block -> T-258.)
+:: on a MiOS-equipped host. (The [field] SSOT block is available.)
 set "toml_path=%~dp0..\mios.toml"
 if not exist "%toml_path%" set "toml_path=C:\MiOS\usr\share\mios\mios.toml"
 
@@ -46,7 +46,7 @@ set "medicat_sha1="
 set "medicat_md5="
 :: Ventoy version is NEVER hand-pinned. MiOS targets the NEWEST upstream GLOBALLY and
 :: GENERATES the pin at runtime (resolved live from GitHub) or at build (recorded into the
-:: SSOT SBOM as [cat].ventoy_version). Empty here on purpose -- no hardcoded fallback. If
+:: SSOT SBOM as [field].ventoy_version). Empty here on purpose -- no hardcoded fallback. If
 :: it cannot be resolved (offline + no build-recorded pin + no Ventoy already staged) the
 :: flash fails loud rather than silently pinning a stale version.
 set "ventoy_ver="
@@ -73,7 +73,7 @@ set "subtle_color=#B7C9D7"
 :: mios.toml omits (degrade-open on a missing/partial SSOT). TOML values are quoted or numeric.
 if not exist "%toml_path%" goto no_toml
 echo Loading installation settings from mios.toml SSOT...
-set "ssot_env=%TEMP%\mios-cat-ssot.cmd"
+set "ssot_env=%TEMP%\mios-field-ssot.cmd"
 del "%ssot_env%" /q >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content -Raw -LiteralPath '%toml_path%'; $q=[char]34; function G([string]$k){ $m=[regex]::Match($t, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*(?:'+$q+'([^'+$q+'\r\n]*)'+$q+'|(\d+)|(true|false))')); if($m.Success){ if($m.Groups[1].Value){ $m.Groups[1].Value -replace '\\\\','\' } elseif($m.Groups[2].Value){ $m.Groups[2].Value } else { $m.Groups[3].Value } } }; function GS([string]$sec,[string]$k){ $sm=[regex]::Match($t, ('(?ms)^\s*\['+[regex]::Escape($sec)+'\]\s*(.*?)(?=\r?\n\s*\[|\Z)')); if($sm.Success){ $m=[regex]::Match($sm.Groups[1].Value, ('(?m)^\s*'+[regex]::Escape($k)+'\s*=\s*(?:'+$q+'([^'+$q+'\r\n]*)'+$q+'|(\d+)|(true|false))')); if($m.Success){ if($m.Groups[1].Value){ $m.Groups[1].Value -replace '\\\\','\' } elseif($m.Groups[2].Value){ $m.Groups[2].Value } else { $m.Groups[3].Value } } } }; $map=[ordered]@{ drivepath='drivepath'; medicatver='medicatver'; medicat_sha1='medicat_sha1'; medicat_md5='medicat_md5'; ventoy_ver='ventoy_version'; file='cache_path'; bg_color='bg'; fg_color='fg'; accent_color='accent'; cursor_color='cursor'; success_color='success'; muted_color='muted'; subtle_color='subtle'; live_chat_enabled='live_chat_enabled'; live_chat_iso_name='live_chat_iso_name'; live_chat_iso_src='live_chat_iso_src'; monitor_enabled='monitor_enabled'; show_live_monitor='show_live_monitor' }; $o=New-Object System.Collections.Generic.List[string]; foreach($e in $map.GetEnumerator()){ $v=G $e.Value; if($v){ $o.Add('set '+$q+$e.Key+'='+$v+$q) } }; $mg=G 'min_disk_gb'; if($mg){ $o.Add('set '+$q+'min_disk_gb='+$mg+$q) }; $rl=GS 'cat.repo_partition' 'label'; if($rl){ $o.Add('set '+$q+'repo_label='+$rl+$q) }; $dl=GS 'cat.data_partition' 'label'; if($dl){ $o.Add('set '+$q+'data_label='+$dl+$q) }; if($o.Count){ Set-Content -LiteralPath '%ssot_env%' -Value $o -Encoding ascii }" 2>nul
 if exist "%ssot_env%" call "%ssot_env%"
@@ -123,8 +123,8 @@ if not exist bin\7z.exe (
         if exist "C:\Program Files\7-Zip\7z.dll" copy "C:\Program Files\7-Zip\7z.dll" bin\7z.dll >nul 2>&1
     ) else (
         echo Downloading 7z helper...
-        curl.exe -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.exe" -o ./bin/7z.exe 2>nul || powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.exe' -OutFile './bin/7z.exe' -UseBasicParsing -Headers @{'User-Agent'='MiOS-Cat'}" >nul 2>&1
-        curl.exe -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll" -o ./bin/7z.dll 2>nul || powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll' -OutFile './bin/7z.dll' -UseBasicParsing -Headers @{'User-Agent'='MiOS-Cat'}" >nul 2>&1
+        curl.exe -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.exe" -o ./bin/7z.exe 2>nul || powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.exe' -OutFile './bin/7z.exe' -UseBasicParsing -Headers @{'User-Agent'='MiOS-Field'}" >nul 2>&1
+        curl.exe -s -L "https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll" -o ./bin/7z.dll 2>nul || powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/mon5termatt/medicat_installer/main/7z/64.dll' -OutFile './bin/7z.dll' -UseBasicParsing -Headers @{'User-Agent'='MiOS-Field'}" >nul 2>&1
     )
 )
 
@@ -148,7 +148,7 @@ set "force_format=Enabled"
 
 :: ------------------------------------------------------------------
 :: mios-install.ps1 is the sole unified interface for the project.
-:: MiOS-Cat.bat is now strictly the USB flash executor.
+:: MiOS-Field.bat is now strictly the USB flash executor.
 :: ------------------------------------------------------------------
 goto start_install
 
@@ -156,7 +156,7 @@ goto start_install
 cls
 echo.
 echo ==========================================================
-echo             STARTING MiOS-Cat INSTALLATION
+echo             STARTING MiOS-Field INSTALLATION
 echo ==========================================================
 echo Target Drive      : %drivepath%:
 echo Cache File        : %file%
@@ -191,8 +191,8 @@ if not "%confirm%"=="Y" (
 )
 
 :: Ensure target drive exists
-set "log_file=C:\Windows\Temp\mios-cat-install.log"
-echo [START] MiOS-Cat Flash Execution Started at %DATE% %TIME% > "%log_file%"
+set "log_file=C:\Windows\Temp\mios-field-install.log"
+echo [START] MiOS-Field Flash Execution Started at %DATE% %TIME% > "%log_file%"
 
 if not exist "%drivepath%:\" (
     echo ERROR: Target drive %drivepath%: was not found! | tee -a "%log_file%" 2>nul
@@ -526,10 +526,10 @@ echo Target Drive: %drivepath%:
 echo ==========================================================
 echo.
 
-set "flash_log=%TEMP%\mios-cat-flash.log"
-set "flash_marker=%TEMP%\mios-cat-flash.marker"
+set "flash_log=%TEMP%\mios-field-flash.log"
+set "flash_marker=%TEMP%\mios-field-flash.marker"
 del "%flash_marker%" /q >nul 2>&1
-echo [INFO] Starting MiOS-Cat USB flash operations... > "%flash_log%"
+echo [INFO] Starting MiOS-Field USB flash operations... > "%flash_log%"
 
 if /i "%MIOS_NO_MONITOR%"=="1" goto skip_monitor
 if /i "%MIOS_UNIFIED%"=="1" goto skip_monitor
@@ -541,7 +541,7 @@ start "MiOS Monitor Launcher" powershell.exe -NoProfile -WindowStyle Hidden -Exe
 
 :: 11. Format & Initialize Target USB Drive
 echo Formatting and merging all USB partitions back to a single disk letter (%drivepath%:)...
-powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { Get-Partition -DiskNumber $d.Number | Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue; Initialize-Disk -Number $d.Number -PartitionStyle GPT -ErrorAction SilentlyContinue; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter %drivepath% -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Cat' -Confirm:$false | Out-Null }; Update-HostStorageCache }" >nul 2>&1
+powershell -NoProfile -Command "$d = Get-Partition -DriveLetter %drivepath% -ErrorAction SilentlyContinue | Get-Disk; if ($d) { Get-Partition -DiskNumber $d.Number | Remove-Partition -Confirm:$false -ErrorAction SilentlyContinue; Initialize-Disk -Number $d.Number -PartitionStyle GPT -ErrorAction SilentlyContinue; $p = New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter %drivepath% -ErrorAction SilentlyContinue; if ($p) { Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'MiOS-Field' -Confirm:$false | Out-Null }; Update-HostStorageCache }" >nul 2>&1
 
 set "vtoy_reserve_mb=4096"
 set "mios_repo_gb=0"
@@ -580,7 +580,7 @@ xcopy "%res_dir%\ventoy" "%drivepath%:\ventoy\" /E /I /H /Y /Q >nul
 xcopy "%res_dir%\theme" "%drivepath%:\ventoy\theme\" /E /I /H /Y /Q >nul
 mkdir "%drivepath%:\autorun" >nul 2>&1
 if exist "%res_dir%\autorun" xcopy "%res_dir%\autorun" "%drivepath%:\autorun\" /E /I /H /Y /Q >nul
-:: SystemRescue autorun triggers at the PARTITION ROOT (where ar_source=/dev/disk/by-label/MiOS-Cat
+:: SystemRescue autorun triggers at the PARTITION ROOT (where ar_source=/dev/disk/by-label/MiOS-Field
 :: scans). ar_suffixes keeps the two paths from EVER crossing: the SSH boot runs autorun0 (safe
 :: firstboot -- creates the mios user + prints the live IP/hardware connection header); the explicit
 :: "WIPE ALL DISKS" menu entry runs autorun9 (destructive, gated). The plain-`autorun` slot is left
@@ -611,7 +611,7 @@ robocopy "C:\MiOS" "%repodrive%:\repos\MiOS" /E /XD .npm node_modules build cach
 
 echo Staging shadow-config brain to %repo_label% (%repodrive%:)...
 if exist "%toml_path%" copy "%toml_path%" "%repodrive%:\mios.toml" /Y >nul 2>&1
-copy "%~f0" "%repodrive%:\MiOS-Cat.bat" /Y >nul 2>&1
+copy "%~f0" "%repodrive%:\MiOS-Field.bat" /Y >nul 2>&1
 
 echo Staging MiOS drive icons and autorun.inf across all partitions...
 if exist "%~dp0..\field\resources\autorun\mios-stage-icons.ps1" (
@@ -693,11 +693,11 @@ if not "%ico_file%"=="" (
 )
 del "%temp%\launcher.cs" /Q >nul 2>&1
 
-if exist "%flash_marker%" ( echo SUCCESS > "%flash_marker%" ) else if defined TEMP ( echo SUCCESS > "%TEMP%\mios-cat-flash.marker" )
+if exist "%flash_marker%" ( echo SUCCESS > "%flash_marker%" ) else if defined TEMP ( echo SUCCESS > "%TEMP%\mios-field-flash.marker" )
 
 echo.
 echo ==========================================================
-echo     MiOS-Cat ALL-IN-ONE USB FLASHING SUCCESSFULLY COMPLETED
+echo     MiOS-Field ALL-IN-ONE USB FLASHING SUCCESSFULLY COMPLETED
 echo ==========================================================
 echo All images were compiled on localhost SSD and written in one pass.
 echo Target drive %drivepath%: is now ready to boot!
@@ -773,9 +773,8 @@ exit /b
 :: ==================================================================
 :: Helper subroutines for the on-boarding / build surfaces.
 :: NOTE: the build-driver + Xbox-builder paths below have no SSOT home
-:: yet -- sibling task T-258 adds a [cat] table to mios.toml. Until it
-:: lands these are clearly-marked defaults; wire them to
-:: [cat].build_driver / [cat].xbox_builder when that table exists.
+:: in mios.toml; [field].build_driver and [field].xbox_builder override
+:: the portable defaults when set.
 :: ==================================================================
 
 :detect_env
@@ -822,10 +821,10 @@ goto :eof
 :: MiOS targets newest upstream GLOBALLY + never hand-pins. A "latest"/empty SSOT value is
 :: an INTENT sentinel, not a pin -- neutralize it, then resolve the newest release live from
 :: GitHub. On success the runtime pin wins (newest). On failure keep whatever the build
-:: recorded in [cat].ventoy_version (a real version) or stay empty -> caller fails loud.
+:: recorded in [field].ventoy_version (a real version) or stay empty -> caller fails loud.
 if /i "%ventoy_ver%"=="latest" set "ventoy_ver="
 set "ventoy_latest="
-for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "try { $h=@{'User-Agent'='MiOS-Cat'}; $r=Invoke-RestMethod -UseBasicParsing -TimeoutSec 8 -Headers $h 'https://api.github.com/repos/ventoy/Ventoy/releases/latest'; ($r.tag_name -replace '^v','') } catch { '' }"`) do set "ventoy_latest=%%i"
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "try { $h=@{'User-Agent'='MiOS-Field'}; $r=Invoke-RestMethod -UseBasicParsing -TimeoutSec 8 -Headers $h 'https://api.github.com/repos/ventoy/Ventoy/releases/latest'; ($r.tag_name -replace '^v','') } catch { '' }"`) do set "ventoy_latest=%%i"
 if defined ventoy_latest if not "%ventoy_latest%"=="" set "ventoy_ver=%ventoy_latest%"
 goto :eof
 
@@ -835,7 +834,7 @@ goto :eof
 :: wrapper (Build-MiOSXbox.ps1), else the DISM orchestrator
 :: (New-MiOSISO.ps1).
 set "xbox_builder="
-:: [cat].xbox_builder SSOT override (an absolute path) wins if set + present.
+:: [field].xbox_builder SSOT override (an absolute path) wins if set + present.
 if exist "%toml_path%" for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -Command "$v=(Get-Content '%toml_path%' | Select-String -Pattern '^\s*xbox_builder\s*=\s*\"(.*)\"' | ForEach-Object { $_.Matches.Groups[1].Value } | Select-Object -First 1); if ($v -and (Test-Path $v)) { $v }"`) do set "xbox_builder=%%i"
 if defined xbox_builder if not "%xbox_builder%"=="" goto :eof
 if exist "%~dp0..\field\autounattend\Build-MiOSXbox.ps1" (

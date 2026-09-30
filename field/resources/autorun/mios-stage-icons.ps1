@@ -1,5 +1,5 @@
 # AI-hint: Generates canonical SSOT distinct high-resolution PNG-ICO drive icons and autorun.inf metadata across MiOS USB partitions, updating Explorer registry keys and flushing Explorer icon cache.
-# AI-related: /usr/share/mios/ventoy/autorun/mios-stage-icons.ps1, /usr/share/mios/mios.toml, MiOS-Cat.bat, build-mios.ps1
+# AI-related: /usr/share/mios/ventoy/autorun/mios-stage-icons.ps1, /usr/share/mios/mios.toml, MiOS-Field.bat, build-mios.ps1
 param(
     [string]$CatDrive = "D",
     [string]$RepoDrive = "",
@@ -73,7 +73,7 @@ if (Test-Path $MiosToml) {
 function New-MiOSVectorDriveIcon {
     param(
         [string]$Path,
-        [string]$LabelText = "MiOS-Cat",
+        [string]$LabelText = "MiOS-Field",
         [string]$IconType = "CAT"  # CAT, REPO, DATA
     )
     try {
@@ -87,7 +87,7 @@ function New-MiOSVectorDriveIcon {
 
         if ($IconType -eq "CAT") {
             # =========================================================================
-            # NEW MiOS-Cat DESIGN: Futuristic Hexagonal Rescue Shield & Beacon
+            # NEW MiOS-Field DESIGN: Futuristic Hexagonal Rescue Shield & Beacon
             # =========================================================================
             $g.Clear([System.Drawing.Color]::FromArgb(11, 15, 25))
 
@@ -304,7 +304,7 @@ label=$Label
     }
 }
 
-Stage-PartitionIcon -Letter $CatDrive  -Label "MiOS-Cat"  -Type "CAT"
+Stage-PartitionIcon -Letter $CatDrive  -Label "MiOS-Field"  -Type "CAT"
 Stage-PartitionIcon -Letter $RepoDrive -Label "MiOS-Repo" -Type "REPO"
 Stage-PartitionIcon -Letter $DataDrive -Label "MiOS-Data" -Type "DATA"
 

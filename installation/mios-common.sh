@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI-hint: The ONE shared library for every Linux MiOS entrypoint (mios-install.sh, build-mios.sh,
-# AI-related: mios-common.ps1, mios-install.sh, build-mios.sh, field/MiOS-Cat.sh, usr/lib/mios/mios_toml.py, mios.toml
+# AI-related: mios-common.ps1, mios-install.sh, build-mios.sh, field/MiOS-Field.sh, usr/lib/mios/mios_toml.py, mios.toml
 
 mios_ssot_layers() {
     local p
@@ -353,7 +353,7 @@ invoke_mios_stage() {
     freeSpaceGB=$(echo "$info" | awk '{print $2}')
     (( diskSizeGB > 0 )) || { log_err "Cannot determine physical disk size for '$drive'."; return 1; }
 
-    # Read min_disk_gb from parameter, env, or SSOT [cat.data_partition] (default 512)
+    # Read min_disk_gb from parameter, env, or SSOT [field.data_partition] (default 512)
     local minDiskGB=512
     if [[ "$optMinDiskGB" -gt 0 ]]; then
         minDiskGB="$optMinDiskGB"
@@ -378,7 +378,7 @@ try:
     import tomllib
     with open('$t', 'rb') as f:
         d = tomllib.load(f)
-        c = (d.get('cat') or {}).get('data_partition') or (d.get('field') or {}).get('data_partition') or {}
+        c = (d.get('field') or {}).get('data_partition') or {}
         if 'min_disk_gb' in c:
             print(c['min_disk_gb'])
             sys.exit(0)
@@ -392,7 +392,7 @@ sys.exit(1)
                     fi
                 fi
                 local awkVal
-                awkVal="$(awk '/^\[(cat|field)\.data_partition\]/{flag=1;next} /^\[/{flag=0} flag && /min_disk_gb/{gsub(/[^0-9]/,"",$0); if (length($0)>0) {print $0; exit}}' "$t" 2>/dev/null || true)"
+                awkVal="$(awk '/^\[field\.data_partition\]/{flag=1;next} /^\[/{flag=0} flag && /min_disk_gb/{gsub(/[^0-9]/,"",$0); if (length($0)>0) {print $0; exit}}' "$t" 2>/dev/null || true)"
                 if [[ -n "$awkVal" && "$awkVal" -gt 0 ]]; then
                     minDiskGB="$awkVal"
                     break
@@ -566,7 +566,7 @@ PY
 EOF
         log_ok "MiOS-Data bulk store staged successfully ($dataDir/manifest.json)."
     else
-        log_warn "Disk size ($diskSizeGB GB) < min_disk_gb ($minDiskGB GB) gate from [field.data_partition]/[cat.data_partition]."
+        log_warn "Disk size ($diskSizeGB GB) < min_disk_gb ($minDiskGB GB) gate from [field.data_partition]."
         log_warn "Skipping separate MiOS-Data bulk store staging per T-261 specification (degrade-open offline mode: small USB stick carries MiOS-Repo config brain only)."
     fi
 
@@ -593,5 +593,5 @@ New_MiOSOCIArchive() { new_mios_oci_archive "$@"; }
 New_MiOS_OCI_Archive() { new_mios_oci_archive "$@"; }
 Expand_MiOSOCIImage() { expand_mios_oci_image "$@"; }
 Expand_MiOS_OCI_Image() { expand_mios_oci_image "$@"; }
-Invoke_MiOSCatStage() { invoke_mios_stage "$@"; }
-Invoke_MiOSCatVerify() { invoke_mios_verify "$@"; }
+Invoke_MiOSFieldStage() { invoke_mios_stage "$@"; }
+Invoke_MiOSFieldVerify() { invoke_mios_verify "$@"; }

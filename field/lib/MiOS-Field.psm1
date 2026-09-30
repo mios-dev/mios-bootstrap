@@ -1,4 +1,4 @@
-# field/lib/MiOS-Cat.psm1 -- shared backend for MiOS-Cat.
+# field/lib/MiOS-Field.psm1 -- shared backend for MiOS-Field.
 # Implements T-261: Separate MiOS-Data bulk store staging on disks meeting min_disk_gb gate.
 # Folded losslessly with installation/mios-common.ps1 (Task T-1118).
 
@@ -8,9 +8,9 @@ if (Test-Path -LiteralPath $commonPath) {
 }
 
 
-function Show-MiOSCatMenu {
+function Show-MiOSFieldMenu {
     Write-Host "==========================================================" -ForegroundColor Cyan
-    Write-Host "                MiOS-Cat Unified Launcher                 " -ForegroundColor Cyan
+    Write-Host "                MiOS-Field Unified Launcher                 " -ForegroundColor Cyan
     Write-Host "==========================================================" -ForegroundColor Cyan
     Write-Host " 1) Stage (Download artifacts to USB)"
     Write-Host " 2) Install (Headless deployment)"
@@ -25,25 +25,25 @@ function Show-MiOSCatMenu {
 
     $choice = Read-Host "Select an option"
     switch ($choice) {
-        "1" { Invoke-MiOSCatStage }
-        "2" { Invoke-MiOSCatInstall }
-        "3" { Invoke-MiOSCatBuild }
-        "4" { Invoke-MiOSCatUpdate }
-        "5" { Invoke-MiOSCatProvision }
-        "6" { Invoke-MiOSCatVerify }
-        "7" { Invoke-MiOSCatManual }
-        "8" { Invoke-MiOSCatInstall @('-Target', 'wsl') }
+        "1" { Invoke-MiOSFieldStage }
+        "2" { Invoke-MiOSFieldInstall }
+        "3" { Invoke-MiOSFieldBuild }
+        "4" { Invoke-MiOSFieldUpdate }
+        "5" { Invoke-MiOSFieldProvision }
+        "6" { Invoke-MiOSFieldVerify }
+        "7" { Invoke-MiOSFieldManual }
+        "8" { Invoke-MiOSFieldInstall @('-Target', 'wsl') }
         "0" { return }
-        default { Write-Host "Invalid choice."; Show-MiOSCatMenu }
+        default { Write-Host "Invalid choice."; Show-MiOSFieldMenu }
     }
 }
 
 # Stage and verify are implemented once in installation/mios-common.ps1.
 # This field module exports their compatibility names for existing callers.
 
-function Invoke-MiOSCatInstall {
+function Invoke-MiOSFieldInstall {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsList)
-    Write-Host "[MiOS-Cat] Executing verb: install" -ForegroundColor Green
+    Write-Host "[MiOS-Field] Executing verb: install" -ForegroundColor Green
     $ps1Path = Join-Path $PSScriptRoot "..\..\installation\mios-install.ps1"
     if (Test-Path $ps1Path) {
         $psBin = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
@@ -57,9 +57,9 @@ function Invoke-MiOSCatInstall {
     }
 }
 
-function Invoke-MiOSCatBuild {
+function Invoke-MiOSFieldBuild {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgsList)
-    Write-Host "[MiOS-Cat] Executing verb: build" -ForegroundColor Green
+    Write-Host "[MiOS-Field] Executing verb: build" -ForegroundColor Green
     $ps1Path = Join-Path $PSScriptRoot "..\..\build-mios.ps1"
     if (Test-Path $ps1Path) {
         $psBin = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { 'pwsh.exe' } else { 'powershell.exe' }
@@ -73,12 +73,12 @@ function Invoke-MiOSCatBuild {
     }
 }
 
-function Invoke-MiOSCatUpdate {
+function Invoke-MiOSFieldUpdate {
     param(
         [Parameter(Position = 0)]
         [string]$DriveLetter = "D"
     )
-    Write-Host "[MiOS-Cat] Executing verb: update" -ForegroundColor Green
+    Write-Host "[MiOS-Field] Executing verb: update" -ForegroundColor Green
     Write-Host "Refreshing staged payloads and their manifest..."
     $cleanLetter = $DriveLetter.TrimEnd(':\')
     $drivePath = if ($DriveLetter.Contains('\') -or $DriveLetter.Contains('/')) { $DriveLetter } else { "${cleanLetter}:\" }
@@ -90,14 +90,14 @@ function Invoke-MiOSCatUpdate {
     return Invoke-MiosStage -DriveLetter $DriveLetter
 }
 
-function Invoke-MiOSCatProvision {
+function Invoke-MiOSFieldProvision {
     param(
         [Parameter(Position = 0)]
         [string]$DriveLetter = "D",
         [Parameter()]
         [string]$TargetDir = ""
     )
-    Write-Host "[MiOS-Cat] Executing verb: provision" -ForegroundColor Green
+    Write-Host "[MiOS-Field] Executing verb: provision" -ForegroundColor Green
     Write-Host "Provisioning models from MiOS-Data..."
     $cleanLetter = $DriveLetter.TrimEnd(':\')
     $drivePath = if ($DriveLetter.Contains('\') -or $DriveLetter.Contains('/')) { $DriveLetter } else { "${cleanLetter}:\" }
@@ -130,19 +130,19 @@ function Invoke-MiOSCatProvision {
     }
 }
 
-function Invoke-MiOSCatManual {
-    Write-Host "[MiOS-Cat] Executing verb: manual" -ForegroundColor Green
+function Invoke-MiOSFieldManual {
+    Write-Host "[MiOS-Field] Executing verb: manual" -ForegroundColor Green
     powershell
 }
 
-Export-ModuleMember -Function Show-MiOSCatMenu, `
-    Invoke-MiOSCatStage, `
-    Invoke-MiOSCatInstall, `
-    Invoke-MiOSCatBuild, `
-    Invoke-MiOSCatUpdate, `
-    Invoke-MiOSCatProvision, `
-    Invoke-MiOSCatVerify, `
-    Invoke-MiOSCatManual, `
+Export-ModuleMember -Function Show-MiOSFieldMenu, `
+    Invoke-MiOSFieldStage, `
+    Invoke-MiOSFieldInstall, `
+    Invoke-MiOSFieldBuild, `
+    Invoke-MiOSFieldUpdate, `
+    Invoke-MiOSFieldProvision, `
+    Invoke-MiOSFieldVerify, `
+    Invoke-MiOSFieldManual, `
     Expand-MiOSOCIImage, `
     Test-MiOSMediaLayout, `
     New-MiOSOCIArchive

@@ -5,8 +5,8 @@
      the right args -- it never moves, renames, or reimplements them.
      AI-related: installation/mios-install.ps1, installation/mios-install.sh,
      installation/mios-install.bat, installation/mios-common.ps1,
-     installation/mios-common.sh, installation/UNIFY.md, field/MiOS-Cat.bat, field/MiOS-Cat.ps1,
-     field/MiOS-Cat.sh, build-mios.ps1, build-mios.sh, Get-MiOS.ps1,
+     installation/mios-common.sh, installation/UNIFY.md, field/MiOS-Field.bat, field/MiOS-Field.ps1,
+     field/MiOS-Field.sh, build-mios.ps1, build-mios.sh, Get-MiOS.ps1,
      field/autounattend/Build-MiOSXboxISO.ps1, field/autounattend/New-MiOSISO.ps1,
      field/autounattend/Deploy-MiOSXbox.ps1, field/autounattend/Invoke-MiOSProvision.ps1,
      field/autounattend/Build-MiOSSeed.ps1, mios-build, mios-update, mios.toml -->
@@ -40,18 +40,18 @@ fetch the repo, then hand straight into `mios-install`. See
 - `mios-install.ps1` — canonical Windows implementation. Full grammar,
   target table, `--dry-run`/`--unattended` logic. Self-elevates (UAC) only
   for targets that actually need Administrator (`live`, `flash`,
-  `xbox --type vm`, `oci`) — same pattern as `field\MiOS-Cat.ps1`.
+  `xbox --type vm`, `oci`) — same pattern as `field\MiOS-Field.ps1`.
 - `mios-install.sh` — canonical Linux implementation. Same grammar; targets
-  `fedora`, `bootc`, `build`, `update`, `flash` (via `field\MiOS-Cat.sh`), and
+  `fedora`, `bootc`, `build`, `update`, `flash` (via `field\MiOS-Field.sh`), and
   `live` run natively. Self-execs `sudo -E "$0" "$@"` only for targets that
   need root — the same convention `mios-build` / `mios-update` already use
   on an installed host.
 - `mios-install.bat` — thin shim **only**: resolves `pwsh.exe` (falls back
   to `powershell.exe`), forwards `%*` to `mios-install.ps1` unchanged,
   mirrors `%ERRORLEVEL%`. This is the deliberate **inverse** of
-  `field\MiOS-Cat.bat`/`field\MiOS-Cat.ps1`'s own convention — see
+  `field\MiOS-Field.bat`/`field\MiOS-Field.ps1`'s own convention — see
   "Why the .bat/.ps1 relationship looks backwards" below. Don't "fix" it to
-  match MiOS-Cat.
+  match MiOS-Field.
 - `mios-common.ps1` / `mios-common.sh` — the **one shared contract** both
   dispatchers source: the layered SSOT resolver (`Get-MiosSsotValue` /
   `mios_ssot_value`, `user > host > vendor`, mirroring
@@ -110,9 +110,9 @@ an entrypoint doesn't actually have.
 
 | Target | `--type` (default first) | Platform | Calls | Concrete invocation | Stage support | `--unattended` maps to |
 |---|---|---|---|---|---|---|
-| `live` | `live` (no-op today — see note) | Windows | `field\MiOS-Cat.bat` | `MiOS-Cat.bat stage` | none isolable (best-effort) — `start_install` is one monolithic pipeline | `NONINTERACTIVE=1` |
-| `flash` | `usb` (only) | Windows | `field\MiOS-Cat.bat` | `MiOS-Cat.bat stage` | same as `live` | `NONINTERACTIVE=1` |
-| `flash` | `usb` (only) | Linux | `field\MiOS-Cat.sh` | `./MiOS-Cat.sh` (Ventoy/MediCat kickstart, run as your **normal user** — see caveat below) | best-effort only | not supported — flag documented, still prompts |
+| `live` | `live` (no-op today — see note) | Windows | `field\MiOS-Field.bat` | `MiOS-Field.bat stage` | none isolable (best-effort) — `start_install` is one monolithic pipeline | `NONINTERACTIVE=1` |
+| `flash` | `usb` (only) | Windows | `field\MiOS-Field.bat` | `MiOS-Field.bat stage` | same as `live` | `NONINTERACTIVE=1` |
+| `flash` | `usb` (only) | Linux | `field\MiOS-Field.sh` | `./MiOS-Field.sh` (Ventoy/MediCat kickstart, run as your **normal user** — see caveat below) | best-effort only | not supported — flag documented, still prompts |
 | `xbox` | `iso` (default) | Windows | `field\autounattend\Build-MiOSXboxISO.ps1` | `Build-MiOSXboxISO.ps1 -TomlPath <ssot> [-SkipPrereqs] [-SkipWsl]` | `prereqs`=REAL (`-SkipPrereqs`) · `fetch`=REAL (pass `-SourceIso <path>` through `--` to skip the UUP fetch; omit to force it) · `service`/`iso`=best-effort (no standalone flag at this wrapper — drop to `New-MiOSISO.ps1` directly for that) · `flash`=N/A (no device write here) | no native unattended switch found; the script is already non-interactive by default |
 | `xbox` | `vm` | Windows | `field\autounattend\Deploy-MiOSXbox.ps1` | `Deploy-MiOSXbox.ps1 -TomlPath <ssot> [-SkipBuild -SourceIso <path>] -VMName <name> -LogDir <path>` | `prereqs`/`fetch`/`service`/`iso`=best-effort · `flash`=**REAL**: `--stage flash` → `-SkipBuild -SourceIso <existing-iso>` (create+boot the Hyper-V VM only) | none documented; progress is tracked via a JSON state file, not a flag |
 | `xbox` | `provision` | Windows | `field\autounattend\Invoke-MiOSProvision.ps1` | `Invoke-MiOSProvision.ps1 -TomlPath <ssot> [-SkipBootstrap]` | `service`=REAL — this whole script *is* the service stage, standalone · others N/A | `-SkipBootstrap` approximates it (skips the online Get-MiOS.ps1 fallback) |
@@ -120,20 +120,20 @@ an entrypoint doesn't actually have.
 | `fedora` | `fhs` (only) | Windows, target is remote | `build-mios.sh` | **prints** the ready-to-paste remote command (`sudo bash -c "..."`) — no native remote-exec in the inventory. Optional: set `$env:MIOS_REMOTE_HOST` to ssh it over instead. | same as above, applied to the printed/ssh'd command | same env vars, surfaced in the printed command |
 | `bootc` | `switch` (default) | Linux, run **on the target** | `build-mios.sh` | `INSTALL_MODE=bootc IMAGE_TAG=<ref> MIOS_PROMPT_TIMEOUT=1 sudo ./build-mios.sh` | `flash`=best-effort — Phase-4's reboot prompt is the flash stage; unattended answers "y" via the env var, not a dedicated flag | `MIOS_PROMPT_TIMEOUT=1` |
 | `bootc` | `upgrade` | Linux, already-installed host | `mios-update` | `mios-update [--check\|--apply\|--rollback]` | `prereqs`=REAL (`--check`, dry preview) · `flash`=REAL (`--apply`, stages + reboots) · `fetch`/`service`/`iso` collapse into `bootc upgrade` internals, not isolable | `--apply` is the closest analog — it still runs unattended by construction |
-| `oci` | `local` (default) | Windows | `build-mios.ps1` | `build-mios.ps1 -Unattended` with `$env:MIOS_SKIP_BIB=1` | see **caveat** below — `prereqs`/`service`=best-effort · `fetch`=real-ish via `MIOS_BOOTSTRAP_REPO`/`MIOS_BOOTSTRAP_REF` · `iso`=REAL-shaped: `--stage iso` omits `MIOS_SKIP_BIB` (full qcow2/raw/BIB matrix) · `flash`=N/A | `-Unattended` (the one real flag `MiOS-Cat.bat` itself passes) |
+| `oci` | `local` (default) | Windows | `build-mios.ps1` | `build-mios.ps1 -Unattended` with `$env:MIOS_SKIP_BIB=1` | see **caveat** below — `prereqs`/`service`=best-effort · `fetch`=real-ish via `MIOS_BOOTSTRAP_REPO`/`MIOS_BOOTSTRAP_REF` · `iso`=REAL-shaped: `--stage iso` omits `MIOS_SKIP_BIB` (full qcow2/raw/BIB matrix) · `flash`=N/A | `-Unattended` (the one real flag `MiOS-Field.bat` itself passes) |
 | `oci` | `full` | Windows | `build-mios.ps1` | `build-mios.ps1 -Unattended` (`MIOS_SKIP_BIB` unset) | same as `local`, `iso` stage forced on | `-Unattended` |
 | `oci` | `push` | Windows | `build-mios.ps1` | same as `local`/`full` + `$env:MIOS_GITHUB_TOKEN` exported first | same | `-Unattended` |
 | `seed` | `dev` (default) | Windows | `field\autounattend\Build-MiOSSeed.ps1` | `Build-MiOSSeed.ps1 -TomlPath <ssot> [-OutDir <path>] [-BuilderDistro MiOS-DEV] [-ImageRef <ref>] [-Force]` | `service`=REAL, single-shot (the whole script *is* the service+iso stage) · `prereqs`/`fetch`/`flash`=N/A (exports from an already-built distro, no fetch of its own) | no native unattended flag; the script has no documented prompts — treat as always-unattended |
 | `build` | (n/a) | Linux, already-installed host | `mios-build` | `mios-build [--apply\|--no-switch\|--tag <name>]` | `service`=default (podman build) · `flash`=REAL (`--apply`: build + switch + reboot) · `prereqs`/`fetch`/`iso`=N/A (operates on the tree already present) | `--apply` is closest; the script itself is always non-interactive |
 | `update` | (n/a) | Linux, already-installed host | `mios-update` | `mios-update [--check\|--apply\|--rollback]` | identical entrypoint to the `bootc --type upgrade` row above | `--apply` |
-| `update` | `repo` | Windows, bootstrap checkout | `field\MiOS-Cat.bat` | `MiOS-Cat.bat update` (→ `sub_update`: `git fetch`/`pull` both `C:\MiOS` and `C:\mios-bootstrap`) | `fetch`=REAL — this whole target *is* the fetch stage · others N/A | `NONINTERACTIVE=1` |
+| `update` | `repo` | Windows, bootstrap checkout | `field\MiOS-Field.bat` | `MiOS-Field.bat update` (→ `sub_update`: `git fetch`/`pull` both `C:\MiOS` and `C:\mios-bootstrap`) | `fetch`=REAL — this whole target *is* the fetch stage · others N/A | `NONINTERACTIVE=1` |
 
 `<ssot>` above resolves the same way every existing entrypoint already does:
 `..\mios.toml` relative to the script, else `C:\MiOS\usr\share\mios\mios.toml`.
 
 ### Verified caveat — `oci` and `MIOS_SKIP_BIB`
 
-`field\MiOS-Cat.bat`'s own `build_oci`/`build_all` menu items really do
+`field\MiOS-Field.bat`'s own `build_oci`/`build_all` menu items really do
 set/clear `$env:MIOS_SKIP_BIB` before calling `build-mios.ps1 -Unattended` —
 that's a real, existing distinction in the **caller**, and `mios-install`
 mirrors it rather than inventing a new env var. Read against the current
@@ -155,20 +155,20 @@ builder wasn't already provisioned.
 
 ### Verified caveat — `flash` on Linux is never run with `sudo`
 
-`field\MiOS-Cat.sh` explicitly checks `EUID` and **exits with an error** if
+`field\MiOS-Field.sh` explicitly checks `EUID` and **exits with an error** if
 launched as root (`CheckNotElevated`) — it calls `sudo` itself, per command,
 only where a step needs it. `mios-install flash` on Linux therefore runs
-`./MiOS-Cat.sh` as your normal user, not `sudo ./MiOS-Cat.sh`; you'll be
+`./MiOS-Field.sh` as your normal user, not `sudo ./MiOS-Field.sh`; you'll be
 prompted for your password inline when the script needs to elevate.
 
 ## Why some targets map where they do
 
 - **`live` vs `flash`.** Both resolve to the *same* call today,
-  `MiOS-Cat.bat stage`. `MiOS-Cat.bat`'s `start_install` settings
+  `MiOS-Field.bat stage`. `MiOS-Field.bat`'s `start_install` settings
   (`extract_mode`, `force_format`, `drivepath`) are interactive-menu-only —
   there's no flag or env var yet for `mios-install` to lean on to make
   `live` produce a lighter zero-install payload distinct from `flash`'s full
-  offline-repo payload. Until `MiOS-Cat.bat` optionally grows an additive
+  offline-repo payload. Until `MiOS-Field.bat` optionally grows an additive
   env-var default for `extract_mode` (a separate, carefully-scoped change —
   *not* something to sneak in here, per the "don't touch the existing
   entrypoints" rule), `--type` on `live` is accepted but is a documented
@@ -190,7 +190,7 @@ prompted for your password inline when the script needs to elevate.
   switch** as the real `--stage flash` mapping (skip straight to VM
   create+boot against an existing ISO) — a genuine flag, not best-effort.
 - **`oci`'s `--stage iso`** maps to *not* setting `MIOS_SKIP_BIB=1`
-  (produces the full qcow2/raw/BIB matrix, i.e. what `MiOS-Cat.bat`'s own
+  (produces the full qcow2/raw/BIB matrix, i.e. what `MiOS-Field.bat`'s own
   `build_all` branch requests); the default/`--stage service` sets
   `MIOS_SKIP_BIB=1` (what `build_oci` requests). See the verified caveat
   above for what that env var currently does — and doesn't — control inside
@@ -198,21 +198,21 @@ prompted for your password inline when the script needs to elevate.
 
 ## Why the .bat/.ps1 relationship looks backwards
 
-`field\MiOS-Cat.ps1` is already a thin, self-elevating shim that forwards
-`@args` to `field\MiOS-Cat.bat` — `.bat` canonical, `.ps1` shim. That's the
-right call *there* because `MiOS-Cat` targets factory-fresh Windows boxes:
+`field\MiOS-Field.ps1` is already a thin, self-elevating shim that forwards
+`@args` to `field\MiOS-Field.bat` — `.bat` canonical, `.ps1` shim. That's the
+right call *there* because `MiOS-Field` targets factory-fresh Windows boxes:
 cmd.exe is always present, double-clickable, and has no
 execution-policy gate to fight. `mios-install` is reached only *after*
 `Get-MiOS.ps1` has already cloned the repo and the operator is running from
-a real shell, so the constraint that forced `MiOS-Cat.bat` to be canonical
+a real shell, so the constraint that forced `MiOS-Field.bat` to be canonical
 doesn't apply here. Per this design, `mios-install.ps1` carries the real
 grammar (canonical) and `mios-install.bat` is the thin forwarder (shim) —
-the *inverse* of `MiOS-Cat`'s own convention. Don't "fix" it to match.
+the *inverse* of `MiOS-Field`'s own convention. Don't "fix" it to match.
 
 ## Conventions carried forward (not invented)
 
 - **Exit code mirroring**: `& $target_script @args; exit $LASTEXITCODE`
-  (Windows) / `"$@"; exit $?` (Linux) — exactly `MiOS-Cat.ps1`'s pattern.
+  (Windows) / `"$@"; exit $?` (Linux) — exactly `MiOS-Field.ps1`'s pattern.
 - **Self-elevation** via UAC relaunch (Windows) / self-`sudo` re-exec
   (Linux) only for targets that actually need it — never blanket elevation.
 - **`--dry-run`** prints the resolved command and does not execute — since
@@ -229,7 +229,7 @@ the *inverse* of `MiOS-Cat`'s own convention. Don't "fix" it to match.
 Per this repo's own convention — `mios.toml` is the one config surface,
 and `mios-toml-get` / `Get-MiosTomlValue` / `usr/lib/mios/mios_toml.py`
 already exist as the shared resolver both `build-mios.ps1` and
-`MiOS-Cat.bat` use — the target → entrypoint mapping table above is a
+`MiOS-Field.bat` use — the target → entrypoint mapping table above is a
 candidate for a future `mios.toml` `[installation.targets.<name>]` section
 (entrypoint path, arg templates, type/stage support flags) rather than
 staying hand-maintained in two scripts. `mios.toml` does not have this
@@ -248,7 +248,7 @@ the *entry into this whole system*, not something `mios-install`
 re-wraps — you only reach `mios-install` after `Get-MiOS.ps1` has already
 cloned `mios-bootstrap` locally. `Get-MiOS.ps1` also exposes
 `-Action BuildXboxISO` and `-Action FlashUSB`, which are themselves tiny
-wrappers (around `Build-MiOSXboxISO.ps1` and `MiOS-Cat.bat` respectively) —
+wrappers (around `Build-MiOSXboxISO.ps1` and `MiOS-Field.bat` respectively) —
 `mios-install xbox --type iso` and `mios-install flash` supersede those two
 with the fuller `--type`/`--stage`/`--dry-run` grammar, but neither
 `mios-install` nor this README should grow a path that calls back into

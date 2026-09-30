@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Shared backend for MiOS-Cat Linux/WSL launcher.
-# Implements Law 9 (ONE-CANONICAL-NAME) and Task T-261 parity with MiOS-Cat.psm1.
+# Shared backend for MiOS-Field Linux/WSL launcher.
+# Implements Law 9 (ONE-CANONICAL-NAME) and Task T-261 parity with MiOS-Field.psm1.
 # Folded losslessly with installation/mios-common.sh (Task T-1118).
 
 COMMON_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../installation" && pwd)/mios-common.sh"
@@ -9,9 +9,9 @@ if [[ -f "$COMMON_SH" ]]; then
 fi
 
 
-function Show_MiOSCatMenu() {
+function Show_MiOSFieldMenu() {
     echo -e "\033[36m==========================================================\033[0m"
-    echo -e "\033[36m                MiOS-Cat Unified Launcher                 \033[0m"
+    echo -e "\033[36m                MiOS-Field Unified Launcher                 \033[0m"
     echo -e "\033[36m==========================================================\033[0m"
     echo " 1) Stage (Download artifacts to USB)"
     echo " 2) Install (Headless deployment)"
@@ -25,22 +25,22 @@ function Show_MiOSCatMenu() {
     
     read -p "Select an option: " choice
     case "$choice" in
-        1) Invoke_MiOSCatStage "$@" ;;
-        2) Invoke_MiOSCatInstall "$@" ;;
-        3) Invoke_MiOSCatBuild "$@" ;;
-        4) Invoke_MiOSCatUpdate "$@" ;;
-        5) Invoke_MiOSCatProvision "$@" ;;
-        6) Invoke_MiOSCatManual "$@" ;;
-        7) Invoke_MiOSCatVerify "$@" ;;
+        1) Invoke_MiOSFieldStage "$@" ;;
+        2) Invoke_MiOSFieldInstall "$@" ;;
+        3) Invoke_MiOSFieldBuild "$@" ;;
+        4) Invoke_MiOSFieldUpdate "$@" ;;
+        5) Invoke_MiOSFieldProvision "$@" ;;
+        6) Invoke_MiOSFieldManual "$@" ;;
+        7) Invoke_MiOSFieldVerify "$@" ;;
         0) exit 0 ;;
-        *) echo "Invalid choice." ; Show_MiOSCatMenu "$@" ;;
+        *) echo "Invalid choice." ; Show_MiOSFieldMenu "$@" ;;
     esac
 }
 
 # Media staging and verification are implemented in installation/mios-common.sh.
 
-function Invoke_MiOSCatInstall() {
-    echo -e "\033[32m[MiOS-Cat] Executing verb: install\033[0m"
+function Invoke_MiOSFieldInstall() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: install\033[0m"
     local bootstrap_path="$(dirname "${BASH_SOURCE[0]}")/../../bootstrap.sh"
     if [[ -f "$bootstrap_path" ]]; then
         bash "$bootstrap_path" "$@"
@@ -50,8 +50,8 @@ function Invoke_MiOSCatInstall() {
     fi
 }
 
-function Invoke_MiOSCatBuild() {
-    echo -e "\033[32m[MiOS-Cat] Executing verb: build\033[0m"
+function Invoke_MiOSFieldBuild() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: build\033[0m"
     local build_path="$(dirname "${BASH_SOURCE[0]}")/../../build-mios.sh"
     if [[ -f "$build_path" ]]; then
         bash "$build_path" "$@"
@@ -61,8 +61,8 @@ function Invoke_MiOSCatBuild() {
     fi
 }
 
-function Invoke_MiOSCatUpdate() {
-    echo -e "\033[32m[MiOS-Cat] Executing verb: update\033[0m"
+function Invoke_MiOSFieldUpdate() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: update\033[0m"
     echo "Refreshing staged payloads and their manifest..."
     local drive="${1:-/mnt/usb}"
     local archive="$drive/MiOS-Data/images/mios-latest.tar"
@@ -73,8 +73,8 @@ function Invoke_MiOSCatUpdate() {
     fi
 }
 
-function Invoke_MiOSCatProvision() {
-    echo -e "\033[32m[MiOS-Cat] Executing verb: provision\033[0m"
+function Invoke_MiOSFieldProvision() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: provision\033[0m"
     echo "Provisioning models from MiOS-Data..."
     local drive="${1:-/mnt/usb}"
     local targetDir="${2:-/usr/share/mios/vllm/model}"
@@ -111,7 +111,7 @@ except (OSError, ValueError, KeyError, TypeError) as error:
 PY
 }
 
-function Invoke_MiOSCatManual() {
-    echo -e "\033[32m[MiOS-Cat] Executing verb: manual\033[0m"
+function Invoke_MiOSFieldManual() {
+    echo -e "\033[32m[MiOS-Field] Executing verb: manual\033[0m"
     bash
 }

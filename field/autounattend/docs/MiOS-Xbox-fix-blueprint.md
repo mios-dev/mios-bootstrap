@@ -96,6 +96,6 @@ resolve py_exe robustly [READY]. B6 ventoy/theme not found [READY]. B7 PortableA
 verify [READY]. B8 keypress at end — non-interactive under monitored path [READY].
 
 ## 10. Verification gate — stop the fake pass [READY]
-`MiOS-Cat.bat:463-475` only checks ISO **existence** then prints "100% compiled, serviced, and
+`MiOS-Field.bat:463-475` only checks ISO **existence** then prints "100% compiled, serviced, and
 verified" — overclaim. Replace with a REAL gate: mount `install.wim`, assert the SSOT-expected hive
 values + SetupComplete + MiOS scripts + Xbox reg are actually present (fail hard, no fake pass).

@@ -1,5 +1,5 @@
 # tests/test_cat_staging.ps1
-# Two-sided unit and integration tests for MiOS-Cat OCI data staging (Task T-261).
+# Two-sided unit and integration tests for MiOS-Field OCI data staging (Task T-261).
 # Verifies positive controls (large disk stages OCI archive, extracts layout, small disk skips MiOS-Data)
 # and negative controls (invalid media path, insufficient disk space, corrupted OCI archive).
 
@@ -9,10 +9,10 @@ param()
 $ErrorActionPreference = "Continue"
 
 $testRoot = Join-Path $PSScriptRoot "..\field"
-$libPath = Join-Path $testRoot "lib\MiOS-Cat.psm1"
+$libPath = Join-Path $testRoot "lib\MiOS-Field.psm1"
 
 if (-not (Test-Path -LiteralPath $libPath)) {
-    Write-Error "MiOS-Cat.psm1 not found at $libPath"
+    Write-Error "MiOS-Field.psm1 not found at $libPath"
     exit 1
 }
 
@@ -75,7 +75,7 @@ function Assert-Condition {
 }
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "  MiOS-Cat OCI Staging & Field Verification Tests (T-261) " -ForegroundColor Cyan
+Write-Host "  MiOS-Field OCI Staging & Field Verification Tests (T-261) " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 # -------------------------------------------------------------------------
@@ -87,7 +87,7 @@ $null = New-Item -ItemType Directory -Force -Path $tempDrive1
 Initialize-TestRepoDirs -Root $tempDrive1
 
 try {
-    $res1 = Invoke-MiOSCatStage -DriveLetter $tempDrive1 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 100 -ArchivePath $fixtureArchive -Extract
+    $res1 = Invoke-MiOSFieldStage -DriveLetter $tempDrive1 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 100 -ArchivePath $fixtureArchive -Extract
     Assert-Condition "Stage returns success ($res1)" ($res1 -eq $true)
     Assert-Condition "Global LASTEXITCODE is 0" ($global:LASTEXITCODE -eq 0)
 
@@ -128,8 +128,8 @@ try {
     }
 
     # Verify media layout check
-    $verifyPass = Invoke-MiOSCatVerify -DriveLetter $tempDrive1 -MinDiskGB 512
-    Assert-Condition "Invoke-MiOSCatVerify passes on valid 512GB media" ($verifyPass -eq $true)
+    $verifyPass = Invoke-MiOSFieldVerify -DriveLetter $tempDrive1 -MinDiskGB 512
+    Assert-Condition "Invoke-MiOSFieldVerify passes on valid 512GB media" ($verifyPass -eq $true)
 } finally {
     if (Test-Path -LiteralPath $tempDrive1) {
         Remove-Item -LiteralPath $tempDrive1 -Recurse -Force -ErrorAction SilentlyContinue
@@ -145,7 +145,7 @@ $null = New-Item -ItemType Directory -Force -Path $tempDrive2
 Initialize-TestRepoDirs -Root $tempDrive2
 
 try {
-    $res2 = Invoke-MiOSCatStage -DriveLetter $tempDrive2 -SimulatedDiskSizeGB 64 -SimulatedFreeSpaceGB 30
+    $res2 = Invoke-MiOSFieldStage -DriveLetter $tempDrive2 -SimulatedDiskSizeGB 64 -SimulatedFreeSpaceGB 30
     Assert-Condition "Stage returns success on small disk ($res2)" ($res2 -eq $true)
     Assert-Condition "Global LASTEXITCODE is 0" ($global:LASTEXITCODE -eq 0)
 
@@ -160,8 +160,8 @@ try {
     Assert-Condition "T-261 Invariant: MiOS-Data is SKIPPED on <512GB disk" $dataAbsent
 
     # Verify media layout check
-    $verifySmall = Invoke-MiOSCatVerify -DriveLetter $tempDrive2 -MinDiskGB 512 -SimulatedDiskSizeGB 64
-    Assert-Condition "Invoke-MiOSCatVerify passes on valid small media layout" ($verifySmall -eq $true)
+    $verifySmall = Invoke-MiOSFieldVerify -DriveLetter $tempDrive2 -MinDiskGB 512 -SimulatedDiskSizeGB 64
+    Assert-Condition "Invoke-MiOSFieldVerify passes on valid small media layout" ($verifySmall -eq $true)
 } finally {
     if (Test-Path -LiteralPath $tempDrive2) {
         Remove-Item -LiteralPath $tempDrive2 -Recurse -Force -ErrorAction SilentlyContinue
@@ -175,7 +175,7 @@ Write-Host "`n[Suite 3] Negative Control: Invalid / Non-Existent Media aborts wi
 $nonExistentPath = "Z:\NonExistentDrive_T261_" + [System.Guid]::NewGuid().ToString("N")
 $errOutput1 = $null
 
-$res3 = Invoke-MiOSCatStage -DriveLetter $nonExistentPath -ErrorVariable errOutput1 2>$null
+$res3 = Invoke-MiOSFieldStage -DriveLetter $nonExistentPath -ErrorVariable errOutput1 2>$null
 Assert-Condition "Stage returns failure ($res3 = false)" ($res3 -eq $false)
 Assert-Condition "Global LASTEXITCODE is non-zero (1)" ($global:LASTEXITCODE -eq 1)
 
@@ -191,7 +191,7 @@ $null = New-Item -ItemType Directory -Force -Path $tempDrive4
 
 try {
     # Simulate 512GB total drive but only 0.2GB free (less than 10GB required)
-    $res4 = Invoke-MiOSCatStage -DriveLetter $tempDrive4 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 0.2 2>$null
+    $res4 = Invoke-MiOSFieldStage -DriveLetter $tempDrive4 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 0.2 2>$null
     Assert-Condition "Stage returns failure when space is insufficient ($res4 = false)" ($res4 -eq $false)
     Assert-Condition "Global LASTEXITCODE is non-zero (1) on insufficient space" ($global:LASTEXITCODE -eq 1)
 
@@ -232,27 +232,24 @@ try {
 }
 
 # -------------------------------------------------------------------------
-# Test Suite 6: CLI Parity & Shim Invocation (cat/MiOS-Cat.ps1 and field/MiOS-Cat.ps1)
+# Test Suite 6: Canonical Field CLI Invocation
 # -------------------------------------------------------------------------
-Write-Host "`n[Suite 6] CLI Invocation Parity: cat/MiOS-Cat.ps1 and field/MiOS-Cat.ps1" -ForegroundColor Yellow
+Write-Host "`n[Suite 6] Canonical Field CLI Invocation" -ForegroundColor Yellow
 $tempDrive6 = Join-Path ([System.IO.Path]::GetTempPath()) ("mios_test_cli_" + [System.Guid]::NewGuid().ToString("N"))
 $null = New-Item -ItemType Directory -Force -Path $tempDrive6
 Initialize-TestRepoDirs -Root $tempDrive6
 
 try {
-    $cliScript = Join-Path $PSScriptRoot "..\field\MiOS-Cat.ps1"
-    $shimScript = Join-Path $PSScriptRoot "..\cat\MiOS-Cat.ps1"
+    $cliScript = Join-Path $PSScriptRoot "..\field\MiOS-Field.ps1"
+    Assert-Condition "field/MiOS-Field.ps1 exists" (Test-Path -LiteralPath $cliScript)
 
-    Assert-Condition "field/MiOS-Cat.ps1 exists" (Test-Path -LiteralPath $cliScript)
-    Assert-Condition "cat/MiOS-Cat.ps1 exists" (Test-Path -LiteralPath $shimScript)
-
-    # Test field/MiOS-Cat.ps1 stage with -NoElevate
+    # Test field/MiOS-Field.ps1 stage with -NoElevate
     & pwsh -NoProfile -ExecutionPolicy Bypass -File $cliScript stage -DriveLetter $tempDrive6 -SimulatedDiskSizeGB 512 -SimulatedFreeSpaceGB 50 -ArchivePath $fixtureArchive -NoElevate 2>&1 | Out-Null
-    Assert-Condition "field/MiOS-Cat.ps1 stage executed with exit code 0" ($LASTEXITCODE -eq 0)
+    Assert-Condition "field/MiOS-Field.ps1 stage executed with exit code 0" ($LASTEXITCODE -eq 0)
 
-    # Test cat/MiOS-Cat.ps1 verify
-    & pwsh -NoProfile -ExecutionPolicy Bypass -File $shimScript verify -DriveLetter $tempDrive6 -MinDiskGB 512 2>&1 | Out-Null
-    Assert-Condition "cat/MiOS-Cat.ps1 verify executed with exit code 0" ($LASTEXITCODE -eq 0)
+    # Test field/MiOS-Field.ps1 verify
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $cliScript verify -DriveLetter $tempDrive6 -MinDiskGB 512 2>&1 | Out-Null
+    Assert-Condition "field/MiOS-Field.ps1 verify executed with exit code 0" ($LASTEXITCODE -eq 0)
 } finally {
     if (Test-Path -LiteralPath $tempDrive6) {
         Remove-Item -LiteralPath $tempDrive6 -Recurse -Force -ErrorAction SilentlyContinue

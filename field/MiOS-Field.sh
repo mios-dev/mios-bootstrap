@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MiOS-Cat.sh -- canonical Linux/WSL launcher for MiOS.
+# MiOS-Field.sh -- canonical Linux/WSL launcher for MiOS.
 # Implements Law 9 (ONE-CANONICAL-NAME). Dispatches verbs.
 
 set -e
@@ -8,7 +8,7 @@ VERB="$1"
 shift || true
 VERBARGS=("$@")
 
-LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/cat.sh"
+LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/lib/field.sh"
 if [[ ! -f "$LIB_PATH" ]]; then
     echo "Backend library not found at $LIB_PATH" >&2
     exit 1
@@ -16,7 +16,7 @@ fi
 source "$LIB_PATH"
 
 if [[ -z "$VERB" ]]; then
-    Show_MiOSCatMenu "${VERBARGS[@]}"
+    Show_MiOSFieldMenu "${VERBARGS[@]}"
     exit $?
 fi
 
@@ -27,28 +27,28 @@ fi
 
 case "$VERB" in
     stage)
-        Invoke_MiOSCatStage "${VERBARGS[@]}"
+        Invoke_MiOSFieldStage "${VERBARGS[@]}"
         ;;
     verify)
-        Invoke_MiOSCatVerify "${VERBARGS[@]}"
+        Invoke_MiOSFieldVerify "${VERBARGS[@]}"
         ;;
     install)
-        Invoke_MiOSCatInstall "${VERBARGS[@]}"
+        Invoke_MiOSFieldInstall "${VERBARGS[@]}"
         ;;
     wsl|import)
-        Invoke_MiOSCatInstall -Target "$VERB" "${VERBARGS[@]}"
+        Invoke_MiOSFieldInstall -Target "$VERB" "${VERBARGS[@]}"
         ;;
     build)
-        Invoke_MiOSCatBuild "${VERBARGS[@]}"
+        Invoke_MiOSFieldBuild "${VERBARGS[@]}"
         ;;
     update)
-        Invoke_MiOSCatUpdate "${VERBARGS[@]}"
+        Invoke_MiOSFieldUpdate "${VERBARGS[@]}"
         ;;
     provision)
-        Invoke_MiOSCatProvision "${VERBARGS[@]}"
+        Invoke_MiOSFieldProvision "${VERBARGS[@]}"
         ;;
     manual)
-        Invoke_MiOSCatManual "${VERBARGS[@]}"
+        Invoke_MiOSFieldManual "${VERBARGS[@]}"
         ;;
     *)
         echo "Unknown verb: $VERB. Valid verbs: stage, verify, install, build, update, provision, manual, wsl, import." >&2

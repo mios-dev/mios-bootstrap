@@ -301,7 +301,7 @@ public static class MiosMonitorCenter {
 }
 
 function Start-MiosMonitor {
-    param([string]$LogPath, [string]$MarkerPath, [string]$Title = 'MiOS-Cat', [switch]$InProcess)
+    param([string]$LogPath, [string]$MarkerPath, [string]$Title = 'MiOS-Field', [switch]$InProcess)
     if ("$($env:MIOS_NO_MONITOR)".ToLower() -in @('1','true','yes','on') -or
         "$($env:MIOS_HEADLESS)".ToLower() -in @('1','true','yes','on')) { return $null }
 
@@ -658,7 +658,7 @@ function Invoke-MiosStage {
             if ($ssotPath -and (Test-Path -LiteralPath $ssotPath)) {
                 try {
                     $content = [System.IO.File]::ReadAllText($ssotPath)
-                    $rxSec = '(?ms)^\s*\[(?:cat|field)\.data_partition\][ \t]*\r?\n(?<body>.*?)(?=^\s*\[|\z)'
+                    $rxSec = '(?ms)^\s*\[field\.data_partition\][ \t]*\r?\n(?<body>.*?)(?=^\s*\[|\z)'
                     $mSec = [regex]::Match($content, $rxSec)
                     if ($mSec.Success) {
                         $mKey = [regex]::Match($mSec.Groups['body'].Value, '(?m)^\s*min_disk_gb\s*=\s*(\d+)')
@@ -919,7 +919,7 @@ function Invoke-MiosStage {
         $manifestObj | ConvertTo-Json -Depth 4 | Out-File -FilePath $manifestPath -Encoding utf8
         Write-Host "MiOS-Data bulk store staged successfully ($manifestPath)." -ForegroundColor Green
     } else {
-        Write-Host "[MiOS-Install] Disk size ($diskSizeGB GB) < min_disk_gb ($MinDiskGB GB) gate from [field.data_partition]/[cat.data_partition]." -ForegroundColor Yellow
+        Write-Host "[MiOS-Install] Disk size ($diskSizeGB GB) < min_disk_gb ($MinDiskGB GB) gate from [field.data_partition]." -ForegroundColor Yellow
         Write-Host "[MiOS-Install] Skipping separate MiOS-Data bulk store staging (degrade-open offline mode: small USB stick carries MiOS-Repo config brain only)." -ForegroundColor Yellow
     }
 
@@ -1011,5 +1011,5 @@ function Invoke-MiosVerify {
 # ============================================================================
 #  Backward Compatibility Aliases (T-1118)
 # ============================================================================
-function Invoke-MiOSCatStage { Invoke-MiosStage @args }
-function Invoke-MiOSCatVerify { Invoke-MiosVerify @args }
+function Invoke-MiOSFieldStage { Invoke-MiosStage @args }
+function Invoke-MiOSFieldVerify { Invoke-MiosVerify @args }

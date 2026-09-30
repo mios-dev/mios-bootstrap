@@ -9,13 +9,13 @@
   hand-maintained on the stick. Degrade-open: any failure leaves the checked-in grub.cfg
   defaults (rootpass=mios nofirewall ...) in place, which already boot SSH-enabled.
 .NOTES
-  Called by installation\MiOS-Cat.bat after the Ventoy config is deployed to the stick.
+  Called by installation\MiOS-Field.bat after the Ventoy config is deployed to the stick.
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$TargetDrive,          # e.g. "D"
   [string]$TomlPath = "",
-  [string]$PartitionLabel = "MiOS-Cat"                 # fallback ar_source label ([cat.sysrescue].ar_source_label)
+  [string]$PartitionLabel = "MiOS-Field"                 # fallback ar_source label ([cat.sysrescue].ar_source_label)
 )
 $ErrorActionPreference = 'Stop'
 function Note($m){ Write-Host "[render-sysrescue] $m" }
@@ -57,7 +57,7 @@ try {
   $header = IsTrue (GS 'cat.sysrescue' 'connection_header' 'true')
   $label  = GS 'cat.sysrescue' 'ar_source_label' ''
   if (-not $label) { $label = $PartitionLabel }
-  if (-not $label) { $label = 'MiOS-Cat' }
+  if (-not $label) { $label = 'MiOS-Field' }
   # Passphrase gating the superuser-only "Wipe MiOS" GRUB entry. GRUB word-splits the
   # `password` line, so strip anything that would break parsing (keep alnum . _ -).
   $wipePass = GS 'cat.sysrescue' 'wipe_passphrase' 'mios'
@@ -75,7 +75,7 @@ try {
     $c = Get-Content -Raw -LiteralPath $grub
     $c = $c -replace 'password rescue mios', ("password rescue " + $wipePass)   # BEFORE rootpass=mios
     $c = $c -replace 'rootpass=mios', ("rootpass=" + $pass)
-    $c = $c -replace 'by-label/MiOS-Cat', ("by-label/" + $label)
+    $c = $c -replace 'by-label/MiOS-Field', ("by-label/" + $label)
     if (-not $nofw)   { $c = $c -replace ' nofirewall','' }
     if (-not $rootlg) { $c = $c -replace 'rootpass=[^\s]+\s*','' }
     Set-Content -LiteralPath $grub -Value $c -Encoding ASCII
@@ -87,7 +87,7 @@ try {
   if (Test-Path -LiteralPath $syslinux) {
     $s = Get-Content -Raw -LiteralPath $syslinux
     $s = $s -replace 'rootpass=mios', ("rootpass=" + $pass)
-    $s = $s -replace 'by-label/MiOS-Cat', ("by-label/" + $label)
+    $s = $s -replace 'by-label/MiOS-Field', ("by-label/" + $label)
     if (-not $nofw) { $s = $s -replace ' nofirewall','' }
     Set-Content -LiteralPath $syslinux -Value $s -Encoding ASCII
     Note "syslinux.cfg (BIOS path) rendered (pass=<ssot>, nofirewall=$nofw, label=$label)."

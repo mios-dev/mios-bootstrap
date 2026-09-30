@@ -839,10 +839,10 @@ function Set-MiOSRemoteAccessOffline {
                     Write-Host "    fetching virtio-win.iso (attempt $($try + 1)/5) from $u ..." -ForegroundColor DarkGray
                     Remove-Item $viso -Force -ErrorAction SilentlyContinue
                     if (Test-Path $curlExe) {
-                        & $curlExe -fL --retry 4 --retry-delay 5 --connect-timeout 30 -A 'Mozilla/5.0 (MiOS-Cat)' -o $viso $u 2>$null
+                        & $curlExe -fL --retry 4 --retry-delay 5 --connect-timeout 30 -A 'Mozilla/5.0 (MiOS-Field)' -o $viso $u 2>$null
                     } else {
                         $op = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
-                        try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri $u -OutFile $viso -UseBasicParsing -Headers @{ 'User-Agent' = 'Mozilla/5.0 (MiOS-Cat)' } -MaximumRedirection 6 -ErrorAction Stop } catch {}
+                        try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri $u -OutFile $viso -UseBasicParsing -Headers @{ 'User-Agent' = 'Mozilla/5.0 (MiOS-Field)' } -MaximumRedirection 6 -ErrorAction Stop } catch {}
                         $ProgressPreference = $op
                     }
                     if (-not (Test-MiOSIsoValid $viso)) { Write-Host "    download failed the ISO9660 integrity check (partial/HTML) -- retrying$(if ($try + 1 -eq 2 -and $vurls.Count -gt 1) { ' (next: stable-virtio mirror)' } else { '' })" -ForegroundColor Yellow; continue }
@@ -1539,7 +1539,7 @@ Copy-Item (Join-Path $media 'autounattend.xml') (Join-Path $media 'sources\autou
 # unattend.xml) is the FIRST implicit answer-file location Setup checks -- it is part of the
 # running RAM image, so it needs no media enumeration at all. We write it there AND at the
 # boot.wim root (X:\autounattend.xml) for every index. Result: MiOS-Xbox is fully portable
-# and self-installing from any USB/DVD/VM/Ventoy with no MiOS-Cat or Ventoy plugin present.
+# and self-installing from any USB/DVD/VM/Ventoy with no MiOS-Field or Ventoy plugin present.
 $__auXml   = Join-Path $media 'autounattend.xml'
 $__bootWim = Join-Path $media 'sources\boot.wim'
 if ((Test-Path $__auXml) -and (Test-Path $__bootWim)) {

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # AI-hint: Thin Linux bash dispatcher for the mios-install unified provisioning
-# AI-related: mios-common.sh, build-mios.sh, field/MiOS-Cat.sh, field/MiOS-Cat.bat
+# AI-related: mios-common.sh, build-mios.sh, field/MiOS-Field.sh, field/MiOS-Field.bat
 # AI-functions: usage, resolve_flash_or_live, resolve_live, resolve_flash
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CAT_DIR="${ROOT}/field"
-if [[ ! -d "$CAT_DIR" && -d "${ROOT}/../mios-bootstrap/field" ]]; then
-    CAT_DIR="$(cd "${ROOT}/../mios-bootstrap/field" && pwd)"
+FIELD_DIR="${ROOT}/field"
+if [[ ! -d "$FIELD_DIR" && -d "${ROOT}/../mios-bootstrap/field" ]]; then
+    FIELD_DIR="$(cd "${ROOT}/../mios-bootstrap/field" && pwd)"
 fi
-MIOS_CAT_SH="${CAT_DIR}/MiOS-Cat.sh"
+MIOS_FIELD_SH="${FIELD_DIR}/MiOS-Field.sh"
 
 _MIOS_REPO_ROOT="$ROOT"
 . "${SCRIPT_DIR}/mios-common.sh"
@@ -93,16 +93,16 @@ resolve_flash_or_live() {
         usb|live) ;;
         *) die "Target '${target_name}' only supports" ;;
     esac
-    [[ -f "$MIOS_CAT_SH" ]] || die "Cat/MiOS-Cat.sh not found at ${MIOS_CAT_SH}"
+    [[ -f "$MIOS_FIELD_SH" ]] || die "field/MiOS-Field.sh not found at ${MIOS_FIELD_SH}"
     FORBIDS_ROOT=1
-    CMD=(env -C "$CAT_DIR" bash ./MiOS-Cat.sh "${PASSTHROUGH[@]}")
-    STAGE_NOTES+=("stage isolation: NONE -- MiOS-Cat.sh is one monolithic interactive pipeline; --stage is documentation-only here.")
+    CMD=(env -C "$FIELD_DIR" bash ./MiOS-Field.sh "${PASSTHROUGH[@]}")
+    STAGE_NOTES+=("stage isolation: NONE -- MiOS-Field.sh is one monolithic interactive pipeline; --stage is documentation-only here.")
     [[ -n "$STAGE" ]] && STAGE_NOTES+=("--stage ${STAGE} requested but not isolable; running the full pipeline.")
     if (( UNATTENDED )); then
-        STAGE_NOTES+=("--unattended requested but MiOS-Cat.sh has no non-interactive mode on Linux -- it WILL prompt for the USB device, Medicat source, and partition-scheme choice.")
+        STAGE_NOTES+=("--unattended requested but MiOS-Field.sh has no non-interactive mode on Linux -- it WILL prompt for the USB device, Medicat source, and partition-scheme choice.")
     fi
     if [[ "$target_name" == "live" ]]; then
-        STAGE_NOTES+=("'live' and 'flash' resolve to the SAME call today -- MiOS-Cat.sh has no lighter zero-install mode exposed via flag/env yet (documented open design question, not solved here).")
+        STAGE_NOTES+=("'live' and 'flash' resolve to the SAME call today -- MiOS-Field.sh has no lighter zero-install mode exposed via flag/env yet (documented open design question, not solved here).")
     fi
 }
 resolve_live()  { resolve_flash_or_live live; }
@@ -176,7 +176,7 @@ resolve_update() {
     case "$TYPE" in
         ""|update) ;;
         repo)
-            WINDOWS_GUIDANCE="target 'update' --type repo is Windows-only: it maps to 'field\\MiOS-Cat.bat update' (git fetch/pull of BOTH C:\\MiOS and C:\\mios-bootstrap). There is no Linux row for this in installation/README.md -- run it on the Windows checkout instead, or just 'git pull' this repo yourself."
+            WINDOWS_GUIDANCE="target 'update' --type repo is Windows-only: it maps to 'field\\MiOS-Field.bat update' (git fetch/pull of BOTH C:\\MiOS and C:\\mios-bootstrap). There is no Linux row for this in installation/README.md -- run it on the Windows checkout instead, or just 'git pull' this repo yourself."
             return
             ;;
         *) die "Target 'update' supports" ;;
@@ -250,7 +250,7 @@ resolve_oci() {
     local unattended_flag="" skip_bib_note=""
     (( UNATTENDED )) && unattended_flag=" -Unattended"
     case "$TYPE" in
-        local) skip_bib_note='$env:MIOS_SKIP_BIB=1 before calling (OCI image only -- what MiOS-Cat.bat''s build_oci menu item sets)' ;;
+        local) skip_bib_note='$env:MIOS_SKIP_BIB=1 before calling (OCI image only -- what MiOS-Field.bat''s build_oci menu item sets)' ;;
         full)  skip_bib_note='MIOS_SKIP_BIB left UNSET (full raw/iso/qcow2/vhd/wsl2 matrix -- what build_all sets)' ;;
         push)  skip_bib_note='MIOS_SKIP_BIB left UNSET, plus $env:MIOS_GITHUB_TOKEN exported first for the ghcr push' ;;
     esac

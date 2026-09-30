@@ -1453,7 +1453,7 @@
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>176</Order>
-            <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$env:MIOS_AGREEMENT_ACK='accepted'; $env:MIOS_AGREEMENT_BANNER='silent'; $env:MIOS_PROMPT_TIMEOUT='1'; $d = (Get-Volume | Where-Object { $_.FileSystemLabel -in 'MiOS-Repo','MiOS-Data' } | Select-Object -First 1).DriveLetter; if ($d -and (Test-Path \"$($d):\MiOS-Cat.bat\")) { & \"$($d):\MiOS-Cat.bat\" } else { irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex }"</CommandLine>
+            <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$env:MIOS_AGREEMENT_ACK='accepted'; $env:MIOS_AGREEMENT_BANNER='silent'; $env:MIOS_PROMPT_TIMEOUT='1'; $d = (Get-Volume | Where-Object { $_.FileSystemLabel -in 'MiOS-Repo','MiOS-Data' } | Select-Object -First 1).DriveLetter; if ($d -and (Test-Path \"$($d):\MiOS-Field.bat\")) { & \"$($d):\MiOS-Field.bat\" } else { irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex }"</CommandLine>
             <Description>MiOS bootstrap (nested offline USB / irm|iex)</Description>
             <RequiresUserInput>false</RequiresUserInput>
           </SynchronousCommand>

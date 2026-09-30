@@ -1616,8 +1616,8 @@ branding.living_wallpaper    = "true"
 
 
 # ----------------------------------------------------------------------------
-# [cat] -- MiOS-Cat unified USB installer + launcher/build configuration (SSOT for the
-# field/ entry point). Consumed by field/MiOS-Cat.{bat,ps1,sh}. Consolidates the former
+# [field] -- MiOS-Field unified USB installer + launcher/build configuration (SSOT for the
+# field/ entry point). Consumed by field/MiOS-Field.{bat,ps1,sh}. Consolidates the former
 # [medicat] block (T-258b). Empty ("") launcher paths mean "use the built-in portable
 # %~dp0-relative resolution" so a MiOS-Repo USB stays self-contained; set an ABSOLUTE
 # path only to OVERRIDE. (ADR-0008)
