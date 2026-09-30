@@ -156,11 +156,11 @@ if ($Action -ne 'Default') {
     }
 
     if ($Action -eq 'FlashUSB') {
-        Write-Host "[*] Action: FlashUSB. Staging and launching interactive MiOS-Cat installer..." -ForegroundColor Cyan
+        Write-Host "[*] Action: FlashUSB. Staging and launching interactive MiOS-Field installer..." -ForegroundColor Cyan
         # 1. Locate source folder
         $srcDir = Join-Path (Ensure-MiosBootstrapRepo) "field"
         if (-not (Test-Path $srcDir)) {
-            Write-Error "MiOS-Cat (field) folder not found after fetch -- check network / GitHub access."
+            Write-Error "MiOS-Field (field) folder not found after fetch -- check network / GitHub access."
             exit 1
         }
         # 2. Resolve staging directory
@@ -173,16 +173,16 @@ if ($Action -ne 'Default') {
         New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
         Copy-Item -Path "$srcDir\*" -Destination $targetDir -Recurse -Force
         
-        # 4. Launch the canonical MiOS-Cat launcher. It self-elevates via UAC, so
+        # 4. Launch the canonical MiOS-Field launcher. It self-elevates via UAC, so
         # it ends up running as the machine Administrator -- which on a provisioned
         # MiOS host is the SSOT-named MiOS AI admin account (the renamed built-in
         # Administrator; [autounattend.service].svc_user, default 'mios-sudo').
         # We no longer hardcode a 'MIOS\Administrator' scheduled-task principal:
         # the hostname AND the admin-account name are operator-defined via SSOT, so
         # a fixed 'MIOS\Administrator' was wrong on every box but this dev machine.
-        $catScript = Join-Path $targetDir "MiOS-Cat.bat"
-        Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Cat`" cmd.exe /k `"$catScript`""
-        Write-Host "[+] Interactive MiOS-Cat launcher spawned from staged directory." -ForegroundColor Green
+        $catScript = Join-Path $targetDir "MiOS-Field.bat"
+        Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Field`" cmd.exe /k `"$catScript`""
+        Write-Host "[+] Interactive MiOS-Field launcher spawned from staged directory." -ForegroundColor Green
         exit 0
     }
 
@@ -7187,9 +7187,9 @@ if ($_bootstrapExit -eq 0) {
     }
 }
 
-# -- MiOS-Cat handoff: offer to flash a bootable MiOS-Cat USB -----------------
+# -- MiOS-Field handoff: offer to flash a bootable MiOS-Field USB -----------------
 # The bare `irm|iex` one-liner runs the Default action and (until now) never
-# routed to MiOS-Cat -- the -Action FlashUSB path is unreachable from a pipe (no
+# routed to MiOS-Field -- the -Action FlashUSB path is unreachable from a pipe (no
 # params). Offer it here as a param-less prompt so a factory-fresh install can go
 # straight from provisioning to building a deploy USB. Skipped under -Unattended
 # (never surprise-format a drive) or if bootstrap did not succeed.
@@ -7197,24 +7197,24 @@ if ($_bootstrapExit -eq 0 -and -not $Unattended) {
     try {
         $_catSrc = Join-Path $RepoDir 'field'
         if (-not (Test-Path $_catSrc)) { $_catSrc = 'C:\mios-bootstrap\field' }
-        $_catBat = Join-Path $_catSrc 'MiOS-Cat.bat'
+        $_catBat = Join-Path $_catSrc 'MiOS-Field.bat'
         if (Test-Path $_catBat) {
             Write-Host ''
-            Write-Host '  MiOS is provisioned. MiOS-Cat can now build a bootable USB that deploys' -ForegroundColor Cyan
+            Write-Host '  MiOS is provisioned. MiOS-Field can now build a bootable USB that deploys' -ForegroundColor Cyan
             Write-Host '  MiOS (and MiOS-Xbox) onto any machine -- recovery tools, the offline Fedora' -ForegroundColor Cyan
             Write-Host '  installer, and the repo, all on one stick.' -ForegroundColor Cyan
-            $_ans = Read-Host '  Launch MiOS-Cat to build a deploy USB now? [y/N]'
+            $_ans = Read-Host '  Launch MiOS-Field to build a deploy USB now? [y/N]'
             if ($_ans -match '^(y|yes)$') {
-                Write-Host '  [*] Launching MiOS-Cat (canonical .bat)...' -ForegroundColor Cyan
+                Write-Host '  [*] Launching MiOS-Field (canonical .bat)...' -ForegroundColor Cyan
                 # Already elevated -- launch the canonical .bat directly in a new
                 # interactive console (no hardcoded-principal scheduled task).
-                Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Cat`" cmd.exe /k `"$_catBat`""
+                Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Field`" cmd.exe /k `"$_catBat`""
             } else {
                 Write-Host "  You can run it any time:  `"$_catBat`"" -ForegroundColor DarkGray
             }
         }
     } catch {
-        Write-Host "  [!] MiOS-Cat handoff prompt skipped (non-fatal): $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "  [!] MiOS-Field handoff prompt skipped (non-fatal): $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 

@@ -212,7 +212,7 @@ function New-MiOSAutounattendXml {
     if ($runBootstrap) {
         # Escape $bootUrl -- an SSOT override with '&' would otherwise break the XML.
         $_url = [Security.SecurityElement]::Escape($bootUrl)
-        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;`$env:MIOS_AGREEMENT_ACK='accepted'; `$env:MIOS_AGREEMENT_BANNER='silent'; `$env:MIOS_PROMPT_TIMEOUT='1'; `$d = (Get-Volume | Where-Object { `$_.FileSystemLabel -in 'MiOS-Repo','MiOS-Data' } | Select-Object -First 1).DriveLetter; if (`$d -and (Test-Path `&quot;`$(`$d):\MiOS-Cat.bat`&quot;)) { &amp; `&quot;`$(`$d):\MiOS-Cat.bat`&quot; } else { irm $_url | iex }&quot;"
+        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;`$env:MIOS_AGREEMENT_ACK='accepted'; `$env:MIOS_AGREEMENT_BANNER='silent'; `$env:MIOS_PROMPT_TIMEOUT='1'; `$d = (Get-Volume | Where-Object { `$_.FileSystemLabel -in 'MiOS-Repo','MiOS-Data' } | Select-Object -First 1).DriveLetter; if (`$d -and (Test-Path `&quot;`$(`$d):\MiOS-Field.bat`&quot;)) { &amp; `&quot;`$(`$d):\MiOS-Field.bat`&quot; } else { irm $_url | iex }&quot;"
         [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>{1}</CommandLine><Description>MiOS bootstrap (nested offline USB / irm|iex)</Description><RequiresUserInput>false</RequiresUserInput></SynchronousCommand>' -f $_flOrd, $cmd))
         $_flOrd++
     }

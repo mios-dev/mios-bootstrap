@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# MiOS-Field.sh -- canonical Linux/WSL launcher for MiOS-Field.
-# Dispatches verbs. MiOS-Cat.sh is a defunct shim that forwards here.
+# MiOS-Field.sh -- canonical Linux/WSL launcher for MiOS.
+# Implements Law 9 (ONE-CANONICAL-NAME). Dispatches verbs.
 
 set -e
 
@@ -20,12 +20,10 @@ if [[ -z "$VERB" ]]; then
     exit $?
 fi
 
-INSTALL_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/../installation/mios-install.sh"
-if [[ -f "$INSTALL_SCRIPT" ]]; then
-    exec bash "$INSTALL_SCRIPT" "$VERB" "${VERBARGS[@]}"
-fi
-
 case "$VERB" in
+    flash|live)
+        Show_MiOSFieldMenu "${VERBARGS[@]}"
+        ;;
     stage)
         Invoke_MiOSFieldStage "${VERBARGS[@]}"
         ;;
@@ -34,9 +32,6 @@ case "$VERB" in
         ;;
     install)
         Invoke_MiOSFieldInstall "${VERBARGS[@]}"
-        ;;
-    wsl|import)
-        Invoke_MiOSFieldInstall -Target "$VERB" "${VERBARGS[@]}"
         ;;
     build)
         Invoke_MiOSFieldBuild "${VERBARGS[@]}"
@@ -51,7 +46,11 @@ case "$VERB" in
         Invoke_MiOSFieldManual "${VERBARGS[@]}"
         ;;
     *)
-        echo "Unknown verb: $VERB. Valid MiOS-Field verbs: stage, verify, install, build, update, provision, manual, wsl, import." >&2
-        exit 1
+        INSTALL_SCRIPT="${_MIOS_REPO_ROOT}/installation/mios-install.sh"
+        if [[ ! -f "$INSTALL_SCRIPT" ]]; then
+            echo "MiOS installer not found: $INSTALL_SCRIPT" >&2
+            exit 1
+        fi
+        exec bash "$INSTALL_SCRIPT" "$VERB" "${VERBARGS[@]}"
         ;;
 esac

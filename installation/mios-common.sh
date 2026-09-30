@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI-hint: The ONE shared library for every Linux MiOS entrypoint (mios-install.sh, build-mios.sh,
-# AI-related: mios-common.ps1, mios-install.sh, build-mios.sh, field/MiOS-Cat.sh, usr/lib/mios/mios_toml.py, mios.toml
+# AI-related: mios-common.ps1, mios-install.sh, build-mios.sh, field/MiOS-Field.sh, usr/lib/mios/mios_toml.py, mios.toml
 
 mios_ssot_layers() {
     local p
@@ -136,19 +136,14 @@ get_mios_disk_info() {
         diskSizeGB="$optSimDiskGB"
     elif [[ -n "${MIOS_SIMULATED_DISK_GB:-}" && "$MIOS_SIMULATED_DISK_GB" -gt 0 ]]; then
         diskSizeGB="$MIOS_SIMULATED_DISK_GB"
-    elif df -BG "$drive" >/dev/null 2>&1; then
-        diskSizeGB=$(df -BG "$drive" | awk 'NR==2 {print int($2)}')
-    fi
-
-    if [[ "$diskSizeGB" -eq 0 ]] && command -v lsblk >/dev/null 2>&1; then
-        local dev
-        dev=$(df "$drive" 2>/dev/null | awk 'NR==2 {print $1}')
-        if [[ -n "$dev" && -b "$dev" ]]; then
-            local bytes
+    elif command -v lsblk >/dev/null 2>&1; then
+        local dev parent bytes
+        dev=$(df -P "$drive" 2>/dev/null | awk 'NR==2 {print $1}')
+        if [[ -b "$dev" ]]; then
+            parent=$(lsblk -n -o PKNAME "$dev" 2>/dev/null | head -n 1)
+            [[ -n "$parent" && -b "/dev/$parent" ]] && dev="/dev/$parent"
             bytes=$(lsblk -b -d -n -o SIZE "$dev" 2>/dev/null || true)
-            if [[ -n "$bytes" && "$bytes" -gt 0 ]]; then
-                diskSizeGB=$(( bytes / 1024 / 1024 / 1024 ))
-            fi
+            [[ "$bytes" =~ ^[0-9]+$ ]] && diskSizeGB=$(( bytes / 1024 / 1024 / 1024 ))
         fi
     fi
 
@@ -156,8 +151,8 @@ get_mios_disk_info() {
         freeSpaceGB="$optSimFreeGB"
     elif [[ -n "${MIOS_SIMULATED_FREE_GB:-}" && "$MIOS_SIMULATED_FREE_GB" -gt 0 ]]; then
         freeSpaceGB="$MIOS_SIMULATED_FREE_GB"
-    elif df -BG "$drive" >/dev/null 2>&1; then
-        freeSpaceGB=$(df -BG "$drive" | awk 'NR==2 {print int($4)}')
+    elif df -B1 "$drive" >/dev/null 2>&1; then
+        freeSpaceGB=$(df -B1 "$drive" | awk 'NR==2 {print int($4 / 1073741824)}')
     fi
 
     echo "$diskSizeGB $freeSpaceGB"
@@ -180,6 +175,7 @@ test_mios_media_layout() {
     }
     local diskSizeGB
     diskSizeGB=$(echo "$info" | awk '{print $1}')
+    (( diskSizeGB > 0 )) || { log_err "Cannot determine physical disk size for '$drive'."; return 1; }
 
     local repoDir="$drive/MiOS-Repo"
     local dataDir="$drive/MiOS-Data"
@@ -197,9 +193,23 @@ test_mios_media_layout() {
     if [[ "$isLargeDisk" -eq 1 ]]; then
         local dataValid=0
         if [[ -d "$dataDir" && -d "$dataDir/images" && -f "$dataDir/manifest.json" ]]; then
-            local tarCount
-            tarCount=$(find "$dataDir/images" -maxdepth 1 -name "*.tar" 2>/dev/null | wc -l)
-            if (( tarCount > 0 )); then
+            if [[ -f "$dataDir/images/mios-latest.tar" && -d "$dataDir/models" ]] &&
+                test_mios_oci_archive "$dataDir/images/mios-latest.tar" &&
+                python3 - "$dataDir/manifest.json" "$dataDir/images/mios-latest.tar" <<'PY'
+import hashlib, json, sys
+try:
+    manifest = json.load(open(sys.argv[1], encoding='utf-8'))
+    assert manifest['gate_passed'] is True
+    expected = manifest['oci_archive']['sha256']
+    digest = hashlib.sha256()
+    with open(sys.argv[2], 'rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    assert digest.hexdigest() == expected
+except (OSError, ValueError, KeyError, AssertionError):
+    sys.exit(1)
+PY
+            then
                 dataValid=1
             fi
         fi
@@ -227,123 +237,71 @@ test_mios_media_layout() {
     fi
 }
 
-new_mios_oci_archive() {
+test_mios_oci_archive() {
     local archiveFilePath="$1"
-    local imageRef="${2:-localhost/mios:latest}"
+    [[ -s "$archiveFilePath" ]] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 - "$archiveFilePath" <<'PY'
+import hashlib, json, sys, tarfile
 
-    mkdir -p "$(dirname "$archiveFilePath")"
-    local tempDir
-    tempDir=$(mktemp -d 2>/dev/null || mktemp -d -t 'mios_oci')
+def fail():
+    sys.exit(1)
 
-    # 1. oci-layout
-    printf '{"imageLayoutVersion":"1.0.0"}' > "$tempDir/oci-layout"
+try:
+    with tarfile.open(sys.argv[1], 'r:*') as archive:
+        members = {member.name.lstrip('./'): member for member in archive.getmembers()}
+        if any(member.name.startswith('/') or '..' in member.name.replace('\\', '/').split('/')
+               or member.issym() or member.islnk() for member in archive.getmembers()):
+            fail()
+        def read(name):
+            member = members.get(name)
+            if member is None or not member.isfile(): fail()
+            return archive.extractfile(member).read()
+        def blob(descriptor):
+            digest = descriptor['digest']
+            if not digest.startswith('sha256:') or len(digest) != 71: fail()
+            data = read('blobs/sha256/' + digest[7:])
+            if len(data) != descriptor['size'] or hashlib.sha256(data).hexdigest() != digest[7:]: fail()
+            return data
+        if json.loads(read('oci-layout'))['imageLayoutVersion'] != '1.0.0': fail()
+        index = json.loads(read('index.json'))
+        if index['schemaVersion'] != 2 or not index['manifests']: fail()
+        for item in index['manifests']:
+            if item['mediaType'] != 'application/vnd.oci.image.manifest.v1+json': fail()
+            manifest = json.loads(blob(item))
+            layers = manifest['layers']
+            if manifest['schemaVersion'] != 2 or not layers: fail()
+            config = json.loads(blob(manifest['config']))
+            if config['os'] != 'linux' or len(config['rootfs']['diff_ids']) != len(layers): fail()
+            for layer in layers:
+                descriptor = layer['digest']
+                if not descriptor.startswith('sha256:') or len(descriptor) != 71: fail()
+                member = members.get('blobs/sha256/' + descriptor[7:])
+                if member is None or not member.isfile() or member.size != layer['size'] or member.size == 0: fail()
+                stream = archive.extractfile(member)
+                digest = hashlib.sha256()
+                for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                    digest.update(chunk)
+                if digest.hexdigest() != descriptor[7:]: fail()
+except (OSError, ValueError, KeyError, TypeError, tarfile.TarError):
+    fail()
+PY
+}
 
-    # 2. blobs
-    mkdir -p "$tempDir/blobs/sha256"
-
-    # Empty 512 byte tar layer
-    local layerHex
-    if command -v sha256sum >/dev/null 2>&1; then
-        dd if=/dev/zero bs=512 count=1 of="$tempDir/layer.tar" 2>/dev/null
-        layerHex=$(sha256sum "$tempDir/layer.tar" | awk '{print $1}')
-        mv "$tempDir/layer.tar" "$tempDir/blobs/sha256/$layerHex"
-    else
-        layerHex="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        touch "$tempDir/blobs/sha256/$layerHex"
-    fi
-
-    # Config blob
-    local configJson="{\"architecture\":\"amd64\",\"os\":\"linux\",\"rootfs\":{\"type\":\"layers\",\"diff_ids\":[\"sha256:$layerHex\"]}}"
-    local configHex
-    if command -v sha256sum >/dev/null 2>&1; then
-        printf '%s' "$configJson" > "$tempDir/config.json"
-        configHex=$(sha256sum "$tempDir/config.json" | awk '{print $1}')
-        local configSize
-        configSize=$(wc -c < "$tempDir/config.json")
-        mv "$tempDir/config.json" "$tempDir/blobs/sha256/$configHex"
-    else
-        configHex="d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f"
-        local configSize=${#configJson}
-        printf '%s' "$configJson" > "$tempDir/blobs/sha256/$configHex"
-    fi
-
-    # Manifest blob
-    local manifestJson="{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"config\":{\"mediaType\":\"application/vnd.oci.image.config.v1+json\",\"digest\":\"sha256:$configHex\",\"size\":$configSize},\"layers\":[{\"mediaType\":\"application/vnd.oci.image.layer.v1.tar\",\"digest\":\"sha256:$layerHex\",\"size\":512}]}"
-    local manifestHex
-    if command -v sha256sum >/dev/null 2>&1; then
-        printf '%s' "$manifestJson" > "$tempDir/manifest.blob"
-        manifestHex=$(sha256sum "$tempDir/manifest.blob" | awk '{print $1}')
-        local manifestSize
-        manifestSize=$(wc -c < "$tempDir/manifest.blob")
-        mv "$tempDir/manifest.blob" "$tempDir/blobs/sha256/$manifestHex"
-    else
-        manifestHex="b4c2b9a7c3d2e1f0"
-        local manifestSize=${#manifestJson}
-        printf '%s' "$manifestJson" > "$tempDir/blobs/sha256/$manifestHex"
-    fi
-
-    # 3. index.json
-    cat <<EOF > "$tempDir/index.json"
-{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"sha256:$manifestHex","size":$manifestSize,"annotations":{"org.opencontainers.image.ref.name":"latest"}}]}
-EOF
-
-    # 4. Pack into tar
-    rm -f "$archiveFilePath"
-    if tar -cf "$archiveFilePath" -C "$tempDir" oci-layout index.json blobs 2>/dev/null; then
-        rm -rf "$tempDir"
-        return 0
-    else
-        rm -rf "$tempDir"
-        log_err "Failed to pack OCI archive tar."
+new_mios_oci_archive() {
+    local archiveFilePath="$1" sourceArchivePath="${2:-}"
+    [[ -n "$sourceArchivePath" ]] && test_mios_oci_archive "$sourceArchivePath" || {
+        log_err "A real MiOS OCI image archive is required. Supply its path."
         return 1
-    fi
+    }
+    cp "$sourceArchivePath" "$archiveFilePath"
 }
 
 expand_mios_oci_image() {
-    local archiveFilePath="$1"
-    local destinationPath="$2"
-
-    if [[ ! -f "$archiveFilePath" ]]; then
-        log_err "OCI archive not found: $archiveFilePath"
-        return 1
-    fi
-
+    local archiveFilePath="$1" destinationPath="$2"
+    test_mios_oci_archive "$archiveFilePath" || { log_err "Invalid MiOS OCI archive: $archiveFilePath"; return 1; }
     mkdir -p "$destinationPath"
-    log_info "Extracting OCI archive: $archiveFilePath -> $destinationPath"
-
-    if ! tar -xf "$archiveFilePath" -C "$destinationPath" 2>/dev/null; then
-        if command -v python3 >/dev/null 2>&1; then
-            python3 -c "import tarfile; t=tarfile.open('$archiveFilePath'); t.extractall('$destinationPath'); t.close()" 2>/dev/null || {
-                log_err "Failed to extract archive $archiveFilePath."
-                return 1
-            }
-        else
-            log_err "Failed to extract archive $archiveFilePath."
-            return 1
-        fi
-    fi
-
-    # Validate OCI layout structure
-    local ociLayoutFile="$destinationPath/oci-layout"
-    local indexJsonFile="$destinationPath/index.json"
-
-    if [[ ! -f "$ociLayoutFile" ]]; then
-        log_err "Corrupted or invalid OCI archive: missing 'oci-layout' specification file."
-        return 1
-    fi
-
-    if [[ ! -f "$indexJsonFile" ]]; then
-        log_err "Corrupted or invalid OCI archive: missing 'index.json' manifest."
-        return 1
-    fi
-
-    if ! grep -q "imageLayoutVersion" "$ociLayoutFile" 2>/dev/null; then
-        log_err "Invalid oci-layout file: missing imageLayoutVersion."
-        return 1
-    fi
-
-    log_ok "OCI layout verified successfully."
-    return 0
+    tar -xf "$archiveFilePath" -C "$destinationPath"
 }
 
 invoke_mios_stage() {
@@ -354,6 +312,7 @@ invoke_mios_stage() {
     local optSimFreeGB=0
     local optExtract=0
     local optForce=0
+    local optArchive=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -365,6 +324,9 @@ invoke_mios_stage() {
                 optSimFreeGB="$2"; shift 2 ;;
             --extract)
                 optExtract=1; shift ;;
+            --archive)
+                [[ $# -ge 2 ]] || { log_err '--archive requires a path'; return 1; }
+                optArchive="$2"; shift 2 ;;
             --force)
                 optForce=1; shift ;;
             -*)
@@ -389,8 +351,9 @@ invoke_mios_stage() {
     local freeSpaceGB
     diskSizeGB=$(echo "$info" | awk '{print $1}')
     freeSpaceGB=$(echo "$info" | awk '{print $2}')
+    (( diskSizeGB > 0 )) || { log_err "Cannot determine physical disk size for '$drive'."; return 1; }
 
-    # Read min_disk_gb from parameter, env, or SSOT [cat.data_partition] (default 512)
+    # Read min_disk_gb from parameter, env, or SSOT [field.data_partition] (default 512)
     local minDiskGB=512
     if [[ "$optMinDiskGB" -gt 0 ]]; then
         minDiskGB="$optMinDiskGB"
@@ -415,7 +378,7 @@ try:
     import tomllib
     with open('$t', 'rb') as f:
         d = tomllib.load(f)
-        c = (d.get('cat') or {}).get('data_partition') or (d.get('field') or {}).get('data_partition') or {}
+        c = (d.get('field') or {}).get('data_partition') or {}
         if 'min_disk_gb' in c:
             print(c['min_disk_gb'])
             sys.exit(0)
@@ -429,7 +392,7 @@ sys.exit(1)
                     fi
                 fi
                 local awkVal
-                awkVal="$(awk '/^\[(cat|field)\.data_partition\]/{flag=1;next} /^\[/{flag=0} flag && /min_disk_gb/{gsub(/[^0-9]/,"",$0); if (length($0)>0) {print $0; exit}}' "$t" 2>/dev/null || true)"
+                awkVal="$(awk '/^\[field\.data_partition\]/{flag=1;next} /^\[/{flag=0} flag && /min_disk_gb/{gsub(/[^0-9]/,"",$0); if (length($0)>0) {print $0; exit}}' "$t" 2>/dev/null || true)"
                 if [[ -n "$awkVal" && "$awkVal" -gt 0 ]]; then
                     minDiskGB="$awkVal"
                     break
@@ -440,12 +403,32 @@ sys.exit(1)
 
     echo "Target disk: $drive (Total: $diskSizeGB GB, Free: $freeSpaceGB GB, min_disk_gb: $minDiskGB GB)"
 
+    local sourceArchive=""
+    if (( diskSizeGB >= minDiskGB )); then
+        local repoRoot
+        repoRoot="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+        for candidate in "$optArchive" "${MIOS_OCI_ARCHIVE:-}" \
+            "$repoRoot/build/oci-archive/mios-latest.tar" "$repoRoot/build/mios-latest.tar"; do
+            [[ -n "$candidate" && -f "$candidate" ]] || continue
+            if ! test_mios_oci_archive "$candidate"; then
+                log_err "Invalid OCI archive: $candidate"
+                return 1
+            fi
+            sourceArchive="$candidate"
+            break
+        done
+        [[ -n "$sourceArchive" ]] || {
+            log_err 'Large media requires a real MiOS OCI archive. Supply --archive or MIOS_OCI_ARCHIVE.'
+            return 1
+        }
+    fi
+
     # Verify free disk space (Negative Control)
     local requiredSpaceGB=1
     if (( diskSizeGB >= minDiskGB )); then
         requiredSpaceGB=10
     fi
-    if (( freeSpaceGB > 0 && freeSpaceGB < requiredSpaceGB && optForce == 0 )); then
+    if (( freeSpaceGB < requiredSpaceGB && optForce == 0 )); then
         log_err "Insufficient disk space on '$drive'. Required: ${requiredSpaceGB} GB, Available: ${freeSpaceGB} GB."
         return 1
     fi
@@ -456,12 +439,17 @@ sys.exit(1)
     mkdir -p "$reposDir"
 
     # Copy shadow config into MiOS-Repo
-    for tomlPath in "/usr/share/mios/mios.toml" "C:/MiOS/usr/share/mios/mios.toml" "$(dirname "${BASH_SOURCE[0]}")/../mios.toml"; do
-        if [[ -f "$tomlPath" ]]; then
-            cp "$tomlPath" "$repoDir/"
-            break
-        fi
-    done
+    if [[ ! -f "$repoDir/mios.toml" ]]; then
+        for tomlPath in "$HOME/.config/mios/mios.toml" \
+            "$(dirname "${BASH_SOURCE[0]}")/../mios.toml" \
+            "/usr/share/mios/mios.toml" "C:/MiOS/usr/share/mios/mios.toml"; do
+            if [[ -f "$tomlPath" ]]; then
+                cp "$tomlPath" "$repoDir/mios.toml" || return 1
+                break
+            fi
+        done
+    fi
+    [[ -f "$repoDir/mios.toml" ]] || { log_err 'No mios.toml available for MiOS-Repo'; return 1; }
 
     # Clone/copy repos into MiOS-Repo
     if [[ ! -d "$reposDir/MiOS" ]]; then
@@ -488,26 +476,10 @@ sys.exit(1)
         # Stage OCI archive strictly into MiOS-Data/images/
         local stagedArchive="$imagesDir/mios-latest.tar"
         log_info "Staging OCI archive to $stagedArchive..."
-        local foundTar=""
-        for t in build/oci-archive/*.tar build/*.tar M:/MiOS-images/*.tar; do
-            if [[ -f "$t" ]]; then
-                foundTar="$t"
-                break
-            fi
-        done
-
-        if [[ -n "$foundTar" ]]; then
-            log_info "Copying existing archive $foundTar -> $stagedArchive..."
-            cp "$foundTar" "$stagedArchive"
-        elif command -v podman >/dev/null 2>&1 && podman image exists localhost/mios:latest 2>/dev/null; then
-            log_info "Saving localhost/mios:latest -> $stagedArchive..."
-            podman save --format oci-archive -o "$stagedArchive" localhost/mios:latest 2>/dev/null || true
+        if [[ "$(realpath "$sourceArchive")" != "$(realpath -m "$stagedArchive")" ]]; then
+            cp "$sourceArchive" "$stagedArchive" || return 1
         fi
-
-        if [[ ! -f "$stagedArchive" ]]; then
-            log_info "Generating standard OCI image archive structure -> $stagedArchive..."
-            new_mios_oci_archive "$stagedArchive"
-        fi
+        test_mios_oci_archive "$stagedArchive" || { log_err 'Staged OCI archive failed validation'; return 1; }
 
         # If extract requested, expand and verify OCI layout
         local extractedOk=false
@@ -544,16 +516,20 @@ sys.exit(1)
         # Write models inventory
         local date_str
         date_str=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2026-09-29T12:00:00Z")
-        cat <<EOF > "$modelsDir/models.json"
-{
-  "staged_count": $stagedModels,
-  "catalog": [
-    { "name": "lfm2-700m.gguf", "role": "live_chat", "format": "gguf" },
-    { "name": "granite-4.1-8b.gguf", "role": "live_chat_fallback", "format": "gguf" }
-  ],
-  "updated": "$date_str"
-}
-EOF
+        python3 - "$modelsDir" <<'PY' > "$modelsDir/models.json"
+import hashlib, json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+catalog = []
+for path in sorted(root.iterdir()):
+    if not path.is_file() or path.name == 'models.json':
+        continue
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    catalog.append({'name': path.name, 'size_bytes': path.stat().st_size, 'sha256': digest.hexdigest()})
+print(json.dumps({'staged_count': len(catalog), 'catalog': catalog}, indent=2))
+PY
 
         # Compute archive hash and size
         local archiveSize=0
@@ -590,7 +566,7 @@ EOF
 EOF
         log_ok "MiOS-Data bulk store staged successfully ($dataDir/manifest.json)."
     else
-        log_warn "Disk size ($diskSizeGB GB) < min_disk_gb ($minDiskGB GB) gate from [field.data_partition]/[cat.data_partition]."
+        log_warn "Disk size ($diskSizeGB GB) < min_disk_gb ($minDiskGB GB) gate from [field.data_partition]."
         log_warn "Skipping separate MiOS-Data bulk store staging per T-261 specification (degrade-open offline mode: small USB stick carries MiOS-Repo config brain only)."
     fi
 
@@ -617,6 +593,5 @@ New_MiOSOCIArchive() { new_mios_oci_archive "$@"; }
 New_MiOS_OCI_Archive() { new_mios_oci_archive "$@"; }
 Expand_MiOSOCIImage() { expand_mios_oci_image "$@"; }
 Expand_MiOS_OCI_Image() { expand_mios_oci_image "$@"; }
-Invoke_MiOSCatStage() { invoke_mios_stage "$@"; }
-Invoke_MiOSCatVerify() { invoke_mios_verify "$@"; }
-
+Invoke_MiOSFieldStage() { invoke_mios_stage "$@"; }
+Invoke_MiOSFieldVerify() { invoke_mios_verify "$@"; }

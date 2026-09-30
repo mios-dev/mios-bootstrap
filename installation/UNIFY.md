@@ -4,6 +4,18 @@
 
 # MiOS — Unified Native Installation + Configuration
 
+## Field ownership update (T-261 / T-1118, 2026-09-29)
+
+`field/` is the canonical hardware-facing component. The retired `cat/` launcher
+paths have been removed; `field/MiOS-Field.{ps1,sh,bat}` owns the media entry. Both
+field and the guided `installation/mios-install` surface call the single
+stage/verify implementation in `installation/mios-common.{ps1,sh}`. Staging
+large media requires a real MiOS OCI archive supplied with `-ArchivePath` or
+`--archive` (or `MIOS_OCI_ARCHIVE`). The installer validates the OCI manifest,
+config, filesystem layers, blob sizes, and SHA-256 digests before marking the
+media ready. On small media the `MiOS-Repo` shadow config remains available;
+an existing `MiOS-Repo/mios.toml` is preserved on repeat staging.
+
 **Goal:** one native web-pulled entry (`irm | iex` / `curl | bash`) that pulls everything and hands
 into the single guided `mios-install` surface, which both installs *and* opens the MiOS Portal /
 configurator — all reading/writing one SSOT. Flatten every redundant elevation / repo-fetch /
@@ -13,7 +25,7 @@ prereq-install / toml-resolution / redirector into one shared step.
 
 **Entrypoints (Windows):** `Get-MiOS.ps1` (the `irm|iex` web door, `-Action` router + Default
 bootstrap → `bootstrap.ps1` → `build-mios.ps1`), `installation/mios-install.{ps1,sh,bat}` (guided
-dispatcher), `field/MiOS-Cat.bat` (USB flasher/menu hub), `build-mios.ps1` (MiOS-DEV builder).
+dispatcher), `field/MiOS-Field.bat` (USB flasher/menu hub), `build-mios.ps1` (MiOS-DEV builder).
 **Linux:** `build-mios.sh` (canonical), `bootstrap.sh`/`install.sh` (redirectors → build-mios.sh).
 
 **Portal + configurator = one app.** The Portal is routes inside the agent-pipe FastAPI
@@ -27,18 +39,18 @@ serves `/` (dashboard, embedded `_PORTAL_HTML`), `/configure` (Settings shell), 
 **SSOT — 3× mios.toml, layered `vendor < host < user`** (resolver `usr/lib/mios/mios_toml.py`):
 - `C:\MiOS\usr\share\mios\mios.toml` — **canonical VENDOR** SSOT (every derived surface + drift-gate reads this).
 - `C:\MiOS\mios.toml` — curated root "edit me" subset (drift-gate 48: key-subset of canonical).
-- `C:\mios-bootstrap\mios.toml` — Windows/`[cat]`/`[autounattend]` copy (drift-gate 22: `[ports]` parity).
+- `C:\mios-bootstrap\mios.toml` — Windows/`[field]`/`[autounattend]` copy (drift-gate 22: `[ports]` parity).
 
 ## The redundancy to flatten
 
 | Redundant work | Today | Target |
 |---|---|---|
-| UAC self-elevate | 4 impls (Get-MiOS, MiOS-Cat.bat, mios-install, build-mios) | ONE shared `Test/Invoke-Elevate` |
+| UAC self-elevate | 4 impls (Get-MiOS, MiOS-Field.bat, mios-install, build-mios) | ONE shared `Test/Invoke-Elevate` |
 | Repo fetch/clone | 6 paths, 2 targets (`M:\MiOS\repo\mios-bootstrap` vs `C:\mios-bootstrap`) | ONE fetch, ONE canonical checkout |
-| Prereq install | Get-MiOS (winget), build-mios (WSL/podman), MiOS-Cat (7z), Xbox (DISM) | ONE resolver keyed off the chosen target |
+| Prereq install | Get-MiOS (winget), build-mios (WSL/podman), MiOS-Field (7z), Xbox (DISM) | ONE resolver keyed off the chosen target |
 | mios.toml resolve | 5 hand-rolled PS resolvers, different search orders | ONE layered resolver (PS port of `mios_toml.py`) |
 | Bootstrap redirectors | `bootstrap.ps1`, `install.ps1`, `bootstrap.sh`, `install.sh` all → build-mios | collapse to ONE canonical entry per OS |
-| Guided menus | `mios-install` catalog **and** MiOS-Cat.bat menu; MiOS-Cat.bat even re-runs `irm Get-MiOS\|iex` (a loop back to the web door) | `mios-install` is the ONLY guided surface; MiOS-Cat.bat becomes the **flash executor only** |
+| Guided menus | `mios-install` catalog **and** MiOS-Field.bat menu; MiOS-Field.bat even re-runs `irm Get-MiOS\|iex` (a loop back to the web door) | `mios-install` is the ONLY guided surface; MiOS-Field.bat becomes the **flash executor only** |
 
 ## Target flow
 
@@ -47,7 +59,7 @@ irm .../mios | iex   (Windows)   /   curl .../mios | bash   (Linux)
   └─ ONE bootstrap, shared steps EXACTLY ONCE:
        agreement → elevate → repo-fetch → prereq(target) → SSOT-resolve
   └─ hands into  installation/mios-install.{ps1,sh}   (the single guided surface)
-       flash/live → field/MiOS-Cat.bat   (flash executor only; no self-update, no web re-entry)
+       flash/live → field/MiOS-Field.bat   (flash executor only; no self-update, no web re-entry)
        oci/build  → build-mios.{ps1,sh}
        xbox       → field/autounattend/*.ps1
        configure  → Portal/configurator @ /configure on the agent_pipe port   (the one SSOT editor)
@@ -78,10 +90,10 @@ Both fetch the repo (git, else GitHub zip) exactly once, then hand into
    `mios-install.sh` now source it and keep only their guided/dispatch surface (the two files each
    shed ~40 lines of duplicated theme/elevation/resolver code). Verified: parse + all-target
    dry-runs green in pwsh7 + WPS5.1 + Git-Bash. **Next:** migrate `Get-MiOS.ps1`, `build-mios.{ps1,sh}`,
-   and `MiOS-Cat.bat` to source the same contract (one at a time, each re-tested).
-3. **[DONE] Break the web-door loop in `MiOS-Cat.bat`** — `:build_need_online` no longer runs
+   and `MiOS-Field.bat` to source the same contract (one at a time, each re-tested).
+3. **[DONE] Break the web-door loop in `MiOS-Field.bat`** — `:build_need_online` no longer runs
    `irm Get-MiOS|iex` (a re-entry back through the web door, which redoes agreement/elevation/prereqs
-   and, since Get-MiOS often launches MiOS-Cat, was circular). It now fetches the mios-bootstrap repo
+   and, since Get-MiOS often launches MiOS-Field, was circular). It now fetches the mios-bootstrap repo
    ONCE (git, else GitHub zip — the same logic as `Ensure-MiosRepo`, inlined because the repo is
    exactly what's missing) into `C:\mios-bootstrap`, then hands into the LOCAL `build-mios.ps1`.
    Embedded PS parse-checked (0 errors). *Deliberately kept:* the startup self-update (only acts on a
@@ -97,7 +109,7 @@ Both fetch the repo (git, else GitHub zip) exactly once, then hand into
    hop — is load-bearing: it sets the `-BootstrapOnly` default and carries the `Get-MiOS.ps1`
    WT-staging/elevation/M:\ fallback that the Linux side folds into `build-mios.sh`.)
 5. **One canonical checkout path** — the shared contract already standardizes on `C:\mios-bootstrap`
-   (`Ensure-MiosRepo` / `mios_ensure_repo` and MiOS-Cat's fetch-once all target it). `Get-MiOS.ps1`'s
+   (`Ensure-MiosRepo` / `mios_ensure_repo` and MiOS-Field's fetch-once all target it). `Get-MiOS.ps1`'s
    `$RepoDir = M:\MiOS\repo\mios-bootstrap` default (its heavy Pass-1/Pass-2 build tree) is a
    *separate* build-workspace concern from the installer checkout — retiring/aligning it is a
    `build-mios.ps1` change, tracked separately so it doesn't destabilize the working build path.
@@ -129,7 +141,7 @@ Only listed files are touched. What the two repos legitimately own differently
 is enumerated in `not_mirrored` so the divergence reads as deliberate rather
 than as drift someone forgot to fix: the entry points (`install.sh` redirects to
 `build-mios.sh` here because this repo root IS the system root, while bootstrap
-redirects to `field/MiOS-Cat.sh`, which exists only there), `mios-common.sh`
+redirects to `field/MiOS-Field.sh`, which exists only there), `mios-common.sh`
 (identical code, richer comments in bootstrap that are not yet harvested), each
 repo's agent instructions, and `.gitignore`.
 

@@ -1,8 +1,8 @@
-<!-- AI-hint: Ground-truth bug list extracted from a REAL MiOS-Cat flash log (2026-07-23, UUP converter
+<!-- AI-hint: Ground-truth bug list extracted from a REAL MiOS-Field flash log (2026-07-23, UUP converter
      v124 -> New-MiOSISO -> AIO flash to D:). Folds into the MiOS-Xbox fix work. Corrects the earlier
      "native-converter skips all provisioning" hypothesis: servicing + branding + SetupComplete +
      autounattend DO bake. These are the actual defects to fix. -->
-# MiOS-Cat / MiOS-Xbox flash-log bugs — 2026-07-23 (ground truth)
+# MiOS-Field / MiOS-Xbox flash-log bugs — 2026-07-23 (ground truth)
 
 Build: UUP converter v124, stock **26100.8968** (24H2) -> New-MiOSISO servicing -> MiOS-Xbox.iso 3.2 GB
 -> AIO single-pass flash to D:. **Provisioning IS baked** (Xbox FSE 109 ids, debloat 45 ops into Default

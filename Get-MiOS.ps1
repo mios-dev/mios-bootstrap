@@ -538,32 +538,40 @@ if ($Action -ne 'Default') {
     if ($Action -eq 'FlashUSB') {
         Write-Host "[*] Action: FlashUSB. Staging and launching interactive MiOS-Field installer..." -ForegroundColor Cyan
         # 1. Locate source folder
-        $srcDir = Join-Path (Ensure-MiosBootstrapRepo) "field"
+        $sourceRoot = Ensure-MiosBootstrapRepo
+        $srcDir = Join-Path $sourceRoot "field"
         if (-not (Test-Path $srcDir)) {
             Write-Error "MiOS-Field (field) folder not found after fetch -- check network / GitHub access."
             exit 1
         }
         # 2. Resolve staging directory
         $v = Get-Volume | Where-Object { $_.DriveType -eq 'Fixed' -and $_.SizeRemaining -gt 25GB } | Sort-Object SizeRemaining -Descending | Select-Object -First 1
-        $stageDir = if ($v) { Join-Path "$($v.DriveLetter):\" "MiOS\medicat_stage" } else { Join-Path $env:TEMP "medicat_stage" }
-        $targetDir = Join-Path $stageDir "cat"
+        $stageDir = if ($v) { Join-Path "$($v.DriveLetter):\" "MiOS\field_stage" } else { Join-Path $env:TEMP "field_stage" }
+        $targetDir = Join-Path $stageDir "field"
         Write-Host "    Staging directory: $targetDir" -ForegroundColor Cyan
 
-        # 3. Copy source files to staging directory
-        New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-        Copy-Item -Path "$srcDir\*" -Destination $targetDir -Recurse -Force
-
-        # Canonical launcher first; the defunct MiOS-Cat.bat shim keeps older trees working.
-        $launchScript = Join-Path $targetDir "MiOS-Field.ps1"
-        $launchBat    = Join-Path $targetDir "MiOS-Cat.bat"
-        if (-not (Test-Path $launchScript) -and (Test-Path $launchBat)) { $launchScript = $launchBat }
-        if (Test-Path $launchScript) {
-            Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Field`" powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$launchScript`""
-            Write-Host "[+] Interactive MiOS-Field launcher spawned from staged directory." -ForegroundColor Green
-        } else {
-            Write-Error "MiOS-Field launcher not found in staged directory: $targetDir"
-            exit 1
+        # Preserve the repository layout required by the shared field backend.
+        # Stage only runtime source paths; never copy Git metadata or scratch files.
+        New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+        foreach ($relativePath in @('field', 'installation', 'automation', 'src', 'etc', 'usr', 'var',
+                'Get-MiOS.ps1', 'bootstrap.ps1', 'bootstrap.sh', 'build-mios.ps1', 'build-mios.sh',
+                'install.ps1', 'install.sh', 'seed-merge.ps1', 'seed-merge.sh', 'mios.toml',
+                'VERSION', 'system-prompt.md')) {
+            $sourcePath = Join-Path $sourceRoot $relativePath
+            if (Test-Path -LiteralPath $sourcePath) {
+                Copy-Item -LiteralPath $sourcePath -Destination $stageDir -Recurse -Force -ErrorAction Stop
+            }
         }
+
+        $fieldScript = Join-Path $targetDir "MiOS-Field.bat"
+        foreach ($requiredPath in @($fieldScript, (Join-Path $stageDir 'installation\mios-common.ps1'),
+                (Join-Path $stageDir 'installation\MiOS-Field.bat'))) {
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                throw "MiOS-Field runtime file was not staged: $requiredPath"
+            }
+        }
+        Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Field`" cmd.exe /k `"$fieldScript`" flash"
+        Write-Host "[+] Interactive MiOS-Field launcher spawned from staged directory." -ForegroundColor Green
         exit 0
     }
 
@@ -5019,12 +5027,17 @@ $_lhfwd    = [string](Get-MiosTomlValue -Section 'wsl2' -Key 'localhost_forwardi
 $_fwall    = [string](Get-MiosTomlValue -Section 'wsl2' -Key 'firewall'             -Default 'false')
 $_gui      = [string](Get-MiosTomlValue -Section 'wsl2' -Key 'gui_applications'     -Default 'true')
 $_isMirror = ($_netMode -ieq 'mirrored')
+$_wslHostRamGB = try { [math]::Floor((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory / 1GB) } catch { 16 }
+$_wslReservePct = [math]::Min(95, [math]::Max(0, [int](Get-MiosTomlValue -Section 'bootstrap.dev_vm.host_reserve' -Key 'memory_pct' -Default 50)))
+$_wslReserveGB  = [math]::Max(0, [int](Get-MiosTomlValue -Section 'bootstrap.dev_vm.host_reserve' -Key 'memory_gb'  -Default 8))
+$_wslRamGB = [math]::Max(4, $_wslHostRamGB - [math]::Max($_wslReserveGB, [math]::Floor($_wslHostRamGB * $_wslReservePct / 100)))
 
 $_wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
 $_wslCfgRaw = if (Test-Path $_wslCfg) { Get-Content $_wslCfg -Raw } else { "" }
 
 # Build the section body from TOML-resolved values.
 $_keyLines = New-Object System.Collections.Generic.List[string]
+$_keyLines.Add("memory=${_wslRamGB}GB")
 $_keyLines.Add("networkingMode=$_netMode")
 if ($_isMirror) {
     if ($_fwall -ieq 'true') { $_keyLines.Add('firewall=true') }
@@ -5036,7 +5049,7 @@ if ($_gui -ieq 'true') { $_keyLines.Add('guiApplications=true') }
 # Detect divergence: any required key missing or value mismatched.
 $_needWrite = $false
 foreach ($_kv in $_keyLines) {
-    $_pat = '^' + [regex]::Escape($_kv) + '\s*$'
+    $_pat = '(?m)^' + [regex]::Escape($_kv) + '\s*$'
     if ($_wslCfgRaw -notmatch $_pat) { $_needWrite = $true; break }
 }
 if ($_needWrite) {
@@ -5044,7 +5057,8 @@ if ($_needWrite) {
         $_baseline = @"
 
 [wsl2]
-# MiOS pre-Phase-0 minimum, generated from mios.toml [wsl2].* by
+# MiOS pre-Phase-0 settings, generated from mios.toml [wsl2] and
+# [bootstrap.dev_vm.host_reserve] by
 # Get-MiOS.ps1 on every irm|iex. Edit values in mios.html, not here --
 # this block is regenerated.
 $($_keyLines -join "`r`n")
@@ -5064,12 +5078,12 @@ $($_keyLines -join "`r`n")
                 if (-not $_added) { foreach ($_kv in $_keyLines) { $_out.Add($_kv) }; $_added = $true }
                 continue
             } elseif ($_l -match '^\[') { $_in = $false }
-            if ($_in -and $_l -match '^(networkingMode|localhostForwarding|firewall|guiApplications)\s*=') { continue }
+            if ($_in -and $_l -match '^(memory|networkingMode|localhostForwarding|firewall|guiApplications)\s*=') { continue }
             $_out.Add($_l)
         }
         [System.IO.File]::WriteAllLines($_wslCfg, $_out, (New-Object System.Text.UTF8Encoding($false)))
     }
-    Write-Host "  [+] .wslconfig: $_netMode mode written from mios.toml [wsl2].* (pre-Phase-0)" -ForegroundColor Green
+    Write-Host "  [+] .wslconfig: $_netMode mode and ${_wslRamGB}GB RAM written from mios.toml (pre-Phase-0)" -ForegroundColor Green
     & wsl.exe --shutdown 2>$null | Out-Null
 }
 
@@ -5663,10 +5677,7 @@ if ($_bootstrapExit -eq 0 -and -not $Unattended) {
     try {
         $_fieldSrc = Join-Path $RepoDir 'field'
         if (-not (Test-Path $_fieldSrc)) { $_fieldSrc = 'C:\mios-bootstrap\field' }
-        # Canonical executor is installation/MiOS-Field.bat; the defunct field/MiOS-Cat.bat
-        # shim (and the field copy on older trees) remain as fallbacks.
-        $_fieldBat = Join-Path (Split-Path $_fieldSrc -Parent) 'installation\MiOS-Field.bat'
-        if (-not (Test-Path $_fieldBat)) { $_fieldBat = Join-Path $_fieldSrc 'MiOS-Cat.bat' }
+        $_fieldBat = Join-Path $_fieldSrc 'MiOS-Field.bat'
         if (Test-Path $_fieldBat) {
             Write-Host ''
             Write-Host '  MiOS is provisioned. MiOS-Field can now build a bootable USB that deploys' -ForegroundColor Cyan
@@ -5677,7 +5688,7 @@ if ($_bootstrapExit -eq 0 -and -not $Unattended) {
                 Write-Host '  [*] Launching MiOS-Field (canonical .bat)...' -ForegroundColor Cyan
                 # Already elevated -- launch the canonical .bat directly in a new
                 # interactive console (no hardcoded-principal scheduled task).
-                Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Field`" cmd.exe /k `"$_fieldBat`""
+                Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/c start `"MiOS-Field`" cmd.exe /k `"$_fieldBat`" flash"
             } else {
                 Write-Host "  You can run it any time:  `"$_fieldBat`"" -ForegroundColor DarkGray
             }

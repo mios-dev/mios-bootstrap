@@ -3,16 +3,11 @@
 
 set -e
 
-# Canonical launcher first; the defunct MiOS-Cat shim keeps older checkouts working.
+# Use local cat if available (cloned tree), otherwise fetch from main
 FIELD_PATH="$(dirname "${BASH_SOURCE[0]}")/field/MiOS-Field.sh"
-CAT_PATH="$(dirname "${BASH_SOURCE[0]}")/field/MiOS-Cat.sh"
-if [[ -f "$FIELD_PATH" ]]; then
-    TARGET="$FIELD_PATH"
-elif [[ -f "$CAT_PATH" ]]; then
-    TARGET="$CAT_PATH"
-else
+if [[ ! -f "$FIELD_PATH" ]]; then
     curl -fsSL "https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/field/MiOS-Field.sh" | bash -s -- install "$@"
     exit $?
 fi
 
-bash "$TARGET" install "$@"
+bash "$FIELD_PATH" install "$@"

@@ -11,14 +11,13 @@ param(
     [int]$SimulatedDiskSizeGB = 0,
     [double]$SimulatedFreeSpaceGB = 0,
     [switch]$Extract,
+    [string]$ArchivePath = '',
     [parameter(ValueFromRemainingArguments=$true)][string[]]$Passthrough = @()
 )
 
 # AI-hint: Unified MiOS provisioning installer (Windows) -- the canonical `mios-install`.
 $ErrorActionPreference = 'Stop'
 $script:Root    = Split-Path -Parent $PSScriptRoot           # repo root (installation\ is one level down)
-$script:CatBat  = Join-Path $script:Root 'installation\MiOS-Cat.bat'
-if (-not (Test-Path $script:CatBat)) { $script:CatBat = Join-Path $script:Root 'field\MiOS-Cat.bat' }
 $script:BuildPs = Join-Path $script:Root 'build-mios.ps1'
 $script:AutoDir = Join-Path $script:Root 'field\autounattend'
 
@@ -45,7 +44,7 @@ function Show-MiosLogo {
 # ============================================================================
 function Get-MiosCatalog {
     [ordered]@{
-        'flash' = @{ title = 'Build a bootable MiOS-Cat USB'; platform='windows'; needsAdmin=$true; destructive=$true
+        'flash' = @{ title = 'Build a bootable MiOS-Field USB'; platform='windows'; needsAdmin=$true; destructive=$true
             what = 'Wipes a USB stick and forges a complete MiOS boot drive: Ventoy bootloader (SecureBoot/UEFI/GPT), Fedora + MiOS-Xbox installers, recovery tools, and offline MiOS repos.'
             produces = 'A USB you can boot on ANY PC to install or recover MiOS.'
             cost = '20-40 min'
@@ -181,9 +180,9 @@ function Resolve-Target {
     $ssot = if ($script:TomlPath) { $script:TomlPath } else { Join-Path $script:Root 'mios.toml' }
     $r = @{ Kind='ps'; Exe=$null; Args=@(); Env=@{}; NeedsAdmin=$false; Notes=@(); Platform='windows'; Drive='D:' }
     switch ($Target) {
-        { $_ -in 'live','flash','cat' } {
+        { $_ -in 'live','flash' } {
             $r.Kind='bat'; $r.NeedsAdmin=$true
-            $r.Exe=Join-Path $PSScriptRoot 'MiOS-Cat.bat'
+            $r.Exe=Join-Path $PSScriptRoot 'MiOS-Field.bat'
             $r.Args=$Passthrough
             if ($Unattended) { $r.Env['NONINTERACTIVE']='1' }
             $d = Get-MiosSsotValue -Section 'field' -Key 'drivepath'
@@ -228,6 +227,7 @@ function Resolve-Target {
             if ($SimulatedDiskSizeGB -gt 0) { $stageArgs += @('-SimulatedDiskSizeGB', $SimulatedDiskSizeGB) }
             if ($SimulatedFreeSpaceGB -gt 0) { $stageArgs += @('-SimulatedFreeSpaceGB', $SimulatedFreeSpaceGB) }
             if ($Extract) { $stageArgs += '-Extract' }
+            if ($ArchivePath) { $stageArgs += @('-ArchivePath', $ArchivePath) }
             if ($Passthrough) { $stageArgs += $Passthrough }
             $r.Args = $stageArgs
         }
@@ -299,7 +299,7 @@ if ($Target -notin @('verify', 'monitor') -and -not $DryRun -and -not (Confirm-M
 
 # Consolidated installer surface: EVERY install/build target comes WITH the live monitor.
 # Launch mios mon (the unified TUI) in its own window so the operator watches the whole
-# pipeline live -- matches MiOS-Cat.bat's ensure_live_monitor. The 'monitor' target itself and
+# pipeline live -- matches MiOS-Field.bat's ensure_live_monitor. The 'monitor' target itself and
 # the early-exit special targets (configure/repos/update) never reach here. Suppressed by
 # MIOS_NO_MONITOR=1 (headless/CI/nested).
 if ($env:MIOS_NO_MONITOR -ne '1' -and -not $DryRun -and $Target -notin @('stage', 'verify')) {
@@ -372,10 +372,12 @@ if ($DryRun) {
 }
 
 if ($plan.Kind -eq 'internal') {
-    $res = if ($plan.Args.Count -gt 0) {
-        & ([scriptblock]::Create("$($plan.Fn) " + ($plan.Args -join ' ')))
+    if ($Passthrough.Count -gt 0) { throw "Unsupported stage/verify arguments: $($Passthrough -join ' ')" }
+    $drive = if ($DriveLetter) { $DriveLetter } else { 'D' }
+    $res = if ($Target -eq 'stage') {
+        Invoke-MiosStage -DriveLetter $drive -MinDiskGB $MinDiskGB -SimulatedDiskSizeGB $SimulatedDiskSizeGB -SimulatedFreeSpaceGB $SimulatedFreeSpaceGB -Extract:$Extract -ArchivePath $ArchivePath
     } else {
-        & $plan.Fn
+        Invoke-MiosVerify -DriveLetter $drive -MinDiskGB $MinDiskGB
     }
     if ($res -eq $false -or $global:LASTEXITCODE -ne 0) {
         exit 1
@@ -394,7 +396,7 @@ if ($plan.Kind -eq 'py') {
 }
 
 if ($Plan.Kind -eq 'bat') {
-    Write-MiosLine 'info' "Launching MiOS-Cat.bat stage"
+    Write-MiosLine 'info' "Launching MiOS-Field.bat stage"
     & cmd.exe /c "`"$($plan.Exe)`"" @($plan.Args)
     exit $LASTEXITCODE
 }

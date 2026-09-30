@@ -1,6 +1,6 @@
 @echo off
-:: MiOS-Cat.bat -- thin WinPE/legacy-cmd shim (DEFUNCT name, kept for compat)
-:: Forwards all execution to the canonical MiOS-Field.ps1 (Law 9 Parity, T-1118 fold).
+:: MiOS-Field.bat -- thin WinPE/legacy-cmd shim
+:: Forwards all execution to the canonical MiOS-Field.ps1 (Law 9 Parity).
 
 setlocal
 

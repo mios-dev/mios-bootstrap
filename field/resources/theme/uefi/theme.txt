@@ -1,5 +1,5 @@
 desktop-image: "background.jpg"
-title-text: "MiOS-Cat Unified System Deployment & Recovery"
+title-text: "MiOS-Field Unified System Deployment & Recovery"
 title-color: "#E7DFD3"
 message-color: "#E7DFD3"
 

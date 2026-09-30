@@ -10,9 +10,9 @@ echo "==============================================="
 echo "Started at: $(date)"
 
 # 1. Identify the USB boot disk
-usb_partition=$(readlink -f /dev/disk/by-label/MiOS-Cat)
+usb_partition=$(readlink -f /dev/disk/by-label/MiOS-Field)
 if [ -z "$usb_partition" ] || [ ! -b "$usb_partition" ]; then
-    echo "ERROR: Could not find USB partition labeled 'MiOS-Cat'!"
+    echo "ERROR: Could not find USB partition labeled 'MiOS-Field'!"
     # Fallback: scan mountpoints or sysfs
     usb_partition=$(mount | grep -E '/run/archiso/img_dev|/run/archiso/bootmnt' | awk '{print $1}' | head -n 1)
 fi

@@ -1,5 +1,5 @@
-# MiOS-Field.ps1 -- canonical Windows launcher for MiOS-Field.
-# Dispatches verbs. MiOS-Cat.ps1 is a defunct shim that forwards here.
+# MiOS-Field.ps1 -- canonical Windows launcher for MiOS.
+# Implements Law 9 (ONE-CANONICAL-NAME). Dispatches verbs.
 
 $ErrorActionPreference = "Stop"
 
@@ -36,6 +36,13 @@ if ([string]::IsNullOrWhiteSpace($Verb)) {
 }
 
 switch -Regex ($Verb) {
+    "^(flash|live)$" {
+        $installer = Join-Path $PSScriptRoot '..\installation\mios-install.ps1'
+        if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "MiOS installer not found: $installer"
+        }
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -Target $Verb @VerbArgs
+    }
     "^(stage)$" {
         Invoke-MiOSFieldStage @VerbArgs
     }
@@ -62,7 +69,7 @@ switch -Regex ($Verb) {
         Invoke-MiOSFieldManual @VerbArgs
     }
     default {
-        Write-Error "Unknown verb: $Verb. Valid verbs: stage, install, build, update, provision, verify, manual, wsl, import."
+        Write-Error "Unknown verb: $Verb. Valid verbs: flash, live, stage, install, build, update, provision, verify, manual, wsl, import."
         exit 1
     }
 }
