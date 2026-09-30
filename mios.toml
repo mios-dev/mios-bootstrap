@@ -1210,6 +1210,13 @@ disk_gb             = 32      # always keep 32 GB free on M:\ for Windows-side a
 
 [bootstrap.prereqs]
 install_podman_desktop = false
+# Optional Windows interoperability tooling: this bootstrap step provisions
+# host binaries and PATH only. MiOS-DEV owns compilation and tests; Windows
+# never runs the project build here. Installed by default; the linker and
+# import-library tool must both exist, healing partial winget registrations
+# with --force.
+install_llvm_mingw    = true
+llvm_mingw_pkg        = "MartinStorsjo.LLVM-MinGW.MSVCRT"
 podman_pkg             = "RedHat.Podman-Desktop"
 podman_cli_pkg         = "RedHat.Podman"
 git_pkg                = "Git.Git"

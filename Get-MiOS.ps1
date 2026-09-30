@@ -2807,6 +2807,51 @@ foreach ($mod in $psModules) {
     }
 }
 
+function Install-MiOSLLVMMinGW {
+    # Provision the SSOT-selected Windows interoperability toolchain only.
+    # MiOS-DEV owns compilation and tests; this host step never runs cargo,
+    # rustc, or a project build. Verify the linker and import-library tools
+    # together so a partial package registration cannot claim readiness.
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "  [!] winget not available; skipping LLVM-MinGW toolchain." -ForegroundColor Yellow
+        return
+    }
+    $_enable = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'install_llvm_mingw' -Default 'true')
+    if ($_enable -notin @('true', '1', 'yes')) {
+        Write-Host "  [-] install_llvm_mingw is disabled; skipping LLVM-MinGW toolchain." -ForegroundColor DarkGray
+        return
+    }
+    $_llvmPkg = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'llvm_mingw_pkg' -Default 'MartinStorsjo.LLVM-MinGW.MSVCRT')
+    Write-Host "  [*] Ensuring Windows LLVM-MinGW tooling ($_llvmPkg) for provisioning/handoff..." -ForegroundColor Cyan
+    try {
+        $_clang = $null
+        foreach ($_attempt in 1..2) {
+            # Registration alone is not proof: a partially-failed install
+            # registers the package without shipping binaries, and winget then
+            # reports "already installed, no upgrade". Verify the linker file
+            # and heal with --force when it is missing.
+            $_clang = Get-ChildItem -Path "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\${_llvmPkg}_*" -Recurse -Filter 'x86_64-w64-mingw32-clang.exe' -ErrorAction SilentlyContinue |
+                Where-Object { Test-Path -LiteralPath (Join-Path $_.DirectoryName 'llvm-dlltool.exe') -PathType Leaf } | Select-Object -First 1
+            if ($_clang -and $_clang.FullName) { break }
+            & winget install --id $_llvmPkg --exact --silent --force --accept-package-agreements --accept-source-agreements --source winget 2>&1 | ForEach-Object { Write-Host "  [LLVM-MinGW] $_" }
+            if ($LASTEXITCODE -ne 0) { Write-Host "  [!] LLVM-MinGW provisioning attempt $_attempt exited $LASTEXITCODE; rechecking binaries." -ForegroundColor Yellow }
+        }
+        if (-not ($_clang -and $_clang.FullName)) {
+            $_clang = Get-ChildItem -Path "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\${_llvmPkg}_*" -Recurse -Filter 'x86_64-w64-mingw32-clang.exe' -ErrorAction SilentlyContinue |
+                Where-Object { Test-Path -LiteralPath (Join-Path $_.DirectoryName 'llvm-dlltool.exe') -PathType Leaf } | Select-Object -First 1
+        }
+        if ($_clang -and $_clang.FullName) {
+            $_binDir = Split-Path -Parent $_clang.FullName
+            if (($env:Path -split ';') -notcontains $_binDir) { $env:Path = "$_binDir;$env:Path" }
+            Write-Host "  [+] LLVM-MinGW toolchain ready: $_binDir" -ForegroundColor Green
+        } else {
+            Write-Host "  [!] LLVM-MinGW linker/import-library tools remain incomplete after provisioning; the optional host toolchain is unavailable." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "  [!] LLVM-MinGW install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 function Update-MiOSOhMyPosh {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-Host "  [!] winget not available; cannot install oh-my-posh." -ForegroundColor Yellow
@@ -5259,6 +5304,7 @@ if ($true) {
     Write-Host "  $_msgStep5" -ForegroundColor Cyan
     Install-MiOSFastfetch           | Out-Null
     Write-Host "  $_msgStep6" -ForegroundColor Cyan
+    Install-MiOSLLVMMinGW           | Out-Null
     Update-MiOSOhMyPosh             | Out-Null
     Update-MiOSPSReadLine           | Out-Null
     Install-MiOSOhMyPoshTheme       | Out-Null
