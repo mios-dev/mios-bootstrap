@@ -19,7 +19,9 @@
 #
 # The dnf package set is NOT listed here: it is [packages.devcontainer] in
 # usr/share/mios/mios.toml, resolved by the canonical automation/lib/packages.sh.
-FROM quay.io/podman/machine-os:6.1
+# [image].machine_os_mirror: the podman machine OS MiOS-DEV boots, container
+# images only (Codespaces' containerd cannot read the upstream disk-image entries).
+FROM ghcr.io/mios-dev/machine-os:6.1
 
 # An ostree layout: /home, /root, /opt, /srv, /mnt and /usr/local link into /var,
 # which the image's own tmpfiles.d fills at boot. A container never boots.

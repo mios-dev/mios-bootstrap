@@ -514,6 +514,7 @@ tag             = "latest"
 local_tag       = "localhost/mios:latest"
 machine_os_repo = "quay.io/podman/machine-os"
 machine_os_tag  = "6.1"
+machine_os_mirror = "ghcr.io/mios-dev/machine-os"
 
 # ----------------------------------------------------------------------------
 # [packages] -- SSOT mapping mios.toml -> usr/share/mios/PACKAGES.md sections.
