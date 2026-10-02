@@ -3137,13 +3137,11 @@ if [[ -x /usr/libexec/mios/system-sync-env.sh ]]; then
         echo "[quadlet-overlay] WARN: mios-sync-env exited non-zero (install.env may be stale)"
 fi
 
-if [[ -x /automation/34-render-quadlets.sh ]]; then
-    echo "[quadlet-overlay] rendering Quadlet \${MIOS_*} placeholders via automation/34-render-quadlets.sh"
-    sudo /automation/34-render-quadlets.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
-        echo "[quadlet-overlay] WARN: 34-render-quadlets.sh exited non-zero (Quadlets may still have placeholders)"
-else
-    echo "[quadlet-overlay] WARN: /automation/34-render-quadlets.sh not found (mios.git overlay incomplete?)"
-fi
+# Render failure is fatal (exit 3, thrown by the caller): a unit started with an unrendered ${MIOS_*} reads it literally (T-1133).
+[[ -x /automation/34-render-quadlets.sh ]] || { echo "[quadlet-overlay] ERROR: /automation/34-render-quadlets.sh not found"; exit 3; }
+echo "[quadlet-overlay] rendering Quadlet \${MIOS_*} placeholders via automation/34-render-quadlets.sh"
+sudo /automation/34-render-quadlets.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
+    { echo "[quadlet-overlay] ERROR: 34-render-quadlets.sh failed; no unit was started"; exit 3; }
 
 SYSTEMD_PID=$(pidof systemd 2>/dev/null | tr ' ' '\n' | head -1)
 if [[ -n "$SYSTEMD_PID" ]]; then
@@ -3778,6 +3776,7 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     $stage = "set -e; export MIOS_DEV_ENABLE_AI='$enableAi' MIOS_DEV_ENABLE_RUNNER='$enableRunner'; " +
              "bash '$stagedWsl' '$miosRootWsl'"
     & wsl.exe -d $wslDistro --exec bash -c $stage 2>&1 | ForEach-Object { Write-Log "quadlet-overlay: $_" }
+    if ($LASTEXITCODE -eq 3) { Log-Fail "Quadlet placeholders did not render; no unit was started"; throw "Quadlet overlay failed: 34-render-quadlets.sh" }
     if ($LASTEXITCODE -ne 0) {
         Log-Warn "Quadlet overlay rc=$LASTEXITCODE -- partial overlay possible (units may still be present; rerun safe)"
     } else {
