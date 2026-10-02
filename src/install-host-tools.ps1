@@ -471,9 +471,10 @@ function Install-MiosWindowsTools {
     # divergent mios-bootstrap/src/btop hand-copies were RETIRED -- editing
     # btop now means editing mios.toml [btop] + re-running mios-sync-theme,
     # which refreshes Linux AND (via this stage) Windows from one source.
-    # Target M:\MiOS\btop\ via BTOP_CONFIG_DIR so config lives on the
-    # MiOS-owned drive (per feedback_mios_m_drive_everything) not %APPDATA%.
-    $_btopDst = 'M:\MiOS\btop'
+    # Target [packages.windows].btop_config_dir via BTOP_CONFIG_DIR. The vendor
+    # value sits on the MiOS-owned data drive (per feedback_mios_m_drive_everything)
+    # not %APPDATA%; it resolves through the mios.toml overlay (Law 7).
+    $_btopDst = "$(Get-MiosTomlValue -Section 'packages.windows' -Key 'btop_config_dir' -Default 'M:\MiOS\btop')"
     $_btopThemesDst = Join-Path $_btopDst 'themes'
     foreach ($_d in @($_btopDst, $_btopThemesDst)) {
         if (-not (Test-Path -LiteralPath $_d)) {
