@@ -2216,7 +2216,7 @@ function Get-PodmanMachineOsImage {
         # / .machine_os_tag (SSOT). Hardcoded fallbacks below are vendor
         # defaults only -- operators bump the tag (6.0 -> 6.1) via mios.html.
         [string]$Repo = (Get-MiosTomlValue -Section 'image' -Key 'machine_os_repo' -Default 'quay.io/podman/machine-os'),
-        [string]$Tag  = (Get-MiosTomlValue -Section 'image' -Key 'machine_os_tag'  -Default '6.0'),
+        [string]$Tag  = (Get-MiosTomlValue -Section 'image' -Key 'machine_os_tag'  -Default '6.1'),
         [string]$Architecture = 'x86_64',
         [string]$DiskType = 'wsl',
         [Parameter(Mandatory)] [string]$CacheDir
@@ -2436,11 +2436,11 @@ function New-BuilderDistro([hashtable]$HW) {
     # the data disk. $HW.DiskGB has also been clamped there.
     $diskGB = $HW.DiskGB
 
-    $_tomlBase   = Get-MiosTomlValue -Section 'bootstrap.dev_vm' -Key 'base_image' -Default 'quay.io/podman/machine-os:6.0'
+    $_tomlBase   = Get-MiosTomlValue -Section 'bootstrap.dev_vm' -Key 'base_image' -Default 'quay.io/podman/machine-os:6.1'
     if ($_tomlBase -match '^(.+):([^:]+)$') {
         $_tomlRepo = $Matches[1]; $_tomlTag = $Matches[2]
     } else {
-        $_tomlRepo = $_tomlBase;  $_tomlTag = '6.0'
+        $_tomlRepo = $_tomlBase;  $_tomlTag = '6.1'
     }
     $machineTag = if ($env:MIOS_MACHINE_TAG) { $env:MIOS_MACHINE_TAG } else { $_tomlTag }
     $machineRepo = $_tomlRepo
