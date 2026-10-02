@@ -19,7 +19,12 @@
 #
 # The dnf package set is NOT listed here: it is [packages.devcontainer] in
 # usr/share/mios/mios.toml, resolved by the canonical automation/lib/packages.sh.
-FROM registry.fedoraproject.org/fedora:44
+FROM quay.io/podman/machine-os:6.0
+
+# An ostree layout: /home, /root, /opt, /srv, /mnt and /usr/local link into /var,
+# which the image's own tmpfiles.d fills at boot. A container never boots.
+RUN systemd-tmpfiles --create --prefix=/var/home --prefix=/var/roothome --prefix=/var/opt \
+        --prefix=/var/srv --prefix=/var/mnt --prefix=/var/usrlocal
 
 # Where the SSOT comes from when the build context is not a MiOS checkout.
 ARG MIOS_REPO=https://github.com/mios-dev/MiOS.git
