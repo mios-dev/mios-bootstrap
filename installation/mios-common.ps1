@@ -636,9 +636,9 @@ function Invoke-MiosStage {
 
     # Resolve min_disk_gb threshold from parameter, environment, SSOT, or fallback to 512
     if ($MinDiskGB -le 0) {
-        if ($env:MIOS_MIN_DISK_GB) {
+        if ($env:MIOS_FIELD_DATA_PARTITION_MIN_DISK_GB) {
             $parsedEnv = 0
-            if ([int]::TryParse($env:MIOS_MIN_DISK_GB, [ref]$parsedEnv) -and $parsedEnv -gt 0) {
+            if ([int]::TryParse($env:MIOS_FIELD_DATA_PARTITION_MIN_DISK_GB, [ref]$parsedEnv) -and $parsedEnv -gt 0) {
                 $MinDiskGB = $parsedEnv
             }
         }
@@ -697,11 +697,6 @@ function Invoke-MiosStage {
     $diskSizeGB = 0
     if ($SimulatedDiskSizeGB -gt 0) {
         $diskSizeGB = $SimulatedDiskSizeGB
-    } elseif ($env:MIOS_SIMULATED_DISK_GB) {
-        $simEnv = 0
-        if ([int]::TryParse($env:MIOS_SIMULATED_DISK_GB, [ref]$simEnv) -and $simEnv -gt 0) {
-            $diskSizeGB = $simEnv
-        }
     }
 
     if ($diskSizeGB -le 0) {

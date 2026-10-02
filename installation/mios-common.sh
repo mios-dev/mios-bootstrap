@@ -134,8 +134,6 @@ get_mios_disk_info() {
 
     if [[ "$optSimDiskGB" -gt 0 ]]; then
         diskSizeGB="$optSimDiskGB"
-    elif [[ -n "${MIOS_SIMULATED_DISK_GB:-}" && "$MIOS_SIMULATED_DISK_GB" -gt 0 ]]; then
-        diskSizeGB="$MIOS_SIMULATED_DISK_GB"
     elif command -v lsblk >/dev/null 2>&1; then
         local dev parent bytes
         dev=$(df -P "$drive" 2>/dev/null | awk 'NR==2 {print $1}')
@@ -149,8 +147,6 @@ get_mios_disk_info() {
 
     if [[ "$optSimFreeGB" -gt 0 ]]; then
         freeSpaceGB="$optSimFreeGB"
-    elif [[ -n "${MIOS_SIMULATED_FREE_GB:-}" && "$MIOS_SIMULATED_FREE_GB" -gt 0 ]]; then
-        freeSpaceGB="$MIOS_SIMULATED_FREE_GB"
     elif df -B1 "$drive" >/dev/null 2>&1; then
         freeSpaceGB=$(df -B1 "$drive" | awk 'NR==2 {print int($4 / 1073741824)}')
     fi
@@ -357,8 +353,8 @@ invoke_mios_stage() {
     local minDiskGB=512
     if [[ "$optMinDiskGB" -gt 0 ]]; then
         minDiskGB="$optMinDiskGB"
-    elif [[ -n "${MIOS_MIN_DISK_GB:-}" && "$MIOS_MIN_DISK_GB" -gt 0 ]]; then
-        minDiskGB="$MIOS_MIN_DISK_GB"
+    elif [[ -n "${MIOS_FIELD_DATA_PARTITION_MIN_DISK_GB:-}" && "$MIOS_FIELD_DATA_PARTITION_MIN_DISK_GB" -gt 0 ]]; then
+        minDiskGB="$MIOS_FIELD_DATA_PARTITION_MIN_DISK_GB"
     else
         local tomlCandidates=(
             "/usr/share/mios/mios.toml"
