@@ -8,8 +8,11 @@
 #   - mock Log-Ok/Log-Warn/Write-Log/Set-Step/Get-MiosTomlValue, mock Invoke-RestMethod/
 #     Invoke-WebRequest (network disabled), no-op functions for the direct-download tools
 #     the script guards on via Get-Command;
-#   - $env:LOCALAPPDATA/$env:TEMP/$env:ProgramFiles/${env:ProgramFiles(x86)} redirected
-#     into a scratch tree; $MiosBinDir/$MiosRepoDir/$MiosBootstrapShadow pointed at scratch;
+#   - $env:LOCALAPPDATA/$env:TEMP/$env:APPDATA/$env:ProgramFiles/${env:ProgramFiles(x86)}
+#     redirected into a scratch tree; $MiosBinDir/$MiosRepoDir/$MiosBootstrapShadow and
+#     [packages.windows].btop_config_dir pointed at scratch;
+#   - portable across pwsh hosts: PATH joined with [IO.Path]::PathSeparator, stub bins
+#     are '.exe' on Windows and extensionless +x elsewhere;
 #   - Test-Path is shadowed to return $false for EXACTLY the two foreign vendor toml
 #     candidates (M:\etc\mios\mios.toml, M:\usr\share\mios\mios.toml) so the controlled
 #     package list in the scratch $MiosBootstrapShadow\mios.toml is the only source;
@@ -53,6 +56,8 @@ $shadowDir = Join-Path $scratch "shadow"
 $mockBinsDir = Join-Path $scratch "mockbins"
 $localDir = Join-Path $scratch "local"
 $tmpDir = Join-Path $scratch "tmp"
+$appDataDir = Join-Path $scratch "appdata"
+$btopDstDir = Join-Path $scratch "btop"
 foreach ($d in @($scratch, $shadowDir, $mockBinsDir)) {
     $null = New-Item -ItemType Directory -Path $d -Force
 }
@@ -138,6 +143,7 @@ function Get-MiosTomlValue {
             "Mock.Retry.Pkg|retrybin"
         ) }
         "packages.windows|verify_probes" { return @() }
+        "packages.windows|btop_config_dir" { return $btopDstDir }
         "browser_ai|enable"              { return "false" }
         default                          { return $Default }
     }
@@ -219,8 +225,17 @@ function gh { }
 $toml = "[packages.windows]`r`npkgs = [`"Mock.Skip.Pkg`", `"Mock.Orphan.Pkg`", `"Mock.Fresh.Pkg`", `"Mock.Retry.Pkg`"]`r`n"
 [System.IO.File]::WriteAllText((Join-Path $shadowDir "mios.toml"), $toml, [System.Text.UTF8Encoding]::new($false))
 
-$null = New-Item -ItemType File -Path (Join-Path $mockBinsDir "mockskipbin.exe") -Force
-$null = New-Item -ItemType File -Path (Join-Path $mockBinsDir "mockokbin.exe") -Force
+# Stub bins resolvable by Get-Command on every platform: '.exe' on Windows,
+# extensionless + executable bit elsewhere (pwsh on Linux/macOS only resolves
+# applications that carry +x).
+$stubExt = if ($IsWindows -or $env:OS -eq 'Windows_NT') { ".exe" } else { "" }
+foreach ($stub in @("mockskipbin", "mockokbin")) {
+    $stubPath = Join-Path $mockBinsDir ($stub + $stubExt)
+    $null = New-Item -ItemType File -Path $stubPath -Force
+    if (-not $stubExt) {
+        [System.IO.File]::SetUnixFileMode($stubPath, [System.IO.UnixFileMode]'UserRead, UserWrite, UserExecute')
+    }
+}
 # orphanbin / retrybin deliberately NOT created (bin-missing scenario).
 
 if ($PlantDefect) {
@@ -240,6 +255,7 @@ $savedLocalAppData = $env:LOCALAPPDATA
 $savedTemp = $env:TEMP
 $savedProgramFiles = $env:ProgramFiles
 $savedProgramFilesX86 = ${env:ProgramFiles(x86)}
+$savedAppData = $env:APPDATA
 $savedPath = $env:PATH
 $userPathBefore = [Environment]::GetEnvironmentVariable("PATH", "User")
 $btopBefore = [Environment]::GetEnvironmentVariable("BTOP_CONFIG_DIR", "User")
@@ -248,7 +264,8 @@ $env:LOCALAPPDATA = $localDir
 $env:TEMP = $tmpDir
 $env:ProgramFiles = Join-Path $scratch "ProgramFiles"
 ${env:ProgramFiles(x86)} = Join-Path $scratch "ProgramFilesx86"
-$env:PATH = "$mockBinsDir;$env:PATH"
+$env:APPDATA = $appDataDir
+$env:PATH = "$mockBinsDir$([System.IO.Path]::PathSeparator)$env:PATH"
 
 # Variables the dot-sourced script resolves through the scope chain (not env vars).
 $MiosBinDir = Join-Path $scratch "bin"        # deliberately NOT created (no User PATH persist)
@@ -356,12 +373,14 @@ try {
     Assert-Condition "User PATH unchanged" ( $userPathAfter -ceq $userPathBefore ) ("before='$userPathBefore' after='$userPathAfter'")
     Assert-Condition "User BTOP_CONFIG_DIR unchanged" ( "$btopAfter" -ceq "$btopBefore" ) ("before='$btopBefore' after='$btopAfter'")
     $callLines = @(Get-Content -LiteralPath $script:WingetCallFile -ErrorAction SilentlyContinue)
+    Assert-Condition "btop config dir resolved from [packages.windows].btop_config_dir (scratch)" ( Test-Path -LiteralPath (Join-Path $btopDstDir "themes") ) ("expected $btopDstDir/themes")
     Assert-Condition "winget call log recorded all invocations" ( $callLines.Count -ge 8 ) ("lines: $($callLines.Count)")
 } finally {
     $env:LOCALAPPDATA = $savedLocalAppData
     $env:TEMP = $savedTemp
     $env:ProgramFiles = $savedProgramFiles
     ${env:ProgramFiles(x86)} = $savedProgramFilesX86
+    $env:APPDATA = $savedAppData
     $env:PATH = $savedPath
     $userPathRestored = [Environment]::GetEnvironmentVariable("PATH", "User")
     if ($userPathRestored -cne $userPathBefore) {
