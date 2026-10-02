@@ -124,12 +124,23 @@ function Install-MiosWindowsTools {
             } else {
                 Log-Ok ("winget installing: {0}..." -f $pkg)
             }
-            $forceArgs = if ($wingetSeesIt) { @('--force') } else { @() }
+            $forceArgs = @(if ($wingetSeesIt) { '--force' })
             & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget --scope user @forceArgs 2>&1 |
                 ForEach-Object { Write-Log ("winget[{0}]: {1}" -f $pkg, $_) }
             if ($LASTEXITCODE -eq 0) {
                 Log-Ok "winget install: $pkg [OK]"
                 $installed++
+            } elseif ($LASTEXITCODE -eq 0x8A15002B) {
+                Log-Ok ("winget install: {0} already installed (winget 0x8A15002B) -- verifying PATH" -f $pkg)
+                if ($expectedBin) {
+                    if (Get-Command $expectedBin -ErrorAction SilentlyContinue) {
+                        Log-Ok ("winget already-present: {0} ('{1}' on PATH)" -f $pkg, $expectedBin)
+                    } else {
+                        Log-Warn ("winget claims {0} already installed but '{1}' not on PATH" -f $pkg, $expectedBin)
+                    }
+                }
+                $skipped++
+                continue
             } else {
                 Log-Warn ("winget install: {0} user-scope exit {1} -- retrying without --scope" -f $pkg, $LASTEXITCODE)
                 & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget @forceArgs 2>&1 |
@@ -137,17 +148,20 @@ function Install-MiosWindowsTools {
                 if ($LASTEXITCODE -eq 0) {
                     Log-Ok "winget install (retry): $pkg [OK]"
                     $installed++
-                } else {
-                    Log-Warn ("winget install: {0} FAILED (exit {1}) -- retrying with --ignore-security-hash" -f $pkg, $LASTEXITCODE)
-                    & winget install --id $pkg --silent --accept-package-agreements --accept-source-agreements --source winget --ignore-security-hash @forceArgs 2>&1 |
-                        ForEach-Object { Write-Log ("winget[{0}-hash-retry]: {1}" -f $pkg, $_) }
-                    if ($LASTEXITCODE -eq 0) {
-                        Log-Ok "winget install (hash-retry): $pkg [OK]"
-                        $installed++
-                    } else {
-                        Log-Warn ("winget install: {0} COMPLETELY FAILED (exit {1})" -f $pkg, $LASTEXITCODE)
-                        $failed++
+                } elseif ($LASTEXITCODE -eq 0x8A15002B) {
+                    Log-Ok ("winget install (retry): {0} already installed (winget 0x8A15002B) -- verifying PATH" -f $pkg)
+                    if ($expectedBin) {
+                        if (Get-Command $expectedBin -ErrorAction SilentlyContinue) {
+                            Log-Ok ("winget already-present: {0} ('{1}' on PATH)" -f $pkg, $expectedBin)
+                        } else {
+                            Log-Warn ("winget claims {0} already installed but '{1}' not on PATH" -f $pkg, $expectedBin)
+                        }
                     }
+                    $skipped++
+                    continue
+                } else {
+                    Log-Warn ("winget install: {0} COMPLETELY FAILED (exit {1})" -f $pkg, $LASTEXITCODE)
+                    $failed++
                 }
             }
         } catch {
