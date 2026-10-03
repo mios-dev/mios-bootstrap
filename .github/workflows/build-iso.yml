@@ -69,3 +69,30 @@ jobs:
             exit 1
           fi
           echo "MiOS-Xbox-Merged.xml is byte-identical to presets/mios-xbox.xml."
+
+      - name: llms.txt follows the llms.txt format (llmstxt.org)
+        # This repo owns llms.txt (mios.git [bootstrap.sync].not_mirrored), so
+        # mios.git's Law 15 parity gate never reads it and this step is its only
+        # gate. The validator is mios.git's Rust conformance binary; only
+        # tools/native and the toolchain pin are fetched, outside the workspace.
+        # The success line is required, not just exit 0: a mios.git that
+        # predates --llms-txt builds a binary that exits 0 without validating.
+        run: |
+          set -euo pipefail
+          mios="${RUNNER_TEMP}/mios"
+          git clone --depth 1 --filter=blob:none --no-checkout \
+              https://github.com/mios-dev/mios.git "$mios"
+          git -C "$mios" sparse-checkout set --no-cone /tools/native/ /rust-toolchain.toml
+          git -C "$mios" checkout
+          rc=0
+          out="$(cd "$mios/tools/native" && cargo run -q -p mios-template-conform -- \
+              --llms-txt --root "$GITHUB_WORKSPACE")" || rc=$?
+          printf '%s\n' "$out"
+          if (( rc != 0 )); then
+            echo "::error file=llms.txt::llms.txt does not follow the llms.txt format; the violations are listed above"
+            exit "$rc"
+          fi
+          if ! grep -q '^\[llms-txt\] .* conforms to ' <<<"$out"; then
+            echo "::error file=llms.txt::mios.git's mios-template-conform printed no --llms-txt result, so llms.txt was not validated"
+            exit 1
+          fi
