@@ -177,34 +177,6 @@ function Write-Log {
     }
 }
 
-function Write-DebugLog {
-    param($Message)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logMessage = "[$timestamp] DEBUG: $Message"
-    
-    # Always log debug messages to file (not just when debug mode is on)
-    try {
-        Add-Content -Path $script:LogFile -Value $logMessage -ErrorAction SilentlyContinue
-    } catch {
-        # If logging fails, try to continue
-    }
-    
-    # Only show in UI if debug mode is enabled
-    if ($script:DebugMode) {
-        try {
-            if ($logTextBox -and $logTextBox.IsHandleCreated) {
-                $form.Invoke([System.Action[string]]{
-                    param($msg)
-                    $logTextBox.AppendText("$msg`r`n")
-                    $logTextBox.ScrollToCaret()
-                }, $logMessage) | Out-Null
-            }
-        } catch {
-            # UI not available, continue
-        }
-    }
-}
-
 function Update-Status {
     param($Message)
     $statusLabel.Text = $Message

@@ -125,12 +125,6 @@ $ns = New-Object System.Xml.XmlNamespaceManager($base.NameTable)
 $ns.AddNamespace('n', $NLNS)
 
 # Ensure the base parents we union into exist (they do in ULTRA-PLUS; create if not).
-function Get-OrCreateChild {
-    param([xml]$Doc,[System.Xml.XmlNode]$Parent,[string]$Name,[System.Xml.XmlNamespaceManager]$Ns)
-    $node = $Parent.SelectSingleNode("n:$Name", $Ns)
-    if (-not $node) { $node = New-El $Doc $Name; [void]$Parent.AppendChild($node) }
-    return $node
-}
 $rc      = $base.SelectSingleNode('//n:RemoveComponents', $ns)
 if (-not $rc) { $rc = New-El $base 'RemoveComponents'; [void]$base.DocumentElement.AppendChild($rc) }
 $featSec = $base.SelectSingleNode('//n:Features', $ns)
