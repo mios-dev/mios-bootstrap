@@ -88,8 +88,12 @@ jobs:
           out="$(cd "$mios/tools/native" && cargo run -q -p mios-template-conform -- \
               --llms-txt --root "$GITHUB_WORKSPACE")" || rc=$?
           printf '%s\n' "$out"
-          if (( rc != 0 )); then
+          if (( rc == 1 )) && grep -q '^\[llms-txt\] .*: [0-9]* violation' <<<"$out"; then
             echo "::error file=llms.txt::llms.txt does not follow the llms.txt format; the violations are listed above"
+            exit 1
+          fi
+          if (( rc != 0 )); then
+            echo "::error::mios.git's mios-template-conform did not run cleanly (exit $rc), so llms.txt was not validated; see the output above"
             exit "$rc"
           fi
           if ! grep -q '^\[llms-txt\] .* conforms to ' <<<"$out"; then
