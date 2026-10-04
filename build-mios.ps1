@@ -1,4 +1,4 @@
-﻿# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver ...
+# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver ...
 # AI-doc: usr/share/doc/mios/manual/root.md
 
 param(
@@ -471,52 +471,6 @@ function Invoke-MigrateLegacyInstallRoot {
     }
 }
 
-function Invoke-DataDiskBootstrap {
-    param([hashtable]$HW)
-    if ($env:MIOS_SKIP_DATA_DISK -in @('1','true','TRUE','yes')) {
-        Log-Warn "MIOS_SKIP_DATA_DISK set -- using C:\MiOS layout"
-        return
-    }
-    if (-not $script:IsAdmin) {
-        Log-Warn "Not running as admin -- skipping data disk provisioning (would need elevation to shrink C:)"
-        return
-    }
-    # M:\ shrink amount sourced from mios.toml [bootstrap.host_storage].
-    # shrink_mb (vendor default 262656 = 256 GiB + 512 MB buffer so the
-    # NTFS volume rounds to "256 GB" in Explorer). MIOS_DATA_DISK_MB env
-    # still wins for ad-hoc test overrides.
-    $shrinkMB    = if ($env:MIOS_DATA_DISK_MB)     { [int]$env:MIOS_DATA_DISK_MB }     else { Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'shrink_mb' -Default 262656 }
-    $driveLetter = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER }      else { Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'M' }
-    $_volLabel   = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'volume_label' -Default 'MIOS-DEV'
-    try {
-        $dataRoot = Initialize-MiosDataDisk -ShrinkMB $shrinkMB -DriveLetter $driveLetter -VolumeLabel $_volLabel
-        Set-PodmanMachineStorageOn -DataRoot $dataRoot
-        # Clamp the VHDX max-size to fit the new partition.
-        $newFreeGB = [math]::Floor((Get-Volume -DriveLetter $driveLetter).SizeRemaining / 1GB)
-        $clamped   = [math]::Max(80, [math]::Min($HW.DiskGB, $newFreeGB - 8))
-        if ($clamped -ne $HW.DiskGB) {
-            Log-Ok "Clamped VHDX max from $($HW.DiskGB) GB to $clamped GB to fit ${driveLetter}: ($newFreeGB GB free)"
-            $HW.DiskGB = $clamped
-        }
-    } catch {
-        Log-Warn "MiOS data-disk provisioning failed: $_"
-        Log-Warn "Continuing with default %LOCALAPPDATA% storage (set MIOS_SKIP_DATA_DISK=1 to silence this)"
-        return
-    }
-
-    # Redirect ALL install paths onto the new data disk. The full-
-    # partition overlay means M:\MiOS\ is everything: bin, icons,
-    # themes, repos, distros, images, machine-state, logs.
-    $newRoot = Join-Path "${driveLetter}:\" 'MiOS'
-    if ($newRoot -ne $script:MiosInstallDir) {
-        $legacyRoot = $script:MiosInstallDir
-        Log-Ok "Full-partition overlay: redirecting install root $legacyRoot -> $newRoot"
-        Update-MiosInstallPaths -NewRoot $newRoot
-        # Auto-migrate any leftover content from a previous boot-time
-        # install (C:\MiOS, %LOCALAPPDATA%\MiOS) onto the data disk.
-        Invoke-MigrateLegacyInstallRoot -LegacyRoot $legacyRoot
-    }
-}
 
 function Test-DashboardCanRedraw {
     try {
@@ -1451,174 +1405,6 @@ function Invoke-NativeQuiet {
     }
 }
 
-function Show-PostBootstrapMenu {
-    if ($Unattended) { return }
-    Move-BelowDash
-    $devDistro = $null
-    try {
-        $wslList = (& wsl.exe -l -q 2>$null) -split "`r?`n" |
-                   ForEach-Object { ($_ -replace [char]0, '').Trim() } |
-                   Where-Object { $_ }
-        foreach ($c in @('MiOS-DEV','podman-MiOS-DEV','MiOS-BUILDER','podman-MiOS-BUILDER')) {
-            if ($wslList -contains $c) { $devDistro = $c; break }
-        }
-    } catch {}
-    while ($true) {
-        try { Clear-Host } catch {}
-        $W = $script:DW - 4    # leading "  │ " (4) + trailing " │" handled in row
-        $hr   = ([char]0x2500).ToString() * $W
-        $top  = "  " + [char]0x256D + ((([char]0x2500).ToString() * 3) + " MiOS bootstrap complete " + (([char]0x2500).ToString() * 99)).Substring(0, $W) + [char]0x256E
-        $div  = "  " + [char]0x251C + $hr + [char]0x2524
-        $bot  = "  " + [char]0x2570 + $hr + [char]0x256F
-        function _Row { param([string]$Inner)
-            if ($Inner.Length -gt ($W - 2)) { $Inner = $Inner.Substring(0, $W - 2) }
-            "  " + [char]0x2502 + " " + $Inner.PadRight($W - 2) + " " + [char]0x2502
-        }
-        Write-Host ""
-        Write-Host $top -ForegroundColor Green
-        if ($devDistro) {
-            Write-Host (_Row ("Dev distro:  {0}" -f $devDistro))                     -ForegroundColor DarkGray
-            Write-Host (_Row ("Enter via:   wsl -d {0} --user mios" -f $devDistro))   -ForegroundColor DarkGray
-            Write-Host $div -ForegroundColor Green
-        }
-        Write-Host (_Row "1) Continue to build (OCI image + deployables)")           -ForegroundColor White
-        Write-Host (_Row "2) Change settings (open mios.toml in configurator)")       -ForegroundColor White
-        Write-Host (_Row "3) System checks (preflight + dev VM health)")              -ForegroundColor White
-        Write-Host (_Row "4) Logs / reports")                                         -ForegroundColor White
-        Write-Host (_Row "5) Enter dev distro now (wsl -d ...)")                      -ForegroundColor White
-        Write-Host (_Row "6) Close")                                                  -ForegroundColor White
-        Write-Host $bot -ForegroundColor Green
-        $choice = Read-Host "  Pick [1-6]"
-        switch ($choice.Trim()) {
-            '1' {
-                if (-not $devDistro) {
-                    Write-Host "  ERROR: cannot find a MiOS-DEV WSL distro to hand off into." -ForegroundColor Red
-                    Write-Host "         Tried: MiOS-DEV / podman-MiOS-DEV / MiOS-BUILDER / podman-MiOS-BUILDER" -ForegroundColor DarkGray
-                    Write-Host "         Fix:   re-run the bootstrap to provision the dev distro." -ForegroundColor DarkGray
-                    Write-Host ""
-                    Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray -NoNewline
-                    $null = Read-Host
-                    continue
-                }
-                Write-Host "  -> Opening a new terminal into $devDistro for the build pipeline..." -ForegroundColor Cyan
-                Write-Host "     The build dashboard renders in the MiOS-DEV tty (not on Windows)." -ForegroundColor DarkGray
-
-                $driverPath = '/usr/libexec/mios/mios-build-driver'
-                $fallback   = "$MiosRawBase/usr/libexec/mios/mios-build-driver"
-                $driverCmd  = "stty cols $($script:MiosCols) rows $($script:MiosRows) 2>/dev/null; if [ -x '$driverPath' ]; then exec bash '$driverPath'; else echo '[handoff] $driverPath not in $devDistro yet -- fetching latest...'; t=`$(mktemp); if curl -fsSL '$fallback' -o `"`$t`"; then chmod +x `"`$t`"; exec bash `"`$t`"; else echo '[handoff] FATAL: could not fetch driver from $fallback'; exec bash; fi; fi"
-                # wt.exe (Windows Terminal) is the canonical multi-tab host; if it's
-                # missing or the App Execution Alias is broken (per d6e8b66 / earlier
-                # in this session), fall back to a plain Start-Process wsl.exe in a
-                # fresh conhost window. Either way the build runs in MiOS-DEV.
-                $wt = $null
-                try {
-                    $alias = Get-Command wt.exe -ErrorAction SilentlyContinue
-                    if ($alias) { $wt = $alias.Source }
-                } catch {}
-                if (-not $wt) {
-                    $uwp = Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.WindowsTerminal_*" -Directory -ErrorAction SilentlyContinue |
-                           Sort-Object LastWriteTime -Descending |
-                           Select-Object -First 1
-                    if ($uwp) {
-                        $cand = Join-Path $uwp.FullName 'wt.exe'
-                        if (Test-Path $cand) { $wt = $cand }
-                    }
-                }
-                if ($wt) {
-                    & $wt --size "$($script:MiosCols),$($script:MiosRows)" --title "MiOS Build ($devDistro)" `
-                        wsl.exe -d $devDistro --user mios --cd "~" -- bash -lc $driverCmd
-                } else {
-                    Write-Host "  wt.exe not found -- launching wsl.exe via a sized conhost window." -ForegroundColor Yellow
-                    # conhost-side resize: spawn a pwsh window that resizes
-                    # itself to mios.toml [terminal] dims before exec'ing
-                    # wsl.exe. The dashboard frame then renders flush against
-                    # the borders, matching the wt.exe path's geometry.
-                    $_shCols = $script:MiosCols
-                    $_shRows = $script:MiosRows
-                    $_shScr  = $script:MiosScroll
-                    $resizeShim = @"
-try {
-    [Console]::SetWindowSize($_shCols,$_shRows)
-    [Console]::SetBufferSize($_shCols,$_shScr)
-} catch {}
-& wsl.exe -d '$devDistro' --user mios --cd '~' -- bash -lc @'
-$driverCmd
-'@
-"@
-                    Start-Process -FilePath 'pwsh.exe' `
-                        -ArgumentList @('-NoProfile','-NoExit','-Command', $resizeShim)
-                }
-                Write-Host "  -> Build is running inside $devDistro. This Windows menu can close." -ForegroundColor Green
-                Write-Host ""
-                Write-Host "  Press Enter to return to the menu, or close this window..." -ForegroundColor DarkGray -NoNewline
-                $null = Read-Host
-            }
-            '2' {
-                if (Get-Command Open-Configurator -EA SilentlyContinue) {
-                    Open-Configurator -RepoDir $MiosRepoDir
-                } else {
-                    $cfgHtml = Join-Path $MiosRepoDir 'usr/share/mios/configurator/mios.html'
-                    if (Test-Path $cfgHtml) { Start-Process $cfgHtml }
-                    else { Write-Host "  configurator HTML not found at $cfgHtml" -ForegroundColor Yellow }
-                }
-            }
-            '3' {
-                # preflight.ps1 is in mios.git, which is now overlaid AT
-                # $MiosRepoDir root (M:\). Per the directive
-                # "M:\ IS git", mios.git/preflight.ps1 lives at M:\preflight.ps1.
-                # The legacy $MiosRepoDir\mios\preflight.ps1 fallback is kept
-                # for operators on stale checkouts pre-overlay-refactor.
-                $pflCandidates = @(
-                    (Join-Path $MiosRepoDir 'preflight.ps1'),
-                    (Join-Path $MiosRepoDir 'mios\preflight.ps1')
-                )
-                $pfl = $pflCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-                if ($pfl) {
-                    Write-Host "  -> running preflight.ps1..." -ForegroundColor Cyan
-                    & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $pfl
-                } else {
-                    Write-Host "  preflight.ps1 not found at any of:" -ForegroundColor Yellow
-                    $pflCandidates | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkYellow }
-                }
-                Write-Host ""
-                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray -NoNewline
-                $null = Read-Host
-            }
-            '4' {
-                Write-Host ""
-                Write-Host "  Unified log: $LogFile" -ForegroundColor Cyan
-                Write-Host "  Log dir    : $MiosLogDir" -ForegroundColor Cyan
-                Write-Host ""
-                if (Test-Path $LogFile) {
-                    Write-Host "  -- last 30 lines --" -ForegroundColor DarkGray
-                    Get-Content -Tail 30 $LogFile | ForEach-Object { Write-Host "    $_" }
-                }
-                Write-Host ""
-                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray -NoNewline
-                $null = Read-Host
-            }
-            '5' {
-                if ($devDistro) {
-                    $resolvedUser = 'root'
-                    try {
-                        $passwd = (& wsl.exe -d $devDistro --user root -- cat /etc/passwd 2>$null) -join "`n"
-                        if ($passwd -match '(?m)^mios:') { $resolvedUser = 'mios' }
-                        elseif ($passwd -match '(?m)^core:') { $resolvedUser = 'core' }
-                    } catch {}
-                    Write-Host "  -> launching wsl -d $devDistro --user $resolvedUser ..." -ForegroundColor Cyan
-                    & wsl.exe -d $devDistro --user $resolvedUser
-                } else {
-                    Write-Host "  No registered MiOS dev distro found. Try `wsl --list` and enter manually." -ForegroundColor Yellow
-                    Write-Host ""
-                    Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray -NoNewline
-                    $null = Read-Host
-                }
-            }
-            '6' { return }
-            default { Write-Host "  Pick 1-6." -ForegroundColor Yellow }
-        }
-    }
-}
 
 function Read-Line([string]$Prompt, [string]$Default = "") {
     Move-BelowDash
@@ -1630,29 +1416,6 @@ function Read-Line([string]$Prompt, [string]$Default = "") {
     if ([string]::IsNullOrWhiteSpace($v)) { return $Default } else { return $v }
 }
 
-function Read-Model([string]$Default = "qwen3.5:2b") {
-    $small = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'small_ram_model' -Default 'phi4-mini:3.8b-q4_K_M'
-    $mid   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_model'   -Default 'qwen3.5:2b'
-    $big   = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_model'   -Default 'qwen3.5:14b'
-    $midGb = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'mid_ram_gb'      -Default 12
-    $bigGb = Get-MiosTomlValue -Section 'ai.host_thresholds' -Key 'big_ram_gb'      -Default 32
-    Move-BelowDash
-    Write-Host ""
-    Write-Host "  AI model (Architectural Law 5 -- baked into the image):" -ForegroundColor White
-    Write-Host "    1) $small  -- low-RAM default (CPU-fit)" -ForegroundColor DarkGray
-    Write-Host "    2) $mid  -- >= ${midGb} GB RAM, auto-promote tier" -ForegroundColor DarkGray
-    Write-Host "    3) $big  -- >= ${bigGb} GB RAM, big-RAM tier" -ForegroundColor DarkGray
-    Write-Host "    4) custom            -- enter your own ollama model id" -ForegroundColor DarkGray
-    $choice = Read-Line "Choice [1-4]" "1"
-    switch ($choice) {
-        "1"     { return $small }
-        ""      { return $small }
-        "2"     { return $mid }
-        "3"     { return $big }
-        "4"     { return (Read-Line "Custom model id (e.g. mistral-small3:24b)" $Default) }
-        default { Write-Host "  invalid choice '$choice'; using default '$Default'" -ForegroundColor Yellow; return $Default }
-    }
-}
 
 function Resolve-MiosTomlAiDefaults([string]$RepoDir) {
     return @{
@@ -1882,16 +1645,6 @@ function Open-ConfiguratorOnWindows([string]$RepoDir, [string]$Html) {
     }
 }
 
-function Read-Password([string]$Prompt = "Password") {
-    Move-BelowDash
-    Write-Host "  $Prompt [default: mios]: " -NoNewline -ForegroundColor White
-    if ($Unattended) { Write-Host "(default)" -ForegroundColor DarkGray; return "" }
-    if ($PSVersionTable.PSVersion.Major -ge 7) { return (Read-Host -MaskInput) }
-    $ss = Read-Host -AsSecureString
-    $b  = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ss)
-    try   { return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($b) }
-    finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }
-}
 
 function Get-PasswordHash([string]$Plain) {
     if ($Plain -eq "mios" -or [string]::IsNullOrWhiteSpace($Plain)) {
@@ -2024,23 +1777,6 @@ function Find-ActiveDistro {
     return $null
 }
 
-function Sync-RepoToDistro([string]$Distro, [string]$WinPath) {
-    $wsl = ConvertTo-WslPath $WinPath
-    # Try direct WSL file:// fetch (works when Windows drive is mounted at /mnt/)
-    try {
-        & wsl.exe -d $Distro --user root --exec bash -c `
-            "git -C / fetch 'file://$wsl' main 2>/dev/null && git -C / reset --hard FETCH_HEAD 2>/dev/null"
-        if ($LASTEXITCODE -eq 0) { return $true }
-    } catch {}
-    # Dev-distro fallback: Windows drive not mounted; pull from GitHub
-    # origin instead. Routed through Invoke-DistroSh so it works in both
-    # the pre-rename (podman-machine-ssh) and post-rename (wsl-direct)
-    # states.
-    try {
-        Invoke-DistroSh -Bash "cd / && git fetch --depth=1 origin main 2>/dev/null && git reset --hard FETCH_HEAD 2>/dev/null" -MachineName $Distro 2>$null | Out-Null
-        return ($LASTEXITCODE -eq 0)
-    } catch { return $false }
-}
 
 function Initialize-MiosDataDisk {
     <#
@@ -2429,8 +2165,8 @@ function New-BuilderDistro([hashtable]$HW) {
     }
     $ramMB = [math]::Max(4096, [math]::Min($HW.OsTotalRamMB - 512, $HW.RamGB * 1024))
 
-    # Data disk + podman storage redirection happened earlier in
-    # Invoke-DataDiskBootstrap (between Phase 1 and Phase 2). By the
+    # Data disk + podman storage redirection happened earlier
+    # (between Phase 1 and Phase 2). By the
     # time we reach Phase 3 the partition is provisioned and
     # CONTAINERS_STORAGE_CONF / podman.connections already point at
     # the data disk. $HW.DiskGB has also been clamped there.
@@ -6420,24 +6156,6 @@ $endMark
         return
     }
 
-    # Try programmatic Pin to Start. Works on Windows 10; no-op on
-    # Windows 11 (Microsoft removed the "Pin to Start" verb in 21H2+).
-    # Operators on Win11 see a hint to right-click -> Pin manually.
-    function Invoke-MiosPinToStart {
-        param([string]$LnkPath)
-        if (-not (Test-Path -LiteralPath $LnkPath)) { return $false }
-        try {
-            $shellApp = New-Object -ComObject Shell.Application
-            $folderObj = $shellApp.Namespace((Split-Path $LnkPath -Parent))
-            $itemObj = $folderObj.ParseName((Split-Path $LnkPath -Leaf))
-            $pinVerb = $itemObj.Verbs() | Where-Object { $_.Name -replace '&', '' -match '^(Pin to Start|Pin to taskbar)$' } | Select-Object -First 1
-            if ($pinVerb) {
-                $pinVerb.DoIt()
-                return $true
-            }
-        } catch {}
-        return $false
-    }
 
     $_stagingDrive = if ($env:MIOS_DATA_DISK_LETTER) { $env:MIOS_DATA_DISK_LETTER } else { Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'M' }
 

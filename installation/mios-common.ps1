@@ -61,6 +61,20 @@ function Get-MiosSsotValue {
     return $Default
 }
 
+function Convert-MiosHexToRgb {
+    param([string]$Hex, [int[]]$DefaultRgb)
+    if ($Hex -and $Hex -match '^#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$') {
+        try {
+            return @(
+                [convert]::ToInt32($Matches[1], 16),
+                [convert]::ToInt32($Matches[2], 16),
+                [convert]::ToInt32($Matches[3], 16)
+            )
+        } catch {}
+    }
+    return $DefaultRgb
+}
+
 function Get-MiosPalette {
     param([string]$TomlPath = '')
     $fallback = @{
@@ -74,7 +88,13 @@ function Get-MiosPalette {
         muted   = @(148,142,142)
         subtle  = @(183,201,215)
     }
-    return $fallback
+    $pal = @{}
+    foreach ($k in $fallback.Keys) {
+        $defHex = '#{0:X2}{1:X2}{2:X2}' -f $fallback[$k][0], $fallback[$k][1], $fallback[$k][2]
+        $hex = Get-MiosSsotValue -Section 'colors' -Key $k -Default $defHex -TomlPath $TomlPath
+        $pal[$k] = Convert-MiosHexToRgb $hex $fallback[$k]
+    }
+    return $pal
 }
 
 $script:MiosVtOk = Enable-MiosVt

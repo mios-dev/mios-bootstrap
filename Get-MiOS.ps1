@@ -725,16 +725,13 @@ function Resolve-MiosTomlText {
     }
     # Only a saved operator file is a host layer. The bootstrap checkout's
     # mios.toml is a template and must never shadow the full system SSOT.
-    foreach ($path in @(
-        (Join-Path $env:USERPROFILE '.config\mios\mios.toml')
-    )) {
-        if ($path -and (Test-Path -LiteralPath $path -PathType Leaf)) {
-            try {
-                $script:_MiosTomlCache['_text'] = [IO.File]::ReadAllText($path, (New-Object System.Text.UTF8Encoding($false)))
-                $script:_MiosTomlCache['_source'] = $path
-                return $script:_MiosTomlCache['_text']
-            } catch {}
-        }
+    $path = Join-Path $env:USERPROFILE '.config\mios\mios.toml'
+    if ($path -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+        try {
+            $script:_MiosTomlCache['_text'] = [IO.File]::ReadAllText($path, (New-Object System.Text.UTF8Encoding($false)))
+            $script:_MiosTomlCache['_source'] = $path
+            return $script:_MiosTomlCache['_text']
+        } catch {}
     }
     $script:_MiosTomlCache['_text'] = ''
     $script:_MiosTomlCache['_source'] = '(no operator override)'
@@ -3977,84 +3974,6 @@ try {
     } catch {}
 }
 
-function Get-MiOSCenteredWindowPosition {
-    param(
-        [int]$Cols   = 80,
-        [int]$Rows   = 30,
-        [int]$CellW  = 10,
-        [int]$CellH  = 20
-    )
-    try {
-        Add-Type -Namespace 'MiOS.Native' -Name 'Dpi' -MemberDefinition @'
-[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-'@ -ErrorAction SilentlyContinue
-        try { [MiOS.Native.Dpi]::SetProcessDPIAware() | Out-Null } catch {}
-    } catch {}
-
-    try {
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        $cursor = [System.Windows.Forms.Cursor]::Position
-        $screen = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
-
-        $winW = ($Cols * $CellW) + 20   # cells + DWM frame + scrollbar
-        $winH = ($Rows * $CellH) + 12   # cells + DWM frame T+B
-        $x = [int]($screen.X + ($screen.Width  - $winW) / 2)
-        $y = [int]($screen.Y + ($screen.Height - $winH) / 2)
-        if ($x -lt $screen.X) { $x = $screen.X }
-        if ($y -lt $screen.Y) { $y = $screen.Y }
-        return @{ Pos = "$x,$y"; ScreenLeft = $screen.X; ScreenTop = $screen.Y; ScreenWidth = $screen.Width; ScreenHeight = $screen.Height }
-    } catch {
-        return @{ Pos = '0,0'; ScreenLeft = 0; ScreenTop = 0; ScreenWidth = 1920; ScreenHeight = 1080 }
-    }
-}
-
-function Move-MiOSWindowToCenter {
-    param(
-        [hashtable]$ScreenInfo,
-        [int]$TimeoutMs = 4000
-    )
-    try {
-        Add-Type -Namespace 'MiOS.Native' -Name 'Win' -MemberDefinition @'
-[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-[DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-public struct RECT { public int Left, Top, Right, Bottom; }
-'@ -ErrorAction SilentlyContinue
-    } catch {}
-
-    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
-    $hwnd = [IntPtr]::Zero
-    while ((Get-Date) -lt $deadline) {
-        $wt = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
-              Sort-Object StartTime -Descending |
-              Select-Object -First 1
-        if ($wt -and $wt.MainWindowHandle -ne [IntPtr]::Zero) {
-            if ([MiOS.Native.Win]::IsWindowVisible($wt.MainWindowHandle)) {
-                $hwnd = $wt.MainWindowHandle
-                break
-            }
-        }
-        Start-Sleep -Milliseconds 150
-    }
-    if ($hwnd -eq [IntPtr]::Zero) { return $false }
-
-    $hwndTopmost = [IntPtr]::new(-1)
-    for ($attempt = 0; $attempt -lt 3; $attempt++) {
-        $rect = New-Object MiOS.Native.Win+RECT
-        if (-not [MiOS.Native.Win]::GetWindowRect($hwnd, [ref]$rect)) { return $false }
-        $w = $rect.Right - $rect.Left
-        $h = $rect.Bottom - $rect.Top
-        if ($w -le 0 -or $h -le 0) { return $false }
-        $x = [int]($ScreenInfo.ScreenLeft + ($ScreenInfo.ScreenWidth  - $w) / 2)
-        $y = [int]($ScreenInfo.ScreenTop  + ($ScreenInfo.ScreenHeight - $h) / 2)
-        # HWND_TOPMOST + SWP_SHOWWINDOW = 0x40.
-        [void][MiOS.Native.Win]::SetWindowPos($hwnd, $hwndTopmost, $x, $y, $w, $h, 0x40)
-        # Belt-and-braces no-zorder pass.
-        [void][MiOS.Native.Win]::SetWindowPos($hwnd, [IntPtr]::Zero, $x, $y, $w, $h, 0x04)
-        Start-Sleep -Milliseconds 350
-    }
-    return $true
-}
 
 # -- Status helpers (used by Step-0 + Pass-2) ---------------------------------
 # Defined here -- BEFORE Pass-1's Step-0 M:\ block -- so the M:\ provisioning
