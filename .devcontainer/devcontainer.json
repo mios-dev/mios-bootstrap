@@ -175,7 +175,12 @@
         "containers.containerCommand": "podman",
         "containers.environment": {
           "DOCKER_HOST": "unix:///run/user/1000/podman/podman.sock"
-        }
+        },
+        "terminal.integrated.allowChords": false,
+        "terminal.integrated.allowMnemonics": false,
+        "terminal.integrated.commandsToSkipShell": [
+          "-workbench.action.toggleSidebarVisibility"
+        ]
       },
       "extensions": [
         "rust-lang.rust-analyzer",
