@@ -1562,6 +1562,12 @@ verify_probes = [
     "oh-my-posh"
 ]
 
+# Windows-side btop config root. Install-MiosWindowsTools stages the
+# SSOT-rendered btop.conf + themes/mios.theme here and points the User-scope
+# BTOP_CONFIG_DIR at it. Defaults to the MiOS-owned data drive (see
+# [bootstrap.host_storage].drive_letter) rather than %APPDATA%.
+btop_config_dir = "M:\\MiOS\\btop"
+
 # ─── Browser AI: Zen Twilight wired to the MiOS OWUI pipeline ─────────────────
 # Installs Zen Browser (Twilight channel, Firefox-based) on the Windows host and
 # points Firefox/Zen's built-in AI chatbot SIDEBAR at the local OWUI / MiOS-Agent
