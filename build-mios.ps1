@@ -1,4 +1,4 @@
-﻿# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver ...
+# AI-hint: PowerShell entry point for MiOS installation that configures the MiOS-DEV podman-machine, handles initial licensing, and manages the SSH handoff to the Linux-side build driver ...
 # AI-doc: usr/share/doc/mios/manual/root.md
 
 param(
@@ -6482,38 +6482,75 @@ $endMark
         Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
         Log-Ok "MiOS native launcher staged: $miosLauncher (cols=$_lnchCols rows=$_lnchRows from mios.toml [terminal])"
     }
-    # ── mios-wallpaperd (Rust native living wallpaper + gui-watch daemon) ──
+    # ── mios-wallpaperd (Rust native living wallpaper + gui-watch daemon, T-1132) ──
     $wallpaperd_src = Join-Path $MiosRepoDir 'tools\native\mios-wallpaperd'
     $wallpaperd_exe = Join-Path $MiosBinDir 'mios-wallpaperd.exe'
-    if (Get-Command cargo -ErrorAction SilentlyContinue) {
-        Log-Info "Compiling mios-wallpaperd via cargo..."
+    $builtExeCandidates = @(
+        (Join-Path $MiosRepoDir 'tools\native\target\x86_64-pc-windows-gnu\release\mios-wallpaperd.exe'),
+        (Join-Path $MiosRepoDir 'tools\native\target\release\mios-wallpaperd.exe')
+    )
+    $builtExe = $builtExeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+    # Cross-build hermetically inside MiOS-DEV if not pre-built
+    if (-not $builtExe) {
+        $devDistroName = if ($script:DevDistro) { $script:DevDistro } elseif ($DevDistro) { $DevDistro } else { 'MiOS-DEV' }
+        $repoWsl = ConvertTo-WslPath $MiosRepoDir
+        $buildCmd = "CARGO_TARGET_DIR=/var/tmp/cargo-target cargo build --manifest-path `"$repoWsl/tools/native/mios-wallpaperd/Cargo.toml`" --target x86_64-pc-windows-gnu --release && mkdir -p `"$repoWsl/tools/native/target/x86_64-pc-windows-gnu/release`" && cp /var/tmp/cargo-target/x86_64-pc-windows-gnu/release/mios-wallpaperd.exe `"$repoWsl/tools/native/target/x86_64-pc-windows-gnu/release/`""
+
+        Log-Info "Cross-compiling mios-wallpaperd inside $devDistroName (x86_64-pc-windows-gnu)..."
+        try {
+            Invoke-DistroSh -Bash $buildCmd -MachineName $devDistroName -NoSudo
+            if ($LASTEXITCODE -eq 0) {
+                $builtExe = $builtExeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+            }
+        } catch {
+            Log-Warn "Cross-compilation in $devDistroName failed: $($_.Exception.Message)"
+        }
+    }
+
+    # Host cargo fallback if still not built
+    if (-not $builtExe -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        Log-Info "Compiling mios-wallpaperd via host cargo..."
         $cargoOut = & cargo build --manifest-path "$wallpaperd_src\Cargo.toml" --release 2>&1
         if ($LASTEXITCODE -eq 0) {
-            $builtExe = Join-Path $MiosRepoDir 'tools\native\target\release\mios-wallpaperd.exe'
-            if (Test-Path $builtExe) {
-                Copy-Item -Path $builtExe -Destination $wallpaperd_exe -Force
-                Log-Ok "mios-wallpaperd compiled and staged: $wallpaperd_exe"
+            $builtExe = $builtExeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        } else {
+            Log-Warn "Host cargo build for mios-wallpaperd failed: $($cargoOut -join ' ')"
+        }
+    }
 
-                # Register as a Windows Service
-                $svcName = 'MiOS-Wallpaper-Service'
-                if (-not (Get-Service -Name $svcName -ErrorAction SilentlyContinue)) {
-                    $svcPath = "`"$wallpaperd_exe`""
-                    & sc.exe create $svcName binPath= $svcPath start= auto displayname= "MiOS Wallpaper Service" | Out-Null
-                    if ($LASTEXITCODE -eq 0) {
-                        Log-Ok "Registered Windows Service: $svcName"
-                        & sc.exe start $svcName | Out-Null
-                    } else {
-                        Log-Warn "Failed to register Windows Service: $svcName"
-                    }
+    # Verify and provision the built executable at SSOT destination
+    if ($builtExe -and (Test-Path -LiteralPath $builtExe)) {
+        $isVerified = $false
+        try {
+            $bytes = [IO.File]::ReadAllBytes($builtExe)
+            # Must be a valid PE binary (MZ header: 0x4D, 0x5A) with non-trivial size (>100KB)
+            if ($bytes.Length -gt 102400 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) {
+                $isVerified = $true
+            }
+        } catch {}
+
+        if ($isVerified) {
+            Copy-Item -Path $builtExe -Destination $wallpaperd_exe -Force
+            Log-Ok "mios-wallpaperd verified and staged: $wallpaperd_exe ($([math]::Round((Get-Item $wallpaperd_exe).Length / 1MB, 2)) MB)"
+
+            # Register as a Windows Service only after verification
+            $svcName = 'MiOS-Wallpaper-Service'
+            if (-not (Get-Service -Name $svcName -ErrorAction SilentlyContinue)) {
+                $svcPath = "`"$wallpaperd_exe`""
+                & sc.exe create $svcName binPath= $svcPath start= auto displayname= "MiOS Wallpaper Service" | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Log-Ok "Registered Windows Service: $svcName"
+                    & sc.exe start $svcName | Out-Null
+                } else {
+                    Log-Warn "Failed to register Windows Service: $svcName"
                 }
-            } else {
-                Log-Warn "cargo build succeeded but mios-wallpaperd.exe not found at $builtExe"
             }
         } else {
-            Log-Warn "cargo build for mios-wallpaperd failed: $($cargoOut -join ' ')"
+            Log-Warn "Built executable at $builtExe failed PE binary verification -- wallpaper service not registered"
         }
     } else {
-        Log-Warn "cargo not found -- skipping compilation of mios-wallpaperd (requires Rust)"
+        Log-Warn "mios-wallpaperd executable unavailable -- wallpaper service skipped"
     }
 
             # Register MiOS-Autostart (AtLogon trigger, RunLevel Highest, hidden).
