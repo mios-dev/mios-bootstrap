@@ -30,9 +30,10 @@ function Get-MiosSsotValue {
         [string]$Default = '',
         [string]$TomlPath = ''
     )
+    $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
     $candidatePaths = if ($TomlPath) { @($TomlPath) } else {
         @(
-            (Join-Path $env:USERPROFILE '.config\mios\mios.toml'),
+            (Join-Path $userHome '.config\mios\mios.toml'),
             'C:\ProgramData\MiOS\mios.toml',
             'C:\MiOS\usr\share\mios\mios.toml',
             'C:\Windows\Web\MiOS\mios.toml',
