@@ -426,7 +426,7 @@ function Invoke-MigrateLegacyInstallRoot {
         return
     }
 
-    # ── Force path: explicit operator opt-in for cleanup of stale dirs ──
+    # -- Force path: explicit operator opt-in for cleanup of stale dirs --
     # Refuses to operate on git working trees -- those are sacrosanct.
     if (Test-Path (Join-Path $LegacyRoot '.git')) {
         Log-Warn "$LegacyRoot is a git working tree. Migration refuses to /MOVE git working trees (use a manual git remote workflow instead). Aborting even with MIOS_FORCE_LEGACY_MIGRATE=1."
@@ -835,7 +835,7 @@ function Initialize-MiosGlobals {
     if ($script:MiosFrameW   -lt 20) { $script:MiosFrameW   = 79 }
     if ($script:MiosFrameH   -lt 5)  { $script:MiosFrameH   = 19 }
     if ($script:MiosRightMgn -lt 0)  { $script:MiosRightMgn = 1  }
-    # ── [theme.font] -- font + cell metrics ──────────────────
+    # -- [theme.font] -- font + cell metrics ------------------
     $script:MiosFontFamily = [string](Get-MiosTomlValue -Section 'theme.font' -Key 'family'      -Default 'GeistMono Nerd Font Mono')
     $script:MiosFontSize   = [int]   (Get-MiosTomlValue -Section 'theme.font' -Key 'size'        -Default 12)
     $script:MiosFontWeight = [string](Get-MiosTomlValue -Section 'theme.font' -Key 'weight'      -Default 'normal')
@@ -843,18 +843,18 @@ function Initialize-MiosGlobals {
     $script:MiosCellH      = [int]   (Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px'   -Default 20)
     $script:MiosChromeW    = [int]   (Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px' -Default 20)
     $script:MiosChromeH    = [int]   (Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px' -Default 12)
-    # ── [theme.terminal] -- WT profile names ─────────────────
+    # -- [theme.terminal] -- WT profile names -----------------
     $script:MiosSchemeName     = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name'         -Default 'MiOS')
     $script:MiosProfileName    = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'profile_name'        -Default 'MiOS-WIN')
     $script:MiosDevProfileName = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'dev_profile_name'    -Default 'MiOS-DEV')
     $script:MiosHubTargetProf  = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'hub_target_profile'  -Default 'MiOS-DEV')
     $script:MiosSummonKeys     = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'summon_keys'         -Default 'win+space')
     $script:MiosSummonWindow   = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'summon_window_name'  -Default 'MiOS-DEV')
-    # ── [apps] -- shortcut / AumID names ─────────────────────
+    # -- [apps] -- shortcut / AumID names ---------------------
     $script:MiosAumid          = [string](Get-MiosTomlValue -Section 'apps' -Key 'aumid'             -Default 'MiOS.Workstation')
     $script:MiosStartMenuFold  = [string](Get-MiosTomlValue -Section 'apps' -Key 'start_menu_folder' -Default 'MiOS')
     $script:MiosHubLnkName     = [string](Get-MiosTomlValue -Section 'apps' -Key 'hub_shortcut_name' -Default 'MiOS')
-    # ── [branding] -- taglines + dashboard frame chars ───────
+    # -- [branding] -- taglines + dashboard frame chars -------
     $script:MiosTagline        = [string](Get-MiosTomlValue -Section 'branding' -Key 'tagline'      -Default 'My Personal Operating System')
     $script:MiosTaglineLong    = [string](Get-MiosTomlValue -Section 'branding' -Key 'tagline_long' -Default 'My Personal Operating System  --  Immutable Fedora AI Workstation')
     $script:MiosTaglineApp     = [string](Get-MiosTomlValue -Section 'branding' -Key 'tagline_app'  -Default $script:MiosTagline)
@@ -954,7 +954,7 @@ $script:DashSync = [hashtable]::Synchronized(@{
 $script:BgPs = $null
 $script:BgRs = $null
 
-# ── Dashboard functions ───────────────────────────────────────────────────────
+# -- Dashboard functions -------------------------------------------------------
 function fmtSpan([timespan]$s) {
     if ($s.TotalHours -ge 1) { return "{0}:{1:D2}:{2:D2}" -f [int]$s.TotalHours,$s.Minutes,$s.Seconds }
     return "{0:D2}:{1:D2}" -f [int]$s.TotalMinutes,$s.Seconds
@@ -1012,19 +1012,19 @@ function Show-Dashboard {
     # Box-drawing frame chars to match the MiOS terminal's
     # Show-MiosDashboard styling (oh-my-posh framing). $sepTop and
     # $sepBot are the rounded top/bottom corners; $sepD is the
-    # divider between sections; sides use thin │.
+    # divider between sections; sides use thin |.
     $sepTop = ([char]0x256D + (([char]0x2500).ToString() * ($w - 2)) + [char]0x256E).PadRight($winW)
     $sepBot = ([char]0x2570 + (([char]0x2500).ToString() * ($w - 2)) + [char]0x256F).PadRight($winW)
     $sepD   = ([char]0x251C + (([char]0x2500).ToString() * ($w - 2)) + [char]0x2524).PadRight($winW)
     $sepE   = $sepTop   # legacy alias -- header uses top corner the first time
 
-    # ── Row helper -- script block closes over $in/$winW from caller scope ─────
+    # -- Row helper -- script block closes over $in/$winW from caller scope -----
     $mkRow = {
         param([string]$c)
         ([char]0x2502 + " " + $c.PadRight($in) + " " + [char]0x2502).PadRight($winW)
     }
 
-    # ── State ─────────────────────────────────────────────────────────────────
+    # -- State -----------------------------------------------------------------
     $phDone = [int]($script:PhStat | Where-Object { $_ -ge 2 } | Measure-Object).Count
     $phFail = [int]($script:PhStat | Where-Object { $_ -eq 3 } | Measure-Object).Count
     $elapsed   = [datetime]::Now - $script:ScriptStart
@@ -1042,7 +1042,7 @@ function Show-Dashboard {
     $stepMax = [math]::Max(3, $in - 8)
     if ($step.Length -gt $stepMax) { $step = $step.Substring(0, $stepMax - 3) + "..." }
 
-    # ── Single unified progress bar (phases + build steps = one global count) ─
+    # -- Single unified progress bar (phases + build steps = one global count) -
     $stDone  = [math]::Max(0, $script:BuildSubDone)
     $stTotal = [math]::Max(1, $script:BuildSubTotal)
     $glDone  = $phDone + $stDone
@@ -1058,7 +1058,7 @@ function Show-Dashboard {
     $nameW = [math]::Max(8, $in - 16)
     $tableFmt = "{0,2} {1,-6} {2,-${nameW}} {3,5}"
 
-    # ── Assemble rows ─────────────────────────────────────────────────────────
+    # -- Assemble rows ---------------------------------------------------------
     $rows = [System.Collections.Generic.List[string]]::new()
 
     # Header -- gap computed so total row width = $w, then padded to $winW
@@ -1143,7 +1143,7 @@ function Show-Dashboard {
     $rows.Add((& $mkRow "Log: $logLeaf"))
     $rows.Add($sepBot)
 
-    # ── Render at fixed position; full-width overwrite eliminates bleed ────────
+    # -- Render at fixed position; full-width overwrite eliminates bleed --------
     $dashStart = [math]::Min($script:DashRow, [math]::Max(0, $bufH - $rows.Count - 2))
     # Lock out the background heartbeat for the duration of the buffer
     # writes so the spinner can't stamp a "/" or "-" into a separator
@@ -1246,7 +1246,7 @@ function _TruncToWidth {
     # paths like "C:\Users\Administrator\AppData\Local\MiOS\repo\..."
     # get middle-elided to keep both ends visible:
     #   "C:\...\MiOS\repo\subdir\file.ext"
-    # Falls back to simple tail truncation with "…" for non-paths.
+    # Falls back to simple tail truncation with "..." for non-paths.
     param([string]$S, [int]$MaxW = 78)
     if ($S.Length -le $MaxW) { return $S }
     # Path-aware: middle-elide if the string contains backslashes.
@@ -1291,7 +1291,7 @@ function Log-Info([string]$T) { Write-Log $T;          Set-Step $T }
 function Log-Warn([string]$T) { Write-Log $T "WARN";  Set-Step "WARN: $T" }
 function Log-Fail([string]$T) { Write-Log $T "ERROR"; Set-Step "FAIL: $T" }
 
-# ── Utility helpers ───────────────────────────────────────────────────────────
+# -- Utility helpers -----------------------------------------------------------
 function ConvertTo-WslPath([string]$P) {
     $P = $P -replace '\\','/'
     if ($P -match '^([A-Za-z]):(.*)') { return "/mnt/$($Matches[1].ToLower())$($Matches[2])" }
@@ -1979,7 +1979,7 @@ function Get-PodmanMachineOsImage {
         throw "Expected OCI image index at $Repo`:$Tag, got mediaType=$($index.mediaType)"
     }
 
-    # ── Step 2: pick the platform manifest ────────────────────────────
+    # -- Step 2: pick the platform manifest ----------------------------
     $pm = $index.manifests | Where-Object {
         $_.platform.architecture -eq $Architecture -and
         $_.annotations.disktype -eq $DiskType
@@ -1990,7 +1990,7 @@ function Get-PodmanMachineOsImage {
         throw "No platform manifest for $Architecture/$DiskType in $Repo`:$Tag (available: $available)"
     }
 
-    # ── Step 3: platform manifest -> single layer ─────────────────────
+    # -- Step 3: platform manifest -> single layer ---------------------
     # Same byte[]-vs-string trap as Step 1 -- decode explicitly.
     $pmResp = Invoke-WebRequest -UseBasicParsing -Uri "$base/manifests/$($pm.digest)" `
         -Headers @{ 'Accept' = 'application/vnd.oci.image.manifest.v1+json' } `
@@ -2009,7 +2009,7 @@ function Get-PodmanMachineOsImage {
     $localPath      = Join-Path $CacheDir $title
     $expectedDigest = ($layer.digest -replace '^sha256:', '').ToLower()
 
-    # ── Step 4: cache-hit short-circuit ───────────────────────────────
+    # -- Step 4: cache-hit short-circuit -------------------------------
     if (Test-Path $localPath) {
         $existingHash = (Get-FileHash -Path $localPath -Algorithm SHA256).Hash.ToLower()
         if ($existingHash -eq $expectedDigest) {
@@ -2020,7 +2020,7 @@ function Get-PodmanMachineOsImage {
         Remove-Item $localPath -Force -ErrorAction SilentlyContinue
     }
 
-    # ── Step 5: streamed download via System.Net.Http (no RAM buffer) ─
+    # -- Step 5: streamed download via System.Net.Http (no RAM buffer) -
     $sizeMB  = [math]::Round($layer.size / 1MB, 1)
     Log-Ok "Downloading machine-os layer ($sizeMB MB) -> $localPath"
     $blobUrl = "$base/blobs/$($layer.digest)"
@@ -2062,7 +2062,7 @@ function Get-PodmanMachineOsImage {
         $client.Dispose()
     }
 
-    # ── Step 6: SHA256 verify ─────────────────────────────────────────
+    # -- Step 6: SHA256 verify -----------------------------------------
     Set-Step "Verifying machine-os layer SHA256"
     $actualHash = (Get-FileHash -Path $tmpPath -Algorithm SHA256).Hash.ToLower()
     if ($actualHash -ne $expectedDigest) {
@@ -2744,7 +2744,7 @@ sudo git config --system --add safe.directory / 2>/dev/null || \
 sudo git config --system --add safe.directory "$CACHE_DIR" 2>/dev/null || \
     sudo git config --global --add safe.directory "$CACHE_DIR"
 
-# ── Phase A: ensure native bare-clone cache exists + is fresh ────────────────
+# -- Phase A: ensure native bare-clone cache exists + is fresh ----------------
 cache_state=missing
 if [[ -d "$CACHE_DIR/objects" ]]; then
     cache_state=present
@@ -2788,7 +2788,7 @@ else
     fi
 fi
 
-# ── Phase B: ensure / is a git working tree pointing at the native cache ─────
+# -- Phase B: ensure / is a git working tree pointing at the native cache -----
 echo "[overlay] making / a git working tree of mios.git ($CACHE_DIR)"
 sudo git -C / init -b "$ORIGIN_BRANCH" 2>&1 | head -1 || true
 sudo git -C / config --bool core.fileMode false
@@ -2797,7 +2797,7 @@ sudo git -C / config --bool core.symlinks true
 sudo git -C / remote remove origin 2>/dev/null || true
 sudo git -C / remote add origin "$CACHE_DIR"
 
-# ── Phase C: fetch + reset --hard (operates entirely on native ext4) ─────────
+# -- Phase C: fetch + reset --hard (operates entirely on native ext4) ---------
 echo "[overlay] git -C / fetch origin $ORIGIN_BRANCH (from native cache) ..."
 fetch_out=$(sudo git -C / fetch --depth=1 origin "$ORIGIN_BRANCH" 2>&1)
 fetch_rc=$?
@@ -4109,7 +4109,7 @@ if ($ImportWsl) {
 }
 
 function Invoke-BibBuild([string[]]$Types, [string]$MachineOutDir, [int]$TimeoutMin = 60) {
-    # Run bootc-image-builder inside the machine via Windows podman API (→ machine socket)
+    # Run bootc-image-builder inside the machine via Windows podman API (-> machine socket)
     # Types: 'qcow2', 'raw', 'anaconda-iso', 'vmdk'
     $typeArgs = ($Types | ForEach-Object { "--type $_" }) -join " "
     Set-Step "BIB: $($Types -join '+')..."
@@ -4172,7 +4172,7 @@ function New-MiosHyperVVm([string]$RawPath, [int]$RamGB = 8) {
         Write-Log "Hyper-V module not available -- skipping VM creation"
         return $false
     }
-    # Convert raw → vhdx if Convert-VHD is available
+    # Convert raw -> vhdx if Convert-VHD is available
     $vhdxPath = [System.IO.Path]::ChangeExtension($RawPath, ".vhdx")
     if (Get-Command Convert-VHD -EA SilentlyContinue) {
         Set-Step "Converting raw -> vhdx..."
@@ -4211,7 +4211,7 @@ function Invoke-DeployPipeline([hashtable]$HW) {
     if (-not (Test-Path $artifactDir)) { New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null }
     if (-not (Test-Path $wslFsDir))    { New-Item -ItemType Directory -Path $wslFsDir    -Force | Out-Null }
 
-    # ── Phase 10: Export WSL2 tar ──────────────────────────────────────────────
+    # -- Phase 10: Export WSL2 tar ----------------------------------------------
     Start-Phase 10
     $wslTar = Join-Path $artifactDir "mios-wsl2.tar"
     $wslOk  = $false
@@ -4227,7 +4227,7 @@ function Invoke-DeployPipeline([hashtable]$HW) {
         $ExitCode = 1
     }
 
-    # ── Phase 11: Register WSL2 distro ────────────────────────────────────────
+    # -- Phase 11: Register WSL2 distro ----------------------------------------
     Start-Phase 11
     if ($wslOk) {
         try {
@@ -4247,7 +4247,7 @@ function Invoke-DeployPipeline([hashtable]$HW) {
         $ExitCode = 1
     }
 
-    # ── Phase 12: BIB disk images (qcow2 + raw) ───────────────────────────────
+    # -- Phase 12: BIB disk images (qcow2 + raw) -------------------------------
     Start-Phase 12
     $bibMachineDir = "/tmp/mios-bib-output"
     $bibOk = $false
@@ -4278,7 +4278,7 @@ function Invoke-DeployPipeline([hashtable]$HW) {
         End-Phase 12 -Warn
     }
 
-    # ── Phase 13: Hyper-V VM from raw disk ────────────────────────────────────
+    # -- Phase 13: Hyper-V VM from raw disk ------------------------------------
     Start-Phase 13
     $rawPath = Join-Path $artifactDir "mios.raw"
     if ($bibOk -and (Test-Path $rawPath)) {
@@ -4936,7 +4936,7 @@ function Install-WindowsBranding {
         } catch {}
     }
 
-    # ── 2. oh-my-posh.exe (installed into $MiosBinDir) ───────────────
+    # -- 2. oh-my-posh.exe (installed into $MiosBinDir) ---------------
     # Single canonical install location: $MiosInstallDir\bin (= C:\MiOS\bin
     # for admin installs, %LOCALAPPDATA%\MiOS\bin otherwise) so all MiOS
     # tooling lives under one root and a single PATH entry covers them.
@@ -4963,7 +4963,7 @@ function Install-WindowsBranding {
         Log-Ok "Added $MiosBinDir to $pathScope PATH"
     }
 
-    # ── 3. PowerShell profile + theme ────────────────────────────────
+    # -- 3. PowerShell profile + theme --------------------------------
     # mios.git overlay puts the theme at $MiosRepoDir\usr\share\mios\...
     # (per "M:\ IS git" directive). The mios-bootstrap shadow
     # is checked as a defensive fallback.
@@ -4993,14 +4993,14 @@ function Install-WindowsBranding {
             }
             $_eR = _Esc $_pwRight; $_eL = _Esc $_pwLeft; $_eLD = _Esc $_ldDia; $_eTD = _Esc $_trDia
             # Replace every powerline_symbol occurrence by VALUE -- the
-            # current vendor default is  (right) or  (left);
+            # current vendor default is [U+E0B4] (right) or [U+E0B6] (left);
             # we don't know which segments use which without parsing,
             # so we substitute by current literal in two passes.
             if ($_eR -and $_eR -ne "$([char]0xE0B4)") { $_omp = $_omp -replace '\\ue0b4', $_eR }
             if ($_eL -and $_eL -ne "$([char]0xE0B6)") { $_omp = $_omp -replace '\\ue0b6', $_eL }
             # leading_diamond / trailing_diamond appear only on diamond-
             # style segments (the leading text + trailing time caps).
-            # Patch by JSON key: "leading_diamond": "" -> the new
+            # Patch by JSON key: "leading_diamond": "[U+E0B6]" -> the new
             # value. Same for trailing_diamond.
             if ($_eLD -and $_eLD -ne "$([char]0xE0B6)") {
                 $_omp = $_omp -replace '("leading_diamond"\s*:\s*")\\u[0-9a-fA-F]{4}', ('${1}' + $_eLD)
@@ -5094,7 +5094,7 @@ function New-MiosIcon {
         $green  = [System.Drawing.Color]::FromArgb(62, 119, 101)
         $g.Clear($bg)
 
-        # ── Iso cube vertices ────────────────────────────────────────
+        # -- Iso cube vertices ----------------------------------------
         # Six visible vertices of an isometric cube silhouette, plus
         # the front (vMid) corner. The cube is centered at (cx, cy)
         # with extent $r. All face polygons share these vertices so
@@ -5129,7 +5129,7 @@ function New-MiosIcon {
         $g.FillPolygon($brushRight, $rightPts)
         $brushTop.Dispose(); $brushLeft.Dispose(); $brushRight.Dispose()
 
-        # ── Hatch marks (`/:\` echoes of the ASCII art) ──────────────
+        # -- Hatch marks (`/:\` echoes of the ASCII art) --------------
         # Skip at 16 px -- the lines turn to mush. At 32+ each face
         # gets two parallel diagonal strokes to mimic the wireframe
         # `/:\` cross-hatching of the dashboard letters.
@@ -5169,7 +5169,7 @@ function New-MiosIcon {
             $hatchPen.Dispose()
         }
 
-        # ── Edge strokes (cube outline) ──────────────────────────────
+        # -- Edge strokes (cube outline) ------------------------------
         $edgePen = New-Object System.Drawing.Pen($bg, [math]::Max(1, $s / 36))
         $g.DrawPolygon($edgePen, $topPts)
         $g.DrawPolygon($edgePen, $leftPts)
@@ -5178,7 +5178,7 @@ function New-MiosIcon {
         $g.DrawLine($edgePen, $vTop, $vMid)
         $edgePen.Dispose()
 
-        # ── Badge (verb-specific glyph in bottom-right) ──────────────
+        # -- Badge (verb-specific glyph in bottom-right) --------------
         if ($Badge -ne 'plain' -and $s -ge 32) {
             $bSize = [int]($s * 0.36)
             $bX    = $s - $bSize - 1
@@ -5191,12 +5191,12 @@ function New-MiosIcon {
             $badgeBrush.Dispose()
             $glyphFont = New-Object System.Drawing.Font("Segoe UI Symbol", [int]($bSize * 0.65), [System.Drawing.FontStyle]::Bold)
             $glyphChar = switch ($Badge) {
-                'dev'    { [char]0x276F }   # ❯ chevron right
-                'pull'   { [char]0x2193 }   # ↓ down arrow
-                'dash'   { [char]0x25A6 }   # ▦ grid
-                'build'  { [char]0x2699 }   # ⚙ gear
-                'update' { [char]0x21BB }   # ↻ clockwise
-                'config' { [char]0x2699 }   # ⚙ gear
+                'dev'    { [char]0x276F }   # > chevron right
+                'pull'   { [char]0x2193 }   # v down arrow
+                'dash'   { [char]0x25A6 }   # # grid
+                'build'  { [char]0x2699 }   # * gear
+                'update' { [char]0x21BB }   # @ clockwise
+                'config' { [char]0x2699 }   # * gear
                 'help'   { [char]0x003F }   # ? question mark
             }
             $sf = New-Object System.Drawing.StringFormat
@@ -5250,7 +5250,7 @@ function Install-MiosLauncher {
         New-Item -ItemType Directory -Path $d -Force | Out-Null
     }
 
-    # ── 1. Generate the icon family (one .ico per verb) ───────────────
+    # -- 1. Generate the icon family (one .ico per verb) ---------------
     $iconMap = @{
         'mios'         = 'plain'
         'mios-dev'     = 'dev'
@@ -5311,7 +5311,7 @@ function Resolve-MiosDevDistro {
 $devResolveBlock
 `$distro = Resolve-MiosDevDistro
 if (`$args.Count -eq 0) {
-    wsl.exe -d `$distro --user mios --cd / -- bash -l
+    & (Join-Path `$PSScriptRoot 'mios.cmd') terminal
 } else {
     wsl.exe -d `$distro @args
 }
@@ -5746,6 +5746,12 @@ if ($args.Count -gt 0) {
 '@
     Set-Content -Path $hubPath -Value $hubScript -Encoding UTF8
     Log-Ok "MiOS app staged at $hubPath"
+    # CMD is also the default Windows OpenSSH shell. A machine-PATH .cmd must
+    # exist independently of the user's PowerShell profile, including Xbox.
+    $_nativeSetup = Join-Path $PSScriptRoot 'usr\share\mios\windows\mios-native-client-setup.ps1'
+    if (-not (Test-Path -LiteralPath $_nativeSetup)) { throw "Native MiOS CMD setup missing: $_nativeSetup" }
+    & $_nativeSetup -Distro $DevDistro -BinDirectory $MiosBinDir -SourceRoot $PSScriptRoot
+    if (-not $?) { throw 'Native MiOS CMD/client setup failed' }
 
     # mios-code.ps1 -- `mios code` verb. Opens code-server in the
     # operator's default browser.
@@ -5943,7 +5949,7 @@ try {
     # Also drop a VERSION file so mios-dash can render the current ver.
     Set-Content -Path (Join-Path $MiosInstallDir 'VERSION') -Value $MiosVersion.TrimStart('v') -Encoding UTF8
 
-    # ── 3. PowerShell profile: mios-* functions (idempotent block) ────
+    # -- 3. PowerShell profile: mios-* functions (idempotent block) ----
     $profilePath = $PROFILE.CurrentUserAllHosts
     if (-not $profilePath) { $profilePath = $PROFILE }
     $profileDir  = Split-Path $profilePath -Parent
@@ -6143,7 +6149,7 @@ $endMark
         Log-Warn "Windows Terminal not installed (no settings.json found) -- launcher will fall back to bare pwsh"
     }
 
-    # ── 5. Desktop primary launcher + Start Menu MiOS folder ──────────
+    # -- 5. Desktop primary launcher + Start Menu MiOS folder ----------
     $desktopDir = [Environment]::GetFolderPath('Desktop')
     $shell      = New-Object -ComObject WScript.Shell
 
@@ -6200,7 +6206,7 @@ $endMark
         Set-Content -Path $miosLauncher -Value $launcherSrc -Encoding UTF8
         Log-Ok "MiOS native launcher staged: $miosLauncher (cols=$_lnchCols rows=$_lnchRows from mios.toml [terminal])"
     }
-    # ── mios-wallpaperd (Rust native living wallpaper + gui-watch daemon, T-1132) ──
+    # -- mios-wallpaperd (Rust native living wallpaper + gui-watch daemon, T-1132) --
     $wallpaperd_src = Join-Path $MiosRepoDir 'tools\native\mios-wallpaperd'
     $wallpaperd_exe = Join-Path $MiosBinDir 'mios-wallpaperd.exe'
     $builtExeCandidates = @(
@@ -6348,69 +6354,11 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
             Log-Warn "MiOS-Autostart staging failed: $($_.Exception.Message)"
         }
 
-    # Compile a tiny native .exe launcher with subsystem:Windows (no
-    # console flash + window-centering loop). Source code lives in
-    # src/mios-launch.cs at the repo root; build-mios.ps1 reads it from
-    # disk so AMSI heuristics don't see Win32-interop strings as part
-    # of the .ps1 script content.
+    # Native client setup builds the Rust Windows-subsystem launcher inside
+    # MiOS-DEV before creating shortcuts. Its startup renders the runtime SSOT.
     $miosLauncherExe = Join-Path $MiosBinDir 'mios-launch.exe'
-    $_csSrcCandidates = @(
-        (Join-Path $MiosRepoDir 'src\mios-launch.cs'),
-        (Join-Path $MiosBootstrapShadow 'src\mios-launch.cs')
-    )
-    $_csSrc = $null
-    foreach ($_c in $_csSrcCandidates) {
-        if (Test-Path -LiteralPath $_c) { $_csSrc = $_c; break }
-    }
-    $launcherCs = $null
-    if ($_csSrc) {
-        try { $launcherCs = [IO.File]::ReadAllText($_csSrc, (New-Object System.Text.UTF8Encoding($false))) } catch {
-            Log-Warn "mios-launch.cs read failed at ${_csSrc}: $($_.Exception.Message)"
-        }
-    } else {
-        Log-Warn "mios-launch.cs not found in repo (probed: $($_csSrcCandidates -join ', ')) -- mios-launch.exe will not be compiled"
-    }
-    # PS 5.1's Add-Type rejects -OutputType WindowsApplication. Invoke
-    # the .NET Framework C# compiler (csc.exe) directly. Ships with
-    # every Windows machine that has .NET 4.x installed (which is all
-    # supported Windows versions). The /target:winexe flag sets PE
-    # subsystem:Windows so the resulting .exe has no console.
-    $_csc = $null
-    foreach ($_cscCand in @(
-        "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
-        "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
-    )) {
-        if (Test-Path -LiteralPath $_cscCand) { $_csc = $_cscCand; break }
-    }
-    if ($_csc -and $launcherCs) {
-        $_launcherCs = Join-Path $env:TEMP ('mios-launch-' + [guid]::NewGuid().Guid.Substring(0,8) + '.cs')
-        try {
-            Set-Content -LiteralPath $_launcherCs -Value $launcherCs -Encoding UTF8
-            $_cscArgs = @(
-                '/nologo',
-                '/target:winexe',                # subsystem:Windows -- no console host
-                '/optimize+',
-                '/reference:System.Drawing.dll',
-                '/reference:System.Windows.Forms.dll',
-                ('/out:' + $miosLauncherExe),
-                $_launcherCs
-            )
-            $_cscOut = & $_csc @_cscArgs 2>&1
-            if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $miosLauncherExe)) {
-                Log-Ok "MiOS native .exe launcher compiled via csc.exe: $miosLauncherExe (subsystem:Windows -- zero pre-flash)"
-            } else {
-                Log-Warn ("mios-launch.exe csc compile failed (exit {0}): {1}" -f $LASTEXITCODE, (($_cscOut | Select-Object -Last 5) -join ' / '))
-                $miosLauncherExe = $null
-            }
-        } catch {
-            Log-Warn "mios-launch.exe csc compile failed: $($_.Exception.Message) -- falling back to pwsh launcher (will pre-flash)"
-            $miosLauncherExe = $null
-        } finally {
-            if (Test-Path -LiteralPath $_launcherCs) { Remove-Item -LiteralPath $_launcherCs -Force -ErrorAction SilentlyContinue }
-        }
-    } else {
-        Log-Warn "csc.exe not found under %WINDIR%\Microsoft.NET\Framework{,64}\v4.0.30319 -- mios-launch.exe not compiled"
-        $miosLauncherExe = $null
+    if (-not (Test-Path -LiteralPath $miosLauncherExe)) {
+        throw 'The native Rust Windows launcher was not staged by MiOS-DEV'
     }
 
     if ($miosLauncherExe -and (Test-Path -LiteralPath $miosLauncherExe)) {
@@ -6641,7 +6589,7 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
 
     [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
 
-    # ── 6. Verify the dev distro is registered (or warn) ──────────────
+    # -- 6. Verify the dev distro is registered (or warn) --------------
     # Phase 3 ("MiOS-DEV distro") provisions the dev distro as
     # "podman-$DevDistro" (= "podman-MiOS-DEV"); the post-Phase-13
     # Rename-PodmanDevDistro pass drops that prefix to plain
@@ -6703,7 +6651,7 @@ $script:DashboardMode = if ($env:MIOS_DASHBOARD_MODE -eq 'interactive' -and (Tes
     'log'
 }
 
-# ── Banner ───────────────────────────────────────────────────────────────────
+# -- Banner -------------------------------------------------------------------
 try { Clear-Host } catch {}
 $bTop = [char]0x256D + (([char]0x2500).ToString() * ($script:DW - 2)) + [char]0x256E
 $bBot = [char]0x2570 + (([char]0x2500).ToString() * ($script:DW - 2)) + [char]0x256F
@@ -6745,7 +6693,7 @@ if ($script:DashboardMode -eq 'log') {
 # Capture the row where the dashboard will be drawn (right after banner)
 $script:DashRow = try { [Console]::CursorTop } catch { 0 }
 
-# ── Background heartbeat (interactive mode only) ─────────────────────────────
+# -- Background heartbeat (interactive mode only) -----------------------------
 # Runs on a dedicated runspace so the spinner animates even when the
 # main render loop is blocked on a long sub-process. Skipped in log
 # mode -- without working SetCursorPosition the heartbeat would just
@@ -6795,7 +6743,7 @@ $script:DW = Get-MiosFrameWidth
 
 Show-Dashboard -Force   # draw initial (all phases pending)
 
-# ── Phase 0 -- Hardware + Prerequisites ──────────────────────────────────────
+# -- Phase 0 -- Hardware + Prerequisites --------------------------------------
 Start-Phase 0
 $HW = Get-Hardware
 Write-Log "hw: CPU=$($HW.Cpus)  RAM=$($HW.RamGB)GB  Disk=$($HW.DiskGB)GB  GPU=$($HW.GpuName)"
@@ -6979,7 +6927,7 @@ function Invoke-GitFetchWithRetry {
     return $exitCode
 }
 
-# ── Phase 1 -- Detecting existing build environment ──────────────────────────
+# -- Phase 1 -- Detecting existing build environment --------------------------
 Start-Phase 1
 Start-MiosBuildMonitor
 $activeDistro = Find-ActiveDistro
@@ -7045,7 +6993,7 @@ $miosRepo = $MiosRepoDir
     } finally { Pop-Location }
     Log-Ok (Get-MiosTomlValue -Section 'messages.steps' -Key 'mios_git_overlaid' -Default "mios.git overlaid at $MiosRepoDir")
 
-    # ── Step 2: mios-bootstrap.git in shadow checkout, files overlaid ──────
+    # -- Step 2: mios-bootstrap.git in shadow checkout, files overlaid ------
     if (Test-Path (Join-Path $MiosBootstrapShadow ".git")) {
         Set-Step "Updating mios-bootstrap.git shadow (fetch + hard reset)"
         Push-Location $MiosBootstrapShadow
@@ -7121,7 +7069,7 @@ $miosRepo = $MiosRepoDir
     Log-Ok (Get-MiosTomlValue -Section 'messages.steps' -Key 'entry_scripts_staged' -Default "Entry scripts staged at $MiosBinDir")
     End-Phase 2
 
-    # ── Phase 3 -- MiOS-DEV distro (formerly MiOS-BUILDER) ───────────────────
+    # -- Phase 3 -- MiOS-DEV distro (formerly MiOS-BUILDER) -------------------
     Start-Phase 3
 
     try { Set-MiosWslConfig -RamGB $HW.RamGB -Cpus $HW.Cpus -Force } catch { Log-Warn "Set-MiosWslConfig (pre-Phase-3): $($_.Exception.Message)" }
@@ -7805,7 +7753,7 @@ exit 0
 
     End-Phase 4
 
-    # ── Phase 5 -- Verify Windows build context ──────────────────────────────
+    # -- Phase 5 -- Verify Windows build context ------------------------------
     # Build runs via 'podman build' from the Windows clone -- no machine exec needed.
     Start-Phase 5
     # mios.git is overlaid AT $MiosRepoDir root, per.
@@ -7852,7 +7800,7 @@ exit 0
         # Frame width comes from the SAME Get-MiosFrameWidth helper that
         # drives every other framed surface in this script -- one
         # formula, one source.  Subtract 2 for the 2-cell left-indent
-        # the install-complete banner uses ('  ╭...╯').
+        # the install-complete banner uses ('  +...+').
         $_inner = (Get-MiosFrameWidth) - 2
         if ($_inner -lt 40) { $_inner = 40 }
         $_titlePadded = '  ' + $_TV + ' ' + $_completeTitle.PadRight($_inner - 1) + ' ' + $_TV
@@ -7914,7 +7862,7 @@ exit 0
     Open-Configurator -RepoDir $MiosRepoDir
     $script:_MiosTomlCache.Clear()  # configurator may have promoted a new layer
 
-    # ── Phase 6 -- Identity ───────────────────────────────────────────────────
+    # -- Phase 6 -- Identity ---------------------------------------------------
     Start-Phase 6
     $script:CurStep = "Resolving identity from mios.toml..."
     Show-Dashboard -Force
@@ -7943,7 +7891,7 @@ exit 0
     $script:IdentInfo = "User:$MiosUser  Host:$MiosHostname  Base:$($HW.BaseImage -replace 'ghcr.io/ublue-os/ucore-hci:','')  Model:$MiosAiModel"
     End-Phase 6
 
-    # ── Phase 7 -- Write identity ─────────────────────────────────────────────
+    # -- Phase 7 -- Write identity ---------------------------------------------
     Start-Phase 7
     $MiosLlamacppBakeModels = $aiDefaults.LlamacppBakeModels
     $MiosVllmBakeModel       = $aiDefaults.VllmBakeModel
@@ -7988,7 +7936,7 @@ chmod 0640 /etc/mios/install.env
     else { Log-Warn "install.env write failed (non-fatal -- firstboot will use default identity; set MIOS_* vars manually)" }
     End-Phase 7
 
-    # ── App registration + Start Menu ─────────────────────────────────────────
+    # -- App registration + Start Menu -----------------------------------------
     # Phase index varies by mode -- 5 in BootstrapOnly (the trimmed
     # 6-phase Windows-side layout) and 8 in -FullBuild / -BuildOnly
     # (the full 14-phase legacy layout).
@@ -8176,7 +8124,7 @@ foreach (`$wtPath in @(`$WT, `$WT_PREVIEW)) {
         }
         # profiles.defaults: only the keys MiOS writes
         if (`$j.profiles -and `$j.profiles.defaults) {
-            foreach (`$k in @('scrollbarState','padding','useAcrylic','opacity','systemBackdrop','suppressApplicationTitle','disableAnimations','useAtlasEngine','experimental.detectURLs','experimental.input.forceVT','experimental.rendering.forceFullRepaint')) {
+            foreach (`$k in @('scrollbarState','padding','useAcrylic','opacity','unfocusedAppearance','systemBackdrop','suppressApplicationTitle','disableAnimations','useAtlasEngine','experimental.detectURLs','experimental.input.forceVT','experimental.rendering.forceFullRepaint')) {
                 if (`$j.profiles.defaults.PSObject.Properties[`$k]) {
                     `$j.profiles.defaults.PSObject.Properties.Remove(`$k); `$changed = `$true
                 }

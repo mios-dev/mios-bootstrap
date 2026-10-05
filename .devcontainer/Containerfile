@@ -54,6 +54,16 @@ RUN --mount=type=bind,source=.,target=/ctx,ro \
              .devcontainer/install-root-overlay.sh .devcontainer/mios-agent-pipe-dev \
              .devcontainer/fetch-installer.sh usr/libexec/mios/mios-vscode-custom-css \
              usr/libexec/mios/mios-toml-get usr/lib/mios/mios_toml.py \
+             usr/libexec/mios/mios-mcp-server usr/share/mios/vendored/tmux-mcp \
+             usr/libexec/mios/ux/tmux_theme.py usr/libexec/mios/mios-dotfiles-render \
+             usr/libexec/mios/mios-terminal usr/libexec/mios/mios-ai-terminal \
+             usr/libexec/mios/mios-dashboard.sh usr/libexec/mios/mios-mon.py usr/bin/mios \
+             etc/profile.d/mios-prompt.sh etc/tmux.conf etc/dconf/db/local.d/10-mios-keybindings \
+             usr/share/mios/tmux usr/share/mios/keybindings usr/share/mios/hyprland/mios-keys.conf usr/share/mios/sway/mios-keys.conf \
+             usr/share/mios/theme/templates/oh-my-posh.omp.json.tmpl usr/share/mios/oh-my-posh/mios.omp.json \
+             tools/native/Cargo.toml tools/native/Cargo.lock tools/native/mios-unit-gen tools/native/mios-agent-relay \
+             usr/share/mios/vendored/wheels \
+             usr/share/mios/vendored/fonts/geist-nerd.zip \
              usr/share/mios/themes/code-server-terminal.css; do \
         [ -e "$src/$f" ] || { echo "[devcontainer] ERROR: $f is missing from the MiOS source" >&2; exit 1; }; \
         install -d -m 0755 "$stage/$(dirname "$f")"; cp -a "$src/$f" "$stage/$f"; \
@@ -70,7 +80,10 @@ RUN set -euo pipefail; \
     export MIOS_TOML=/usr/src/mios-ssot/usr/share/mios/mios.toml; \
     . /usr/src/mios-ssot/automation/lib/packages.sh; \
     pkgs="$(get_packages_strict devcontainer)"; \
+    pkgs="$pkgs $(get_packages_strict mcp)"; \
     dnf install -y --setopt=install_weak_deps=False $pkgs; \
+    MIOS_TOML=/usr/src/mios-ssot/usr/share/mios/mios.toml MIOS_RESOLVER_NATIVE=0 \
+      python3.13 /usr/src/mios-ssot/usr/libexec/mios/mios-mcp-server --install-native --source-root /usr/src/mios-ssot; \
     dnf clean all
 
 # The native catalog links static musl binaries with rust-lld ([build.native.linux]).
@@ -99,7 +112,19 @@ RUN set -euo pipefail; \
         || { echo "[devcontainer] ERROR: linker ${linker} missing from the ${channel} toolchain" >&2; exit 1; }; \
     chmod -R a+rwX "$RUSTUP_HOME" "$CARGO_HOME"
 
-RUN npm install -g @anthropic-ai/claude-code @github/copilot @google/gemini-cli
+# The existing native generator is also the runtime projection engine. Build
+# its source with the same SSOT toolchain, without shipping the other tools.
+RUN set -euo pipefail; \
+    stage=/usr/src/mios-ssot; \
+    python3 -c 'import pathlib,re; p=pathlib.Path("/usr/src/mios-ssot/tools/native/Cargo.toml"); s=p.read_text(); p.write_text(re.sub(r"(?s)members = \[.*?\]", "members = [\"mios-unit-gen\", \"mios-agent-relay\"]", s, count=1))'; \
+    target="$(MIOS_TOML_ROOT="$stage" python3 "$stage/usr/libexec/mios/mios-toml-get" --vendor build.native.linux.targets "$(uname -m)")"; \
+    RUSTFLAGS='-C linker=rust-lld' cargo build --release --target "$target" \
+        --manifest-path "$stage/tools/native/Cargo.toml" -p mios-unit-gen -p mios-agent-relay; \
+    for binary in mios-unit-gen mios-agent-relay; do \
+        install -m 0755 "$stage/tools/native/target/$target/release/$binary" "/usr/libexec/mios/$binary"; \
+    done
+
+RUN /usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --agent-cli --install
 
 RUN install -d -m 0755 /usr/lib/mios/agents \
     && python3.11 -m venv /usr/lib/mios/agents/.venv \
@@ -133,15 +158,9 @@ RUN install -m 0755 /usr/src/mios-ssot/.devcontainer/install-root-overlay.sh /us
     && install -m 0755 /usr/src/mios-ssot/.devcontainer/fetch-installer.sh /usr/local/bin/mios-fetch-installer \
     && rm -rf /usr/src/mios-ssot
 
-# The Antigravity CLI is part of the environment, so a failed install fails the
-# build instead of shipping an image that silently lacks it. The fetch helper
-# decodes the CDN's unsolicited gzip and refuses a non-script payload.
+# Every agent is already installed globally from the same SSOT catalog.
 USER mios-dev
-RUN set -eu; tmp="$(mktemp -d)"; \
-    mios-fetch-installer https://antigravity.google/cli/install.sh "$tmp/install.sh"; \
-    bash "$tmp/install.sh" >/dev/null; \
-    /home/mios-dev/.local/bin/agy --version; \
-    rm -rf "$tmp"
+RUN agy --version
 
 ENV PATH="/home/mios-dev/.local/bin:${PATH}"
 ENV MIOS_DEVCONTAINER=1
