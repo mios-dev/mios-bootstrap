@@ -13,6 +13,15 @@
 > proprietary side-channels, no fallback to vendor-cloud URLs, no
 > vendor-specific agent / dev-tool product references in any AI file.
 >
+> **Universal Harness Neutrality & Native MiOS-MCP + tmux-mcp (Globally Binding):**
+> No agent or harness (Antigravity, OpenAI Codex, Claude Code, OpenCode, Gemini, etc.)
+> is permanently hardcoded as the master, worker, or monitor. Absolutely **ANY AGENT** can be
+> dynamically promoted to Orchestrator or Monitor based on whichever Agent CLI is invoked.
+> All multi-agent workflows, inter-agent coordination, sub-pane spawning, command execution,
+> and live monitoring MUST use `MiOS-MCP` (`agent-pipe` / `agent-relay` / `state.json`) and `tmux-mcp v2`
+> native slot tools (`open-pane`, `execute-command`, `send-keys`, `capture-pane`, `start-and-watch`,
+> `nested_workflow`) natively, both in headless slots (`/run/mios-tmux/`) and in the live desktop session (`tmux -L mios-human`).
+>
 > **System repo:** <https://github.com/mios-dev/mios> — that's where
 > the FHS overlay, Containerfile, automation scripts, and the six
 > Architectural Laws live. This repo is the *user-facing entry surface*.
