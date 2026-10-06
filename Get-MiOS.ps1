@@ -5660,7 +5660,7 @@ try {
 $_bootstrapExit = $LASTEXITCODE
 
 if ($_bootstrapExit -eq 0) {
-    $_msgFinalStep = Get-MiosTomlValue -Section 'messages.steps' -Key 'final_step_native_app' -Default '[*] Final step: Registering MiOS as a native Windows app + canonical 4 shortcuts...'
+    $_msgFinalStep = Get-MiosTomlValue -Section 'messages.steps' -Key 'final_step_native_app' -Default '[*] Final step: Registering the unified MiOS Windows launcher...'
     Write-Host ''
     Write-Host "  $_msgFinalStep" -ForegroundColor Cyan
     try { Install-MiOSNativeApp | Out-Null } catch {
@@ -5672,6 +5672,12 @@ if ($_bootstrapExit -eq 0) {
     # filter ignores xdg-open URL handlers, so we publish explicitly.
     try { Install-MiOSServiceShortcuts | Out-Null } catch {
         Write-Host "  [!] Install-MiOSServiceShortcuts failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    # Reconcile after the legacy app registrar so its per-action links cannot
+    # reappear at the end of a fresh install. Uninstall remains in Windows Settings.
+    $_nativeProjection = Join-Path $env:ProgramData 'MiOS\bin\mios-native-client-setup.ps1'
+    if (Test-Path -LiteralPath $_nativeProjection) {
+        & $_nativeProjection -RuntimeOnly -BinDirectory (Split-Path -Parent $_nativeProjection)
     }
 }
 

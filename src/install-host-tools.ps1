@@ -1,4 +1,4 @@
-﻿# AI-hint: Powershell script to install Windows host CLI tools (e.g., pwsh, ripgrep, fzf) via winget (with checksum retry fallback) or direct GitHub downloads based on mios.toml definitions to prepare the host environment for MiOS terminal operations.
+# AI-hint: Powershell script to install Windows host CLI tools (e.g., pwsh, ripgrep, fzf) via winget (with checksum retry fallback) or direct GitHub downloads based on mios.toml definitions to prepare the host environment for MiOS terminal operations.
 # AI-related: mios-bootstrap, mios-seed, localhost:3030
 # AI-functions: Install-MiosWindowsTools, Configure-MiosBrowserAI
 #Requires -Version 5.1
@@ -85,7 +85,8 @@ function Install-MiosWindowsTools {
         'sharkdp.fd|fd',
         'GitHub.cli|gh',
         'fastfetch-cli.fastfetch|fastfetch',
-        'aristocratos.btop4win|btop4win',
+        'aristocratos.btop4win|btop',
+        'arndawg.tmux-windows|tmux',
         'Microsoft.PowerShell|pwsh',
         'JanDeDobbeleer.OhMyPosh|oh-my-posh'
     )
@@ -246,46 +247,26 @@ function Install-MiosWindowsTools {
         } catch { Log-Warn ("fastfetch direct-download failed: {0}" -f $_.Exception.Message) }
     }
 
-    # btop on Windows: dispatch to the dev VM's Linux btop instead of
-    # shipping btop4win.exe. Reasons:
-    #   1. aristocratos/btop4win is the only Windows port; it's
-    #      experimental, links against a non-standard CPPdll.dll that
-    #      isn't on most systems, and the binary fails at launch with
-    #      "code execution cannot proceed because CPPdll.dll was not
-    # found" on operator's host (screenshot).
-    #   2. Operator's "UNIFIED across all platforms" directive: same
-    #      btop binary + same MiOS theme on Windows AND Linux gives
-    #      one consistent experience instead of two divergent ports.
-    #   3. The dev VM's btop already exists, has the MiOS theme
-    #      seeded by mios-seed at /var/home/mios/.config/btop/, and
-    #      renders cleanly via WSLg.
-    # The Windows-side `btop` function (defined in the MiOS PS profile
-    # body) calls `wsl.exe -d <dev-distro> --user mios -- btop`. No
-    # btop.exe in M:\MiOS\bin is needed.
-    Log-Ok 'btop: skipping btop4win install (broken CPPdll.dll dep); Windows pwsh `btop` dispatches to WSL via profile function'
-
-    # Defensive cleanup: prior installs may have left a broken
-    # btop.exe (copied from winget btop4win) in M:\MiOS\bin. Remove it
-    # so the profile function shadowing doesn't get bypassed by PATH
-    # lookup of the broken exe.
-    $stale = Join-Path $MiosBinDir 'btop.exe'
-    if (Test-Path -LiteralPath $stale) {
-        try {
-            Remove-Item -LiteralPath $stale -Force -ErrorAction Stop
-            Log-Ok ("btop: removed stale broken btop.exe at {0}" -f $stale)
-        } catch { Log-Warn ("btop: could not remove stale {0}: {1}" -f $stale, $_.Exception.Message) }
+    # btop4win on Windows: ensure native btop.exe is available (via winget or direct download)
+    # and verify btop.exe operates with the MiOS theme.
+    if (Get-Command btop -ErrorAction SilentlyContinue) {
+        Log-Ok "btop: native btop.exe is available on Windows PATH"
+    } else {
+        Log-Ok "btop: will probe or direct-download btop4win if winget did not link it"
     }
 
     # Direct-download cohort (single self-contained .exe -> $MiosBinDir). gh added
     # for no-local-deps: gh.exe is a self-contained Go binary inside the zip's bin/.
     # (pwsh + python need their runtime tree, handled as dedicated blocks below.)
     $directBins = @(
-        @{ Cmd='rg';  Repo='BurntSushi/ripgrep';                        AssetRx='ripgrep-.*-x86_64-pc-windows-msvc\.zip$';   ExeRx='^rg\.exe$' }
-        @{ Cmd='fzf'; Repo='junegunn/fzf';                              AssetRx='fzf-.*-windows_amd64\.zip$';                ExeRx='^fzf\.exe$' }
-        @{ Cmd='jq';  Repo='jqlang/jq';            DirectAsset='jq-windows-amd64.exe'; ExeName='jq.exe' }
-        @{ Cmd='bat'; Repo='sharkdp/bat';                               AssetRx='bat-.*-x86_64-pc-windows-msvc\.zip$';       ExeRx='^bat\.exe$' }
-        @{ Cmd='fd';  Repo='sharkdp/fd';                                AssetRx='fd-.*-x86_64-pc-windows-msvc\.zip$';        ExeRx='^fd\.exe$' }
-        @{ Cmd='gh';  Repo='cli/cli';                                   AssetRx='gh_.*_windows_amd64\.zip$';                 ExeRx='^gh\.exe$' }
+        @{ Cmd='rg';   Repo='BurntSushi/ripgrep';                        AssetRx='ripgrep-.*-x86_64-pc-windows-msvc\.zip$';   ExeRx='^rg\.exe$' }
+        @{ Cmd='fzf';  Repo='junegunn/fzf';                              AssetRx='fzf-.*-windows_amd64\.zip$';                ExeRx='^fzf\.exe$' }
+        @{ Cmd='jq';   Repo='jqlang/jq';            DirectAsset='jq-windows-amd64.exe'; ExeName='jq.exe' }
+        @{ Cmd='bat';  Repo='sharkdp/bat';                               AssetRx='bat-.*-x86_64-pc-windows-msvc\.zip$';       ExeRx='^bat\.exe$' }
+        @{ Cmd='fd';   Repo='sharkdp/fd';                                AssetRx='fd-.*-x86_64-pc-windows-msvc\.zip$';        ExeRx='^fd\.exe$' }
+        @{ Cmd='gh';   Repo='cli/cli';                                   AssetRx='gh_.*_windows_amd64\.zip$';                 ExeRx='^gh\.exe$' }
+        @{ Cmd='btop'; Repo='aristocratos/btop4win';                     AssetRx='btop4win-.*x64\.zip$';                      ExeRx='^btop\.exe$' }
+        @{ Cmd='tmux'; Repo='arndawg/tmux-windows';                      AssetRx='tmux-windows-.*\.zip$';                     ExeRx='^tmux\.exe$' }
     )
     foreach ($db in $directBins) {
         if (Get-Command $db.Cmd -ErrorAction SilentlyContinue) { continue }
@@ -505,8 +486,48 @@ function Install-MiosWindowsTools {
         } catch {
             Log-Warn "BTOP_CONFIG_DIR set failed: $($_.Exception.Message)"
         }
+
+        # Also stage to %LOCALAPPDATA%\btop as fallback for non-elevated callers
+        try {
+            $_localBtopDst = Join-Path $env:LOCALAPPDATA 'btop'
+            $_localBtopThemesDst = Join-Path $_localBtopDst 'themes'
+            foreach ($_d in @($_localBtopDst, $_localBtopThemesDst)) {
+                if (-not (Test-Path -LiteralPath $_d)) { New-Item -ItemType Directory -Path $_d -Force | Out-Null }
+            }
+            if (Test-Path -LiteralPath $_confSrc) { Copy-Item -LiteralPath $_confSrc -Destination (Join-Path $_localBtopDst 'btop.conf') -Force }
+            if (Test-Path -LiteralPath $_themeSrc) { Copy-Item -LiteralPath $_themeSrc -Destination (Join-Path $_localBtopThemesDst 'mios.theme') -Force }
+            Log-Ok "btop config + theme mirrored to $_localBtopDst"
+        } catch {}
     } else {
         Log-Warn "btop config source not found (probed: $($_btopSrcCandidates -join ', ')) -- skipping btop theme stage"
+    }
+
+    # Windows native tmux config (.tmux.conf)
+    # Staged to $env:USERPROFILE\.tmux.conf so native tmux on Windows runs with
+    # SSOT colors, status bar, and mouse support.
+    try {
+        $_tmuxConfDst = Join-Path $env:USERPROFILE '.tmux.conf'
+        $_tmuxThemeCandidates = @(
+            (Join-Path $MiosRepoDir 'usr\share\mios\tmux\mios-theme.tmux.conf'),
+            (Join-Path $MiosBootstrapShadow 'usr\share\mios\tmux\mios-theme.tmux.conf')
+        )
+        $_tmuxThemeSrc = $null
+        foreach ($_tc in $_tmuxThemeCandidates) {
+            if (Test-Path -LiteralPath $_tc) { $_tmuxThemeSrc = $_tc; break }
+        }
+        if ($_tmuxThemeSrc) {
+            $_themeContent = Get-Content -Raw -LiteralPath $_tmuxThemeSrc
+            $_winTmuxConf = @"
+# AI-hint: MiOS Windows Native Tmux Configuration
+set -g default-terminal "tmux-256color"
+set -g mouse on
+$_themeContent
+"@
+            Set-Content -LiteralPath $_tmuxConfDst -Value $_winTmuxConf -Encoding UTF8 -Force
+            Log-Ok "tmux.conf staged at $_tmuxConfDst"
+        }
+    } catch {
+        Log-Warn "tmux.conf stage failed: $($_.Exception.Message)"
     }
 
     # Wire Zen/Firefox's AI sidebar to the MiOS OWUI pipeline (SSOT [browser_ai]).

@@ -6061,12 +6061,14 @@ public static extern bool IsWindowVisible(System.IntPtr hWnd);
 function mios-portal  { Set-MiosWindow -Mode portal }
 function mios-reading { Set-MiosWindow -Mode reading }
 
-# btop on Windows -> resize current MiOS window to reading mode (100x50
-# centered) and run the dev VM's Linux btop via WSL (UNIFIED). btop
-# hardcodes 80x24 minimum; portal-mode 80x20 reports 75x18 post-WSLg
-# chrome, below the minimum. Reading mode (100x50) reports ~95x48,
-# every btop preset fits. Window restores to portal mode on exit.
+# btop on Windows -> prefer native btop.exe (btop4win) if available;
+# otherwise resize window to reading mode and run the dev VM's Linux btop via WSL (UNIFIED).
 function btop {
+    `$_native = (Get-Command btop.exe -CommandType Application -ErrorAction SilentlyContinue)
+    if (`$_native) {
+        & `$_native.Source @args
+        return
+    }
     `$_devCandidates = @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')
     `$_wslList = @()
     try { `$_wslList = (& wsl.exe -l -q 2>`$null) -split "``r?``n" | ForEach-Object { (`$_ -replace [char]0,'').Trim() } | Where-Object { `$_ } } catch {}
@@ -6075,7 +6077,7 @@ function btop {
         if (`$_wslList -contains `$_c) { `$_dev = `$_c; break }
     }
     if (-not `$_dev) {
-        Write-Host '  [!] No MiOS-DEV WSL distro found -- cannot run btop.' -ForegroundColor Yellow
+        Write-Host '  [!] No native btop.exe or MiOS-DEV WSL distro found -- cannot run btop.' -ForegroundColor Yellow
         return
     }
     Set-MiosWindow -Mode reading
@@ -6085,6 +6087,28 @@ function btop {
     } finally {
         Set-MiosWindow -Mode portal
     }
+}
+
+# tmux on Windows -> prefer native tmux.exe (arndawg.tmux-windows) if available;
+# otherwise dispatch to the dev VM's Linux tmux via WSL.
+function tmux {
+    `$_native = (Get-Command tmux.exe -CommandType Application -ErrorAction SilentlyContinue)
+    if (`$_native) {
+        & `$_native.Source @args
+        return
+    }
+    `$_devCandidates = @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')
+    `$_wslList = @()
+    try { `$_wslList = (& wsl.exe -l -q 2>`$null) -split "``r?``n" | ForEach-Object { (`$_ -replace [char]0,'').Trim() } | Where-Object { `$_ } } catch {}
+    `$_dev = `$null
+    foreach (`$_c in `$_devCandidates) {
+        if (`$_wslList -contains `$_c) { `$_dev = `$_c; break }
+    }
+    if (`$_dev) {
+        & wsl.exe -d `$_dev --user mios -- tmux @args
+        return
+    }
+    Write-Host '  [!] No native tmux.exe or MiOS-DEV WSL distro found -- cannot run tmux.' -ForegroundColor Yellow
 }
 $endMark
 "@

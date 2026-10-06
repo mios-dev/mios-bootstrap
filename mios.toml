@@ -361,6 +361,8 @@ stale_fallbacks = []
 # until T-317 makes mios-unit-gen faithful.
 unbound = ["chrome_cdp_worker", "ai_legacy", "field_live_chat"]
 headscale = 8085
+llm_igpu = 8540
+rpc_igpu = 8550
 [ports.lan_firewall]
 profiles = ["Private", "Domain"]
 expose   = ["forge_http", "open_webui", "hermes", "searxng", "cockpit", "llm_light", "code_server", "guacamole_web"]
@@ -1541,6 +1543,7 @@ pkgs = [
     "jqlang.jq",                     # JSON query
     "GitHub.cli",                    # gh
     "aristocratos.btop4win",         # btop (Windows port)
+    "arndawg.tmux-windows",          # native tmux for Windows (terminal multiplexer)
     "fastfetch-cli.fastfetch",       # fastfetch
 ]
 
@@ -1553,6 +1556,7 @@ verify_probes = [
     "python",
     "fastfetch",
     "btop",
+    "tmux",
     "rg",
     "fzf",
     "jq",
@@ -1561,6 +1565,21 @@ verify_probes = [
     "fd",
     "pwsh",
     "oh-my-posh"
+]
+
+# Package-ID to expected-binary mapping for packages whose winget ID differs from the command name.
+bin_map = [
+    "BurntSushi.ripgrep.MSI|rg",
+    "junegunn.fzf|fzf",
+    "jqlang.jq|jq",
+    "sharkdp.bat|bat",
+    "sharkdp.fd|fd",
+    "GitHub.cli|gh",
+    "fastfetch-cli.fastfetch|fastfetch",
+    "aristocratos.btop4win|btop",
+    "arndawg.tmux-windows|tmux",
+    "Microsoft.PowerShell|pwsh",
+    "JanDeDobbeleer.OhMyPosh|oh-my-posh"
 ]
 
 # Windows-side btop config root. Install-MiosWindowsTools stages the
