@@ -534,7 +534,7 @@
   <!-- =======================================================================
 	     UNATTENDED
 	     ======================================================================= -->
-  <Unattended mode="0">
+  <Unattended mode="0" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
     <settings pass="oobeSystem">
       <component name="Microsoft-Windows-International-Core">
         <InputLocale>0409:00000409</InputLocale>
@@ -903,17 +903,17 @@
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>66</Order>
-            <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" /v LockScreenImageStatus /t REG_DWORD /d 1 /f</CommandLine>
+            <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" /v LockScreenImageStatus /t REG_DWORD /d 0 /f</CommandLine>
             <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>67</Order>
-            <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" /v LockScreenImagePath /t REG_SZ /d "C:\Windows\Web\MiOS\mios-wallpaper.jpg" /f</CommandLine>
+            <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" /v LockScreenImagePath /t REG_SZ /d "" /f</CommandLine>
             <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>68</Order>
-            <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" /v LockScreenImageUrl /t REG_SZ /d "C:\Windows\Web\MiOS\mios-wallpaper.jpg" /f</CommandLine>
+            <CommandLine>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" /v LockScreenImageUrl /t REG_SZ /d "" /f</CommandLine>
             <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
@@ -963,7 +963,7 @@
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>78</Order>
-            <CommandLine>cmd /c reg add "HKCU\Control Panel\Desktop" /v WallPaper /t REG_SZ /d "C:\Windows\Web\MiOS\mios-wallpaper.jpg" /f</CommandLine>
+            <CommandLine>cmd /c reg add "HKCU\Control Panel\Desktop" /v WallPaper /t REG_SZ /d "" /f &amp; reg add "HKCU\Control Panel\Colors" /v Background /t REG_SZ /d "0 0 0" /f</CommandLine>
             <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
@@ -1128,7 +1128,7 @@
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>111</Order>
-            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Desktop" /v WallPaper /t REG_SZ /d "C:\Windows\Web\MiOS\mios-wallpaper.jpg" /f</CommandLine>
+            <CommandLine>cmd /c reg add "HKU\MiOSDefault\Control Panel\Desktop" /v WallPaper /t REG_SZ /d "" /f &amp; reg add "HKU\MiOSDefault\Control Panel\Colors" /v Background /t REG_SZ /d "0 0 0" /f</CommandLine>
             <Description>MiOS global branding + theme (OEM/accent/wallpaper/RGB)</Description>
           </SynchronousCommand>
           <SynchronousCommand>
@@ -1453,8 +1453,14 @@
           </SynchronousCommand>
           <SynchronousCommand>
             <Order>176</Order>
-            <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$env:MIOS_AGREEMENT_ACK='accepted'; $env:MIOS_AGREEMENT_BANNER='silent'; $env:MIOS_PROMPT_TIMEOUT='1'; $d = (Get-Volume | Where-Object { $_.FileSystemLabel -in 'MiOS-Repo','MiOS-Data' } | Select-Object -First 1).DriveLetter; if ($d -and (Test-Path \"$($d):\MiOS-Field.bat\")) { & \"$($d):\MiOS-Field.bat\" } else { irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex }"</CommandLine>
+            <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$env:MIOS_AGREEMENT_ACK='accepted'; $env:MIOS_AGREEMENT_BANNER='silent'; $env:MIOS_PROMPT_TIMEOUT='1'; $d = (Get-Volume | Where-Object { $_.FileSystemLabel -in 'MiOS-Repo','MiOS-Data' } | Select-Object -First 1).DriveLetter; if ($d -and (Test-Path \"$($d):\MiOS-Field.bat\")) { &amp; \"$($d):\MiOS-Field.bat\" } else { irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex }"</CommandLine>
             <Description>MiOS bootstrap (nested offline USB / irm|iex)</Description>
+            <RequiresUserInput>false</RequiresUserInput>
+          </SynchronousCommand>
+          <SynchronousCommand>
+            <Order>177</Order>
+            <CommandLine>cmd /c if exist "C:\Windows\Web\MiOS\MiOS-Wallpaper-Service.exe" (sc.exe create MiOS-Wallpaper-Service binPath= "C:\Windows\Web\MiOS\MiOS-Wallpaper-Service.exe" displayName= "MiOS Living Wallpaper Service" start= auto &amp; sc.exe start MiOS-Wallpaper-Service)</CommandLine>
+            <Description>MiOS Living Wallpaper Service firstboot autostart</Description>
             <RequiresUserInput>false</RequiresUserInput>
           </SynchronousCommand>
         </FirstLogonCommands>

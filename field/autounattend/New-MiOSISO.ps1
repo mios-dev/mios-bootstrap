@@ -431,12 +431,44 @@ function Set-MiOSIdentityOffline {
         $webDir = Join-Path $Mount 'Windows\Web\MiOS'; New-Item -ItemType Directory -Force -Path $webDir | Out-Null
         $bg = ([string](Get-Toml $Toml 'colors.bg' '#282262')).TrimStart('#')
         $c1 = [System.Drawing.ColorTranslator]::FromHtml("#$bg"); $c2 = [System.Drawing.ColorTranslator]::FromHtml("#$accent")
+        $artSources = @(
+            (Join-Path $PSScriptRoot '..\resources\theme\uefi\background.jpg'),
+            'C:\mios-bootstrap\field\resources\theme\uefi\background.jpg',
+            'C:\Windows\Web\MiOS\mios-wallpaper.jpg'
+        )
+        $artPath = $artSources | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+
         $bmp = New-Object System.Drawing.Bitmap(2560,1440); $gfx = [System.Drawing.Graphics]::FromImage($bmp)
-        $rectF = New-Object System.Drawing.Rectangle(0,0,2560,1440)
-        $gfx.FillRectangle((New-Object System.Drawing.Drawing2D.LinearGradientBrush($rectF,$c1,$c2,45.0)),$rectF)
-        $bmp.Save((Join-Path $webDir 'mios-wallpaper.jpg'),[System.Drawing.Imaging.ImageFormat]::Jpeg)
+        if ($artPath) {
+            $srcImg = [System.Drawing.Image]::FromFile($artPath)
+            $gfx.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $gfx.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+            $gfx.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+            $gfx.DrawImage($srcImg, 0, 0, 2560, 1440)
+            $srcImg.Dispose()
+        } else {
+            $rectF = New-Object System.Drawing.Rectangle(0,0,2560,1440)
+            $gfx.FillRectangle((New-Object System.Drawing.Drawing2D.LinearGradientBrush($rectF,$c1,$c2,45.0)),$rectF)
+        }
+        $wpOut = Join-Path $webDir 'mios-wallpaper.jpg'
+        $bmp.Save($wpOut, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+
         $lg = New-Object System.Drawing.Bitmap(120,120); $lgx = [System.Drawing.Graphics]::FromImage($lg); $lgx.Clear($c2); $lg.Save((Join-Path $webDir 'mios-logo.bmp'),[System.Drawing.Imaging.ImageFormat]::Bmp)
         $gfx.Dispose(); $bmp.Dispose(); $lgx.Dispose(); $lg.Dispose(); Write-Host "    wallpaper + logo -> Windows\Web\MiOS" -ForegroundColor DarkGray
+        
+        # Eliminate static Windows desktop/wallpaper images globally (zero static background)
+        $winWpDir = Join-Path $Mount 'Windows\Web\Wallpaper\Windows'
+        if (Test-Path $winWpDir) {
+            $img0Dst = Join-Path $winWpDir 'img0.jpg'
+            if (Test-Path $img0Dst) { Remove-Item $img0Dst -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+        $win4kDir = Join-Path $Mount 'Windows\Web\4K\Wallpaper\Windows'
+        if (Test-Path $win4kDir) {
+            Get-ChildItem -Path $win4kDir -Filter "img0_*.jpg" -File -ErrorAction SilentlyContinue | ForEach-Object {
+                Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Write-Host "    eliminated Windows img0.jpg and 4K wallpaper fallback paths offline (zero static background globally)" -ForegroundColor Green
         
         # Stage the compiled wallpaper executables and WebView2 DLLs into the offline image
         $hostWebDir = "C:\Windows\Web\MiOS"
@@ -590,7 +622,8 @@ function Set-MiOSIdentityOffline {
         $transp    = if ((Get-Toml $Toml 'theme.transparency' 'true') -match '^(?i:true|1|yes)$') { '1' } else { '0' }
         $cm = Get-MiOSCursorMap
         $theme = New-Object System.Collections.Generic.List[string]
-        @('[Theme]',"DisplayName=$themeName",'','[Control Panel\Desktop]',"Wallpaper=$wpTheme","WallpaperStyle=$wpStyle",'',
+        @('[Theme]',"DisplayName=$themeName",'','[Control Panel\Desktop]',"Wallpaper=","WallpaperStyle=$wpStyle",'',
+          '[Control Panel\Colors]','Background=0 0 0','',
           '[VisualStyles]','Path=%SystemRoot%\resources\Themes\Aero\Aero.msstyles','ColorStyle=NormalColor','Size=NormalSize','AutoColorization=0',
           ('ColorizationColor=0xFF{0}' -f $accent),"AppsUseLightTheme=$darkVal","SystemUsesLightTheme=$darkVal","EnableTransparency=$transp",'') | ForEach-Object { $theme.Add($_) }
         if ($curScheme) { $theme.Add('[Control Panel\Cursors]'); foreach ($k in $cm.Keys) { $theme.Add(('{0}={1}\{2}' -f $k, $curDir, $cm[$k])) }; $theme.Add("DefaultValue=$curName"); $theme.Add('') }
@@ -1179,7 +1212,7 @@ function Invoke-MiOSImageServicing {
         $hostDst = Join-Path $mount 'ProgramData\MiOS'
         New-Item -ItemType Directory -Force -Path $hostDst | Out-Null
         foreach ($stage in 'MiOS-Host.ps1','MiOS-XBOX-Hydrate.ps1','MiOS-Daemon.ps1','MiOS-FirstBoot.ps1','MiOS-AccountSync.ps1',
-                            'MiOS-Progress.psm1','MiOS-Provision.ps1','MiOS-SetupExperience.ps1','write-mios-progress.sh') {
+                            'MiOS-Progress.psm1','MiOS-Provision.ps1','MiOS-SetupExperience.ps1','write-mios-progress.sh','run-hidden.vbs') {
             $src = Join-Path $PSScriptRoot $stage
             if (Test-Path $src) { Copy-Item $src (Join-Path $hostDst $stage) -Force; Write-Host "    staged $stage -> image ProgramData\MiOS" -ForegroundColor DarkGray }
         }

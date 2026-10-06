@@ -2202,7 +2202,13 @@ param(
 )
 $ErrorActionPreference = 'SilentlyContinue'
 
-$_nativeLauncher = Join-Path $PSScriptRoot 'mios-launch.exe'
+$_programDataLauncher = "$env:ProgramData\MiOS\bin\mios-launch.exe"
+$_programDataBinding  = "$env:ProgramData\MiOS\bin\native-binding.json"
+if ((Test-Path -LiteralPath $_programDataBinding) -and (Test-Path -LiteralPath $_programDataLauncher)) {
+    $_nativeLauncher = $_programDataLauncher
+} else {
+    $_nativeLauncher = Join-Path $PSScriptRoot 'mios-launch.exe'
+}
 if (Test-Path -LiteralPath $_nativeLauncher) {
     & $_nativeLauncher $Profile
     exit $LASTEXITCODE
@@ -2350,9 +2356,23 @@ if ($hwnd -ne [IntPtr]::Zero) {
     if (-not $pwshExe) { $pwshExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source }
     if (-not $pwshExe) { Write-Host "  [!] No pwsh.exe found; cannot create launcher .lnk." -ForegroundColor Yellow; return }
 
+    $_runHiddenVbs = Join-Path $env:ProgramData 'MiOS\bin\run-hidden.vbs'
+    if (-not (Test-Path -LiteralPath $_runHiddenVbs)) { $_runHiddenVbs = Join-Path $env:ProgramData 'MiOS\run-hidden.vbs' }
+    if (-not (Test-Path -LiteralPath $_runHiddenVbs) -and $miosRoot) {
+        $_vbsCandidate = Join-Path $miosRoot 'usr\share\mios\windows\run-hidden.vbs'
+        if (Test-Path -LiteralPath $_vbsCandidate) { $_runHiddenVbs = $_vbsCandidate }
+    }
+    $_wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
+
     $_hubTargetProfile = Get-MiosTomlValue -Section 'theme.terminal' -Key 'hub_target_profile' -Default 'MiOS-DEV'
     if ([string]::IsNullOrWhiteSpace($_hubTargetProfile)) { $_hubTargetProfile = 'MiOS-DEV' }
-    $lnkArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_hubTargetProfile`""
+    if (Test-Path -LiteralPath $_runHiddenVbs) {
+        $lnkTarget = $_wscriptExe
+        $lnkArgs   = "//B //Nologo `"$_runHiddenVbs`" `"$pwshExe`" -NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_hubTargetProfile`""
+    } else {
+        $lnkTarget = $pwshExe
+        $lnkArgs   = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_hubTargetProfile`""
+    }
     # .lnk Description = mios.toml [branding].tagline_app (preferred)
     # or.tagline. Per 'the Applications
     # tag/description ... should be defined as My Personal Operating
@@ -2373,11 +2393,11 @@ if ($hwnd -ne [IntPtr]::Zero) {
     $writeLnk = {
         param([string]$Path)
         $sc = $shell.CreateShortcut($Path)
-        $sc.TargetPath       = $pwshExe
+        $sc.TargetPath       = if ($lnkTarget) { $lnkTarget } else { $pwshExe }
         $sc.Arguments        = $lnkArgs
         $sc.WorkingDirectory = $miosRoot
         $sc.Description      = $lnkDesc
-        $sc.WindowStyle      = 7   # 7 = Minimized; with -WindowStyle Hidden the parent flashes briefly otherwise
+        $sc.WindowStyle      = if ($lnkTarget -and $lnkTarget -eq $_wscriptExe) { 1 } else { 7 }
         if ($iconPath) { $sc.IconLocation = "$iconPath,0" }
         $sc.Save()
     }
@@ -2398,8 +2418,15 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # Prefer the compiled subsystem:Windows launcher (.exe -- zero pwsh
     # flash, proper window centering loop). Fall back to pwsh + .ps1
     # only for recovery of an older installation without the native launcher.
-    $_launcherExe = Join-Path $miosRoot 'bin\mios-launch.exe'
-    $_useExeLauncher = Test-Path -LiteralPath $_launcherExe
+    $_programDataLauncher = "$env:ProgramData\MiOS\bin\mios-launch.exe"
+    $_programDataBinding  = "$env:ProgramData\MiOS\bin\native-binding.json"
+    if ((Test-Path -LiteralPath $_programDataBinding) -and (Test-Path -LiteralPath $_programDataLauncher)) {
+        $_launcherExe = $_programDataLauncher
+        $_useExeLauncher = $true
+    } else {
+        $_launcherExe = Join-Path $miosRoot 'bin\mios-launch.exe'
+        $_useExeLauncher = Test-Path -LiteralPath $_launcherExe
+    }
 
     $writeMiosLnk = {
         param([string]$LnkPath, [string]$LnkTarget, [string]$LnkArgs, [string]$LnkDesc)
@@ -2445,14 +2472,27 @@ if ($hwnd -ne [IntPtr]::Zero) {
             if ($_lnkVerb -and $_lnkProf -ne $_devProfile) {
                 # Verb dispatch -- the .exe doesn't currently parse -Verb,
                 # so route those (just MiOS Help today) through the .ps1.
-                $_lnkTarget = $pwshExe
-                $_lnkArgStr = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_lnkProf`" -Verb `"$_lnkVerb`""
+                if (Test-Path -LiteralPath $_runHiddenVbs) {
+                    $_lnkTarget = $_wscriptExe
+                    $_lnkArgStr = "//B //Nologo `"$_runHiddenVbs`" `"$pwshExe`" -NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_lnkProf`" -Verb `"$_lnkVerb`""
+                } else {
+                    $_lnkTarget = $pwshExe
+                    $_lnkArgStr = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_lnkProf`" -Verb `"$_lnkVerb`""
+                }
             }
         } else {
-            $_lnkTarget = $pwshExe
-            $_lnkArgStr = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_lnkProf`""
-            if ($_lnkVerb -and $_lnkProf -ne $_devProfile) {
-                $_lnkArgStr += " -Verb `"$_lnkVerb`""
+            if (Test-Path -LiteralPath $_runHiddenVbs) {
+                $_lnkTarget = $_wscriptExe
+                $_lnkArgStr = "//B //Nologo `"$_runHiddenVbs`" `"$pwshExe`" -NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_lnkProf`""
+                if ($_lnkVerb -and $_lnkProf -ne $_devProfile) {
+                    $_lnkArgStr += " -Verb `"$_lnkVerb`""
+                }
+            } else {
+                $_lnkTarget = $pwshExe
+                $_lnkArgStr = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`" -Profile `"$_lnkProf`""
+                if ($_lnkVerb -and $_lnkProf -ne $_devProfile) {
+                    $_lnkArgStr += " -Verb `"$_lnkVerb`""
+                }
             }
         }
         try {
@@ -3939,9 +3979,10 @@ if (-not `$Global:MiosStartupVerbFired -and `$Host.UI.RawUI -and (-not `$env:MIO
     $miosScriptBody += @'
 
 # >>> MiOS native SSOT runtime >>>
-$_miosNativeBin = if ($Global:MiosBin) { $Global:MiosBin } elseif ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } else { Join-Path $env:ProgramData 'MiOS\bin' }
+$_miosNativeBin = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } elseif (Test-Path (Join-Path $env:ProgramData 'MiOS\bin\native-binding.json')) { Join-Path $env:ProgramData 'MiOS\bin' } else { $Global:MiosBin }
 if (Test-Path (Join-Path $_miosNativeBin 'mios-native-client-setup.ps1')) {
     & (Join-Path $_miosNativeBin 'mios-native-client-setup.ps1') -RuntimeOnly -BinDirectory $_miosNativeBin
+    . (Join-Path $_miosNativeBin 'mios-native-shell.ps1') -BinDirectory $_miosNativeBin
     $env:MIOS_OMP_JSON = Join-Path $env:LOCALAPPDATA 'MiOS\themes\mios.omp.json'
     oh-my-posh init pwsh --config $env:MIOS_OMP_JSON | Invoke-Expression
 }
@@ -5172,7 +5213,47 @@ try {
             $_resumeUrl = [string](Get-MiosTomlValue -Section 'bootstrap' -Key 'oneliner_url' -Default 'https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1')
             $_ps        = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
             $_resumeArg = "-NoProfile -ExecutionPolicy Bypass -Command `"irm '$_resumeUrl' | iex`""
-            $_act  = New-ScheduledTaskAction -Execute $_ps -Argument $_resumeArg
+            $_runHiddenVbs = Join-Path $env:ProgramData 'MiOS\bin\run-hidden.vbs'
+            if (-not (Test-Path -LiteralPath $_runHiddenVbs)) { $_runHiddenVbs = Join-Path $env:ProgramData 'MiOS\run-hidden.vbs' }
+            if (-not (Test-Path -LiteralPath $_runHiddenVbs) -and $miosRoot) {
+                $_vbsCandidate = Join-Path $miosRoot 'usr\share\mios\windows\run-hidden.vbs'
+                if (Test-Path -LiteralPath $_vbsCandidate) { $_runHiddenVbs = $_vbsCandidate }
+            }
+            if (-not (Test-Path -LiteralPath $_runHiddenVbs)) {
+                $_vbsDir = Split-Path $_runHiddenVbs -Parent
+                if (-not (Test-Path -LiteralPath $_vbsDir)) { New-Item -ItemType Directory -Path $_vbsDir -Force | Out-Null }
+                @'
+' MiOS Run-Hidden launcher: executes processes in hidden window mode without spawning console frames or Windows Terminal popups
+Option Explicit
+Dim WshShell, args, cmd, i, arg
+Set WshShell = CreateObject("WScript.Shell")
+Set args = WScript.Arguments
+If args.Count > 0 Then
+    cmd = ""
+    For i = 0 To args.Count - 1
+        arg = args(i)
+        If InStr(arg, " ") > 0 And Left(arg, 1) <> """" Then
+            arg = """" & arg & """"
+        End If
+        If cmd = "" Then
+            cmd = arg
+        Else
+            cmd = cmd & " " & arg
+        End If
+    Next
+    WshShell.Run cmd, 0, False
+End If
+'@ | Set-Content -Path $_runHiddenVbs -Encoding ASCII -Force
+            }
+            $_wscript     = Join-Path $env:SystemRoot 'System32\wscript.exe'
+            $_serviceTool = Join-Path $env:ProgramData 'MiOS\bin\MiosServiceTool.exe'
+            if (Test-Path -LiteralPath $_runHiddenVbs) {
+                $_act  = New-ScheduledTaskAction -Execute $_wscript -Argument "//B //Nologo `"$_runHiddenVbs`" `"$_ps`" $_resumeArg"
+            } elseif (Test-Path -LiteralPath $_serviceTool) {
+                $_act  = New-ScheduledTaskAction -Execute $_serviceTool -Argument "-Run `"$_ps`" $_resumeArg"
+            } else {
+                throw "Neither run-hidden.vbs (wscript.exe) nor MiosServiceTool.exe is available to prevent console window flashing on auto-resume."
+            }
             $_trg  = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
             $_prin = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
             $_set  = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries

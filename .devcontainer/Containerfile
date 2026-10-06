@@ -97,7 +97,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     PATH=/usr/local/cargo/bin:${PATH}
 RUN set -euo pipefail; \
     stage=/usr/src/mios-ssot; export MIOS_TOML_ROOT="$stage"; \
-    get() { python3 "$stage/usr/libexec/mios/mios-toml-get" --vendor "$@"; }; \
+    get() { "$stage/usr/libexec/mios/mios-toml-get" --vendor "$@"; }; \
     channel="$(get build.toolchain channel)"; target="$(get build.native.linux.targets "$(uname -m)")"; \
     linker="$(get build.native.linux linker)"; \
     [ -n "$channel" ] && [ -n "$target" ] && [ -n "$linker" ] \
@@ -117,7 +117,7 @@ RUN set -euo pipefail; \
 RUN set -euo pipefail; \
     stage=/usr/src/mios-ssot; \
     python3 -c 'import pathlib,re; p=pathlib.Path("/usr/src/mios-ssot/tools/native/Cargo.toml"); s=p.read_text(); p.write_text(re.sub(r"(?s)members = \[.*?\]", "members = [\"mios-unit-gen\", \"mios-agent-relay\"]", s, count=1))'; \
-    target="$(MIOS_TOML_ROOT="$stage" python3 "$stage/usr/libexec/mios/mios-toml-get" --vendor build.native.linux.targets "$(uname -m)")"; \
+    target="$(MIOS_TOML_ROOT="$stage" "$stage/usr/libexec/mios/mios-toml-get" --vendor build.native.linux.targets "$(uname -m)")"; \
     RUSTFLAGS='-C linker=rust-lld' cargo build --release --target "$target" \
         --manifest-path "$stage/tools/native/Cargo.toml" -p mios-unit-gen -p mios-agent-relay; \
     for binary in mios-unit-gen mios-agent-relay; do \
@@ -134,7 +134,7 @@ RUN install -d -m 0755 /usr/lib/mios/agents \
 # code-server pinned by [image.sidecars].code_server; stylesheet and both workbench.js patches baked, a moved anchor fails the build.
 RUN set -euo pipefail; \
     stage=/usr/src/mios-ssot; export MIOS_TOML_ROOT="$stage"; \
-    get() { python3 "$stage/usr/libexec/mios/mios-toml-get" --vendor "$@"; }; \
+    get() { "$stage/usr/libexec/mios/mios-toml-get" --vendor "$@"; }; \
     img="$(get image.sidecars code_server)"; v="${img##*:}"; \
     case "$img:$v" in *:*:latest|*:|"$v:$v") echo "[devcontainer] ERROR: [image.sidecars].code_server '$img' has no pinned tag" >&2; exit 1;; esac; \
     case "$(uname -m)" in x86_64) arch=amd64;; aarch64) arch=arm64;; *) echo "[devcontainer] ERROR: no code-server RPM for $(uname -m)" >&2; exit 1;; esac; \

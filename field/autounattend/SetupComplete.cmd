@@ -195,14 +195,15 @@ reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccou
 rem     Register MiOS-Host ONSTART task (idempotent /f overwrites if it already exists).
 rem     Run level HIGHEST so the first-run install auto-elevates. WSL cannot run as
 rem     LocalSystem (microsoft/WSL#11280) -- mios-sudo (RID-500, full token) is the runner.
-schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Host.ps1" /f >>"%LOG%" 2>&1
-rem     Also register the MINUTE supervisor daemon (keeps the brain alive across reboots).
-schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Daemon.ps1" /f >>"%LOG%" 2>&1
-rem     MiOS-XBOX-Hydrate: Store-delivered Gaming Services / Xbox app / WebView2 the WU-
-rem     stripped image can't bake offline (winget msstore). MINUTE/2, self-removing, runs
-rem     as __SVCUSER__ (RID-500 full token). Registered HERE (post-rename) now that the
-rem     specialize pass no longer does identity work -- so mios-sudo is guaranteed present.
-schtasks /create /tn "MiOS-XBOX-Hydrate" /sc MINUTE /mo 2 /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-XBOX-Hydrate.ps1" /f >>"%LOG%" 2>&1
+if exist "C:\ProgramData\MiOS\run-hidden.vbs" (
+    schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "wscript.exe //B //Nologo C:\ProgramData\MiOS\run-hidden.vbs powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Host.ps1" /f >>"%LOG%" 2>&1
+    schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "wscript.exe //B //Nologo C:\ProgramData\MiOS\run-hidden.vbs powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Daemon.ps1" /f >>"%LOG%" 2>&1
+    schtasks /create /tn "MiOS-XBOX-Hydrate" /sc MINUTE /mo 2 /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "wscript.exe //B //Nologo C:\ProgramData\MiOS\run-hidden.vbs powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-XBOX-Hydrate.ps1" /f >>"%LOG%" 2>&1
+) else (
+    schtasks /create /tn "MiOS-Host" /sc ONSTART /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Host.ps1" /f >>"%LOG%" 2>&1
+    schtasks /create /tn "MiOS-Daemon" /sc MINUTE /mo 1 /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-Daemon.ps1" /f >>"%LOG%" 2>&1
+    schtasks /create /tn "MiOS-XBOX-Hydrate" /sc MINUTE /mo 2 /rl HIGHEST /ru "__SVCUSER__" /rp "__SVCPW__" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\MiOS\MiOS-XBOX-Hydrate.ps1" /f >>"%LOG%" 2>&1
+)
 rem --- STAGE-1: MiOS-Xbox provisioning DRIVER + FULL-SCREEN PROGRESS BAR. When the
 rem     rendered mios-provision.cmd is present (New-MiOSISO Set-MiOSProvisionWiring), it
 rem     OWNS the first-boot deploy: it registers the reboot-surviving MiOS-Setup-Driver
@@ -230,6 +231,25 @@ echo [MiOS] Running custom DefaultUser script %DATE% %TIME%>>"%LOG%"
 reg load "HKU\DefaultUser" "%SystemDrive%\Users\Default\NTUSER.DAT" >>"%LOG%" 2>&1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SystemRoot%\Setup\Scripts\DefaultUser.ps1" >>"%LOG%" 2>&1
 reg unload "HKU\DefaultUser" >>"%LOG%" 2>&1
+
+rem --- LIVING WALLPAPER SERVICE: auto-launch on first boot ---
+echo [MiOS] configuring MiOS Living Wallpaper Service %DATE% %TIME%>>"%LOG%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+    $dir = 'C:\Windows\Web\MiOS';
+    if (Test-Path \"$dir\Set-MiOSWallpaper.ps1\") {
+        & \"$dir\Set-MiOSWallpaper.ps1\"
+    } else {
+        $root = 'HKLM:\SOFTWARE\MiOS';
+        if (-not (Test-Path $root)) { New-Item -Path $root -Force | Out-Null };
+        $wp = 'HKLM:\SOFTWARE\MiOS\Wallpaper';
+        if (-not (Test-Path $wp)) { New-Item -Path $wp -Force | Out-Null };
+        Set-ItemProperty -Path $wp -Name 'Enabled' -Value 1 -Type DWord -Force;
+    }
+" >>"%LOG%" 2>&1
+if exist "%SystemRoot%\Web\MiOS\MiOS-Wallpaper-Service.exe" (
+    sc.exe create MiOS-Wallpaper-Service binPath= "%SystemRoot%\Web\MiOS\MiOS-Wallpaper-Service.exe" displayName= "MiOS Living Wallpaper Service" start= auto >>"%LOG%" 2>&1
+    sc.exe start MiOS-Wallpaper-Service >>"%LOG%" 2>&1
+)
 
 echo [MiOS] SetupComplete done %DATE% %TIME%>>"%LOG%"
 exit /b 0

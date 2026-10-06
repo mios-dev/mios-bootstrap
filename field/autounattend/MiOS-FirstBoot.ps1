@@ -36,14 +36,40 @@ $env:MIOS_AGREEMENT_BANNER = 'silent'
 $env:MIOS_PROMPT_TIMEOUT   = '1'
 # Brain install (WSL2 + MiOS agent stack) -- self-elevates silently (ConsentPromptBehavior
 # Admin=0). Fire-and-forget so first logon is not held for the long install.
+$runHidden = Join-Path $state 'run-hidden.vbs'
+$wscript = Join-Path $env:WINDIR 'System32\wscript.exe'
 if (Test-Path (Join-Path $state 'MiOS-Host.ps1')) {
-    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $state 'MiOS-Host.ps1')
+    if ((Test-Path $runHidden) -and (Test-Path $wscript)) {
+        Start-Process $wscript -ArgumentList "//B //Nologo `"$runHidden`" powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$state\MiOS-Host.ps1`"" -WindowStyle Hidden
+    } else {
+        Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $state 'MiOS-Host.ps1')
+    }
     L 'started MiOS-Host.ps1 (brain install)'
 }
 # Gaming Services + Xbox app + WebView2 via winget msstore (Store-locked, cannot bake).
 if (Test-Path (Join-Path $state 'MiOS-XBOX-Hydrate.ps1')) {
-    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $state 'MiOS-XBOX-Hydrate.ps1')
+    if ((Test-Path $runHidden) -and (Test-Path $wscript)) {
+        Start-Process $wscript -ArgumentList "//B //Nologo `"$runHidden`" powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$state\MiOS-XBOX-Hydrate.ps1`"" -WindowStyle Hidden
+    } else {
+        Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $state 'MiOS-XBOX-Hydrate.ps1')
+    }
     L 'started MiOS-XBOX-Hydrate.ps1 (Gaming Services)'
+}
+# Living Wallpaper verification & start on interactive firstboot
+if (Test-Path 'C:\Windows\Web\MiOS\MiOS-Wallpaper.exe') {
+    $svc = Get-Service -Name 'MiOS-Wallpaper-Service' -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -ne 'Running') {
+        Start-Service -Name 'MiOS-Wallpaper-Service' -ErrorAction SilentlyContinue
+    }
+    $wpProc = Get-Process -Name 'MiOS-Wallpaper' -ErrorAction SilentlyContinue
+    if (-not $wpProc) {
+        $wpUrl = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\MiOS' -Name 'WallpaperUrl' -ErrorAction SilentlyContinue).WallpaperUrl
+        if (-not $wpUrl) {
+            $wpUrl = 'file:///C:/Windows/Web/MiOS/living-wallpaper.html'
+        }
+        Start-Process -FilePath 'C:\Windows\Web\MiOS\MiOS-Wallpaper.exe' -ArgumentList "`"$wpUrl`"" -WindowStyle Hidden
+        L 'started interactive MiOS-Wallpaper.exe on firstboot'
+    }
 }
 L 'first-logon deploy fired; Startup shortcut KEPT -- retries each logon until the WSL distro exists'
 exit 0

@@ -5778,28 +5778,16 @@ Start-Process $url | Out-Null
 '@
     Set-Content -Path $codePath -Value $codeScript -Encoding UTF8
 
-    # mios-ai.ps1 -- `mios ai` verb. Opens Open WebUI in the
-    # operator's default browser.
+    # mios-ai.ps1 -- enter the native workspace in this terminal.
     $aiPath = Join-Path $MiosBinDir 'mios-ai.ps1'
     $aiScript = @'
-# <MiOSRoot>\bin\mios-ai.ps1 -- the `mios ai` verb.
-# Opens Open WebUI (rich LLM interface) in the default browser.
-# Resolves the URL via mios.toml [ports].open_webui (default 3030).
-param([Parameter(ValueFromRemainingArguments)] $Args)
-$ErrorActionPreference = 'SilentlyContinue'
-$port = 3030
-foreach ($_t in @("$env:USERPROFILE\.config\mios\mios.toml",'M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
-    if (Test-Path -LiteralPath $_t) {
-        try {
-            $_txt = [IO.File]::ReadAllText($_t, (New-Object System.Text.UTF8Encoding($false)))
-            $_m = [regex]::Match($_txt, '(?ms)^\[ports\].*?^\s*open_webui\s*=\s*(\d+)')
-            if ($_m.Success) { $port = [int]$_m.Groups[1].Value; break }
-        } catch {}
-    }
-}
-$url = "http://localhost:$port/"
-Write-Host "  Opening $url" -ForegroundColor DarkGray
-Start-Process $url | Out-Null
+# AI-hint: Legacy Windows mios-ai command enters the native AI workspace in the invoking terminal.
+# AI-related: mios-native-entry.ps1, mios-native-client-setup.ps1, build-mios.ps1
+param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+$nativeBin = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } else { Join-Path $env:ProgramData 'MiOS\bin' }
+$entry = Join-Path $nativeBin 'mios-native-entry.ps1'
+if (-not (Test-Path -LiteralPath $entry)) { throw 'MiOS native terminal entrypoint is missing; run the MiOS native client setup.' }
+& $entry ai @Arguments
 '@
     Set-Content -Path $aiPath -Value $aiScript -Encoding UTF8
 
@@ -6328,9 +6316,58 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
                 Log-Ok "Staged autostart script: $autostartScript"
 
                 $registered = $false
+                $runHiddenVbs = Join-Path $hostProgData 'bin\run-hidden.vbs'
+                if (-not (Test-Path -LiteralPath $runHiddenVbs)) { $runHiddenVbs = Join-Path $hostProgData 'run-hidden.vbs' }
+                if (-not (Test-Path -LiteralPath $runHiddenVbs)) {
+                    $vbsSrc = Join-Path $PSScriptRoot 'usr\share\mios\windows\run-hidden.vbs'
+                    if (Test-Path -LiteralPath $vbsSrc) { Copy-Item -LiteralPath $vbsSrc -Destination $runHiddenVbs -Force }
+                }
+                if (-not (Test-Path -LiteralPath $runHiddenVbs)) {
+                    $vbsDir = Split-Path $runHiddenVbs -Parent
+                    if (-not (Test-Path -LiteralPath $vbsDir)) { New-Item -ItemType Directory -Path $vbsDir -Force | Out-Null }
+                    @'
+' MiOS Run-Hidden launcher: executes processes in hidden window mode without spawning console frames or Windows Terminal popups
+Option Explicit
+Dim WshShell, args, cmd, i, arg
+Set WshShell = CreateObject("WScript.Shell")
+Set args = WScript.Arguments
+If args.Count > 0 Then
+    cmd = ""
+    For i = 0 To args.Count - 1
+        arg = args(i)
+        If InStr(arg, " ") > 0 And Left(arg, 1) <> """" Then
+            arg = """" & arg & """"
+        End If
+        If cmd = "" Then
+            cmd = arg
+        Else
+            cmd = cmd & " " & arg
+        End If
+    Next
+    WshShell.Run cmd, 0, False
+End If
+'@ | Set-Content -Path $runHiddenVbs -Encoding ASCII -Force
+                }
+                $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
+                $serviceTool = Join-Path $hostProgData 'bin\MiosServiceTool.exe'
+                if (-not (Test-Path -LiteralPath $serviceTool)) {
+                    $svcSrc = Join-Path $PSScriptRoot 'usr\share\mios\windows\MiosServiceTool.exe'
+                    if (Test-Path -LiteralPath $svcSrc) { Copy-Item -LiteralPath $svcSrc -Destination $serviceTool -Force }
+                }
+                $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+                if (-not (Test-Path -LiteralPath $psExe)) {
+                    $psExe = if ($_pwsh -and (Test-Path -LiteralPath $_pwsh)) { $_pwsh } else { 'powershell.exe' }
+                }
+
                 if (Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue) {
                     try {
-                        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$autostartScript`""
+                        if (Test-Path -LiteralPath $runHiddenVbs) {
+                            $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument "//B //Nologo `"$runHiddenVbs`" `"$psExe`" -NoProfile -ExecutionPolicy Bypass -File `"$autostartScript`""
+                        } elseif (Test-Path -LiteralPath $serviceTool) {
+                            $action = New-ScheduledTaskAction -Execute $serviceTool -Argument "-Run `"$psExe`" -NoProfile -ExecutionPolicy Bypass -File `"$autostartScript`""
+                        } else {
+                            throw "Neither run-hidden.vbs (wscript.exe) nor MiosServiceTool.exe is available to prevent console window flashing."
+                        }
                         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
                         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
                         $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
@@ -6345,9 +6382,17 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
                 }
 
                 if (-not $registered) {
-                    $_runValAutostart = '"{0}" -NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}"' -f $_pwsh, $autostartScript
-                    Set-ItemProperty -Path $_runKey -Name 'MiOS-Autostart' -Value $_runValAutostart -Type String -Force
-                    Log-Ok "MiOS-Autostart registered in HKCU\Run (fallback)."
+                    if (Test-Path -LiteralPath $runHiddenVbs) {
+                        $_runValAutostart = '"{0}" //B //Nologo "{1}" "{2}" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "{3}"' -f $wscriptExe, $runHiddenVbs, $psExe, $autostartScript
+                    } elseif (Test-Path -LiteralPath $serviceTool) {
+                        $_runValAutostart = '"{0}" -Run "{1}" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "{2}"' -f $serviceTool, $psExe, $autostartScript
+                    } else {
+                        Log-Warn "Skipping HKCU\Run registration: no Subsystem 2 GUI runner available to prevent console window flash."
+                    }
+                    if ($_runValAutostart) {
+                        Set-ItemProperty -Path $_runKey -Name 'MiOS-Autostart' -Value $_runValAutostart -Type String -Force
+                        Log-Ok "MiOS-Autostart registered in HKCU\Run (fallback)."
+                    }
                 }
             }
         } catch {
@@ -6388,7 +6433,9 @@ if (Get-Command podman -ErrorAction SilentlyContinue) {
         # Legacy names from older revisions:
         'Build MiOS.lnk', 'MiOS Dev VM.lnk', 'MiOS Rebuild.lnk',
         'MiOS Setup.lnk', 'MiOS Terminal.lnk', 'MiOS Dev Shell.lnk',
-        'MiOS Podman Shell.lnk'
+        'MiOS Podman Shell.lnk',
+        # Per-action shortcuts consolidated into canonical MiOS.lnk:
+        'MiOS Agents.lnk', 'MiOS AI.lnk', 'MiOS System Monitor.lnk'
     )
     foreach ($legacy in $staleLnks) {
         foreach ($dir in @($StartMenuDir, $desktopDir)) {
@@ -8010,7 +8057,7 @@ exit 1
     }
 
     $desktopDir = [Environment]::GetFolderPath('Desktop')
-    foreach ($legacy in @('MiOS Setup.lnk','Build MiOS.lnk','MiOS Configurator.lnk','MiOS Terminal.lnk','MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','MiOS Build.lnk','MiOS Dashboard.lnk','MiOS Update.lnk','MiOS Pull.lnk')) {
+    foreach ($legacy in @('MiOS Setup.lnk','Build MiOS.lnk','MiOS Configurator.lnk','MiOS Terminal.lnk','MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','MiOS Build.lnk','MiOS Dashboard.lnk','MiOS Update.lnk','MiOS Pull.lnk','MiOS Agents.lnk','MiOS AI.lnk','MiOS System Monitor.lnk')) {
         foreach ($dir in @($StartMenuDir, $desktopDir)) {
             if (-not $dir) { continue }
             $stale = Join-Path $dir $legacy
@@ -8235,7 +8282,7 @@ Write-Host '  [10/13] Removing Start Menu + Desktop shortcuts...' -ForegroundCol
     # Legacy names from prior install revisions
     'MiOS Setup.lnk','Build MiOS.lnk','MiOS Configurator.lnk','MiOS Terminal.lnk',
     'MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','MiOS Build.lnk','MiOS Dashboard.lnk',
-    'MiOS Update.lnk','MiOS Pull.lnk'
+    'MiOS Update.lnk','MiOS Pull.lnk','MiOS Agents.lnk','MiOS AI.lnk','MiOS System Monitor.lnk'
 )
 `$shortcutDirs = @(`$DESK, `$S,
     'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\MiOS',
