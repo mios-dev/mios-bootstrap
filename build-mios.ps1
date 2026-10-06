@@ -6198,6 +6198,7 @@ $endMark
     $wallpaperd_src = Join-Path $MiosRepoDir 'tools\native\mios-wallpaperd'
     $wallpaperd_exe = Join-Path $MiosBinDir 'mios-wallpaperd.exe'
     $builtExeCandidates = @(
+        (Join-Path $MiosRepoDir 'tools\native\target\x86_64-pc-windows-gnullvm\release\mios-wallpaperd.exe'),
         (Join-Path $MiosRepoDir 'tools\native\target\x86_64-pc-windows-gnu\release\mios-wallpaperd.exe'),
         (Join-Path $MiosRepoDir 'tools\native\target\release\mios-wallpaperd.exe')
     )
@@ -6223,7 +6224,12 @@ $endMark
     # Host cargo fallback if still not built
     if (-not $builtExe -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
         Log-Info "Compiling mios-wallpaperd via host cargo..."
-        $cargoOut = & cargo build --manifest-path "$wallpaperd_src\Cargo.toml" --release 2>&1
+        $targetFlag = @()
+        $installedToolchains = & rustup toolchain list 2>$null
+        if ($installedToolchains -match 'gnullvm') {
+            $targetFlag = @('--target', 'x86_64-pc-windows-gnullvm')
+        }
+        $cargoOut = & cargo build --manifest-path "$wallpaperd_src\Cargo.toml" --release @targetFlag 2>&1
         if ($LASTEXITCODE -eq 0) {
             $builtExe = $builtExeCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
         } else {
