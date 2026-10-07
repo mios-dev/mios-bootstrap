@@ -508,23 +508,97 @@ function Install-MiosWindowsTools {
     try {
         $_tmuxConfDst = Join-Path $env:USERPROFILE '.tmux.conf'
         $_tmuxThemeCandidates = @(
+            'M:\usr\share\mios\tmux\mios-theme.tmux.conf',
             (Join-Path $MiosRepoDir 'usr\share\mios\tmux\mios-theme.tmux.conf'),
-            (Join-Path $MiosBootstrapShadow 'usr\share\mios\tmux\mios-theme.tmux.conf')
+            (Join-Path $MiosBootstrapShadow 'usr\share\mios\tmux\mios-theme.tmux.conf'),
+            'C:\MiOS\usr\share\mios\tmux\mios-theme.tmux.conf',
+            'C:\mios-bootstrap\usr\share\mios\tmux\mios-theme.tmux.conf'
         )
         $_tmuxThemeSrc = $null
         foreach ($_tc in $_tmuxThemeCandidates) {
-            if (Test-Path -LiteralPath $_tc) { $_tmuxThemeSrc = $_tc; break }
+            if ($_tc -and (Test-Path -LiteralPath $_tc)) { $_tmuxThemeSrc = $_tc; break }
         }
-        if ($_tmuxThemeSrc) {
-            $_themeContent = Get-Content -Raw -LiteralPath $_tmuxThemeSrc
+        $_themeContent = if ($_tmuxThemeSrc) { Get-Content -Raw -LiteralPath $_tmuxThemeSrc } else { $null }
+
+        $_tmuxKeysCandidates = @(
+            'M:\usr\share\mios\tmux\mios-keys.tmux.conf',
+            (Join-Path $MiosRepoDir 'usr\share\mios\tmux\mios-keys.tmux.conf'),
+            (Join-Path $MiosBootstrapShadow 'usr\share\mios\tmux\mios-keys.tmux.conf'),
+            'C:\MiOS\usr\share\mios\tmux\mios-keys.tmux.conf',
+            'C:\mios-bootstrap\usr\share\mios\tmux\mios-keys.tmux.conf'
+        )
+        $_tmuxKeysSrc = $null
+        foreach ($_kc in $_tmuxKeysCandidates) {
+            if ($_kc -and (Test-Path -LiteralPath $_kc)) { $_tmuxKeysSrc = $_kc; break }
+        }
+        $_keysContent = if ($_tmuxKeysSrc) { Get-Content -Raw -LiteralPath $_tmuxKeysSrc } else { $null }
+
+        if ($_themeContent) {
             $_winTmuxConf = @"
-# AI-hint: MiOS Windows Native Tmux Configuration
+# AI-hint: MiOS Windows Native Tmux Configuration rendered from mios.toml SSOT
+# =====================================================================
+# Terminal Capabilities & Extended Keys (Windows / Blink / ConPTY / SSH)
+# =====================================================================
 set -g default-terminal "tmux-256color"
+set -as terminal-features ",xterm*:RGB"
+set -as terminal-overrides ",xterm*:Tc"
+set -s extended-keys on
+set -gw xterm-keys on
 set -g mouse on
+
+# =====================================================================
+# MiOS Canonical Tmux Theme
+# =====================================================================
 $_themeContent
+
+# =====================================================================
+# MiOS Canonical Tmux Keybindings
+# =====================================================================
+$_keysContent
+
+# =====================================================================
+# Blink Mobile & iOS Touch Combos (BTab / Shift+Tab pass-through)
+# =====================================================================
+bind-key -n BTab send-keys Escape "[Z"
+bind-key Tab send-keys Escape "[Z"
+bind-key `` send-keys Escape "[Z"
+bind-key -n M-BTab send-keys Escape "[Z"
 "@
-            Set-Content -LiteralPath $_tmuxConfDst -Value $_winTmuxConf -Encoding UTF8 -Force
-            Log-Ok "tmux.conf staged at $_tmuxConfDst"
+            $_targetDirs = @(
+                $env:USERPROFILE,
+                (Join-Path $env:LOCALAPPDATA 'tmux'),
+                (Join-Path $env:LOCALAPPDATA 'MiOS\tmux')
+            )
+            if (Test-Path -LiteralPath 'M:\') {
+                $_targetDirs += 'M:\MiOS\tmux'
+            }
+
+            foreach ($_td in $_targetDirs) {
+                if (-not (Test-Path -LiteralPath $_td)) {
+                    New-Item -ItemType Directory -Path $_td -Force -ErrorAction SilentlyContinue | Out-Null
+                }
+                $_targetFile = if ($_td -eq $env:USERPROFILE) { $_tmuxConfDst } else { Join-Path $_td 'tmux.conf' }
+                try {
+                    Set-Content -LiteralPath $_targetFile -Value $_winTmuxConf -Encoding UTF8 -Force
+                    Log-Ok "tmux.conf staged at $_targetFile"
+                } catch {}
+            }
+
+            if (Test-Path -LiteralPath 'M:\MiOS\tmux') {
+                try {
+                    Set-Content -LiteralPath 'M:\MiOS\tmux\mios-theme.tmux.conf' -Value $_themeContent -Encoding UTF8 -Force
+                    if ($_keysContent) {
+                        Set-Content -LiteralPath 'M:\MiOS\tmux\mios-keys.tmux.conf' -Value $_keysContent -Encoding UTF8 -Force
+                    }
+                } catch {}
+            }
+
+            if (Get-Process -Name tmux -ErrorAction SilentlyContinue) {
+                try {
+                    & tmux.exe source-file $_tmuxConfDst 2>$null
+                    Log-Ok "Live tmux server reloaded with MiOS SSOT theme."
+                } catch {}
+            }
         }
     } catch {
         Log-Warn "tmux.conf stage failed: $($_.Exception.Message)"

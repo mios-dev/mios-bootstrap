@@ -196,8 +196,8 @@ function Start-MiosBuildMonitor {
     if ($env:MIOS_NO_MONITOR -in @('1','true','yes','on') -or
         $env:MIOS_HEADLESS -in @('1','true','yes','on')) { return }
 
-    $monitorCols = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'cols' -Default 80)
-    $monitorRows = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'rows' -Default 40)
+    $monitorCols = [int](Get-MiosTomlValue -Section 'terminal.monitor' -Key 'cols' -Default 80)
+    $monitorRows = [int](Get-MiosTomlValue -Section 'terminal.monitor' -Key 'rows' -Default 20)
     $cellWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px' -Default 10)
     $cellHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px' -Default 20)
     $chromeWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px' -Default 20)
@@ -301,8 +301,8 @@ public static class MiosDeskLauncher {
                             try { dpi = GetDpiForWindow(hWnd); } catch (EntryPointNotFoundException) {}
                             int requestedWidth = (int)Math.Round(wantedWidth * dpi / 96.0);
                             int requestedHeight = (int)Math.Round(wantedHeight * dpi / 96.0);
-                            int width = Math.Min(Math.Min(rect.Right - rect.Left, requestedWidth), info.work.Right - info.work.Left);
-                            int height = Math.Min(Math.Min(rect.Bottom - rect.Top, requestedHeight), info.work.Bottom - info.work.Top);
+                            int width = Math.Min(requestedWidth, info.work.Right - info.work.Left);
+                            int height = Math.Min(requestedHeight, info.work.Bottom - info.work.Top);
                             if (width > 0 && height > 0) {
                                 int x = info.work.Left + ((info.work.Right - info.work.Left - width) / 2);
                                 int y = info.work.Top + ((info.work.Bottom - info.work.Top - height) / 2);
@@ -436,8 +436,73 @@ public static class MiosDeskLauncher {
             $wtWindowArgsText = $wtWindowArgs -join ' '
             $monitorCommand = "while (`$true) { & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline; if (`$LASTEXITCODE -eq 0) { break }; Write-Host 'MiOS monitor exited unexpectedly; restarting in 2 seconds' -ForegroundColor Yellow; Start-Sleep -Seconds 2 }"
             $monitorEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($monitorCommand))
-            $monitorShell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-            $wtArgsString = "$wtWindowArgsText --pos `"$monitorX,$monitorY`" --size `"$displayCols,$displayRows`" -w `"MiOS-Monitor`" new-tab --profile `"$monitorProfile`" --colorScheme `"$monitorScheme`" --title `"MiOS Build Monitor`" `"$monitorShell`" -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand $monitorEncoded"
+            $pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+            if (-not $pwsh) {
+                foreach ($cand in @(
+                    "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe",
+                    "$env:ProgramFiles\PowerShell\7\pwsh.exe",
+                    "$env:ProgramFiles\PowerShell\7-preview\pwsh.exe"
+                )) {
+                    if (Test-Path -LiteralPath $cand) { $pwsh = $cand; break }
+                }
+            }
+            if (-not $pwsh) { $pwsh = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
+            $monitorShell = $pwsh
+
+            $interactiveProfile = if (Test-Path -LiteralPath 'M:\MiOS\powershell\profile.ps1') {
+                'M:\MiOS\powershell\profile.ps1'
+            } elseif (Test-Path -LiteralPath "$env:USERPROFILE\Documents\PowerShell\Microsoft.PowerShell_profile.ps1") {
+                "$env:USERPROFILE\Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
+            } else { '' }
+
+            $interactiveShell = if ($interactiveProfile) {
+                "$pwsh -NoLogo -NoExit -Command `"`$env:MIOS_APP_CONTEXT='1'; . '$interactiveProfile'`""
+            } else {
+                "$pwsh -NoLogo -NoExit"
+            }
+
+            $tmuxExe = Get-Command tmux.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+            if (-not $tmuxExe) {
+                foreach ($tc in @(
+                    "$env:LOCALAPPDATA\Microsoft\WinGet\Links\tmux.exe",
+                    "$env:ProgramFiles\WinGet\Links\tmux.exe"
+                )) { if (Test-Path -LiteralPath $tc) { $tmuxExe = $tc; break } }
+            }
+
+            if ($tmuxExe) {
+                & $tmuxExe kill-session -t mios-mon 2>$null
+                $monRunner = "`"$python`" `"$monitorScript`" --pipeline"
+                if ($monitorLaunchMode -in @('fullscreen', 'focusFullscreen')) {
+                    # 1 + 4 Expanded View: Head (smaller ~38%) on LEFT, Monitor + 3 Workers (2x2 grid ~62%) on RIGHT
+                    & $tmuxExe new-session -d -s mios-mon -n "MiOS" -x $displayCols -y $displayRows $interactiveShell
+                    & $tmuxExe set-option -w -t mios-mon:0 automatic-rename off
+                    & $tmuxExe rename-window -t mios-mon:0 "MiOS"
+                    & $tmuxExe split-window -h -p 62 -t mios-mon:0.0 $monRunner
+                    & $tmuxExe split-window -v -t mios-mon:0.1 $interactiveShell
+                    & $tmuxExe split-window -h -t mios-mon:0.1 $interactiveShell
+                    & $tmuxExe split-window -h -t mios-mon:0.2 $interactiveShell
+                    & $tmuxExe select-pane -t mios-mon:0.1
+                } elseif ($displayCols -ge $displayRows) {
+                    # Landscape Golden Ratio: Head (smaller 38.2%) on LEFT, Monitor (bigger 61.8%) on RIGHT
+                    & $tmuxExe new-session -d -s mios-mon -n "MiOS" -x $displayCols -y $displayRows $interactiveShell
+                    & $tmuxExe set-option -w -t mios-mon:0 automatic-rename off
+                    & $tmuxExe rename-window -t mios-mon:0 "MiOS"
+                    & $tmuxExe split-window -h -p 62 -t mios-mon:0.0 $monRunner
+                    & $tmuxExe select-pane -t mios-mon:0.1
+                } else {
+                    # Portrait & Mobile Golden Ratio: Monitor (bigger 61.8%) on TOP, Head (smaller 38.2%) on BOTTOM
+                    & $tmuxExe new-session -d -s mios-mon -n "MiOS" -x $displayCols -y $displayRows $monRunner
+                    & $tmuxExe set-option -w -t mios-mon:0 automatic-rename off
+                    & $tmuxExe rename-window -t mios-mon:0 "MiOS"
+                    & $tmuxExe split-window -v -p 38 -t mios-mon:0.0 $interactiveShell
+                    & $tmuxExe select-pane -t mios-mon:0.0
+                }
+                $wtInnerCmd = "`"$tmuxExe`" attach-session -t mios-mon"
+            } else {
+                $wtInnerCmd = "`"$monitorShell`" -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand $monitorEncoded"
+            }
+
+            $wtArgsString = "$wtWindowArgsText --pos `"$monitorX,$monitorY`" --size `"$displayCols,$displayRows`" -w `"MiOS-Monitor`" new-tab --profile `"$monitorProfile`" --colorScheme `"$monitorScheme`" --title `"MiOS Build Monitor`" $wtInnerCmd"
             $cmdLine = "`"$wtExe`" $wtArgsString"
             if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
                 $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
@@ -2054,6 +2119,10 @@ function Install-MiOSTerminalProfile {
     }
 
     $wtJson | Add-Member -NotePropertyName launchMode -NotePropertyValue $_themeLaunchMode -Force
+    if (-not $wtJson.compatibility) {
+        $wtJson | Add-Member -NotePropertyName compatibility -NotePropertyValue ([PSCustomObject]@{}) -Force
+    }
+    $wtJson.compatibility | Add-Member -NotePropertyName enableUnfocusedAcrylic -NotePropertyValue $true -Force
 
     if (-not $wtJson.profiles.defaults) {
         $wtJson.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([PSCustomObject]@{}) -Force
@@ -2744,6 +2813,8 @@ function Get-MiosVendorContent {
 $Script:MiosBrandingTxt     = Get-MiosVendorContent 'branding/mios.txt'
 $Script:MiosFastfetchConfig = Get-MiosVendorContent 'fastfetch/config.jsonc'
 $Script:MiosOmpJson         = Get-MiosVendorContent 'oh-my-posh/mios.omp.json'
+$Script:MiosTmuxTheme       = try { Get-MiosVendorContent 'tmux/mios-theme.tmux.conf' } catch { $null }
+$Script:MiosTmuxKeys        = try { Get-MiosVendorContent 'tmux/mios-keys.tmux.conf' } catch { $null }
 
 function Install-MiOSTerminalExtras {
     $isPs7 = $PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.PSVersion.Major -ge 7
@@ -2856,6 +2927,7 @@ foreach ($mod in $psModules) {
             }
         } catch {}
     }
+    Install-MiOSTmuxProfile | Out-Null
 }
 
 function Install-MiOSLLVMMinGW {
@@ -3055,6 +3127,168 @@ function Install-MiOSOhMyPoshTheme {
         Write-Host "  [!] mios.omp.json write FAILED at $ompPath" -ForegroundColor Yellow
     }
     return $ompPath
+}
+
+function Install-MiOSTmuxProfile {
+    # Stages canonical MiOS tmux configuration (.tmux.conf) from SSOT theme and keys.
+    # Staged to $env:USERPROFILE\.tmux.conf, M:\MiOS\tmux\tmux.conf, and %LOCALAPPDATA%\tmux\tmux.conf.
+    # If a tmux server is active on Windows, reloads it dynamically with the SSOT theme.
+    $themeContent = $Script:MiosTmuxTheme
+    if (-not $themeContent) {
+        foreach ($_tc in @(
+            'M:\usr\share\mios\tmux\mios-theme.tmux.conf',
+            'C:\MiOS\usr\share\mios\tmux\mios-theme.tmux.conf',
+            'C:\mios-bootstrap\usr\share\mios\tmux\mios-theme.tmux.conf'
+        )) {
+            if ($_tc -and (Test-Path -LiteralPath $_tc)) {
+                try { $themeContent = [System.IO.File]::ReadAllText($_tc, [System.Text.UTF8Encoding]::new($false)); break } catch {}
+            }
+        }
+    }
+    if (-not $themeContent) {
+        $p = Get-MiosPalette
+        $bg = if ($p.bg) { $p.bg } else { '#282262' }
+        $fg = if ($p.fg) { $p.fg } else { '#E7DFD3' }
+        $accent = if ($p.accent) { $p.accent } else { '#1A407F' }
+        $cursor = if ($p.cursor) { $p.cursor } else { '#F35C15' }
+        $green = if ($p.ansi_2_green) { $p.ansi_2_green } else { '#3E7765' }
+        $muted = if ($p.muted) { $p.muted } else { '#948E8E' }
+        $themeContent = @"
+# AI-hint: Fallback MiOS Canonical Tmux Theme from palette SSOT
+set -g status on
+set -g status-interval 2
+set -g status-position bottom
+set -g status-style "bg=default,fg=$fg"
+set -g window-style "bg=default,fg=$fg"
+set -g window-active-style "bg=default,fg=$fg"
+set -g status-justify left
+set -g window-status-separator ""
+set -g default-terminal "tmux-256color"
+set -as terminal-features ",xterm*:RGB"
+set -as terminal-overrides ",xterm*:Tc"
+set -g pane-border-style "fg=$muted"
+set -g pane-active-border-style "fg=$cursor"
+set -g pane-border-lines heavy
+set -g mode-style "bg=$accent,fg=$fg"
+set -g message-style "bg=$accent,fg=$fg"
+set -g message-command-style "bg=$bg,fg=$cursor"
+set -g status-left-length 50
+set -g status-left "#[fg=$accent,bg=default]#[fg=$fg,bg=$accent,bold]  MiOS #[fg=$accent,bg=$green]#[fg=$bg,bg=$green,bold]  #S #[fg=$green,bg=default] "
+set -g window-status-format "#[fg=$muted,bg=default]  #I  #W  "
+set -g window-status-current-format "#[fg=$cursor,bg=default]#[fg=$bg,bg=$cursor,bold] #I  #W #[fg=$cursor,bg=default]"
+set -g status-right-length 100
+set -g status-right "#[fg=$accent,bg=default]#[fg=$fg,bg=$accent]  %H:%M #[fg=$accent,bg=$green]#[fg=$bg,bg=$green,bold]  %Y-%m-%d #[fg=$green,bg=$cursor]#[fg=$bg,bg=$cursor,bold]  #H #[fg=$cursor,bg=default]"
+"@
+    }
+
+    $keysContent = $Script:MiosTmuxKeys
+    if (-not $keysContent) {
+        foreach ($_kc in @(
+            'M:\usr\share\mios\tmux\mios-keys.tmux.conf',
+            'C:\MiOS\usr\share\mios\tmux\mios-keys.tmux.conf',
+            'C:\mios-bootstrap\usr\share\mios\tmux\mios-keys.tmux.conf'
+        )) {
+            if ($_kc -and (Test-Path -LiteralPath $_kc)) {
+                try { $keysContent = [System.IO.File]::ReadAllText($_kc, [System.Text.UTF8Encoding]::new($false)); break } catch {}
+            }
+        }
+    }
+    if (-not $keysContent) {
+        $keysContent = @'
+unbind-key -a -T prefix
+set -g prefix C-b
+set -g prefix2 None
+bind-key C-b send-prefix
+set -s escape-time 50
+set -g repeat-time 500
+set -g history-limit 50000
+set -g mouse on
+bind-key t new-window
+bind-key h select-pane -L
+bind-key j select-pane -D
+bind-key k select-pane -U
+bind-key l select-pane -R
+bind-key s split-window -v
+bind-key v split-window -h
+bind-key n next-window
+bind-key p previous-window
+bind-key w choose-tree -Zw
+bind-key z resize-pane -Z
+bind-key y copy-mode
+bind-key d detach-client
+bind-key b send-prefix
+'@
+    }
+
+    $winTmuxConf = @"
+# AI-hint: MiOS Windows Native Tmux Configuration rendered from mios.toml SSOT
+# =====================================================================
+# Terminal Capabilities & Extended Keys (Windows / Blink / ConPTY / SSH)
+# =====================================================================
+set -g default-terminal "tmux-256color"
+set -as terminal-features ",xterm*:RGB"
+set -as terminal-overrides ",xterm*:Tc"
+set -s extended-keys on
+set -gw xterm-keys on
+set -g mouse on
+
+# =====================================================================
+# MiOS Canonical Tmux Theme
+# =====================================================================
+$themeContent
+
+# =====================================================================
+# MiOS Canonical Tmux Keybindings
+# =====================================================================
+$keysContent
+
+# =====================================================================
+# Blink Mobile & iOS Touch Combos (BTab / Shift+Tab pass-through)
+# =====================================================================
+bind-key -n BTab send-keys Escape "[Z"
+bind-key Tab send-keys Escape "[Z"
+bind-key `` send-keys Escape "[Z"
+bind-key -n M-BTab send-keys Escape "[Z"
+"@
+
+    $targetDirs = @(
+        $env:USERPROFILE,
+        (Join-Path $env:LOCALAPPDATA 'tmux'),
+        (Join-Path $env:LOCALAPPDATA 'MiOS\tmux')
+    )
+    if (Test-Path -LiteralPath 'M:\') {
+        $targetDirs += 'M:\MiOS\tmux'
+    }
+
+    $primaryConf = Join-Path $env:USERPROFILE '.tmux.conf'
+    foreach ($td in $targetDirs) {
+        if (-not (Test-Path -LiteralPath $td)) {
+            New-Item -ItemType Directory -Path $td -Force -ErrorAction SilentlyContinue | Out-Null
+        }
+        $targetFile = if ($td -eq $env:USERPROFILE) { $primaryConf } else { Join-Path $td 'tmux.conf' }
+        try {
+            [System.IO.File]::WriteAllText($targetFile, $winTmuxConf, [System.Text.UTF8Encoding]::new($false))
+            Write-Host "  [+] tmux configuration staged: $targetFile" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "  [!] Failed to write tmux config to $targetFile : $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    if (Test-Path -LiteralPath 'M:\MiOS\tmux') {
+        try {
+            [System.IO.File]::WriteAllText('M:\MiOS\tmux\mios-theme.tmux.conf', $themeContent, [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText('M:\MiOS\tmux\mios-keys.tmux.conf', $keysContent, [System.Text.UTF8Encoding]::new($false))
+        } catch {}
+    }
+
+    if (Get-Process -Name tmux -ErrorAction SilentlyContinue) {
+        try {
+            & tmux.exe source-file $primaryConf 2>$null
+            Write-Host "  [+] Live tmux server reloaded with MiOS SSOT theme." -ForegroundColor Green
+        } catch {}
+    }
+
+    return $primaryConf
 }
 
 function Install-MiOSPowerShellProfile {
@@ -3974,6 +4208,70 @@ if (-not `$Global:MiosStartupVerbFired -and `$Host.UI.RawUI -and (-not `$env:MIO
     if (`$_startupVerb) {
         try { mios `$_startupVerb } catch {}
     }
+}
+
+# btop on Windows -> prefer native btop.exe (btop4win) if available;
+# otherwise resize window to reading mode and run the dev VM's Linux btop via WSL (UNIFIED).
+function btop {
+    `$_native = (Get-Command btop.exe -CommandType Application -ErrorAction SilentlyContinue)
+    if (`$_native) {
+        if (-not `$env:BTOP_CONFIG_DIR) {
+            foreach (`$_bDir in @('M:\MiOS\btop', (Join-Path `$env:LOCALAPPDATA 'btop'))) {
+                if (Test-Path -LiteralPath `$_bDir) { `$env:BTOP_CONFIG_DIR = `$_bDir; break }
+            }
+        }
+        & `$_native.Source @args
+        return
+    }
+    `$_devCandidates = @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')
+    `$_wslList = @()
+    try { `$_wslList = (& wsl.exe -l -q 2>`$null) -split "``r?``n" | ForEach-Object { (`$_ -replace [char]0,'').Trim() } | Where-Object { `$_ } } catch {}
+    `$_dev = `$null
+    foreach (`$_c in `$_devCandidates) {
+        if (`$_wslList -contains `$_c) { `$_dev = `$_c; break }
+    }
+    if (-not `$_dev) {
+        Write-Host '  [!] No native btop.exe or MiOS-DEV WSL distro found -- cannot run btop.' -ForegroundColor Yellow
+        return
+    }
+    try { Set-MiosWindow -Mode reading } catch {}
+    Start-Sleep -Milliseconds 200
+    try {
+        & wsl.exe -d `$_dev --user mios -- btop @args
+    } finally {
+        try { Set-MiosWindow -Mode portal } catch {}
+    }
+}
+
+# tmux on Windows -> prefer native tmux.exe (arndawg.tmux-windows) if available;
+# otherwise dispatch to the dev VM's Linux tmux via WSL.
+function tmux {
+    `$_native = (Get-Command tmux.exe -CommandType Application -ErrorAction SilentlyContinue)
+    if (`$_native) {
+        `$_conf = Join-Path `$env:USERPROFILE '.tmux.conf'
+        if (-not (Test-Path -LiteralPath `$_conf) -or ((Get-Item `$_conf).Length -lt 100)) {
+            foreach (`$_src in @('M:\MiOS\tmux\tmux.conf', (Join-Path `$env:LOCALAPPDATA 'tmux\tmux.conf'), (Join-Path `$env:LOCALAPPDATA 'MiOS\tmux\tmux.conf'))) {
+                if (Test-Path -LiteralPath `$_src) {
+                    Copy-Item -LiteralPath `$_src -Destination `$_conf -Force -ErrorAction SilentlyContinue
+                    break
+                }
+            }
+        }
+        & `$_native.Source @args
+        return
+    }
+    `$_devCandidates = @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')
+    `$_wslList = @()
+    try { `$_wslList = (& wsl.exe -l -q 2>`$null) -split "``r?``n" | ForEach-Object { (`$_ -replace [char]0,'').Trim() } | Where-Object { `$_ } } catch {}
+    `$_dev = `$null
+    foreach (`$_c in `$_devCandidates) {
+        if (`$_wslList -contains `$_c) { `$_dev = `$_c; break }
+    }
+    if (`$_dev) {
+        & wsl.exe -d `$_dev --user mios -- tmux @args
+        return
+    }
+    Write-Host '  [!] No native tmux.exe or MiOS-DEV WSL distro found -- cannot run tmux.' -ForegroundColor Yellow
 }
 "@
     $miosScriptBody += @'
@@ -5343,6 +5641,7 @@ if ($true) {
     Update-MiOSOhMyPosh             | Out-Null
     Update-MiOSPSReadLine           | Out-Null
     Install-MiOSOhMyPoshTheme       | Out-Null
+    Install-MiOSTmuxProfile         | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
     Write-Host "  $_msgStep7" -ForegroundColor Cyan
     Install-MiOSTerminalExtras      | Out-Null

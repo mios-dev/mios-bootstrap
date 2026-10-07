@@ -101,6 +101,14 @@ right_margin      = 0
 cols              = 80
 rows              = 40
 
+[terminal.monitor]
+cols              = 80
+rows              = 20
+split_landscape_head    = 38
+split_landscape_monitor = 62
+split_portrait_monitor  = 62
+split_portrait_head     = 38
+
 # Reading mode -- larger centered window for outputs that don't fit in
 # the canonical 80x20 portal (btop, long log tails, code review,
 # multi-pane fastfetch, etc). `mios reading` resizes + re-centers the
@@ -174,7 +182,7 @@ height            = 1000
 [theme]
 acrylic           = true
 opacity           = 50
-unfocused_acrylic = false
+unfocused_acrylic = true
 unfocused_opacity = 50
 system_backdrop   = "acrylic"
 scrollbar_state   = "hidden"   # EVERY terminal surface (WT, code-server, VTE, Portal); mirrored from mios.git [theme]
@@ -363,6 +371,8 @@ unbound = ["chrome_cdp_worker", "ai_legacy", "field_live_chat"]
 headscale = 8085
 llm_igpu = 8540
 rpc_igpu = 8550
+pgvector_internal = 5432
+searxng_internal = 8080
 [ports.lan_firewall]
 profiles = ["Private", "Domain"]
 expose   = ["forge_http", "open_webui", "hermes", "searxng", "cockpit", "llm_light", "code_server", "guacamole_web"]
