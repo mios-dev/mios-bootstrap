@@ -408,7 +408,7 @@ function Start-MiosMonitor {
         }
 
         $monRunner = "`"$python`" `"$mon`" --pipeline"
-        if ($launchMode -in @('fullscreen', 'focusFullscreen')) {
+        if ($mode -in @('fullscreen', 'focusFullscreen')) {
             # 1 + 4 Expanded View: Head (smaller ~38%) on LEFT, Monitor + 3 Workers (2x2 grid ~62%) on RIGHT
             & $tmuxExe new-session -d -s mios-mon -n "MiOS" -x $cols -y $rows $interactiveShell
             & $tmuxExe set-option -w -t mios-mon:0 automatic-rename off
