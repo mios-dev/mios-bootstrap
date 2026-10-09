@@ -13,13 +13,11 @@
       2. Resizes the host window to ~100x40 so the build dashboard
          frame (80 cols + breathing room) fits without wrapping.
       3. Verifies Git + Podman are present.
-      4. Force-cleans + fresh-clones the mios-bootstrap repo into
-         $env:TEMP\mios-bootstrap. Every run is fresh; no persistent
-         working tree, no fetch/pull update branch.
-      5. Hands off to bootstrap.ps1 -- the new split-bootstrap entry
-         (default: -BootstrapOnly = preflight + dev VM + Windows
-         install; the deployable OCI image is built later via the
-         "Build MiOS" Start Menu shortcut bootstrap.ps1 drops).
+      4. Updates a clean bootstrap checkout while preserving local edits,
+         existing WSL distributions and persistent installation state.
+      5. Hands off to bootstrap.ps1 using the layered SSOT selection
+         [bootstrap].windows_install_mode (default: full), including the
+         OCI build and deployment phases.
 
     Pre-v0.2.4 this script wrapped the run in Start-Transcript --
     that captured the dashboard's cursor escapes and broke the
@@ -27,7 +25,7 @@
     log directly via [IO.File]::AppendAllText (no transcript needed).
 
     Pass -FullBuild to chain the OCI image build immediately
-    (legacy one-shot behavior).
+    regardless of the SSOT bootstrap-only selection.
 
 .PARAMETER RepoUrl
     git URL for mios-bootstrap (default: GitHub upstream).
@@ -36,17 +34,8 @@
     Branch to clone (default: main).
 
 .PARAMETER RepoDir
-    Temp clone target. Default: $env:TEMP\mios-bootstrap-<random8>.
-    Each invocation gets a fresh GUID-suffixed dir so a locked
-    leftover from a previous run never blocks a new start. Operators
-    who genuinely want to point at a local checkout (e.g. for
-    development) can pass an explicit -RepoDir; the script will
-    refuse to delete it if it's outside %TEMP%. There is NO update /
-    fetch / pull branch here -- always fresh-clone. A persistent path
-    like $env:USERPROFILE\MiOS-bootstrap is FORBIDDEN as the bootstrap
-    working tree (it accumulates stale state across runs and was the
-    root cause of every "FATAL: From https://...", "FATAL: Cloning
-    into ...", and "FATAL: vm already exists" surface we kept fixing).
+    Bootstrap checkout. Existing local changes are preserved. Clean checkouts
+    update to the selected branch; installation never deletes the checkout.
 
 .PARAMETER FullBuild
     Run the full pipeline in one shot (preflight + dev VM + Windows
@@ -195,275 +184,22 @@ Center-MiosBootstrapWindow
 function Start-MiosBuildMonitor {
     if ($env:MIOS_NO_MONITOR -in @('1','true','yes','on') -or
         $env:MIOS_HEADLESS -in @('1','true','yes','on')) { return }
-
-    $monitorCols = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'cols' -Default 80)
-    $monitorRows = [int](Get-MiosTomlValue -Section 'terminal.install' -Key 'rows' -Default 40)
-    $cellWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_w_px' -Default 10)
-    $cellHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'cell_h_px' -Default 20)
-    $chromeWidth = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_w_px' -Default 20)
-    $chromeHeight = [int](Get-MiosTomlValue -Section 'theme.font' -Key 'chrome_h_px' -Default 12)
-    $monitorWidthPx = ($monitorCols * $cellWidth) + $chromeWidth
-    $monitorHeightPx = ($monitorRows * $cellHeight) + $chromeHeight
-
-    $monitorScript = @(
-        $env:MIOS_MONITOR_SCRIPT,
-        'C:\MiOS\usr\libexec\mios\mios-mon.py',
-        'M:\usr\libexec\mios\mios-mon.py'
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
-    if (-not $monitorScript) { return }
-
-    try {
-        if (-not ([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-            $typeDef = @"
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public static class MiosDeskLauncher {
-    public delegate bool EnumDesktopWindowsProc(IntPtr hWnd, IntPtr lParam);
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct STARTUPINFO {
-        public int cb; public string lpReserved; public string lpDesktop; public string lpTitle;
-        public int dwX; public int dwY; public int dwXSize; public int dwYSize;
-        public int dwXCountChars; public int dwYCountChars; public int dwFillAttribute;
-        public int dwFlags; public short wShowWindow; public short cbReserved2;
-        public IntPtr lpReserved2; public IntPtr hStdInput; public IntPtr hStdOutput; public IntPtr hStdError;
+    $launcher = Join-Path $env:ProgramData 'MiOS\bin\mios-launch.exe'
+    $monitorScript = @($env:MIOS_MONITOR_SCRIPT,
+        (Join-Path $PSScriptRoot 'usr\libexec\mios\mios-mon.py'),
+        'C:\MiOS\usr\libexec\mios\mios-mon.py') |
+        Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+    $python = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty Source
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf) -or -not $monitorScript -or -not $python) {
+        Write-Warning 'Native SSOT monitor requires the installed Rust launcher, Python and monitor asset.'
+        return
     }
-    [StructLayout(LayoutKind.Sequential)]
-    public struct PROCESS_INFORMATION {
-        public IntPtr hProcess; public IntPtr hThread; public int dwProcessId; public int dwThreadId;
-    }
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    public static extern bool CreateProcess(
-        string lpApp, string lpCmd, IntPtr pAttr, IntPtr tAttr, bool bInherit,
-        uint flags, IntPtr env, string dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool CloseHandle(IntPtr h);
-    [DllImport("user32.dll")] public static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
-    [DllImport("user32.dll")] public static extern bool EnumDesktopWindows(IntPtr hDesktop, EnumDesktopWindowsProc lpfn, IntPtr lParam);
-    [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr hDesktop);
-    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder strText, int maxCount);
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-    [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int x, int y, int width, int height, bool repaint);
-    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
-    [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
-    [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
-    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
-    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT monitor; public RECT work; public uint flags; }
-
-    public static bool HasVisibleMonitorWindow() {
-        IntPtr hDesk = OpenDesktop("Default", 0, false, 0x01FF);
-        if (hDesk == IntPtr.Zero) return false;
-        bool found = false;
-        EnumDesktopWindows(hDesk, (hWnd, lParam) => {
-            if (IsWindowVisible(hWnd)) {
-                StringBuilder sb = new StringBuilder(256);
-                if (GetWindowText(hWnd, sb, 256) > 0) {
-                    if (sb.ToString().IndexOf("MiOS Build Monitor", StringComparison.OrdinalIgnoreCase) >= 0) {
-                        found = true;
-                        ShowWindow(hWnd, 9);
-                        BringWindowToTop(hWnd);
-                        SetForegroundWindow(hWnd);
-                        return false;
-                    }
-                }
-            }
-            return true;
-        }, IntPtr.Zero);
-        CloseDesktop(hDesk);
-        return found;
-    }
-
-    public static bool CenterVisibleMonitorWindow(int wantedWidth, int wantedHeight) {
-        IntPtr hDesk = OpenDesktop("Default", 0, false, 0x01FF);
-        if (hDesk == IntPtr.Zero) return false;
-        bool found = false;
-        EnumDesktopWindows(hDesk, (hWnd, lParam) => {
-            if (IsWindowVisible(hWnd)) {
-                StringBuilder sb = new StringBuilder(256);
-                if (GetWindowText(hWnd, sb, 256) > 0 &&
-                    sb.ToString().IndexOf("MiOS Build Monitor", StringComparison.OrdinalIgnoreCase) >= 0) {
-                    ShowWindow(hWnd, 1);
-                    IntPtr oldDpi = IntPtr.Zero;
-                    try { oldDpi = SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) {}
-                    try {
-                        RECT rect;
-                        MONITORINFO info = new MONITORINFO();
-                        info.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
-                        IntPtr monitor = MonitorFromWindow(hWnd, 2);
-                        if (GetWindowRect(hWnd, out rect) && monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info)) {
-                            uint dpi = 96;
-                            try { dpi = GetDpiForWindow(hWnd); } catch (EntryPointNotFoundException) {}
-                            int requestedWidth = (int)Math.Round(wantedWidth * dpi / 96.0);
-                            int requestedHeight = (int)Math.Round(wantedHeight * dpi / 96.0);
-                            int width = Math.Min(Math.Min(rect.Right - rect.Left, requestedWidth), info.work.Right - info.work.Left);
-                            int height = Math.Min(Math.Min(rect.Bottom - rect.Top, requestedHeight), info.work.Bottom - info.work.Top);
-                            if (width > 0 && height > 0) {
-                                int x = info.work.Left + ((info.work.Right - info.work.Left - width) / 2);
-                                int y = info.work.Top + ((info.work.Bottom - info.work.Top - height) / 2);
-                                BringWindowToTop(hWnd);
-                                SetForegroundWindow(hWnd);
-                                MoveWindow(hWnd, x, y, width, height, true);
-                            }
-                        }
-                    } finally { if (oldDpi != IntPtr.Zero) SetThreadDpiAwarenessContext(oldDpi); }
-                    found = true;
-                    return false;
-                }
-            }
-            return true;
-        }, IntPtr.Zero);
-        CloseDesktop(hDesk);
-        return found;
-    }
-
-    public static int Launch(string cmd, string title) {
-        STARTUPINFO si = new STARTUPINFO();
-        si.cb = Marshal.SizeOf(si);
-        si.lpDesktop = @"winsta0\default";
-        si.lpTitle = title;
-        PROCESS_INFORMATION pi;
-        if (CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, false, 0x00000010, IntPtr.Zero, null, ref si, out pi)) {
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            return pi.dwProcessId;
-        }
-        return -1;
-    }
+    # Rust resolves layered SSOT and renders/spawns WT with structured arguments.
+    & $launcher --build-monitor --python $python --monitor-script $monitorScript
+    if ($LASTEXITCODE -ne 0) { Write-Warning "Native SSOT monitor failed (exit $LASTEXITCODE)" }
 }
-"@
-            Add-Type -TypeDefinition $typeDef -ErrorAction SilentlyContinue
-        }
 
-        if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-            if ([MiosDeskLauncher]::CenterVisibleMonitorWindow($monitorWidthPx, $monitorHeightPx)) { return }
-        } else {
-            $runningProcs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match '^python' -and $_.CommandLine -match 'mios-mon\.py' })
-            $hasActive = $false
-            foreach ($rp in $runningProcs) {
-                $p = Get-Process -Id $rp.ProcessId -ErrorAction SilentlyContinue
-                if ($p -and -not $p.HasExited) { $hasActive = $true; break }
-            }
-            if ($hasActive) { return }
-        }
-
-        $python = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
-        if (-not $python) {
-            foreach ($c in @(
-                'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe',
-                'C:\Users\Administrator\AppData\Local\Programs\Python\Python313\python.exe',
-                'C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe',
-                'C:\Python314\python.exe',
-                'C:\Python312\python.exe'
-            )) { if (Test-Path -LiteralPath $c) { $python = $c; break } }
-        }
-        if (-not $python) { return }
-
-        $wtExe = Get-Command wt.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
-        if (-not $wtExe) {
-            foreach ($candidate in @(
-                "$env:LOCALAPPDATA\Microsoft\WindowsApps\wt.exe",
-                "$env:ProgramFiles\WindowsApps\Microsoft.WindowsTerminal*\wt.exe"
-            )) {
-                $found = Get-Item $candidate -ErrorAction SilentlyContinue | Select-Object -First 1
-                if ($found) { $wtExe = $found.FullName; break }
-            }
-        }
-        # Windows Terminal is required by the bootstrap. If it is not ready
-        # yet, wait for the post-profile-setup invocation below instead of
-        # opening a plain conhost window that can mask the SSOT terminal.
-        if (-not $wtExe -or -not (Test-Path -LiteralPath $wtExe)) { return }
-
-        $spawnedPid = -1
-        if ($wtExe -and (Test-Path -LiteralPath $wtExe)) {
-            $monitorProfile = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'profile_name' -Default 'MiOS-WIN')
-            if ([string]::IsNullOrWhiteSpace($monitorProfile)) { $monitorProfile = 'MiOS-WIN' }
-            $monitorScheme = [string](Get-MiosTomlValue -Section 'theme.terminal' -Key 'scheme_name' -Default 'MiOS')
-            if ([string]::IsNullOrWhiteSpace($monitorScheme)) { $monitorScheme = 'MiOS' }
-            $monitorLaunchMode = [string](Get-MiosTomlValue -Section 'theme' -Key 'launch_mode' -Default 'focus')
-            $monitorX = 0; $monitorY = 0
-            $displayCols = $monitorCols; $displayRows = $monitorRows
-            try {
-                Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-                $cursor = [System.Windows.Forms.Cursor]::Position
-                $workArea = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
-                $displayCols = [math]::Min($monitorCols, [math]::Max(40, [math]::Floor(($workArea.Width - $chromeWidth - 28) / $cellWidth)))
-                $displayRows = [math]::Min($monitorRows, [math]::Max(12, [math]::Floor(($workArea.Height - $chromeHeight - 32) / $cellHeight)))
-                $monitorWidthPx = ($displayCols * $cellWidth) + $chromeWidth
-                $monitorHeightPx = ($displayRows * $cellHeight) + $chromeHeight
-                $monitorX = [int]($workArea.X + (($workArea.Width - $monitorWidthPx) / 2))
-                $monitorY = [int]($workArea.Y + (($workArea.Height - $monitorHeightPx) / 2))
-                if ($monitorX -lt $workArea.X) { $monitorX = $workArea.X }
-                if ($monitorY -lt $workArea.Y) { $monitorY = $workArea.Y }
-            } catch {}
-            $wtWindowArgs = switch ($monitorLaunchMode) {
-                'focus'          { @('--focus') }
-                'maximized'      { @('--maximized') }
-                'maximizedFocus' { @('--maximized','--focus') }
-                'fullscreen'     { @('--fullscreen') }
-                'focusFullscreen'{ @('--fullscreen','--focus') }
-                default          { @() }
-            }
-            $profileReady = $false
-            foreach ($settingsPath in @(
-                (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
-                (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json')
-            )) {
-                if (-not (Test-Path -LiteralPath $settingsPath)) { continue }
-                try {
-                    $settingsText = [IO.File]::ReadAllText($settingsPath)
-                    $settingsText = [regex]::Replace($settingsText, '(?ms)/\*.*?\*/', '')
-                    $settingsText = [regex]::Replace($settingsText, '(?m)^\s*//.*$', '')
-                    $settingsText = [regex]::Replace($settingsText, ',(\s*[\}\]])', '$1')
-                    $settings = $settingsText | ConvertFrom-Json -ErrorAction Stop
-                    if (@($settings.profiles.list | Where-Object { $_.name -eq $monitorProfile }).Count) {
-                        $profileReady = $true
-                        break
-                    }
-                } catch {}
-            }
-            # On a first install, wait until Install-MiOSTerminalProfile has
-            # created the SSOT profile; the caller invokes this launcher again
-            # immediately after that setup step. This avoids a plain-profile
-            # monitor that masks a failed themed launch.
-            if (-not $profileReady) { return }
-            $wtWindowArgsText = $wtWindowArgs -join ' '
-            $monitorCommand = "while (`$true) { & '$($python.Replace("'", "''"))' '$($monitorScript.Replace("'", "''"))' --pipeline; if (`$LASTEXITCODE -eq 0) { break }; Write-Host 'MiOS monitor exited unexpectedly; restarting in 2 seconds' -ForegroundColor Yellow; Start-Sleep -Seconds 2 }"
-            $monitorEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($monitorCommand))
-            $monitorShell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-            $wtArgsString = "$wtWindowArgsText --pos `"$monitorX,$monitorY`" --size `"$displayCols,$displayRows`" -w `"MiOS-Monitor`" new-tab --profile `"$monitorProfile`" --colorScheme `"$monitorScheme`" --title `"MiOS Build Monitor`" `"$monitorShell`" -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand $monitorEncoded"
-            $cmdLine = "`"$wtExe`" $wtArgsString"
-            if (([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-                $spawnedPid = [MiosDeskLauncher]::Launch($cmdLine, 'MiOS Build Monitor')
-            }
-            if ($spawnedPid -le 0) {
-                $monitorProcess = Start-Process -FilePath $wtExe `
-                    -ArgumentList $wtArgsString `
-                    -WindowStyle Normal -PassThru -ErrorAction SilentlyContinue
-                if ($monitorProcess) { $spawnedPid = $monitorProcess.Id }
-            }
-            if ($spawnedPid -gt 0 -and ([System.Management.Automation.PSTypeName]'MiosDeskLauncher').Type) {
-                $centerDeadline = (Get-Date).AddSeconds(6)
-                while ((Get-Date) -lt $centerDeadline) {
-                    [void][MiosDeskLauncher]::CenterVisibleMonitorWindow($monitorWidthPx, $monitorHeightPx)
-                    Start-Sleep -Milliseconds 250
-                }
-            }
-        }
-
-        if ($spawnedPid -le 0) {
-            Write-Host '  [!] MiOS monitor could not launch in the SSOT Windows Terminal profile.' -ForegroundColor Yellow
-        }
-    } catch {
-        Write-Host "  [!] MiOS monitor launch failed: $($_.Exception.Message)" -ForegroundColor Yellow
-    }
-}
 function Ensure-MiosBootstrapRepo {
     param(
         [string]$TargetDir = 'C:\mios-bootstrap',
@@ -2054,6 +1790,10 @@ function Install-MiOSTerminalProfile {
     }
 
     $wtJson | Add-Member -NotePropertyName launchMode -NotePropertyValue $_themeLaunchMode -Force
+    if (-not $wtJson.compatibility) {
+        $wtJson | Add-Member -NotePropertyName compatibility -NotePropertyValue ([PSCustomObject]@{}) -Force
+    }
+    $wtJson.compatibility | Add-Member -NotePropertyName enableUnfocusedAcrylic -NotePropertyValue $true -Force
 
     if (-not $wtJson.profiles.defaults) {
         $wtJson.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([PSCustomObject]@{}) -Force
@@ -2744,6 +2484,8 @@ function Get-MiosVendorContent {
 $Script:MiosBrandingTxt     = Get-MiosVendorContent 'branding/mios.txt'
 $Script:MiosFastfetchConfig = Get-MiosVendorContent 'fastfetch/config.jsonc'
 $Script:MiosOmpJson         = Get-MiosVendorContent 'oh-my-posh/mios.omp.json'
+$Script:MiosTmuxTheme       = try { Get-MiosVendorContent 'tmux/mios-theme.tmux.conf' } catch { $null }
+$Script:MiosTmuxKeys        = try { Get-MiosVendorContent 'tmux/mios-keys.tmux.conf' } catch { $null }
 
 function Install-MiOSTerminalExtras {
     $isPs7 = $PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.PSVersion.Major -ge 7
@@ -2856,6 +2598,7 @@ foreach ($mod in $psModules) {
             }
         } catch {}
     }
+    Install-MiOSTmuxProfile | Out-Null
 }
 
 function Install-MiOSLLVMMinGW {
@@ -3057,6 +2800,25 @@ function Install-MiOSOhMyPoshTheme {
     return $ompPath
 }
 
+function Install-MiOSTmuxProfile {
+    param([switch]$Required)
+    # Bootstrap may run before the native catalog is installed. Final installation
+    # and runtime must use the native renderer; a deferred phase is never success.
+    $nativeRoots = @($env:MIOS_NATIVE_BIN, (Join-Path $env:ProgramData 'MiOS\bin'), (Join-Path $env:LOCALAPPDATA 'MiOS\bin'))
+    foreach ($nativeRoot in $nativeRoots) {
+        if (-not $nativeRoot) { continue }
+        $launcher = Join-Path $nativeRoot 'mios-launch.exe'
+        if ((Test-Path -LiteralPath $launcher -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $nativeRoot 'native-binding.json') -PathType Leaf)) {
+            & $launcher --stage-host-terminal
+            if ($LASTEXITCODE -ne 0) { throw "Native layered SSOT tmux projection failed (exit $LASTEXITCODE)" }
+            return (Join-Path $env:LOCALAPPDATA 'MiOS\terminal\mios-host.tmux.conf')
+        }
+    }
+    if ($Required) { throw 'Native tmux renderer or runtime binding is missing; installation is incomplete.' }
+    Write-Host '  [tmux] Projection deferred until the native catalog and runtime binding are installed.' -ForegroundColor DarkGray
+    return $null
+}
+
 function Install-MiOSPowerShellProfile {
     $miosPsRoot = if (Test-Path 'M:\') { 'M:\MiOS\powershell' }
                   else { Join-Path $env:USERPROFILE 'MiOS-bootstrap\powershell' }
@@ -3240,371 +3002,12 @@ if (`$true) {
         `$miosOmp = _MiosSelfHeal 'themes' 'mios.omp.json' '$ompBlobBase64'
     }
 
-    # -- Framed MiOS dashboard (mirrors mios-dashboard.sh from mios.git) -
-    # 80-col fixed frame, centered ASCII logo, framed fastfetch info.
-    # Gated on WT_SESSION since the +-+ box-drawing only renders
-    # properly in WT (conhost / VS Code embedded shell mangles it).
+    # Both variants use the same native dashboard; no embedded roster or TOML scrape.
     function Show-MiosDashboard {
         param([string]`$ConfigPath, [string]`$LogoPath)
-        `$_widthA = 0; `$_widthB = 0
-        for (`$_i = 0; `$_i -lt 5; `$_i++) {
-            `$_widthB = `$_widthA
-            `$_winC = try { [Console]::WindowWidth } catch { 0 }
-            `$_winR = try { `$Host.UI.RawUI.WindowSize.Width } catch { 0 }
-            `$_widthA = if (`$_winC -gt 0 -and `$_winR -gt 0) { [math]::Min(`$_winC, `$_winR) }
-                        elseif (`$_winC -gt 0) { `$_winC }
-                        elseif (`$_winR -gt 0) { `$_winR }
-                        else { 0 }
-            if (`$_widthA -gt 0 -and `$_widthA -eq `$_widthB) { break }
-            if (`$_i -lt 4) { Start-Sleep -Milliseconds 50 }
-        }
-        `$_winWNow = if (`$_widthA -gt 0) { `$_widthA } else { $_miosFrameW }
-        `$WIDTH = `$_winWNow - $_miosRightMargin
-        if ($_miosFrameW -gt 0 -and `$WIDTH -gt $_miosFrameW) {
-            `$WIDTH = $_miosFrameW
-        }
-        if (`$WIDTH -lt 20) { `$WIDTH = [math]::Max(20, `$_winWNow) }
-        `$INNER = `$WIDTH - 4
-        `$TL=[char]0x256d; `$TR=[char]0x256e; `$BL=[char]0x2570; `$BR=[char]0x256f; `$LT=[char]0x251c; `$RT=[char]0x2524; `$V=[char]0x2502; `$H=[char]0x2500
-
-        `$_esc      = [char]27
-        `$_FrameC   = "`$_esc[34m"
-        `$_FrameR   = "`$_esc[0m"
-
-        function _Strip { param(`$s) `$s -replace '\x1b\[[0-9;]*m','' }
-        function _Frame {
-            param([string]`$Line)
-            `$visible = _Strip `$Line
-            if (`$visible.Length -gt `$INNER) {
-                # Truncate with ellipsis preserving ANSI prefix.
-                `$Line = `$Line.Substring(0, [math]::Min(`$Line.Length, `$INNER + (`$Line.Length - `$visible.Length) - 1)) + [char]0x2026
-                `$visible = _Strip `$Line
-            }
-            `$pad = ' ' * [math]::Max(0, `$INNER - `$visible.Length)
-            "`$_FrameC`$V`$_FrameR `$Line`$pad`$_FrameC `$V`$_FrameR"
-        }
-        function _Center {
-            param([string]`$Line)
-            `$visible = _Strip `$Line
-            `$totalPad = [math]::Max(0, `$INNER - `$visible.Length)
-            `$lpad = ' ' * [math]::Floor(`$totalPad / 2)
-            `$rpad = ' ' * (`$totalPad - [math]::Floor(`$totalPad / 2))
-            "`$_FrameC`$V`$_FrameR `$lpad`$Line`$rpad`$_FrameC `$V`$_FrameR"
-        }
-
-        `$_compact = $_miosFrameH -lt 25
-        # Reserve rows for top + divider + divider + hints + bottom.
-        # Compact hints = 1 row; full hints = 7 rows.
-        `$_hintsRows  = if (`$_compact) { 1 } else { 7 }
-        `$_overhead   = 1 + 1 + 1 + `$_hintsRows + 1   # top + 2 dividers + hints + bottom
-        # Logo + fastfetch share whatever's left.
-        `$_contentBudget = [math]::Max(2, $_miosFrameH - `$_overhead)
-        # In compact mode skip the multi-line ASCII logo entirely; in
-        # full mode allocate up to half the content budget to the logo.
-        `$_logoBudget = if (`$_compact) { 1 } else { [math]::Min(11, [math]::Floor(`$_contentBudget / 2)) }
-        `$_ffBudget   = `$_contentBudget - `$_logoBudget
-
-        # Read mios.toml ONCE up-front so [dashboard].title (here),
-        # [dashboard].rows + [theme.font] (further down) all read from
-        # the same in-memory copy.  No fallback to other paths -- the
-        # canonical layout is M:\etc\mios (host overlay) > M:\usr\share
-        # (vendor on M:\).
-        `$_dashTomlText = `$null
-        foreach (`$_tc in @('M:\etc\mios\mios.toml','M:\usr\share\mios\mios.toml')) {
-            if (Test-Path -LiteralPath `$_tc) {
-                try { `$_dashTomlText = [IO.File]::ReadAllText(`$_tc, (New-Object System.Text.UTF8Encoding(`$false))); break } catch {}
-            }
-        }
-
-        # Top frame.
-        Write-Host (`$TL + (`$H * (`$WIDTH - 2)) + `$TR) -ForegroundColor Blue
-        if (`$_compact) {
-            `$title = 'MiOS  --  My Personal Operating System'
-            if (`$_dashTomlText) {
-                `$_titleM = [regex]::Match(`$_dashTomlText, '(?ms)^\[dashboard\]\s*\r?\n.*?^\s*title\s*=\s*"([^"]+)"')
-                if (`$_titleM.Success) { `$title = `$_titleM.Groups[1].Value }
-            }
-            Write-Host (_Center `$title) -ForegroundColor Blue
-        }
-        elseif (Test-Path -LiteralPath `$LogoPath) {
-            `$logoLines = @(Get-Content -LiteralPath `$LogoPath) | Where-Object { `$_ -ne `$null }
-            # Cap to logo budget so we don't overflow on small frame_height.
-            if (`$logoLines.Count -gt `$_logoBudget) {
-                `$logoLines = `$logoLines[0..([math]::Max(0, `$_logoBudget - 1))]
-            }
-            `$maxLen = 0
-            foreach (`$ll in `$logoLines) {
-                `$len = (_Strip `$ll).Length
-                if (`$len -gt `$maxLen) { `$maxLen = `$len }
-            }
-            `$blockLPad = ' ' * [math]::Max(0, [math]::Floor((`$INNER - `$maxLen) / 2))
-            foreach (`$ll in `$logoLines) {
-                `$stripped = _Strip `$ll
-                `$rPad = ' ' * [math]::Max(0, `$maxLen - `$stripped.Length)
-                Write-Host (_Frame (`$blockLPad + `$ll + `$rPad)) -ForegroundColor Blue
-            }
-        }
-        # Divider.
-        Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
-
-        `$_dashCache = @{}
-        `$_DashGetField = {
-            param([string]`$_k, [string]`$_fontFam, [int]`$_fontSz)
-            switch (`$_k) {
-                'host_os' {
-                    if (-not `$_dashCache.ContainsKey('_os')) {
-                        `$_dashCache['_os'] = try { Get-CimInstance Win32_OperatingSystem -ErrorAction Stop } catch { `$null }
-                    }
-                    `$_o = `$_dashCache['_os']
-                    `$_cap = if (`$_o -and `$_o.Caption) { ((((((`$_o.Caption -replace 'Microsoft\s*','') -replace '\s+for\s+Workstations','') -replace '\s+Insider\s+Preview','') -replace '\s*\(64-?bit\)','') -replace '\s*N\s+Edition','')).Trim() } else { 'Windows' }
-                    return "`$env:USERNAME@`$env:COMPUTERNAME -- `$_cap".Trim()
-                }
-                'cpu' {
-                    if (-not `$_dashCache.ContainsKey('_cpu')) {
-                        `$_dashCache['_cpu'] = try { Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1 } catch { `$null }
-                    }
-                    `$_c = `$_dashCache['_cpu']
-                    if (-not `$_c) { return 'CPU --' }
-                    `$_n = (`$_c.Name -replace '\s+@.*','' -replace '\s+Processor','' -replace '\(R\)','' -replace '\(TM\)','').Trim()
-                    `$_clk = if (`$_c.MaxClockSpeed) { [math]::Round(`$_c.MaxClockSpeed / 1000.0, 2) } else { 0 }
-                    `$_co  = `$_c.NumberOfLogicalProcessors
-                    return "CPU `$_n `${_clk}GHz (`${_co}c)"
-                }
-                {`$_ -in 'gpu_discrete','gpu_integrated'} {
-                    if (-not `$_dashCache.ContainsKey('_gpus')) {
-                        `$_dashCache['_gpus'] = try { @(Get-CimInstance Win32_VideoController -ErrorAction Stop) } catch { @() }
-                    }
-                    `$_gs = `$_dashCache['_gpus']
-                    if (-not `$_gs -or `$_gs.Count -eq 0) { return 'GPU --' }
-                    if (`$_k -eq 'gpu_discrete') {
-                        `$_g = `$_gs | Where-Object { `$_.Name -match 'NVIDIA|GeForce|RTX|GTX|Quadro|Radeon RX|Radeon Pro' } | Select-Object -First 1
-                        if (-not `$_g) { `$_g = `$_gs | Sort-Object @{e={`$_.AdapterRAM};Descending=`$true} | Select-Object -First 1 }
-                    } else {
-                        `$_g = `$_gs | Where-Object { `$_.Name -match 'Radeon\(TM\) Graphics|Intel.*Graphics|UHD Graphics' } | Select-Object -First 1
-                        if (-not `$_g) { return '' }
-                    }
-                    if (-not `$_g) { return 'GPU --' }
-                    `$_n = (`$_g.Name -replace 'NVIDIA GeForce ','' -replace 'NVIDIA ','' -replace '\(R\)','' -replace '\(TM\)','').Trim()
-                    `$_vr = if (`$_g.AdapterRAM) { [math]::Round(([uint32]`$_g.AdapterRAM) / 1GB, 1) } else { 0 }
-                    if (`$_vr -le 0) { return "GPU `$_n" }
-                    return "GPU `$_n `${_vr}GiB"
-                }
-                'ram' {
-                    if (-not `$_dashCache.ContainsKey('_os')) {
-                        `$_dashCache['_os'] = try { Get-CimInstance Win32_OperatingSystem -ErrorAction Stop } catch { `$null }
-                    }
-                    `$_o = `$_dashCache['_os']
-                    if (-not `$_o) { return 'RAM --' }
-                    `$_tot = [math]::Round(([int64]`$_o.TotalVisibleMemorySize) / 1MB, 1)
-                    `$_use = [math]::Round((([int64]`$_o.TotalVisibleMemorySize - [int64]`$_o.FreePhysicalMemory)) / 1MB, 1)
-                    `$_pct = if (`$_o.TotalVisibleMemorySize -gt 0) { [math]::Round(((`$_use / `$_tot) * 100), 0) } else { 0 }
-                    return "RAM `${_use} / `${_tot}GiB (`${_pct}%)"
-                }
-                'swap' {
-                    if (-not `$_dashCache.ContainsKey('_pf')) {
-                        `$_dashCache['_pf'] = try { Get-CimInstance Win32_PageFileUsage -ErrorAction Stop } catch { `$null }
-                    }
-                    `$_p = @(`$_dashCache['_pf'])
-                    if (-not `$_p -or `$_p.Count -eq 0 -or -not `$_p[0]) { return 'Swap --' }
-                    `$_tot = [math]::Round((`$_p | Measure-Object AllocatedBaseSize -Sum).Sum / 1024.0, 1)
-                    `$_use = [math]::Round((`$_p | Measure-Object CurrentUsage -Sum).Sum / 1024.0, 1)
-                    `$_pct = if (`$_tot -gt 0) { [math]::Round(((`$_use / `$_tot) * 100), 0) } else { 0 }
-                    return "Swap `${_use} / `${_tot}GiB (`${_pct}%)"
-                }
-                {`$_ -match '^disk_([a-zA-Z])$'} {
-                    `$_dl = `$_.Substring(5,1).ToUpper()
-                    `$_v  = try { Get-Volume -DriveLetter `$_dl -ErrorAction Stop } catch { `$null }
-                    if (-not `$_v) { return "`${_dl}: --" }
-                    `$_tot = [math]::Round(`$_v.Size / 1GB, 1)
-                    `$_use = [math]::Round((`$_v.Size - `$_v.SizeRemaining) / 1GB, 1)
-                    `$_pct = if (`$_v.Size -gt 0) { [math]::Round((((`$_v.Size - `$_v.SizeRemaining) / `$_v.Size) * 100), 0) } else { 0 }
-                    return "`${_dl}: `${_use} / `${_tot}GiB (`${_pct}%)"
-                }
-                'kernel' {
-                    return 'Kernel ' + [System.Environment]::OSVersion.Version.ToString()
-                }
-                'shell' {
-                    return 'Shell pwsh ' + `$PSVersionTable.PSVersion.ToString()
-                }
-                'font' {
-                    return "Font `$_fontFam `${_fontSz}pt"
-                }
-                'uptime' {
-                    if (-not `$_dashCache.ContainsKey('_os')) {
-                        `$_dashCache['_os'] = try { Get-CimInstance Win32_OperatingSystem -ErrorAction Stop } catch { `$null }
-                    }
-                    `$_o = `$_dashCache['_os']
-                    if (-not `$_o -or -not `$_o.LastBootUpTime) { return 'Up --' }
-                    `$_up = (Get-Date) - `$_o.LastBootUpTime
-                    `$_upd = [math]::Floor(`$_up.TotalDays)
-                    return "Up `${_upd}d `$(`$_up.Hours)h `$(`$_up.Minutes)m"
-                }
-                default { return '' }
-            }
-        }
-
-        # Parse [dashboard].rows + [theme.font] from the mios.toml text
-        # we already loaded above for [dashboard].title.  Vendor defaults
-        # baked in below if parsing fails (cold first-run before M:\
-        # overlay is staged).
-        `$_dashRows  = `$null
-        `$_dashFontF = '$_themeFontFace'
-        `$_dashFontS = $_themeFontSize
-        if (`$_dashTomlText) {
-            `$_dashSec = [regex]::Match(`$_dashTomlText, '(?ms)^\[dashboard\]\s*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)')
-            if (`$_dashSec.Success) {
-                `$_rowsM = [regex]::Match(`$_dashSec.Groups['body'].Value, '(?ms)^\s*rows\s*=\s*\[(?<arr>.*?)^\]')
-                if (`$_rowsM.Success) {
-                    `$_rowsBody = `$_rowsM.Groups['arr'].Value
-                    `$_rowMatches = [regex]::Matches(`$_rowsBody, '\[(?<r>[^\]]*)\]')
-                    `$_dashRows = @()
-                    foreach (`$_rm in `$_rowMatches) {
-                        `$_fields = @(`$_rm.Groups['r'].Value -split ',' | ForEach-Object { `$_.Trim().Trim('"',"'",' ',"``t","``r","``n") } | Where-Object { `$_ })
-                        if (`$_fields.Count -gt 0) { `$_dashRows += ,`$_fields }
-                    }
-                    if (`$_dashRows.Count -eq 0) { `$_dashRows = `$null }
-                }
-            }
-            # [theme.font] -- pick up runtime font overrides for the font field.
-            `$_fontSec = [regex]::Match(`$_dashTomlText, '(?ms)^\[theme\.font\]\s*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)')
-            if (`$_fontSec.Success) {
-                `$_fb = `$_fontSec.Groups['body'].Value
-                `$_fm = [regex]::Match(`$_fb, '(?m)^\s*family\s*=\s*"([^"]+)"')
-                if (`$_fm.Success) { `$_dashFontF = `$_fm.Groups[1].Value }
-                `$_sm = [regex]::Match(`$_fb, '(?m)^\s*size\s*=\s*(\d+)')
-                if (`$_sm.Success) { `$_dashFontS = [int]`$_sm.Groups[1].Value }
-            }
-        }
-        if (-not `$_dashRows) {
-            `$_dashRows = @(@('host_os'),@('cpu','gpu_discrete'),@('ram','swap'),@('disk_c','disk_m'),@('kernel','shell','font'))
-        }
-
-        foreach (`$_row in `$_dashRows) {
-            `$_n = @(`$_row).Count
-            if (`$_n -le 0) { continue }
-            # Equal-width columns within the framed inner area.
-            `$_colW = [math]::Floor((`$INNER - (`$_n - 1) * 2) / `$_n)
-            if (`$_colW -lt 8) { `$_colW = 8 }
-            `$_cells = @()
-            foreach (`$_fk in `$_row) {
-                `$_val = ''
-                try {
-                    `$_val = & `$_DashGetField `$_fk `$_dashFontF `$_dashFontS
-                } catch {
-                    `$_val = "`$_fk : err"
-                }
-                if (-not `$_val) { `$_val = '' }
-                if (`$_val.Length -gt `$_colW) {
-                    `$_val = `$_val.Substring(0, [math]::Max(1, `$_colW - 1)) + [char]0x2026
-                }
-                `$_cells += `$_val.PadRight(`$_colW)
-            }
-            try {
-                Write-Host (_Frame ((`$_cells -join '  ').TrimEnd()))
-            } catch {
-                # Frame helper failed (rare -- ANSI strip or PadRight
-                # overflow); print a placeholder so the render flow
-                # continues and the divider/hints/bottom frame land.
-                Write-Host (_Frame "  [dashboard row render failed]")
-            }
-        }
-        function _ProbeEp {
-            param([string]`$Url, [int]`$TimeoutMs = 1500)
-            try {
-                `$req = [System.Net.WebRequest]::Create(`$Url)
-                `$req.Timeout = `$TimeoutMs
-                `$req.Method  = "GET"
-                `$req.ServicePoint.Expect100Continue = `$false
-                try { `$resp = `$req.GetResponse(); `$resp.Close() } catch {
-                    if (`$_.Exception -is [System.Net.WebException] -and
-                        `$_.Exception.Response -ne `$null) { return `$true }
-                    return `$false
-                }
-                return `$true
-            } catch { return `$false }
-        }
-        function _ServiceCell {
-            param([string]`$Name, [int]`$Port, [string]`$Probe = "/",
-                  [bool]`$Https = `$false)
-            `$scheme = if (`$Https) { "https" } else { "http" }
-            `$url = "`${scheme}://localhost:`${Port}`${Probe}"
-            `$up  = _ProbeEp -Url `$url
-            `$dot = if (`$up) { "`$_esc[32m*`$_esc[0m" } else { "`$_esc[90m-`$_esc[0m" }
-            `$nm = `$Name.PadRight(11)
-            "`$dot `$nm :`$(`$Port.ToString().PadRight(5))"
-        }
-        function _ServiceRow {
-            param([string]`$L, [string]`$R)
-            Write-Host (_Frame ("  `$L  `$R")) -ForegroundColor Blue
-        }
-        Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
-        Write-Host (_Frame "  `$_esc[1m`$_esc[36mAI surface`$_esc[0m") -ForegroundColor Blue
-        `$_c_agent  = _ServiceCell -Name "Agent-Pipe"  -Port $(Get-MiosTomlValue -Section 'ports' -Key 'agent_pipe' -Default 8640) -Probe "/health"
-        `$_c_herm   = _ServiceCell -Name "Hermes"      -Port $(Get-MiosTomlValue -Section 'ports' -Key 'hermes' -Default 8642) -Probe "/health"
-        `$_c_pg     = _ServiceCell -Name "pgvector"    -Port $(Get-MiosTomlValue -Section 'ports' -Key 'pgvector' -Default 8432)
-        `$_c_dash   = _ServiceCell -Name "Dash-AI"     -Port $(Get-MiosTomlValue -Section 'ports' -Key 'hermes_dashboard' -Default 8119)
-        `$_c_llm    = _ServiceCell -Name "LLM-Light"   -Port $(Get-MiosTomlValue -Section 'ports' -Key 'llm_light' -Default 8450)
-        _ServiceRow `$_c_agent `$_c_herm
-        _ServiceRow `$_c_pg    `$_c_dash
-        _ServiceRow `$_c_llm   (' ' * 20)
-        Write-Host (_Frame "  `$_esc[1m`$_esc[36mUser surface`$_esc[0m") -ForegroundColor Blue
-        `$_c_webui  = _ServiceCell -Name "WebUI"       -Port $(Get-MiosTomlValue -Section 'ports' -Key 'open_webui' -Default 8033)
-        `$_c_cock   = _ServiceCell -Name "Cockpit"     -Port $(Get-MiosTomlValue -Section 'ports' -Key 'cockpit' -Default 8090) -Https `$true
-        `$_c_code   = _ServiceCell -Name "Code"        -Port $(Get-MiosTomlValue -Section 'ports' -Key 'code_server' -Default 8800)
-        `$_c_forge  = _ServiceCell -Name "Forge"       -Port $(Get-MiosTomlValue -Section 'ports' -Key 'forge_http' -Default 8300)
-        `$_c_srch   = _ServiceCell -Name "Search"      -Port $(Get-MiosTomlValue -Section 'ports' -Key 'searxng' -Default 8899)
-        `$_c_ttyb   = _ServiceCell -Name "ttyd-bash"   -Port $(Get-MiosTomlValue -Section 'ports' -Key 'ttyd_bash' -Default 8681)
-        `$_c_ttyp   = _ServiceCell -Name "ttyd-PS"     -Port $(Get-MiosTomlValue -Section 'ports' -Key 'ttyd_powershell' -Default 8682)
-        _ServiceRow `$_c_webui `$_c_cock
-        _ServiceRow `$_c_code  `$_c_forge
-        _ServiceRow `$_c_srch  `$_c_ttyb
-        _ServiceRow `$_c_ttyp  (' ' * 20)
-
-        `$_verbDefs = @(
-            @{ name='build';  desc='open mios.html, save, then build the OCI image' },
-            @{ name='config'; desc='edit mios.toml in the HTML configurator (no build)' },
-            @{ name='dash';   desc='show this dashboard (framed banner + fastfetch info)' },
-            @{ name='dev';    desc='enter the MiOS-DEV podman machine' },
-            @{ name='pull';   desc='sync M:\ overlay to origin/main' },
-            @{ name='update'; desc='re-run the bootstrap (cache-busted)' },
-            @{ name='help';   desc='list every verb' }
-        )
-        try {
-            `$_tomlCands = @(
-                (Join-Path `$env:USERPROFILE '.config\mios\mios.toml'),
-                'M:\etc\mios\mios.toml',
-                'M:\usr\share\mios\mios.toml'
-            )
-            foreach (`$_tc in `$_tomlCands) {
-                if (`$_tc -and (Test-Path -LiteralPath `$_tc)) {
-                    `$_tt = Get-Content -LiteralPath `$_tc -Raw -ErrorAction SilentlyContinue
-                    if (-not `$_tt) { continue }
-                    `$_vb = [regex]::Match(`$_tt, '(?ms)^\[verbs\]\s*\r?\n(.*?)(?=^\[|\z)')
-                    if (`$_vb.Success) {
-                        `$_parsed = @()
-                        foreach (`$_ln in (`$_vb.Groups[1].Value -split "``n")) {
-                            `$_pm = [regex]::Match(`$_ln, '^\s*([a-z][a-z0-9_-]*)\s*=\s*\{[^}]*description\s*=\s*"([^"]+)"')
-                            if (`$_pm.Success) { `$_parsed += @{ name=`$_pm.Groups[1].Value; desc=`$_pm.Groups[2].Value } }
-                        }
-                        if (`$_parsed.Count -gt 0) { `$_verbDefs = `$_parsed; break }
-                    }
-                }
-            }
-        } catch {}
-        Write-Host (`$LT + (`$H * (`$WIDTH - 2)) + `$RT) -ForegroundColor Blue
-        if (`$_compact) {
-            `$_hint1 = ((`$_verbDefs | ForEach-Object { `$_.name }) -join '  ')
-            Write-Host (_Center `$_hint1) -ForegroundColor DarkCyan
-        } else {
-            `$_maxName = ((`$_verbDefs | ForEach-Object { `$_.name.Length }) | Measure-Object -Maximum).Maximum
-            foreach (`$_v in `$_verbDefs) {
-                `$_pad = ' ' * (`$_maxName - `$_v.name.Length + 2)
-                Write-Host (_Frame ('  mios ' + `$_v.name + `$_pad + '-- ' + `$_v.desc)) -ForegroundColor DarkCyan
-            }
-        }
-
-        # Bottom frame.
-        Write-Host (`$BL + (`$H * (`$WIDTH - 2)) + `$BR) -ForegroundColor Blue
+        `$_native = if (`$env:MIOS_NATIVE_BIN) { `$env:MIOS_NATIVE_BIN } else { Join-Path `$env:ProgramData 'MiOS\bin' }
+        . (Join-Path `$_native 'mios-native-shell.ps1') -BinDirectory `$_native
+        Invoke-MiosNativeDashboard
     }
 
     if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
@@ -3975,19 +3378,57 @@ if (-not `$Global:MiosStartupVerbFired -and `$Host.UI.RawUI -and (-not `$env:MIO
         try { mios `$_startupVerb } catch {}
     }
 }
-"@
-    $miosScriptBody += @'
 
+# btop on Windows -> prefer native btop.exe (btop4win) if available;
+# otherwise resize window to reading mode and run the dev VM's Linux btop via WSL (UNIFIED).
+function btop {
+    `$_native = (Get-Command btop.exe -CommandType Application -ErrorAction SilentlyContinue)
+    if (`$_native) {
+        if (-not `$env:BTOP_CONFIG_DIR) {
+            foreach (`$_bDir in @('M:\MiOS\btop', (Join-Path `$env:LOCALAPPDATA 'btop'))) {
+                if (Test-Path -LiteralPath `$_bDir) { `$env:BTOP_CONFIG_DIR = `$_bDir; break }
+            }
+        }
+        & `$_native.Source @args
+        return
+    }
+    `$_devCandidates = @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')
+    `$_wslList = @()
+    try { `$_wslList = (& wsl.exe -l -q 2>`$null) -split "``r?``n" | ForEach-Object { (`$_ -replace [char]0,'').Trim() } | Where-Object { `$_ } } catch {}
+    `$_dev = `$null
+    foreach (`$_c in `$_devCandidates) {
+        if (`$_wslList -contains `$_c) { `$_dev = `$_c; break }
+    }
+    if (-not `$_dev) {
+        Write-Host '  [!] No native btop.exe or MiOS-DEV WSL distro found -- cannot run btop.' -ForegroundColor Yellow
+        return
+    }
+    try { Set-MiosWindow -Mode reading } catch {}
+    Start-Sleep -Milliseconds 200
+    try {
+        & wsl.exe -d `$_dev --user mios -- btop @args
+    } finally {
+        try { Set-MiosWindow -Mode portal } catch {}
+    }
+}
+
+# Windows tmux dispatch is rendered and enforced by the native Rust SSOT launcher.
+function tmux {
+    & (Join-Path `$env:ProgramData 'MiOS\bin\mios-launch.exe') --tmux @args
+}
+"@
+    $nativeStartup = @'
 # >>> MiOS native SSOT runtime >>>
-$_miosNativeBin = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } elseif (Test-Path (Join-Path $env:ProgramData 'MiOS\bin\native-binding.json')) { Join-Path $env:ProgramData 'MiOS\bin' } else { $Global:MiosBin }
-if (Test-Path (Join-Path $_miosNativeBin 'mios-native-client-setup.ps1')) {
-    & (Join-Path $_miosNativeBin 'mios-native-client-setup.ps1') -RuntimeOnly -BinDirectory $_miosNativeBin
-    . (Join-Path $_miosNativeBin 'mios-native-shell.ps1') -BinDirectory $_miosNativeBin
-    $env:MIOS_OMP_JSON = Join-Path $env:LOCALAPPDATA 'MiOS\themes\mios.omp.json'
-    oh-my-posh init pwsh --config $env:MIOS_OMP_JSON | Invoke-Expression
+$_miosNativeBin = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } else { Join-Path $env:ProgramData 'MiOS\bin' }
+. (Join-Path $_miosNativeBin 'mios-native-shell.ps1') -BinDirectory $_miosNativeBin
+if (-not $env:MIOS_SKIP_MOTD -and -not $env:MIOS_HOST_TMUX -and -not $env:TMUX -and -not $env:SSH_CONNECTION -and -not [Console]::IsInputRedirected) {
+    & (Join-Path $_miosNativeBin 'mios-launch.exe') --host-terminal
+    if ($LASTEXITCODE -ne 0) { throw "Native MiOS host terminal failed (exit $LASTEXITCODE)" }
+    return
 }
 # <<< MiOS native SSOT runtime <<<
 '@
+    $miosScriptBody = $nativeStartup + "`n" + $miosScriptBody
     $_utf8Bom = New-Object System.Text.UTF8Encoding($true)
     [System.IO.File]::WriteAllText($miosProfileScript, $miosScriptBody, $_utf8Bom)
 
@@ -4427,381 +3868,9 @@ function Ensure-PodmanDesktop {
 
 function Invoke-MiOSFullReap {
     param([switch]$Quiet)
-    $reapEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'SilentlyContinue'
-
-    $_msgBanner   = Get-MiosTomlValue -Section 'messages.reap' -Key 'banner'   -Default '[*] Phase 0: Reaping all prior MiOS state (zero-carry-over contract)...'
-    $_msgComplete = Get-MiosTomlValue -Section 'messages.reap' -Key 'complete' -Default '[+] Phase 0 reap complete -- proceeding with fresh install.'
-    $_lookupReap = {
-        param([string]$Key, [string]$Default)
-        $v = Get-MiosTomlValue -Section 'messages.reap' -Key $Key -Default $Default
-        if ([string]::IsNullOrWhiteSpace($v)) { return $Default }
-        return $v
-    }
-
-    $_log = {
-        param([string]$msg, [string]$color = 'DarkGray')
-        if (-not $Quiet) { Write-Host "    $msg" -ForegroundColor $color }
-    }
-
-    if (-not $Quiet) {
-        Write-Host ''
-        Write-Host "  $_msgBanner" -ForegroundColor Cyan
-    }
-
-    # 1. Podman machines
-    & $_log (& $_lookupReap 'category_1' '[1/13] podman machine stop + rm (MiOS-DEV, MiOS-BUILDER) ...')
-    foreach ($mch in @('MiOS-DEV','MiOS-BUILDER','podman-MiOS-DEV','podman-MiOS-BUILDER')) {
-        try { & podman machine stop $mch *>$null } catch {}
-        try { & podman machine rm -f $mch *>$null } catch {}
-    }
-    try { & podman system reset --force *>$null } catch {}
-
-    # 2. WSL distros (every variant the install pipeline has used)
-    & $_log (& $_lookupReap 'category_2' '[2/13] wsl --unregister (MiOS, MiOS-DEV, podman-MiOS-*, MiOS-BUILDER) ...')
-    foreach ($d in @('MiOS','MiOS-DEV','podman-MiOS-DEV','MiOS-BUILDER','podman-MiOS-BUILDER')) {
-        try { & wsl.exe --unregister $d 2>$null | Out-Null } catch {}
-    }
-    try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
-
-    # 3. Hyper-V VMs matching MiOS-*
-    & $_log (& $_lookupReap 'category_3' '[3/13] Hyper-V VMs (MiOS-*) ...')
-    try {
-        if (Get-Command Get-VM -ErrorAction SilentlyContinue) {
-            Get-VM -Name 'MiOS-*' -ErrorAction SilentlyContinue | ForEach-Object {
-                try { Stop-VM -Name $_.Name -TurnOff -Force -ErrorAction SilentlyContinue } catch {}
-                try { Remove-VM -Name $_.Name -Force -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-    } catch {}
-
-    & $_log (& $_lookupReap 'category_4' '[4/13] Install dirs (%PROGRAMDATA%\MiOS, %LOCALAPPDATA%\MiOS, %APPDATA%\MiOS) -- skipping C:\MiOS + C:\mios-bootstrap ...')
-    foreach ($p in @(
-        (Join-Path $env:ProgramData    'MiOS'),
-        (Join-Path $env:LOCALAPPDATA   'MiOS'),
-        (Join-Path $env:APPDATA        'MiOS')
-    )) {
-        if ([string]::IsNullOrWhiteSpace($p)) { continue }
-        if (Test-Path -LiteralPath $p) {
-            try { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-        }
-    }
-    # M:\ contents -- wipe everything at the drive root (the partition itself
-    # stays; Initialize-DataDisk's idempotent check sees M:\ exists with
-    # label=MIOS-DEV and skips re-creation). MiOS owns this entire volume.
-    if (Test-Path -LiteralPath 'M:\') {
-        try {
-            Get-ChildItem -LiteralPath 'M:\' -Force -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -ne 'System Volume Information' -and $_.Name -ne '$RECYCLE.BIN' } |
-                ForEach-Object {
-                    try { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-                }
-        } catch {}
-    }
-
-    # 5. WT settings.json -- remove only MiOS-set keys, preserve everything else
-    & $_log (& $_lookupReap 'category_5' '[5/13] Windows Terminal settings.json (MiOS scheme + profiles + defaults) ...')
-    foreach ($wtPath in @(
-        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
-        (Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json')
-    )) {
-        if (-not (Test-Path -LiteralPath $wtPath)) { continue }
-        try {
-            $raw = Get-Content -LiteralPath $wtPath -Raw
-            $stripped = [regex]::Replace($raw, '(?ms)/\*.*?\*/', '')
-            $stripped = [regex]::Replace($stripped, '(?m)^\s*//.*$', '')
-            $stripped = [regex]::Replace($stripped, ',(\s*[\}\]])', '$1')
-            $j = $stripped | ConvertFrom-Json -ErrorAction Stop
-            $changed = $false
-            if ($j.PSObject.Properties['launchMode'] -and $j.launchMode -in @('focus','maximizedFocus','focusFullscreen')) {
-                $j.PSObject.Properties.Remove('launchMode'); $changed = $true
-            }
-            if ($j.profiles -and $j.profiles.defaults) {
-                foreach ($k in @('scrollbarState','padding','useAcrylic','opacity','systemBackdrop','suppressApplicationTitle','disableAnimations','useAtlasEngine','experimental.detectURLs','experimental.input.forceVT','experimental.rendering.forceFullRepaint')) {
-                    if ($j.profiles.defaults.PSObject.Properties[$k]) {
-                        $j.profiles.defaults.PSObject.Properties.Remove($k); $changed = $true
-                    }
-                }
-            }
-            if ($j.schemes) {
-                $keepSchemes = @($j.schemes | Where-Object { $_.name -ne 'MiOS' })
-                if ($keepSchemes.Count -ne $j.schemes.Count) { $j.schemes = [object[]]$keepSchemes; $changed = $true }
-            }
-            if ($j.profiles -and $j.profiles.list) {
-                $keepProfiles = @($j.profiles.list | Where-Object {
-                    $_.name -ne 'MiOS' -and $_.name -ne 'MiOS-WIN' -and $_.name -ne 'MiOS-DEV' -and $_.name -ne 'MiOS-Bootstrap' -and $_.name -notmatch '^podman-MiOS-' -and $_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456789}' -and $_.guid -ne '{a8b5c2d3-e4f5-6789-abcd-ef0123456790}'
-                })
-                if ($keepProfiles.Count -ne $j.profiles.list.Count) { $j.profiles.list = [object[]]$keepProfiles; $changed = $true }
-            }
-            if ($changed) {
-                ($j | ConvertTo-Json -Depth 32) | Set-Content -LiteralPath $wtPath -Encoding UTF8
-            }
-        } catch {}
-    }
-
-    # 6. PowerShell profile redirector blocks (marker-delimited removal)
-    & $_log (& $_lookupReap 'category_6' '[6/13] PowerShell profile redirector blocks (MiOS markers) ...')
-    function script:Remove-MiosMarkerBlock {
-        param([string]$Text, [string]$StartMarker, [string]$EndMarker)
-        while ($true) {
-            $si = $Text.IndexOf($StartMarker)
-            if ($si -lt 0) { return $Text }
-            $ei = $Text.IndexOf($EndMarker, $si)
-            if ($ei -lt 0) { return $Text }
-            $endPos = $ei + $EndMarker.Length
-            if ($endPos -lt $Text.Length -and $Text[$endPos] -eq "`r") { $endPos++ }
-            if ($endPos -lt $Text.Length -and $Text[$endPos] -eq "`n") { $endPos++ }
-            $Text = $Text.Substring(0, $si) + $Text.Substring($endPos)
-        }
-    }
-    $pwshProfileCandidates = @(
-        (Join-Path $env:USERPROFILE 'Documents\PowerShell\profile.ps1'),
-        (Join-Path $env:USERPROFILE 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
-        (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\profile.ps1'),
-        (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
-        (Join-Path $env:USERPROFILE 'OneDrive\Documents\PowerShell\profile.ps1'),
-        (Join-Path $env:USERPROFILE 'OneDrive\Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
-        (Join-Path $env:USERPROFILE 'OneDrive\Documents\WindowsPowerShell\profile.ps1'),
-        (Join-Path $env:USERPROFILE 'OneDrive\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1')
-    ) | Where-Object { $_ } | Sort-Object -Unique
-    foreach ($pp in $pwshProfileCandidates) {
-        if (-not (Test-Path -LiteralPath $pp)) { continue }
-        try {
-            $body = Get-Content -LiteralPath $pp -Raw
-            $body = Remove-MiosMarkerBlock -Text $body -StartMarker '# >>> MiOS oh-my-posh init >>>' -EndMarker '# <<< MiOS oh-my-posh init <<<'
-            $body = Remove-MiosMarkerBlock -Text $body -StartMarker '# >>> MiOS dash function >>>'   -EndMarker '# <<< MiOS dash function <<<'
-            $body = $body.Trim()
-            if ([string]::IsNullOrWhiteSpace($body)) {
-                Remove-Item -LiteralPath $pp -Force -ErrorAction SilentlyContinue
-            } else {
-                Set-Content -LiteralPath $pp -Value $body -Encoding UTF8 -NoNewline
-            }
-        } catch {}
-    }
-
-    # 7. Fonts (Geist + Symbols-Only Nerd Font + matching HKCU reg entries)
-    & $_log (& $_lookupReap 'category_7' '[7/13] Fonts (Geist*, *NerdFont*, SymbolsOnly*) + HKCU font reg ...')
-    $fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
-    $fontReg = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
-    if (Test-Path -LiteralPath $fontDir) {
-        Get-ChildItem -LiteralPath $fontDir -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^(Geist|.*NerdFontMono|.*NerdFontPropo|.*NerdFont|SymbolsOnly|.*Symbols.*)' } |
-            ForEach-Object {
-                $fname = $_.Name
-                try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
-                if (Test-Path -LiteralPath $fontReg) {
-                    $face = [System.IO.Path]::GetFileNameWithoutExtension($fname)
-                    foreach ($suffix in @(' (TrueType)',' (OpenType)')) {
-                        $regName = "$face$suffix"
-                        try { Remove-ItemProperty -LiteralPath $fontReg -Name $regName -ErrorAction SilentlyContinue } catch {}
-                    }
-                }
-            }
-    }
-
-    # 8. PATH env (HKCU + HKLM if admin) -- strip M:\MiOS\bin entries
-    & $_log (& $_lookupReap 'category_8' '[8/13] PATH env entries (M:\MiOS\bin from HKCU + HKLM) ...')
-    foreach ($scope in @('User','Machine')) {
-        try {
-            $cur = [Environment]::GetEnvironmentVariable('Path', $scope)
-            if (-not $cur) { continue }
-            $parts = $cur -split ';' | Where-Object {
-                $_ -and ($_ -notmatch '[Mm]:\\\\?MiOS\\\\bin') -and ($_ -notmatch '[Mm]:\\MiOS\\bin')
-            }
-            $new = ($parts -join ';')
-            if ($new -ne $cur) {
-                [Environment]::SetEnvironmentVariable('Path', $new, $scope)
-            }
-        } catch {}
-    }
-
-    # 9. HKCU uninstall reg key
-    & $_log (& $_lookupReap 'category_9' '[9/13] HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MiOS ...')
-    $uninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MiOS'
-    if (Test-Path -LiteralPath $uninstKey) {
-        try { Remove-Item -LiteralPath $uninstKey -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-    }
-
-    # 10. Start Menu folder + Desktop .lnk shortcuts (every legacy name)
-    & $_log (& $_lookupReap 'category_10' '[10/13] Start Menu folder + Desktop .lnk shortcuts ...')
-    $lnkNames = @(
-        'MiOS.lnk','MiOS-WIN.lnk','MiOS-DEV.lnk','MiOS Config.lnk','MiOS Help.lnk','Uninstall MiOS.lnk',
-        'MiOS Setup.lnk','Build MiOS.lnk','MiOS Configurator.lnk','MiOS Terminal.lnk',
-        'MiOS Dev Shell.lnk','MiOS Podman Shell.lnk','MiOS Build.lnk','MiOS Dashboard.lnk',
-        'MiOS Update.lnk','MiOS Pull.lnk'
-    )
-    $shortcutDirs = @(
-        [Environment]::GetFolderPath('Desktop'),
-        (Join-Path $env:USERPROFILE 'OneDrive\Desktop'),
-        'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\MiOS',
-        (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\MiOS')
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Sort-Object -Unique
-    foreach ($dir in $shortcutDirs) {
-        if ($dir -match 'Desktop$') {
-            try {
-                Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -like '.tmp.*' -or $_.Name -like '*.tmp.driveu*' } |
-                    ForEach-Object {
-                        try { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-                    }
-            } catch {}
-        }
-        foreach ($ln in $lnkNames) {
-            $lp = Join-Path $dir $ln
-            if (Test-Path -LiteralPath $lp) {
-                try { Remove-Item -LiteralPath $lp -Force -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-        if ($dir -match 'Start Menu\\Programs\\MiOS$') {
-            $linuxAppsSub = Join-Path $dir 'Linux Apps'
-            if (Test-Path -LiteralPath $linuxAppsSub) {
-                try { Remove-Item -LiteralPath $linuxAppsSub -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-        if ($dir -match 'Start Menu\\Programs\\MiOS$') {
-            if ((Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) {
-                try { Remove-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-    }
-
-    # 11. AppUserModelID HKCU/HKLM registrations
-    & $_log (& $_lookupReap 'category_11' '[11/13] AppUserModelID (MiOS.Workstation) HKCU + HKLM ...')
-    foreach ($aumKey in @(
-        'HKCU:\Software\Classes\AppUserModelId\MiOS.Workstation',
-        'HKLM:\Software\Classes\AppUserModelId\MiOS.Workstation'
-    )) {
-        if (Test-Path -LiteralPath $aumKey) {
-            try { Remove-Item -LiteralPath $aumKey -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-        }
-    }
-
-    # 12. podman-machine state symlinks (3 candidate paths)
-    & $_log (& $_lookupReap 'category_12' '[12/13] podman-machine state symlinks (LOCALAPPDATA / .local\\share / ProgramData) ...')
-    foreach ($pmLink in @(
-        (Join-Path $env:LOCALAPPDATA 'containers\podman\machine'),
-        (Join-Path $env:USERPROFILE  '.local\share\containers\podman\machine'),
-        'C:\ProgramData\containers\podman\machine'
-    )) {
-        if (Test-Path -LiteralPath $pmLink) {
-            try {
-                $item = Get-Item -LiteralPath $pmLink -Force -ErrorAction SilentlyContinue
-                if ($item -and ($item.LinkType -eq 'SymbolicLink' -or $item.LinkType -eq 'Junction' -or $item.Target)) {
-                    Remove-Item -LiteralPath $pmLink -Force -ErrorAction SilentlyContinue
-                } elseif ($item) {
-                    Remove-Item -LiteralPath $pmLink -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            } catch {}
-        }
-    }
-
-    # 13. MIOS_*/MiOS_*/BTOP_CONFIG_DIR environment variables (HKCU + HKLM)
-    & $_log (& $_lookupReap 'category_13' '[13/17] MIOS_* + BTOP_CONFIG_DIR environment variables ...')
-    foreach ($scope in @('User','Machine')) {
-        try {
-            $envKey = if ($scope -eq 'User') { 'HKCU:\Environment' }
-                       else { 'HKLM:\System\CurrentControlSet\Control\Session Manager\Environment' }
-            if (Test-Path -LiteralPath $envKey) {
-                (Get-Item -LiteralPath $envKey).Property | Where-Object { $_ -match '^(MIOS_|MiOS_|BTOP_CONFIG_DIR$)' } |
-                    ForEach-Object { try { Remove-ItemProperty -LiteralPath $envKey -Name $_ -ErrorAction SilentlyContinue } catch {} }
-            }
-        } catch {}
-    }
-
-    # 14. HKCU\Run autostart + kill mios-gui-watch.ps1 daemon
-    & $_log '[14/17] HKCU\Run autostart entries + mios-gui-watch daemon + scheduled tasks ...'
-    foreach ($runVal in @('MiOS-GuiWatch','MiOS','MiOSGuiWatch','MiOS-Autostart')) {
-        try { Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $runVal -ErrorAction SilentlyContinue } catch {}
-    }
-    try {
-        Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -match 'mios-gui-watch' } |
-            ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
-    } catch {}
-    try {
-        if (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue) {
-            Unregister-ScheduledTask -TaskName 'MiOS-Autostart' -Confirm:$false -ErrorAction SilentlyContinue
-        }
-    } catch {}
-    try {
-        $stagedAutostart = Join-Path $env:ProgramData 'MiOS\mios-autostart.ps1'
-        if (Test-Path $stagedAutostart) {
-            Remove-Item -Path $stagedAutostart -Force -ErrorAction SilentlyContinue
-        }
-    } catch {}
-
-    # 15. Windows Defender exclusions (paired with Add-MiosDefenderExclusions)
-    & $_log '[15/17] Windows Defender exclusions (paths + processes) ...'
-    try {
-        if (Get-Command Remove-MpPreference -ErrorAction SilentlyContinue) {
-            foreach ($excPath in @('M:\','M:\MiOS','M:\MiOS\bin','M:\MiOS\repo',(Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet'),$env:TEMP)) {
-                try { Remove-MpPreference -ExclusionPath $excPath -ErrorAction SilentlyContinue } catch {}
-            }
-            foreach ($excProc in @('pwsh.exe','wsl.exe','wslservice.exe','podman.exe','msrdc.exe')) {
-                try { Remove-MpPreference -ExclusionProcess $excProc -ErrorAction SilentlyContinue } catch {}
-            }
-        }
-    } catch {}
-
-    & $_log '[16a/17] Windows Firewall rules (DisplayName "MiOS - *") ...'
-    try {
-        if (Get-Command Get-NetFirewallRule -ErrorAction SilentlyContinue) {
-            Get-NetFirewallRule -DisplayName 'MiOS - *' -ErrorAction SilentlyContinue |
-                ForEach-Object {
-                    try { Remove-NetFirewallRule -InputObject $_ -ErrorAction SilentlyContinue } catch {}
-                }
-        }
-    } catch {}
-
-    # 16. WSL service host caches + any in-flight wslhost/msrdc procs
-    & $_log '[16/17] Killing in-flight wslhost / msrdc / mios-gui-watch host processes ...'
-    foreach ($pn in @('wslhost','msrdc','wsl','vmmemWSL')) {
-        try { Get-Process -Name $pn -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
-    }
-    try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
-
-    & $_log '[17/17] Preparing M:\ (format if dedicated MiOS volume, else clean MiOS dirs) ...'
-    try {
-        $mVol = Get-Volume -DriveLetter M -ErrorAction SilentlyContinue
-        if ($mVol -and $mVol.FileSystemLabel -match '^MIOS') {
-            # KEEP  = never delete (pagefile + system/volume metadata + genuine user data).
-            # PURGE = disposable junk cleared for a fresh MiOS state (Windows UUP staging).
-            # MIOS_DIRS = the FHS/repo/runtime tree MiOS itself lays down on M:\.
-            $_keep  = @('$RECYCLE.BIN','System Volume Information','pagefile.sys','swapfile.sys',
-                        'hiberfil.sys','DumpStack.log.tmp','SteamLibrary','winget','images','research','config')
-            $_purge = @('W10UIuup','MountUUP')
-            $_miosDirs = @('.devcontainer','.forgejo','.git','.github','automation','etc','MiOS',
-                           'podman','root','src','tests','tools','usr','var','powershell')
-            $_hasPagefile = [bool](Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue |
-                                   Where-Object { $_.Name -match '^M:' })
-            $_foreign = @(Get-ChildItem 'M:\' -Force -ErrorAction SilentlyContinue |
-                          Where-Object { $_keep -notcontains $_.Name -and $_purge -notcontains $_.Name -and $_miosDirs -notcontains $_.Name })
-            if (-not $_hasPagefile -and $_foreign.Count -eq 0) {
-                Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel 'MIOS-DEV' -Force -Confirm:$false -ErrorAction Stop | Out-Null
-                & $_log '  [+] M:\ reformatted (dedicated MiOS volume, NTFS, label MIOS-DEV, empty)'
-            } else {
-                $_why = if ($_hasPagefile) { 'active pagefile on M:\' } else { "non-MiOS data present ($(($_foreign.Name) -join ', '))" }
-                & $_log "  M:\ is a SHARED volume ($_why); preserving pagefile/user data -- clearing MiOS tree + UUP staging."
-                foreach ($_d in ($_miosDirs + $_purge)) {
-                    $_p = Join-Path 'M:\' $_d
-                    if (Test-Path -LiteralPath $_p) {
-                        try { Remove-Item -LiteralPath $_p -Recurse -Force -ErrorAction Stop; & $_log "    [removed] M:\$_d" }
-                        catch { & $_log "    [!] could not remove M:\$_d -- $($_.Exception.Message)" }
-                    }
-                }
-            }
-        } else {
-            & $_log '  M:\ not present or label != MIOS-DEV; skipping (safety guard)'
-        }
-    } catch {
-        & $_log ("  [!] M:\ prepare failed: " + $_.Exception.Message)
-    }
-
-    if (-not $Quiet) {
-        Write-Host "  $_msgComplete" -ForegroundColor Green
-        Write-Host ''
-    }
-    $ErrorActionPreference = $reapEAP
+    # Compatibility entry: installation and error recovery preserve persistent
+    # guest state and operator source. Destructive cleanup belongs to uninstall.
+    if (-not $Quiet) { Write-Host '  [MiOS] Existing distributions, persistent state and source checkouts preserved.' -ForegroundColor Cyan }
 }
 
 function Initialize-DataDisk {
@@ -5079,21 +4148,12 @@ if (-not $_freshVendorToml -or
 try { Invoke-MiOSFullReap } catch { Write-Host "  [!] Invoke-MiOSFullReap failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 
 $_trapFmtFailed = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'install_failed_template' -Default '[!!] Install failed: {0}'
-$_trapAutoReap  = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'auto_reaping' -Default '[*]  Auto-reaping all MiOS state to leave Windows zero-state...'
-$_trapReapDone  = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'reap_complete' -Default '[+]  Reap complete -- re-run irm|iex one-liner to retry from clean state.'
-$_trapReapFail  = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'reap_on_failure_failed_template' -Default '[!] Reap-on-failure also failed: {0}'
 trap {
     Write-Host ''
     Write-Host ('  ' + ($_trapFmtFailed -f $_.Exception.Message)) -ForegroundColor Red
-    Write-Host "  $_trapAutoReap" -ForegroundColor Yellow
-    try { Invoke-MiOSFullReap } catch {
-        Write-Host ('  ' + ($_trapReapFail -f $_.Exception.Message)) -ForegroundColor Yellow
-    }
-    Write-Host "  $_trapReapDone" -ForegroundColor Green
-    Write-Host ''
+    Write-Host '  [MiOS] Installation failed; existing distributions, persistent state and source checkouts are preserved.' -ForegroundColor Yellow
     exit 1
 }
-
 # SSOT: every Step N banner resolves through mios.toml [messages.steps].
 # Per feedback_mios_messages_section_ssot: no Write-Host literals in code;
 # vendor defaults via -Default arg of Get-MiosTomlValue.
@@ -5343,6 +4403,7 @@ if ($true) {
     Update-MiOSOhMyPosh             | Out-Null
     Update-MiOSPSReadLine           | Out-Null
     Install-MiOSOhMyPoshTheme       | Out-Null
+    Install-MiOSTmuxProfile         | Out-Null
     Install-MiOSPowerShellProfile   | Out-Null
     Write-Host "  $_msgStep7" -ForegroundColor Cyan
     Install-MiOSTerminalExtras      | Out-Null
@@ -5566,6 +4627,11 @@ function Invoke-GitProc {
 
 if (Test-Path $RepoDir) {
     if (Test-Path (Join-Path $RepoDir '.git')) {
+        $sourceState = Invoke-GitProc -ArgList @('status','--porcelain','--untracked-files=normal') -Cwd $RepoDir
+        if ($sourceState.ExitCode -ne 0) { throw 'Could not inspect bootstrap working tree; source update refused' }
+        if ($sourceState.Stdout.Trim()) {
+            Write-Info "Preserving current bootstrap checkout at $RepoDir (local changes present)."
+        } else {
         Write-Info "Updating existing bootstrap clone at $RepoDir (fetch + hard reset to origin/$Branch) ..."
         $fr = Invoke-GitProc -ArgList @('fetch','--depth=1','origin',$Branch) -Cwd $RepoDir
         if ($fr.ExitCode -ne 0) {
@@ -5579,6 +4645,7 @@ if (Test-Path $RepoDir) {
                 exit 1
             }
             Write-Good "Bootstrap clone updated to origin/$Branch in place at $RepoDir"
+        }
         }
     } elseif (@(Get-ChildItem -LiteralPath $RepoDir -Force -ErrorAction SilentlyContinue).Count -eq 0) {
         # Exists but EMPTY: a prior uninstall emptied it, yet a lingering WSL2 /
@@ -5638,8 +4705,7 @@ if (Test-Path $RepoDir) {
 }
 
 # 6. Hand off to bootstrap.ps1 (canonical split-bootstrap entry).
-# Defaults to -BootstrapOnly: stops after dev VM + Windows install.
-# The "Build MiOS" Start Menu shortcut drives the OCI build.
+# The published one-liner follows the operator's SSOT installation mode.
 $entry = Join-Path $RepoDir "bootstrap.ps1"
 if (-not (Test-Path $entry)) {
     Write-Err "bootstrap.ps1 not found in $RepoDir (cloned with wrong branch?)"
@@ -5649,7 +4715,10 @@ if (-not (Test-Path $entry)) {
 if ($Workflow) { $env:MIOS_WORKFLOW = $Workflow }
 
 $forwardArgs = @()
-if ($FullBuild)  { $forwardArgs += '-FullBuild' }
+$installMode = Get-MiosTomlValue -Section 'bootstrap' -Key 'windows_install_mode' -Default 'full'
+if ($installMode -notin @('full','bootstrap')) { throw 'SSOT bootstrap.windows_install_mode must be full or bootstrap' }
+if ($FullBuild -or $installMode -eq 'full') { $forwardArgs += '-FullBuild' }
+else { $forwardArgs += '-BootstrapOnly' }
 if ($Unattended) { $forwardArgs += '-Unattended' }
 
 Write-Info "Handing off to bootstrap.ps1 ..."
