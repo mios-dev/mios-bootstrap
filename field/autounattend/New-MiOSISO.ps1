@@ -1,4 +1,4 @@
-# AI-hint: DISM-native MiOS-XBOX ISO orchestrator (WISO-07 / T-138). Chains the whole reproducible pipeline: mios-uup-fetch (stock Dev-channel Win11 ISO) -> extract media -> offline-service install.wim with DISM (disable the merged preset's optional features, remove its provisioned appx, write the Xbox Full Screen Experience FeatureManagement override + DeviceForm spoof into the image) -> generate the MiOS autounattend.xml (SSOT accounts + LabConfig WinPE bypass + FirstLogonCommands incl. Xbox mode + nested irm|iex) -> oscdimg dual BIOS/UEFI bootable MiOS-Xbox.iso. No NTLite, no vivetool.exe. SSOT-driven, degrade-open.
+# AI-hint: DISM-native MiOS-XBOX ISO orchestrator (WISO-07 / task_139). Chains the whole reproducible pipeline: mios-uup-fetch (stock Dev-channel Win11 ISO) -> extract media -> offline-service install.wim with DISM (disable the merged preset's optional features, remove its provisioned appx, write the Xbox Full Screen Experience FeatureManagement override + DeviceForm spoof into the image) -> generate the MiOS autounattend.xml (SSOT accounts + LabConfig WinPE bypass + FirstLogonCommands incl. Xbox mode + nested irm|iex) -> oscdimg dual BIOS/UEFI bootable MiOS-Xbox.iso. No NTLite, no vivetool.exe. SSOT-driven, degrade-open.
 # AI-related: mios-bootstrap, mios-uup-fetch.ps1, New-MiOSAutounattend.ps1, MiOS-Provision.lib.ps1, MiOS-Xbox-Merged.xml, docs/uup-autounattend-dism-iso-flow.md, docs/dism-native-conversion-map.md
 # AI-functions: Expand-MiOSIso, Get-MiOSMergedRemovals, Set-MiOSXboxOfflineReg, Invoke-MiOSImageServicing, Build-MiOSBootableIso
 #Requires -Version 5.1
@@ -8,7 +8,7 @@
     using DISM offline servicing + oscdimg -- 100% free/reproducible, no NTLite.
 
 .DESCRIPTION
-    The DISM-native canonical path (operator decision, T-138). Stages:
+    The DISM-native canonical path (operator decision, task_139). Stages:
       0. mios-uup-fetch.ps1  -> stock Win11 ISO on the SSOT channel (default Dev).
       1. Extract the ISO to a writable media tree (Mount-DiskImage + copy).
       2. DISM offline-service sources\install.wim:
@@ -918,7 +918,7 @@ function Set-MiOSRemoteAccessOffline {
         finally { if ($viso) { try { Dismount-DiskImage -ImagePath $viso -ErrorAction SilentlyContinue | Out-Null } catch {} } }
     }
 
-    # ---- (B3) OFFLINE NIC/WLAN driver pack injection (T-281) --------------------------
+    # ---- (B3) OFFLINE NIC/WLAN driver pack injection (task_3327) --------------------------
     $netDir = Get-Toml $Toml 'autounattend.remote.net_drivers_dir' (Join-Path $PSScriptRoot '..\drivers\net')
     if (Test-Path $netDir) {
         $netInfs = @(Get-ChildItem -Path $netDir -Recurse -Filter *.inf -ErrorAction SilentlyContinue)

@@ -11,7 +11,7 @@ rem ============================================================================
 set "LOG=%WINDIR%\Temp\mios-setupcomplete.log"
 echo [MiOS] SetupComplete start %DATE% %TIME%>>"%LOG%"
 
-rem --- PRE-CREATE SYSTEMPROFILE DESKTOP DIRS: prevent "systemprofile\desktop is not accessible" modal (T-280) ---
+rem --- PRE-CREATE SYSTEMPROFILE DESKTOP DIRS: prevent "systemprofile\desktop is not accessible" modal (task_3326) ---
 echo [MiOS] pre-creating systemprofile desktop directories %DATE% %TIME%>>"%LOG%"
 mkdir "%WINDIR%\System32\config\systemprofile\Desktop" >nul 2>&1
 mkdir "%WINDIR%\SysWOW64\config\systemprofile\Desktop" >nul 2>&1
