@@ -29,7 +29,7 @@ dispatcher), `field/MiOS-Field.bat` (USB flasher/menu hub), `build-mios.ps1` (Mi
 **Linux:** `build-mios.sh` (canonical), `bootstrap.sh`/`install.sh` (redirectors → build-mios.sh).
 
 **Portal + configurator = one app.** The Portal is routes inside the agent-pipe FastAPI
-(`server.py`, `MIOS_PORT_AGENT_PIPE`; `mios-agent-pipe.service`). `mios_pipe/routing/portal.py`
+(`server.py`, `MIOS_PORTS_AGENT_PIPE`; `mios-agent-pipe.service`). `mios_pipe/routing/portal.py`
 serves `/` (dashboard, embedded `_PORTAL_HTML`), `/configure` (Settings shell), `/portal/configurator`
 (iframes on-disk `usr/share/mios/configurator/mios.html`), and `GET/POST /portal/config` (read/write).
 `POST /portal/config` writes a **delta to the USER layer** `~/.config/mios/mios.toml` (`kernel/config.py`
