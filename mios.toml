@@ -1203,7 +1203,7 @@ shrink_mb         = 262656
 # floor instead of hard-aborting; only if even this won't fit does it stop (with
 # remediation). 64 GB is enough for the dev VM + a couple of OCI image builds.
 min_shrink_mb     = 65536
-drive_letter      = "M"
+drive_letter      = "C"
 volume_label      = "MIOS-DEV"
 
 # Dev VM (podman-MiOS-DEV) provisioning. base_image is the Fedora bootc base
@@ -1445,7 +1445,7 @@ podman_machine = "podman-machine.tar"          # OPTIONAL podman-machine image (
 distro         = "MiOS"                         # runtime WSL distro name the rootfs imports as
 builder_distro = "MiOS-DEV"                     # source distro Build-MiOSSeed.ps1 exports from
 image_ref      = "ghcr.io/mios-dev/mios:latest" # OCI ref the oci-archive carries / is loaded as
-install_dir    = "M:\\wsl\\MiOS"               # where wsl --import lands the distro (falls back to C: if M: absent)
+install_dir    = "C:\\wsl\\MiOS"               # where wsl --import lands the distro
 build_machine  = false                          # also export a podman-machine image (opt-in; engine runs in-distro by default)
 
 # [autounattend.service] -- MiOS as boot-time SYSTEM services, UP BEFORE LOGON.
@@ -1596,7 +1596,7 @@ bin_map = [
 # SSOT-rendered btop.conf + themes/mios.theme here and points the User-scope
 # BTOP_CONFIG_DIR at it. Defaults to the MiOS-owned data drive (see
 # [bootstrap.host_storage].drive_letter) rather than %APPDATA%.
-btop_config_dir = "M:\\MiOS\\btop"
+btop_config_dir = "C:\\MiOS\\btop"
 
 # ─── Browser AI: Zen Twilight wired to the MiOS OWUI pipeline ─────────────────
 # Installs Zen Browser (Twilight channel, Firefox-based) on the Windows host and
