@@ -309,6 +309,9 @@ firewalld_default_zone = "drop"
 allow_ssh              = true
 allow_cockpit          = true   # opens 9090/tcp
 allow_libvirt_bridge   = true   # for VM networking
+loopback = "127.0.0.1"
+bind_all = "0.0.0.0"
+win_tailscale_ip = "100.79.3.50"
 
 # ----------------------------------------------------------------------------
 # [mios_app] -- placeholder for the future MiOS App client (scaffold-stage;
@@ -340,7 +343,7 @@ forge_ssh          = 8410    # Forgejo git+ssh (vacated 2222 for host admin sshd
 cockpit            = 8110     # host Cockpit web console
 cockpit_link       = 8120    # mios-cockpit-link Podman Desktop discovery shim
 searxng            = 8800     # local privacy-respecting metasearch
-searxng_internal   = 8080     # SearXNG internal container listening port (upstream standard 8080; host maps 8800->8080)
+searxng_internal = 8888     # SearXNG internal container listening port (upstream standard 8080; host maps 8800->8080)
 crawl4ai           = 8810    # local crawl engine -- the crawl4ai FastAPI (crawl4ai over Chrome CDP + Camoufox fallback), the crawl4ai member of the mios-webtools pod. LOOPBACK only (127.0.0.1), NOT a published/LAN port.
 firecrawl          = 8820     # self-hosted firecrawl api -- the firecrawl-api member of the mios-webtools pod (Hermes's native web backend; FIRECRAWL_API_URL). LOOPBACK only (127.0.0.1), NOT a published/LAN port. (3002 is firecrawl's own default; free on MiOS -- 3000=forge_http, 3033=open_webui.)
 hermes             = 8720     # Hermes gateway (canonical /v1). ONE key: hermes-worker.service is the only unit running `hermes gateway run` and binds this.
@@ -398,6 +401,11 @@ stale_fallbacks = []
 # Environment=, and the [units] block that WOULD render the placeholder is inert
 # until task_267 makes mios-unit-gen faithful.
 unbound = ["chrome_cdp_worker", "ai_legacy", "field_live_chat"]
+cockpit_internal = 9090     # Cockpit internal container listening port (upstream standard 9090; host maps 8110->9090)
+crawl4ai_internal = 11235   # crawl4ai container internal listening port (upstream default 11235)
+firecrawl_internal = 3002     # firecrawl container internal listening port (upstream default 3002)
+igpu = 11436   # Windows host iGPU Vulkan inference listener port
+win_llm_light = 11450   # Windows host llama-swap light lane proxy port
 [ports.lan_firewall]
 profiles = ["Private", "Domain"]
 expose   = ["forge_http", "open_webui", "hermes", "searxng", "cockpit", "llm_light", "code_server", "guacamole_web"]
