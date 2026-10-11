@@ -127,9 +127,33 @@ powershell.exe -NoProfile -Command "
     }
 " >>"%LOG%" 2>&1
 
-rem --- Linux-like FS layout (was FirstLogonCommands; do it reliably here) ------
-for %%D in (etc usr home opt srv var bin lib root tmp) do md "%SystemDrive%\%%D" 2>nul
+rem --- Full Linux FHS root directories (18 dirs) + Directory Junctions ---
+for %%D in (bin dev etc home lib lib64 media mnt opt proc root run sbin srv sys tmp usr var) do md "%SystemDrive%\%%D" 2>nul
+md "%SystemDrive%\mnt" 2>nul
 md "%ProgramData%\MiOS" 2>nul
+
+rem --- Strict isolation of Windows Host Namespaces ---
+sc.exe config bindflt start= auto >nul 2>&1
+sc.exe start bindflt >nul 2>&1
+for %%H in (PerfLogs Recovery "Riot Games" XboxGames) do (
+    if exist "%SystemDrive%\%%~H" attrib +h "%SystemDrive%\%%~H" >nul 2>&1
+)
+
+rem --- Directory Junctions: /mnt/c, /home, /var ---
+if exist "%SystemDrive%\mnt\c" rmdir "%SystemDrive%\mnt\c" >nul 2>&1
+mklink /J "%SystemDrive%\mnt\c" "%SystemDrive%\" >nul 2>&1
+
+if exist "M:\" if not exist "M:\home" md "M:\home" >nul 2>&1
+if exist "M:\home" (
+    if exist "%SystemDrive%\home" ( dir "%SystemDrive%\home" >nul 2>&1 || rmdir "%SystemDrive%\home" >nul 2>&1 )
+    if not exist "%SystemDrive%\home" mklink /J "%SystemDrive%\home" "M:\home" >nul 2>&1
+)
+
+if exist "M:\" if not exist "M:\var" md "M:\var" >nul 2>&1
+if exist "M:\var" (
+    if exist "%SystemDrive%\var" ( dir "%SystemDrive%\var" >nul 2>&1 || rmdir "%SystemDrive%\var" >nul 2>&1 )
+    if not exist "%SystemDrive%\var" mklink /J "%SystemDrive%\var" "M:\var" >nul 2>&1
+)
 
 rem --- GAMING DEBLOAT: strip stock Win11 apps BEFORE first logon (the Linux UUP
 rem     build produces a stock image; only the DISM path strips offline). Three

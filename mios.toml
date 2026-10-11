@@ -1502,7 +1502,7 @@ group = "Administrators"
 [autounattend.layout]
 strip_defaults = true
 strip_folders = "3D Objects;Contacts;Favorites;Links;Saved Games;Searches;OneDrive"
-linux_tree = "etc usr var home opt srv tmp bin lib root"
+linux_tree = "bin dev etc home lib lib64 media mnt opt proc root run sbin srv sys tmp usr var"
 lowercase_userfolders = true
 strip_thispc = "{0DB7E03F-FC29-4DC6-9020-FF41B59E513A}"
 

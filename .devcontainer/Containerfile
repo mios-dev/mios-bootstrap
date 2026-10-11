@@ -55,13 +55,13 @@ RUN --mount=type=bind,source=.,target=/ctx,ro \
              .devcontainer/fetch-installer.sh usr/libexec/mios/mios-vscode-custom-css \
              usr/libexec/mios/mios-toml-get usr/lib/mios/mios_toml.py \
              usr/libexec/mios/mios-mcp-server usr/share/mios/vendored/tmux-mcp \
-             usr/libexec/mios/ux/tmux_theme.py usr/libexec/mios/mios-dotfiles-render \
+             usr/libexec/mios/ux/theme_sync.py usr/libexec/mios/mios-dotfiles-render \
              usr/libexec/mios/mios-terminal usr/libexec/mios/mios-ai-terminal \
              usr/libexec/mios/mios-dashboard.sh usr/libexec/mios/mios-mon.py usr/bin/mios \
              etc/profile.d/mios-prompt.sh etc/tmux.conf etc/dconf/db/local.d/10-mios-keybindings \
              usr/share/mios/tmux usr/share/mios/keybindings usr/share/mios/hyprland/mios-keys.conf usr/share/mios/sway/mios-keys.conf \
              usr/share/mios/theme/templates/oh-my-posh.omp.json.tmpl usr/share/mios/oh-my-posh/mios.omp.json \
-             tools/native/Cargo.toml tools/native/Cargo.lock tools/native/mios-unit-gen tools/native/mios-agent-relay \
+             automation/55-native-build.sh src/mios-rs tools/native \
              usr/share/mios/vendored/wheels \
              usr/share/mios/vendored/fonts/geist-nerd.zip \
              usr/share/mios/themes/code-server-terminal.css; do \
@@ -112,17 +112,12 @@ RUN set -euo pipefail; \
         || { echo "[devcontainer] ERROR: linker ${linker} missing from the ${channel} toolchain" >&2; exit 1; }; \
     chmod -R a+rwX "$RUSTUP_HOME" "$CARGO_HOME"
 
-# The existing native generator is also the runtime projection engine. Build
-# its source with the same SSOT toolchain, without shipping the other tools.
+# Equivalence with the MiOS image: the dev image runs the SAME catalog-driven native build
+# (automation/55-native-build.sh -> miosd native-targets, [build.native.categories.*]), so it
+# carries exactly the executables, install dirs and compat links the MiOS image does.
 RUN set -euo pipefail; \
     stage=/usr/src/mios-ssot; \
-    python3 -c 'import pathlib,re; p=pathlib.Path("/usr/src/mios-ssot/tools/native/Cargo.toml"); s=p.read_text(); p.write_text(re.sub(r"(?s)members = \[.*?\]", "members = [\"mios-unit-gen\", \"mios-agent-relay\"]", s, count=1))'; \
-    target="$(MIOS_TOML_ROOT="$stage" "$stage/usr/libexec/mios/mios-toml-get" --vendor build.native.linux.targets "$(uname -m)")"; \
-    RUSTFLAGS='-C linker=rust-lld' cargo build --release --target "$target" \
-        --manifest-path "$stage/tools/native/Cargo.toml" -p mios-unit-gen -p mios-agent-relay; \
-    for binary in mios-unit-gen mios-agent-relay; do \
-        install -m 0755 "$stage/tools/native/target/$target/release/$binary" "/usr/libexec/mios/$binary"; \
-    done
+    bash "$stage/automation/55-native-build.sh"
 
 RUN /usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --agent-cli --install
 

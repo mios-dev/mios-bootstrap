@@ -144,8 +144,10 @@ function Get-MiOSMergedRemovals {
             $en.Add($name)                                    # protected + enabled -> actively ENABLE in the image
         }
     }
-    # Posture B minimum: the MiOS brain always needs these enabled.
-    $en.Add('VirtualMachinePlatform'); $en.Add('Microsoft-Windows-Subsystem-Linux')
+    # Posture B minimum: the MiOS brain always needs these enabled offline.
+    foreach ($featName in @('VirtualMachinePlatform', 'Microsoft-Windows-Subsystem-Linux', 'Containers', 'Microsoft-Hyper-V-All', 'HypervisorPlatform')) {
+        $en.Add($featName)
+    }
     # The <c> RemoveComponents are NTLite CBS keys. The appx-package-style ones
     # (e.g. microsoft.microsoftsolitairecollection, msteams, clipchamp.clipchamp)
     # ARE removable OFFLINE via Remove-AppxProvisionedPackage (matched by
@@ -478,23 +480,50 @@ function Set-MiOSIdentityOffline {
             }
             Write-Host "    staged wallpaper service binaries and DLLs into the image offline" -ForegroundColor Green
         }
+        # Stage Set-MiOSWallpaper.ps1 into the image for wallpaper resolution and runtime sync
+        $setWpCandidates = @(
+            'C:\MiOS\usr\share\mios\windows\Set-MiOSWallpaper.ps1',
+            (Join-Path $PSScriptRoot 'Set-MiOSWallpaper.ps1'),
+            (Join-Path $PSScriptRoot '..\..\..\usr\share\mios\windows\Set-MiOSWallpaper.ps1')
+        )
+        $setWpSrc = $setWpCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+        if ($setWpSrc) {
+            Copy-Item $setWpSrc (Join-Path $webDir 'Set-MiOSWallpaper.ps1') -Force
+            Copy-Item $setWpSrc (Join-Path $ScriptsDst 'Set-MiOSWallpaper.ps1') -Force
+            Write-Host "    staged Set-MiOSWallpaper.ps1 -> Windows\Web\MiOS and Windows\Setup\Scripts" -ForegroundColor Green
+        }
     } catch { Write-Host "    [!] wallpaper/logo skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
 
-    # --- Geist Mono Nerd Font: download, stage to Windows\Fonts, register offline (HKLM) ---
+    # --- Geist Mono Nerd Font: local search or download, stage to Windows\Fonts, register offline (HKLM) ---
     $fontReg = @()
     try {
-        $ftmp = Join-Path $env:TEMP ('mios-geist-'+[guid]::NewGuid().ToString('N').Substring(0,8)); New-Item -ItemType Directory -Force -Path $ftmp | Out-Null
-        Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/GeistMono.zip' -OutFile (Join-Path $ftmp 'g.zip') -ErrorAction Stop
-        Expand-Archive -Path (Join-Path $ftmp 'g.zip') -DestinationPath $ftmp -Force
-        $faces = @(Get-ChildItem $ftmp -Recurse -Include *.ttf,*.otf -File | Where-Object { $_.Name -match 'Mono' -and $_.Name -notmatch 'Propo' })
-        if (-not $faces.Count) { $faces = @(Get-ChildItem $ftmp -Recurse -Include *.ttf,*.otf -File) }
+        $faces = @()
+        $localFontDirs = @(
+            'C:\MiOS\usr\share\fonts\geist',
+            (Join-Path $PSScriptRoot '..\resources\fonts'),
+            'C:\Windows\Fonts'
+        ) | Where-Object { Test-Path $_ }
+        foreach ($ld in $localFontDirs) {
+            $lf = @(Get-ChildItem -Path $ld -Recurse -Include *Geist*.ttf,*Geist*.otf -File -ErrorAction SilentlyContinue)
+            if ($lf.Count -gt 0) { $faces = $lf; break }
+        }
+        if (-not $faces.Count) {
+            $ftmp = Join-Path $env:TEMP ('mios-geist-'+[guid]::NewGuid().ToString('N').Substring(0,8)); New-Item -ItemType Directory -Force -Path $ftmp | Out-Null
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/GeistMono.zip' -OutFile (Join-Path $ftmp 'g.zip') -ErrorAction Stop
+            Expand-Archive -Path (Join-Path $ftmp 'g.zip') -DestinationPath $ftmp -Force
+            $faces = @(Get-ChildItem $ftmp -Recurse -Include *.ttf,*.otf -File | Where-Object { $_.Name -match 'Mono' -and $_.Name -notmatch 'Propo' })
+            if (-not $faces.Count) { $faces = @(Get-ChildItem $ftmp -Recurse -Include *.ttf,*.otf -File) }
+        }
         $fontsDst = Join-Path $Mount 'Windows\Fonts'
         foreach ($f in $faces) {
             Copy-Item $f.FullName (Join-Path $fontsDst $f.Name) -Force
             $face = ([IO.Path]::GetFileNameWithoutExtension($f.Name)) -replace '([a-z])([A-Z])', '$1 $2'
             $fontReg += @{ name = "$face $(if($f.Extension -eq '.otf'){'(OpenType)'}else{'(TrueType)'})"; file = $f.Name }
+            if ($f.Name -match 'Geist-Regular\.ttf') {
+                $fontReg += @{ name = 'Geist Regular (TrueType)'; file = $f.Name }
+            }
         }
-        Write-Host "    staged $($faces.Count) Geist Mono face(s) -> Windows\Fonts" -ForegroundColor DarkGray
+        Write-Host "    staged $($faces.Count) Geist font face(s) -> Windows\Fonts" -ForegroundColor DarkGray
     } catch { Write-Host "    [!] Geist font stage skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow }
     if ($fontReg.Count) {
         $sw = Join-Path $Mount 'Windows\System32\config\SOFTWARE'; & reg.exe load 'HKLM\MIOS_FNT' $sw 2>&1 | Out-Null
@@ -630,16 +659,41 @@ function Set-MiOSIdentityOffline {
         @('[MasterThemeSelector]','MTSM=DABJDKT') | ForEach-Object { $theme.Add($_) }
         [IO.File]::WriteAllText((Join-Path $themesDst 'MiOS.theme'), (($theme -join "`r`n") + "`r`n"), [System.Text.Encoding]::Unicode)
         Write-Host "    staged MiOS.theme -> Windows\Resources\Themes" -ForegroundColor DarkGray
+        # Stage Lock-MiOSTheme.ps1 to enforce HKCU theme retention against OOBE resets
+        $lockScript = @'
+# MiOS-Theme-Lock: RunOnce user-logon theme lock to prevent Windows OOBE / first-logon resets of HKCU
+$ErrorActionPreference = 'SilentlyContinue'
+$themePath = "$env:SystemRoot\resources\Themes\MiOS.theme"
+if (Test-Path $themePath) {
+    & reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes" /v CurrentTheme /t REG_EXPAND_SZ /d "%SystemRoot%\resources\Themes\MiOS.theme" /f 2>$null | Out-Null
+}
+& reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v AppsUseLightTheme /t REG_DWORD /d 0 /f 2>$null | Out-Null
+& reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v SystemUsesLightTheme /t REG_DWORD /d 0 /f 2>$null | Out-Null
+& reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v EnableTransparency /t REG_DWORD /d 1 /f 2>$null | Out-Null
+$wpScript = "$env:SystemRoot\Setup\Scripts\Set-MiOSWallpaper.ps1"
+if (Test-Path $wpScript) {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wpScript -Mode auto 2>$null | Out-Null
+}
+& RUNDLL32.EXE USER32.DLL,UpdatePerUserSystemParameters 1,True 2>$null | Out-Null
+'@
+        Set-Content -LiteralPath (Join-Path $ScriptsDst 'Lock-MiOSTheme.ps1') -Value $lockScript -Encoding utf8
+
         $defHive = Join-Path $Mount 'Users\Default\NTUSER.DAT'
         if (Test-Path $defHive) {
             & reg.exe load 'HKLM\MIOS_DEFT' $defHive 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 foreach ($ln in (Get-MiOSPerUserBrandingReg -Toml $Toml -HivePrefix 'HKLM\MIOS_DEFT')) { & cmd.exe /c $ln 2>&1 | Out-Null }
                 & reg.exe add 'HKLM\MIOS_DEFT\Software\Microsoft\Windows\CurrentVersion\Themes' /v CurrentTheme /t REG_EXPAND_SZ /d '%SystemRoot%\resources\Themes\MiOS.theme' /f 2>&1 | Out-Null
+
+                # Upstream hardened pattern: RunOnce post-provisioning registry lock (MiOS-Theme-Lock)
+                # Overcomes Windows 11 first-logon provisioning resets of HKCU personalization
+                $lockCmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%SystemRoot%\Setup\Scripts\Lock-MiOSTheme.ps1"'
+                & reg.exe add 'HKLM\MIOS_DEFT\Software\Microsoft\Windows\CurrentVersion\RunOnce' /v 'MiOS-Theme-Lock' /t REG_SZ /d $lockCmd /f 2>&1 | Out-Null
+
                 [gc]::Collect(); [gc]::WaitForPendingFinalizers(); Start-Sleep -Seconds 3
                 & reg.exe unload 'HKLM\MIOS_DEFT' 2>&1 | Out-Null
                 if ($LASTEXITCODE -ne 0) { [gc]::Collect(); Start-Sleep -Seconds 3; & reg.exe unload 'HKLM\MIOS_DEFT' 2>&1 | Out-Null }
-                if ($LASTEXITCODE -eq 0) { Write-Host "    baked MiOS active theme into the Default profile (full-shell dark + accent + Bibata; persists per-account)" -ForegroundColor Green }
+                if ($LASTEXITCODE -eq 0) { Write-Host "    baked MiOS active theme + RunOnce lock into Default profile (full-shell dark + accent + Bibata + lock; persists per-account)" -ForegroundColor Green }
                 else { Write-Host "    [!] Default-hive unload FAILED ($LASTEXITCODE) -- theme not baked (would risk profile corruption; skipped safely)" -ForegroundColor Red }
             } else { Write-Host "    [!] could not load Default NTUSER.DAT (MiOS.theme default-bake skipped)" -ForegroundColor Yellow }
         }
@@ -890,7 +944,10 @@ function Set-MiOSRemoteAccessOffline {
             $vl = ($vm | Get-Volume).DriveLetter + ':\'
             $inf = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "\\$variant\\amd64\\" })
             if (-not $inf.Count) { $inf = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '\\amd64\\' }) }
-            Write-Host "    injecting $($inf.Count) virtio driver package(s) offline ($variant/amd64) ..." -ForegroundColor DarkGray
+            # Ensure key virtio and Looking Glass drivers (NetKVM, viostor, vioserial, balloon, ivshmem) are included
+            $coreInfs = @(Get-ChildItem -Path $vl -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(NetKVM|viostor|vioserial|balloon|ivshmem|viorng|vioscsi)\.inf$' })
+            $inf = @($inf + $coreInfs | Sort-Object FullName -Unique)
+            Write-Host "    injecting $($inf.Count) virtio driver package(s) offline ($variant/amd64 incl. NetKVM/viostor/vioserial/balloon/ivshmem) ..." -ForegroundColor DarkGray
             foreach ($d in $inf) { try { Add-WindowsDriver -Path $Mount -Driver $d.FullName -ForceUnsigned -ErrorAction Stop | Out-Null } catch {} }
             # DON'T SKIP: also EMBED the full virtio-win.iso into the installed image so the
             # guest can (re)install the ivshmem + Looking Glass host drivers on demand -- the
@@ -925,6 +982,22 @@ function Set-MiOSRemoteAccessOffline {
         if ($netInfs.Count -gt 0) {
             Write-Host "    injecting $($netInfs.Count) NIC/WLAN driver package(s) offline from $netDir ..." -ForegroundColor Cyan
             try { Add-WindowsDriver -Path $Mount -Driver $netDir -Recurse -ForceUnsigned -ErrorAction SilentlyContinue | Out-Null } catch {}
+        }
+    }
+
+    # ---- (B4) OFFLINE GPU / Looking-Glass driver pack injection ----------------------
+    $gpuDirs = @(
+        (Get-Toml $Toml 'autounattend.remote.gpu_drivers_dir' ''),
+        (Join-Path $PSScriptRoot '..\drivers\gpu'),
+        (Join-Path $PSScriptRoot '..\drivers\looking-glass'),
+        (Join-Path (Resolve-MiOSBuildRoot $Toml) 'drivers\gpu'),
+        'M:\MiOS\drivers\gpu'
+    ) | Where-Object { $_ -and (Test-Path $_) }
+    foreach ($gDir in $gpuDirs) {
+        $gInfs = @(Get-ChildItem -Path $gDir -Recurse -Filter *.inf -ErrorAction SilentlyContinue)
+        if ($gInfs.Count -gt 0) {
+            Write-Host "    injecting $($gInfs.Count) GPU / Looking-Glass driver package(s) offline from $gDir ..." -ForegroundColor Cyan
+            try { Add-WindowsDriver -Path $Mount -Driver $gDir -Recurse -ForceUnsigned -ErrorAction SilentlyContinue | Out-Null } catch {}
         }
     }
 
@@ -1036,7 +1109,7 @@ function Set-MiOSProvisionWiring {
 
 # Offline-service sources\install.wim: features + appx + Xbox reg, then export/trim.
 function Invoke-MiOSImageServicing {
-    param([string]$MediaRoot, $Toml, [object]$Removals, [switch]$BuiltNative)
+    param([string]$MediaRoot, $Toml, [object]$Removals, [switch]$BuiltNative, [switch]$Esd)
     $wim = Join-Path $MediaRoot 'sources\install.wim'
     if (-not (Test-Path $wim)) {
         # Only a solid install.esd (LZMS) is present (MCT media / esd builds). DISM
@@ -1094,6 +1167,85 @@ function Invoke-MiOSImageServicing {
     Mount-WindowsImage -Path $mount -ImagePath $wim -Index $idx | Out-Null
     $_serviced = $false
     try {
+        # Bake Linux FHS 18-directory root skeleton directly into the offline image
+        Write-Host "[*] Baking Linux FHS root directories and namespace isolation into image ..." -ForegroundColor Cyan
+        $fhsDirs = @('bin', 'dev', 'etc', 'home', 'lib', 'lib64', 'media', 'mnt', 'opt', 'proc', 'root', 'run', 'sbin', 'srv', 'sys', 'tmp', 'usr', 'var')
+        foreach ($d in $fhsDirs) {
+            $targetDir = Join-Path $mount $d
+            if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }
+        }
+        $mntC = Join-Path $mount 'mnt\c'
+        if (-not (Test-Path $mntC)) { New-Item -ItemType Directory -Force -Path $mntC | Out-Null }
+
+        # Write unified root .gitignore into the image root to isolate Windows Host namespaces
+        $giPath = Join-Path $mount '.gitignore'
+        $giContent = @"
+# MiOS Unified Root Git Exclusion - Windows Host Namespaces
+/*
+!/bin
+!/dev
+!/etc
+!/home
+!/lib
+!/lib64
+!/media
+!/mnt
+!/opt
+!/proc
+!/root
+!/run
+!/sbin
+!/srv
+!/sys
+!/tmp
+!/usr
+!/var
+!/tools
+!/src
+!/include
+!/Cargo.toml
+!/Cargo.lock
+!/Makefile
+!/README.md
+!/AGENTS.md
+!/CLAUDE.md
+!/GEMINI.md
+!/.gitignore
+!/.gitattributes
+!/.github
+
+# Explicit Windows Host Debris Blocklist
+/`$Recycle.Bin
+/Documents and Settings
+/PerfLogs
+/Program Files
+/Program Files (x86)
+/ProgramData
+/Recovery
+/Riot Games
+/System Volume Information
+/Users
+/Windows
+/XboxGames
+/pagefile.sys
+/swapfile.sys
+/hiberfil.sys
+/DumpStack.log.tmp
+"@
+        Set-Content -LiteralPath $giPath -Value $giContent -Encoding utf8
+        Write-Host "    baked 18 FHS dirs, \mnt\c, and root .gitignore into offline image" -ForegroundColor Green
+
+        # Offline CompactOS application
+        try {
+            Write-Host "[*] Applying CompactOS offline (compact.exe /CompactOs:always) ..." -ForegroundColor Cyan
+            $winDir = Join-Path $mount 'Windows'
+            & compact.exe /CompactOs:always /WinDir:$winDir 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { Write-Host "    CompactOS applied to offline image." -ForegroundColor Green }
+            else { Write-Host "    [!] compact.exe returned exit $LASTEXITCODE (non-fatal, continuing)." -ForegroundColor Yellow }
+        } catch {
+            Write-Host "    [!] CompactOS offline application skipped: $($_.Exception.Message.Split([Environment]::NewLine)[0])" -ForegroundColor Yellow
+        }
+
         # Remove the merged preset's FoD capabilities (offline).
         if ($Removals.Capabilities.Count) {
             $present = @(Get-WindowsCapability -Path $mount | Where-Object State -eq 'Installed' | Select-Object -Expand Name)
@@ -1433,24 +1585,40 @@ function Invoke-MiOSImageServicing {
             Dismount-WindowsImage -Path $mount -Discard -ErrorAction SilentlyContinue | Out-Null
         }
     }
-    $esdFile = Join-Path (Split-Path $wim) 'install.esd'
-    Write-Host "[*] Exporting and compressing to install.esd (Recovery/LZMS compression) ..." -ForegroundColor Cyan
     # Prevent race condition: wait for OS dismount handles to release completely
     Start-Sleep -Seconds 5
     $dismScratch = Join-Path (Split-Path $MediaRoot) 'dismscratch'
     New-Item -ItemType Directory -Force -Path $dismScratch -ErrorAction SilentlyContinue | Out-Null
-    $dismArgs = @("/Export-Image", "/SourceImageFile:$wim", "/SourceIndex:$idx", "/DestinationImageFile:$esdFile", "/Compress:recovery", "/ScratchDir:$dismScratch")
-    & dism.exe $dismArgs
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "    [!] /Compress:recovery failed (exit $LASTEXITCODE). Retrying export with /Compress:max..." -ForegroundColor Yellow
-        $dismArgs = @("/Export-Image", "/SourceImageFile:$wim", "/SourceIndex:$idx", "/DestinationImageFile:$esdFile", "/Compress:max", "/ScratchDir:$dismScratch")
+
+    if ($Esd) {
+        $esdFile = Join-Path (Split-Path $wim) 'install.esd'
+        Write-Host "[*] Exporting and compressing to install.esd (Recovery/LZMS compression) ..." -ForegroundColor Cyan
+        $dismArgs = @("/Export-Image", "/SourceImageFile:$wim", "/SourceIndex:$idx", "/DestinationImageFile:$esdFile", "/Compress:recovery", "/ScratchDir:$dismScratch")
         & dism.exe $dismArgs
-    }
-    if ($LASTEXITCODE -eq 0 -and (Test-Path $esdFile)) {
-        Remove-Item $wim -Force -ErrorAction SilentlyContinue
-        Write-Host "[+] Exported and compressed to $esdFile" -ForegroundColor Green
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "    [!] /Compress:recovery failed (exit $LASTEXITCODE). Retrying export with /Compress:max..." -ForegroundColor Yellow
+            $dismArgs = @("/Export-Image", "/SourceImageFile:$wim", "/SourceIndex:$idx", "/DestinationImageFile:$esdFile", "/Compress:max", "/ScratchDir:$dismScratch")
+            & dism.exe $dismArgs
+        }
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $esdFile)) {
+            Remove-Item $wim -Force -ErrorAction SilentlyContinue
+            Write-Host "[+] Exported and compressed to $esdFile" -ForegroundColor Green
+        } else {
+            Write-Host "[!] Export-Image to ESD failed. Retaining install.wim ($wim) for ISO mastering." -ForegroundColor Yellow
+        }
     } else {
-        Write-Host "[!] Export-Image failed. Retaining uncompressed install.wim ($wim) for ISO mastering -- ISO remains 100% functional." -ForegroundColor Yellow
+        $wimTemp = Join-Path (Split-Path $wim) 'install_clean.wim'
+        Write-Host "[*] Exporting and compacting install.wim (/Compress:max) to reclaim servicing bloat ..." -ForegroundColor Cyan
+        $dismArgs = @("/Export-Image", "/SourceImageFile:$wim", "/SourceIndex:$idx", "/DestinationImageFile:$wimTemp", "/Compress:max", "/ScratchDir:$dismScratch")
+        & dism.exe $dismArgs
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $wimTemp)) {
+            Remove-Item $wim -Force -ErrorAction SilentlyContinue
+            Move-Item $wimTemp $wim -Force
+            Write-Host "[+] Exported clean and compacted install.wim ($wim)" -ForegroundColor Green
+        } else {
+            if (Test-Path $wimTemp) { Remove-Item $wimTemp -Force -ErrorAction SilentlyContinue }
+            Write-Host "[!] Export-Image to install_clean.wim failed (exit $LASTEXITCODE). Retaining serviced install.wim ($wim)." -ForegroundColor Yellow
+        }
     }
 }
 
@@ -1554,7 +1722,7 @@ if (-not $SkipServicing) {
     # fetched AND native_apps is on. With an external -SourceIso the image is stock, so
     # Stage-2 still strips + bakes. BuiltNative lets Stage-2 skip that redundant work.
     $builtNative = $fetched -and ((Get-Toml $toml 'autounattend.uup_convert.native_apps' 'true') -match '^(?i:true|1|yes)$')
-    Invoke-MiOSImageServicing -MediaRoot $media -Toml $toml -Removals $removals -BuiltNative:$builtNative
+    Invoke-MiOSImageServicing -MediaRoot $media -Toml $toml -Removals $removals -BuiltNative:$builtNative -Esd:$Esd
 } else { Write-Host "[*] -SkipServicing: image left stock." -ForegroundColor DarkGray }
 
 # Stage 3 -- autounattend.xml (SSOT accounts + LabConfig WinPE bypass + FirstLogonCommands
