@@ -275,6 +275,32 @@ luks_passphrase  = ""           # never tracked; FHS installer + LUKS only
 github_pat       = ""           # never tracked; configures git credential helper
 
 # ----------------------------------------------------------------------------
+# [security.nohc_allowlist] -- hardcode lint exempt files and patterns.
+# ----------------------------------------------------------------------------
+[security.nohc_allowlist]
+exempt_files = []
+exempt_patterns = [
+    "0\\.0\\.0\\.0",
+    "localhost:80(?![0-9])",
+    "localhost:443(?![0-9])",
+    "127\\.0\\.0\\.1:80(?![0-9])",
+    "127\\.0\\.0\\.1:443(?![0-9])",
+    "localhost/mios",
+    "wsl\\.localhost",
+    "localhost:8700",
+    "localhost:8720",
+    "localhost:8575",
+    ":8700",
+    ":8720",
+    ":8575",
+    ":11436",
+    ":8740",
+    ":11435",
+    ":9222",
+    ":8283"
+]
+
+# ----------------------------------------------------------------------------
 # [network] -- firewalld posture.
 # Defaults match SECURITY.md (default zone "drop", ssh + cockpit allowed).
 # ----------------------------------------------------------------------------
