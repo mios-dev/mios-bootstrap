@@ -3927,8 +3927,8 @@ function Start-MiosDevMachine {
     if (-not $Machine) { $Machine = $DevDistro }
     if (-not $Machine) { $Machine = 'MiOS-DEV' }
 
-    if ($env:MIOS_SKIP_MACHINE_RESTART -in @('1','true','TRUE','yes')) {
-        Log-Warn "MIOS_SKIP_MACHINE_RESTART set -- skipping podman machine restart"
+    if (Get-MiosTomlValue -Section 'smoke_tests' -Key 'skip_machine_restart' -Default $false) {
+        Log-Warn "smoke_tests.skip_machine_restart set -- skipping podman machine restart"
         return $false
     }
 
