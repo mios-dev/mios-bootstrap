@@ -406,6 +406,7 @@ stale_fallbacks = []
 # until task_267 makes mios-unit-gen faithful.
 unbound = ["chrome_cdp_worker", "ai_legacy", "field_live_chat"]
 searxng = 8800     # local privacy-respecting metasearch
+devpod_agent = 8910     # DevPod client agent transport port
 [ports.lan_firewall]
 profiles = ["Private", "Domain"]
 expose   = ["forge_http", "open_webui", "hermes", "searxng", "cockpit", "llm_light", "code_server", "guacamole_web"]
