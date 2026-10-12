@@ -1,6 +1,6 @@
 # field/lib/MiOS-Field.psm1 -- shared backend for MiOS-Field.
-# Implements T-261: Separate MiOS-Data bulk store staging on disks meeting min_disk_gb gate.
-# Folded losslessly with installation/mios-common.ps1 (Task T-1118).
+# Implements task_239: Separate MiOS-Data bulk store staging on disks meeting min_disk_gb gate.
+# Folded losslessly with installation/mios-common.ps1 (Task task_3411).
 
 $commonPath = Join-Path $PSScriptRoot "..\..\installation\mios-common.ps1"
 if (-not (Test-Path -LiteralPath $commonPath -PathType Leaf)) {

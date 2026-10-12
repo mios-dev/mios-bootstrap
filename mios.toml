@@ -242,7 +242,7 @@ groups    = ["wheel", "libvirt", "kvm", "video", "render", "input", "dialout", "
 default_password = "user"
 
 # ----------------------------------------------------------------------------
-# [accounts] -- DB-backed account control plane (T-151/T-152)
+# [accounts] -- DB-backed account control plane (task_152/task_153)
 # ----------------------------------------------------------------------------
 [accounts]
 db_backed = true
@@ -275,6 +275,32 @@ luks_passphrase  = ""           # never tracked; FHS installer + LUKS only
 github_pat       = ""           # never tracked; configures git credential helper
 
 # ----------------------------------------------------------------------------
+# [security.nohc_allowlist] -- hardcode lint exempt files and patterns.
+# ----------------------------------------------------------------------------
+[security.nohc_allowlist]
+exempt_files = []
+exempt_patterns = [
+    "0\\.0\\.0\\.0",
+    "localhost:80(?![0-9])",
+    "localhost:443(?![0-9])",
+    "127\\.0\\.0\\.1:80(?![0-9])",
+    "127\\.0\\.0\\.1:443(?![0-9])",
+    "localhost/mios",
+    "wsl\\.localhost",
+    "localhost:8700",
+    "localhost:8720",
+    "localhost:8575",
+    ":8700",
+    ":8720",
+    ":8575",
+    ":11436",
+    ":8740",
+    ":11435",
+    ":9222",
+    ":8283"
+]
+
+# ----------------------------------------------------------------------------
 # [network] -- firewalld posture.
 # Defaults match SECURITY.md (default zone "drop", ssh + cockpit allowed).
 # ----------------------------------------------------------------------------
@@ -283,6 +309,9 @@ firewalld_default_zone = "drop"
 allow_ssh              = true
 allow_cockpit          = true   # opens 9090/tcp
 allow_libvirt_bridge   = true   # for VM networking
+loopback = "127.0.0.1"
+bind_all = "0.0.0.0"
+win_tailscale_ip = "100.79.3.50"
 
 # ----------------------------------------------------------------------------
 # [mios_app] -- placeholder for the future MiOS App client (scaffold-stage;
@@ -312,11 +341,13 @@ ssh                = 8100     # host admin sshd. "mios-dev ssh should be port 22
 forge_http         = 8400     # Forgejo HTTP web UI
 forge_ssh          = 8410    # Forgejo git+ssh (vacated 2222 for host admin sshd). Non-22 to coexist with sshd; non-2222 to leave that as the canonical operator-SSH port.
 cockpit            = 8110     # host Cockpit web console
+cockpit_internal   = 9090     # Cockpit internal container listening port (upstream standard 9090; host maps 8110->9090)
 cockpit_link       = 8120    # mios-cockpit-link Podman Desktop discovery shim
-searxng            = 8800     # local privacy-respecting metasearch
-searxng_internal   = 8080     # SearXNG internal container listening port (upstream standard 8080; host maps 8800->8080)
+searxng_internal   = 8888     # SearXNG internal container listening port (upstream standard 8888; host maps 8800->8888)
 crawl4ai           = 8810    # local crawl engine -- the crawl4ai FastAPI (crawl4ai over Chrome CDP + Camoufox fallback), the crawl4ai member of the mios-webtools pod. LOOPBACK only (127.0.0.1), NOT a published/LAN port.
+crawl4ai_internal  = 11235   # crawl4ai container internal listening port (upstream default 11235)
 firecrawl          = 8820     # self-hosted firecrawl api -- the firecrawl-api member of the mios-webtools pod (Hermes's native web backend; FIRECRAWL_API_URL). LOOPBACK only (127.0.0.1), NOT a published/LAN port. (3002 is firecrawl's own default; free on MiOS -- 3000=forge_http, 3033=open_webui.)
+firecrawl_internal = 3002     # firecrawl container internal listening port (upstream default 3002)
 hermes             = 8720     # Hermes gateway (canonical /v1). ONE key: hermes-worker.service is the only unit running `hermes gateway run` and binds this.
 hermes_dashboard   = 8210     # Hermes Dashboard web UI (sessions, skills, stats)
 open_webui         = 8200     # Open WebUI (rich LLM interface at http://localhost:3033)
@@ -331,6 +362,7 @@ rdp                = 8300     # GNOME Remote Desktop / xRDP
 pgvector           = 8600     # PostgreSQL + pgvector unified agent DB (WS-9, FOSS; sole agent DB since the WS-A3 cutover)
 pgvector_internal  = 5432     # PostgreSQL internal container listening port (upstream standard 5432; host maps 8600->5432)
 llm_light          = 8500    # mios-llm-light: the primary llama.cpp multi-model + KV-paging lane (WS-10, FOSS; served via the upstream llama-swap proxy image)
+win_llm_light      = 11450   # Windows host llama-swap light lane proxy port
 cpu_node           = 8510    # mios-cpu-node: the always-on / gaming-immune CPU llama-server lane (granite brain on -ngl 0). Rendered into mios-cpu-node.container's --port (was a DEAD key -> empty --port -> llama.cpp stoi crash-loop; SSOT-wired).
 agent_pipe         = 8700     # 'MiOS' standalone Agent Pipe (router + refine + critic; fronts hermes for every gateway)
 ttyd_bash          = 8310     # ttyd browser pty -- Linux bash session
@@ -341,6 +373,7 @@ headscale          = 8085     # Headscale mesh VPN control plane coordinator (HT
 opencode_gateway   = 8780     # opencode -> OpenAI /v1 gateway shim (mios-opencode-gateway.service); makes [agents.opencode] a REAL /v1 council peer. LOOPBACK only (127.0.0.1).
 llm_heavy          = 8520    # mios-llm-heavy: THE heavy dGPU lane (OpenAI /v1), whichever engine [ai].heavy_engine selects (vLLM or SGLang bind this one port). GATED/disabled by default (VRAM). [nodes.local-heavy].
 llm_igpu           = 8540    # mios-igpu: local iGPU inference lane (llama.cpp + Vulkan on Windows host)
+igpu               = 11436   # Windows host iGPU Vulkan inference listener port
 rpc_igpu           = 8550    # mios-rpc-igpu: cross-lane llama.cpp RPC server on iGPU
 prefilter          = 8710    # mios-delegation-prefilter: conversational-bypass classifier + delegation gate (OpenAI /v1 shim in front of hermes). LOOPBACK only.
 arbiter            = 8760    # mios-policy-arbiter: risk-tier arbiter (verb/risk allow-list enforcer). LOOPBACK only. (Mirrors agent.arbiter_port; SSOT migrated here for port-table completeness.)
@@ -367,11 +400,13 @@ piper              = 8179     # mios-piper: Piper streaming TTS engine (audio ba
 stale_fallbacks = []
 
 # Allocated ports nothing references yet. SHRINK-ONLY (gate: check_ports_bound).
-# Per-key reasons: TASKS.jsonl T-318. chrome_cdp_worker's only binder is an
+# Per-key reasons: TASKS.jsonl task_261. chrome_cdp_worker's only binder is an
 # `Environment=` literal in a shipped .service -- systemd does not expand ${} in
 # Environment=, and the [units] block that WOULD render the placeholder is inert
-# until T-317 makes mios-unit-gen faithful.
+# until task_267 makes mios-unit-gen faithful.
 unbound = ["chrome_cdp_worker", "ai_legacy", "field_live_chat"]
+searxng = 8800     # local privacy-respecting metasearch
+devpod_agent = 8910     # DevPod client agent transport port
 [ports.lan_firewall]
 profiles = ["Private", "Domain"]
 expose   = ["forge_http", "open_webui", "hermes", "searxng", "cockpit", "llm_light", "code_server", "guacamole_web"]
@@ -1203,7 +1238,7 @@ shrink_mb         = 262656
 # floor instead of hard-aborting; only if even this won't fit does it stop (with
 # remediation). 64 GB is enough for the dev VM + a couple of OCI image builds.
 min_shrink_mb     = 65536
-drive_letter      = "M"
+drive_letter      = "C"
 volume_label      = "MIOS-DEV"
 
 # Dev VM (podman-MiOS-DEV) provisioning. base_image is the Fedora bootc base
@@ -1289,7 +1324,7 @@ mios-guacd              = true
 # Consumed by mios-uup-fetch.ps1, New-MiOSISO.ps1, ConvertTo-MiOSPreset.ps1, and
 # New-MiOSAutounattend.ps1. Every key degrades open to a MiOS default in-script,
 # so the pipeline runs even before this section is mirrored into the vendor SSOT
-# (mios.git usr/share/mios/mios.toml -- the T-147 configurator surface).
+# (mios.git usr/share/mios/mios.toml -- the task_148 configurator surface).
 # ----------------------------------------------------------------------------
 [autounattend]
 computer_name = "MIOS"
@@ -1298,7 +1333,7 @@ computer_name = "MIOS"
 # BEFORE any desktop -- never a stray interactive "user". (Operator-defined; the setup admin is
 # released/re-secured post-setup.)
 autologon_user = ""
-# UUP Dump source acquisition (T-137). Target the DEV channel -- it carries the
+# UUP Dump source acquisition (task_138). Target the DEV channel -- it carries the
 # newest feature IDs (Xbox Full Screen Experience) before they reach Retail.
 uup_channel    = "dev"           # dev | beta | releasepreview | retail  (maps to WU ring)
 uup_arch       = "amd64"         # amd64 | arm64
@@ -1364,9 +1399,9 @@ keep_apps    = "Microsoft.WindowsStore Microsoft.StorePurchaseApp Microsoft.Desk
 skip_download = "Microsoft.BingNews Microsoft.BingWeather Microsoft.BingSearch Microsoft.Clipchamp Microsoft.GetHelp Microsoft.Getstarted Microsoft.MicrosoftOfficeHub Microsoft.MixedReality.Portal Microsoft.PowerAutomateDesktop Microsoft.MicrosoftSolitaireCollection Microsoft.Todos Microsoft.YourPhone MicrosoftTeams Microsoft.WindowsFeedbackHub microsoft.windowscommunicationsapps Microsoft.People Microsoft.ZuneMusic Microsoft.ZuneVideo MicrosoftCorporationII.QuickAssist Microsoft.OutlookForWindows Microsoft.Copilot Microsoft.Windows.DevHome"
 computer_name  = ""              # empty -> inherits [identity].hostname
 
-# [autounattend.xbox] -- Xbox Full Screen Experience "out of the box" (T-140).
+# [autounattend.xbox] -- Xbox Full Screen Experience "out of the box" (task_141).
 # enable=true is the MiOS-XBOX edition default; the base MiOS edition overrides
-# to false (the [editions] matrix, T-146, scopes this per-edition). feature_ids
+# to false (the [editions] matrix, task_147, scopes this per-edition). feature_ids
 # are Controlled-Feature-Rollout ids that CHANGE PER BUILD -- pin them to the
 # target build here (never assume forward/backward portability). Dev-channel
 # default = the single stable FSE id; 24H2 retail needs the pair
@@ -1445,7 +1480,7 @@ podman_machine = "podman-machine.tar"          # OPTIONAL podman-machine image (
 distro         = "MiOS"                         # runtime WSL distro name the rootfs imports as
 builder_distro = "MiOS-DEV"                     # source distro Build-MiOSSeed.ps1 exports from
 image_ref      = "ghcr.io/mios-dev/mios:latest" # OCI ref the oci-archive carries / is loaded as
-install_dir    = "M:\\wsl\\MiOS"               # where wsl --import lands the distro (falls back to C: if M: absent)
+install_dir    = "C:\\wsl\\MiOS"               # where wsl --import lands the distro
 build_machine  = false                          # also export a podman-machine image (opt-in; engine runs in-distro by default)
 
 # [autounattend.service] -- MiOS as boot-time SYSTEM services, UP BEFORE LOGON.
@@ -1502,7 +1537,7 @@ group = "Administrators"
 [autounattend.layout]
 strip_defaults = true
 strip_folders = "3D Objects;Contacts;Favorites;Links;Saved Games;Searches;OneDrive"
-linux_tree = "etc usr var home opt srv tmp bin lib root"
+linux_tree = "bin dev etc home lib lib64 media mnt opt proc root run sbin srv sys tmp usr var"
 lowercase_userfolders = true
 strip_thispc = "{0DB7E03F-FC29-4DC6-9020-FF41B59E513A}"
 
@@ -1596,7 +1631,7 @@ bin_map = [
 # SSOT-rendered btop.conf + themes/mios.theme here and points the User-scope
 # BTOP_CONFIG_DIR at it. Defaults to the MiOS-owned data drive (see
 # [bootstrap.host_storage].drive_letter) rather than %APPDATA%.
-btop_config_dir = "M:\\MiOS\\btop"
+btop_config_dir = "C:\\MiOS\\btop"
 
 # ─── Browser AI: Zen Twilight wired to the MiOS OWUI pipeline ─────────────────
 # Installs Zen Browser (Twilight channel, Firefox-based) on the Windows host and
@@ -1636,7 +1671,7 @@ reflexion_enable = true
 
 # ─── Editions Matrix ─────────────────────────────────────────────────────────
 # Defines the different flavors/editions of MiOS that can be built by the
-# pipeline (T-146). The build scripts can load an edition profile to override
+# pipeline (task_147). The build scripts can load an edition profile to override
 # the default autounattend and branding keys from a single SSOT.
 [editions.mios]
 autounattend.uup_channel     = "retail"

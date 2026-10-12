@@ -1,5 +1,5 @@
 # tests/test_install_host_tools.ps1
-# Two-sided regression test for the winget ladder in src/install-host-tools.ps1 (Task T-1142).
+# Two-sided regression test for the winget ladder in src/install-host-tools.ps1 (Task task_3435).
 #
 # Positive mode (default) runs the REAL script under a fully mocked, hermetic harness:
 #   - a mock `winget` FUNCTION (functions shadow winget.exe for `& winget`) that records
@@ -273,7 +273,7 @@ $MiosRepoDir = Join-Path $scratch "repo"
 $MiosBootstrapShadow = $shadowDir
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "  install-host-tools.ps1 winget ladder tests (T-1142)" -ForegroundColor Cyan
+Write-Host "  install-host-tools.ps1 winget ladder tests (task_3435)" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 try {
@@ -401,5 +401,5 @@ Write-Host "==========================================================" -Foregro
 if ($script:failedCount -gt 0) {
     exit 1
 }
-Write-Host "T-1142 positive controls: ALL PASS" -ForegroundColor Green
+Write-Host "task_3435 positive controls: ALL PASS" -ForegroundColor Green
 exit 0

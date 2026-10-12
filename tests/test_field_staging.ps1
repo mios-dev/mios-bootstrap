@@ -1,5 +1,5 @@
 # tests/test_cat_staging.ps1
-# Two-sided unit and integration tests for MiOS-Field OCI data staging (Task T-261).
+# Two-sided unit and integration tests for MiOS-Field OCI data staging (Task task_239).
 # Verifies positive controls (large disk stages OCI archive, extracts layout, small disk skips MiOS-Data)
 # and negative controls (invalid media path, insufficient disk space, corrupted OCI archive).
 
@@ -75,7 +75,7 @@ function Assert-Condition {
 }
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "  MiOS-Field OCI Staging & Field Verification Tests (T-261) " -ForegroundColor Cyan
+Write-Host "  MiOS-Field OCI Staging & Field Verification Tests (task_239) " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 # -------------------------------------------------------------------------
@@ -139,7 +139,7 @@ try {
 # -------------------------------------------------------------------------
 # Test Suite 2: Positive Control -- Small Removable Media (< 512 GB)
 # -------------------------------------------------------------------------
-Write-Host "`n[Suite 2] Positive Control: Small disk (< 512GB) stages Repo and SKIPS MiOS-Data per T-261" -ForegroundColor Yellow
+Write-Host "`n[Suite 2] Positive Control: Small disk (< 512GB) stages Repo and SKIPS MiOS-Data per task_239" -ForegroundColor Yellow
 $tempDrive2 = Join-Path ([System.IO.Path]::GetTempPath()) ("mios_test_small_" + [System.Guid]::NewGuid().ToString("N"))
 $null = New-Item -ItemType Directory -Force -Path $tempDrive2
 Initialize-TestRepoDirs -Root $tempDrive2
@@ -154,10 +154,10 @@ try {
     Assert-Condition "MiOS-Repo directory exists on small stick" (Test-Path -LiteralPath $repoDir2)
     Assert-Condition "MiOS-Repo/mios.toml exists on small stick" (Test-Path -LiteralPath (Join-Path $repoDir2 "mios.toml"))
 
-    # T-261 Core Invariant: MiOS-Data MUST be skipped on small disks
+    # task_239 Core Invariant: MiOS-Data MUST be skipped on small disks
     $dataDir2 = Join-Path $tempDrive2 "MiOS-Data"
     $dataAbsent = -not (Test-Path -LiteralPath $dataDir2)
-    Assert-Condition "T-261 Invariant: MiOS-Data is SKIPPED on <512GB disk" $dataAbsent
+    Assert-Condition "task_239 Invariant: MiOS-Data is SKIPPED on <512GB disk" $dataAbsent
 
     # Verify media layout check
     $verifySmall = Invoke-MiOSFieldVerify -DriveLetter $tempDrive2 -MinDiskGB 512 -SimulatedDiskSizeGB 64
@@ -257,9 +257,9 @@ try {
 }
 
 # -------------------------------------------------------------------------
-# Test Suite 7: Canonical installation/mios-install.ps1 Invocation (T-1118)
+# Test Suite 7: Canonical installation/mios-install.ps1 Invocation (task_3411)
 # -------------------------------------------------------------------------
-Write-Host "`n[Suite 7] Canonical installation/mios-install.ps1 Invocation (T-1118)" -ForegroundColor Yellow
+Write-Host "`n[Suite 7] Canonical installation/mios-install.ps1 Invocation (task_3411)" -ForegroundColor Yellow
 $tempDrive7 = Join-Path ([System.IO.Path]::GetTempPath()) ("mios_test_install_" + [System.Guid]::NewGuid().ToString("N"))
 $null = New-Item -ItemType Directory -Force -Path $tempDrive7
 Initialize-TestRepoDirs -Root $tempDrive7

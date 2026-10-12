@@ -10,7 +10,7 @@ AUTOUNATTEND="${MIOS_AUTOUNATTEND:-/mnt/c/../M/MiOS/iso/autounattend.xml}"   # o
 EDITION="${MIOS_EDITION:-professional}"
 LANG_="${MIOS_LANG:-en-us}"
 
-# Accept optional edition as the first argument (T-146)
+# Accept optional edition as the first argument (task_147)
 EDITION_ARG="${1:-}"
 if [ -n "$EDITION_ARG" ]; then
   TOML_PATH="${MIOS_TOML:-/mnt/c/mios-bootstrap/mios.toml}"

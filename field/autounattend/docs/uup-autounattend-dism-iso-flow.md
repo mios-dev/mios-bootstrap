@@ -12,11 +12,11 @@ The identity-agnostic merge + SSOT sanitizer already exist and are validated; th
 and ISO-assembly stages are the remaining work.
 
 **Roadmap linkage** (tracked in `mios.git` ROADMAP.md / TASKS.md, WS-XBOX / WS-WEDITION):
-Stage 0 (UUP Dump acquisition) == **T-137 (WISO-06 `mios-uup-fetch`)**. Stages 6-10 (DISM
-offline servicing + optional deep debloat + oscdimg ISO assembly + CI) == **T-138 (WISO-07)**,
+Stage 0 (UUP Dump acquisition) == **task_138 (WISO-06 `mios-uup-fetch`)**. Stages 6-10 (DISM
+offline servicing + optional deep debloat + oscdimg ISO assembly + CI) == **task_139 (WISO-07)**,
 the operator-decided *DISM-native-canonical* path. The SSOT keys this doc references
 (`[autounattend]` iso_out / iso_label / bootstrap_url / computer_name / accounts) are added by
-**T-147 (WEDITION-02)** — until then `ConvertTo-MiOSPreset.ps1` reads them with MiOS-default
+**task_148 (WEDITION-02)** — until then `ConvertTo-MiOSPreset.ps1` reads them with MiOS-default
 fallbacks (so the flow is forward-accurate but the keys are not yet populated in `mios.toml`).
 
 ## Stage map

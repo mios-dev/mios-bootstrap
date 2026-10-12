@@ -45,7 +45,8 @@ param(
     [switch]$SkipWsl,
     # Edition whose [editions.<name>] overrides apply (Apply-MiosEdition, inside
     # New-MiOSISO). Empty = base config; Build-MiOSXbox.ps1 defaults it to mios-xbox.
-    [string]$Edition
+    [string]$Edition,
+    [switch]$Esd
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'MiOS-Provision.lib.ps1')
@@ -114,6 +115,7 @@ Stage 'iso' {
     $isoArgs = @{ TomlPath = $TomlPath; OutIso = $OutIso; WorkDir = $WorkDir; MergedPreset = $merged }
     if ($SourceIso) { $isoArgs['SourceIso'] = $SourceIso }
     if ($Edition)   { $isoArgs['Edition']   = $Edition }
+    if ($Esd)       { $isoArgs['Esd']       = $true }
     & (Join-Path $PSScriptRoot 'New-MiOSISO.ps1') @isoArgs
 } 40
 

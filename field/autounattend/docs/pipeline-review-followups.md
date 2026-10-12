@@ -16,7 +16,7 @@ IANA→Windows map, `Install-MiOSBuildPrereqs` throws instead of false-green,
 merged-preset written to `$WorkDir` not the repo, BIOS/UEFI boot-file existence
 checks. **Genuinely still open:** (1) the cleartext-cred posture (by-design
 first-boot temp creds; would add `-ObfuscatePasswords` default + an RDP SSOT
-opt-in); (2) the SSOT surface completeness (T-147 — add the in-code-default keys to
+opt-in); (2) the SSOT surface completeness (task_148 — add the in-code-default keys to
 `mios.toml` + `configurator/mios.html`); (3) low: `reg unload` is fire-and-forget
 before `Dismount -Save`; (4) low: branding reads `theme.mode` but the real SSOT is
 `desktop.color_scheme`.
@@ -34,12 +34,12 @@ The original ranked list (now mostly resolved, kept for provenance):
    specialize RunSynchronous runs as SYSTEM → `HKCU`=`HKU\S-1-5-18`,
    `%USERPROFILE%`=`systemprofile`. The layout lands on the wrong profile. Fix: apply
    to the **Default User** hive (so new users inherit) or move to a FirstLogon/user step.
-3. **SSOT surface completeness (T-147).** Many keys the pipeline reads exist only as
+3. **SSOT surface completeness (task_148).** Many keys the pipeline reads exist only as
    in-code defaults, not in `mios.toml`: `[branding].oem_*/ui_font/wallpaper/lockscreen/
    cursor*`, `[autounattend].ui_language/input_locale/image_name/product_key/timezone/
    bypass_hardware_checks/run_bootstrap`, `[autounattend.layout].*`, `[theme].mode`.
    They degrade open but aren't operator-tunable via the one-file SSOT. Fix: add them +
-   expose in `configurator/mios.html` (this is exactly ROADMAP T-147).
+   expose in `configurator/mios.html` (this is exactly ROADMAP task_148).
 4. **Security posture (by-design, document + option).** The autounattend bakes the
    local admin + `mios-svc` passwords **cleartext** (`PlainText=true`, `ObfuscatePasswords`
    off) and enables RDP on first boot. These are first-boot temporary creds (rotate on

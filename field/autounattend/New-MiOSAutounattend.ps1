@@ -184,15 +184,16 @@ function New-MiOSAutounattendXml {
     $firstPw   = ConvertTo-UnattendPassword -Pw ([string]$alPwRaw) -Obfuscate:$ObfuscatePasswords
     $firstName = [Security.SecurityElement]::Escape([string]$alUser)
 
-    # --- FirstLogonCommands (USER context): per-user Linux-like layout, then the
-    #     nested MiOS irm|iex bootstrap. Layout MUST run here (not specialize) so
-    #     HKCU/%USERPROFILE% resolve to the real user, not the systemprofile. -----
+    # --- FirstLogonCommands (USER context): full layout creation, offline branding,
+    #     user preferences, Xbox mode, custom scripts, and the nested bootstrap.
     $firstLogonXml = ''
     $_flc = New-Object System.Text.StringBuilder
     $_flOrd = 1
-    foreach ($lc in @(New-MiOSLinuxLayoutCommands -Toml $Toml)) {
-        [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>cmd /c {1}</CommandLine><Description>MiOS user Linux-like layout</Description></SynchronousCommand>' -f $_flOrd, [Security.SecurityElement]::Escape($lc)))
-        $_flOrd++
+    foreach ($grp in (New-MiOSProvisionCommands -Toml $Toml)) {
+        foreach ($cmd in @($grp.Commands)) {
+            [void]$_flc.AppendLine(('        <SynchronousCommand wcm:action="add"><Order>{0}</Order><CommandLine>cmd /c {1}</CommandLine><Description>{2}</Description></SynchronousCommand>' -f $_flOrd, [Security.SecurityElement]::Escape($cmd), [Security.SecurityElement]::Escape($grp.Description)))
+            $_flOrd++
+        }
     }
     # Run the custom FirstLogon.ps1 script containing guest tools installs
     $flCmd = "powershell.exe -WindowStyle Normal -ExecutionPolicy Unrestricted -NoProfile -File C:\Windows\Setup\Scripts\FirstLogon.ps1"
@@ -230,6 +231,7 @@ function New-MiOSAutounattendXml {
         <RunSynchronousCommand wcm:action="add"><Order>3</Order><Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
         <RunSynchronousCommand wcm:action="add"><Order>4</Order><Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
         <RunSynchronousCommand wcm:action="add"><Order>5</Order><Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add"><Order>6</Order><Path>reg add HKLM\SYSTEM\Setup\MoSetup /v AllowUpgradesWithUnsupportedTPMOrCPU /t REG_DWORD /d 1 /f</Path></RunSynchronousCommand>
       </RunSynchronous>
 "@
     }
@@ -244,7 +246,7 @@ function New-MiOSAutounattendXml {
           <DiskID>0</DiskID>
           <WillWipeDisk>true</WillWipeDisk>
           <CreatePartitions>
-            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>300</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>512</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Size>$cMb</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>4</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
@@ -266,7 +268,7 @@ function New-MiOSAutounattendXml {
           <DiskID>0</DiskID>
           <WillWipeDisk>true</WillWipeDisk>
           <CreatePartitions>
-            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>300</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>512</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
           </CreatePartitions>

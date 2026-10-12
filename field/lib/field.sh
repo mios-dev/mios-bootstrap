@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared backend for MiOS-Field Linux/WSL launcher.
-# Implements Law 9 (ONE-CANONICAL-NAME) and Task T-261 parity with MiOS-Field.psm1.
-# Folded losslessly with installation/mios-common.sh (Task T-1118).
+# Implements Law 9 (ONE-CANONICAL-NAME) and Task task_239 parity with MiOS-Field.psm1.
+# Folded losslessly with installation/mios-common.sh (Task task_3411).
 
 _MIOS_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMMON_SH="${_MIOS_REPO_ROOT}/installation/mios-common.sh"

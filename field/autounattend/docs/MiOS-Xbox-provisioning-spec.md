@@ -1,6 +1,6 @@
 <!-- AI-hint: The AUTHORITATIVE operator spec for MiOS-Xbox (and shared-across-all-MiOS-images)
      provisioning. Every item is SSOT-driven (mios.toml) at build-time + runtime, synced to MiOS-Env
-     OS-wide. The MiOS-Xbox fix work (T-283..T-286 + this) implements + verifies against THIS list.
+     OS-wide. The MiOS-Xbox fix work (task_3329..task_3332 + this) implements + verifies against THIS list.
      "Research" items need the exact registry key / mechanism confirmed before implementing. -->
 # MiOS-Xbox Provisioning Spec (operator-defined, SSOT-driven)
 

@@ -23,13 +23,13 @@ open by another process (prior run not cleaned; or an antivirus/indexer/our own 
 /MountDir:M:\MountUUP /Discard` (loop), `reg unload` any MIOS_*/pe-* hives, kill hive holders, and
 ensure `M:\MountUUP` is EMPTY (0xc1420114). Gate the converter on a clean mount root.
 
-## B2 — Driver-pack bake is ON but the directory is EMPTY (T-281)
+## B2 — Driver-pack bake is ON but the directory is EMPTY (task_3327)
 `[*] Driver-pack bake ON but ...\driverpacks is empty -- populate MiOS-Repo\drivers with chipset/GPU/
 NIC .inf trees`. The mechanism I wired runs, but there's no content. NOTE: the stock UUP CompDB DOES
 pull a broad inbox NIC set (Intel/Realtek/Broadcom/Qualcomm/Marvell/Ralink WiFi + Intel/Realtek/VMware
 Ethernet FODs) — so basic networking is partly covered. STILL MISSING: **AMD Adrenalin + Intel
 chipset, base GPU** drivers. **Fix:** populate `driver_pack_dir` (MiOS-Repo\drivers) with those .inf
-trees, and/or fetch them at build; MiOS-PE driver installer (T-282) covers the tail at runtime.
+trees, and/or fetch them at build; MiOS-PE driver installer (task_3328) covers the tail at runtime.
 
 ## B3 — No offline seeds → Stage-1 provisioning falls back to ONLINE (not self-contained)
 `No seed dir found (autounattend.seed.source / build_root\MiOS\seed) -- Stage-1 falls back to embedded
@@ -61,7 +61,7 @@ PortableApps set actually lands (or confirm the skip is the intended incremental
 Minor: the AIO flush waits for a keypress at the very end. **Fix:** make the terminal step
 non-interactive under the unattended/monitored path.
 
-## Account note (relates T-284)
+## Account note (relates task_3330)
 `mios-provision.cmd (... svc=mios-sudo desktop=user count=6)` — provisioning correctly targets
 **mios-sudo**, but a **`user` desktop account still exists** (6 desktop accts). Per the new spec,
 mios-sudo IS the default admin; reconcile whether the `user` account should exist at all / be the

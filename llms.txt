@@ -1,15 +1,10 @@
-# AI-hint: Machine-readable repository index (llms.txt) for mios-bootstrap — the user-facing installer + AI/knowledge layer of MiOS. Orients an LLM/agent to what MiOS IS (an immutable bootc/OCI Fedora workstation that is also a local, self-replicating agentic AI OS), what this repo contributes to that whole (Phase 0..4 installer, three-layer profile overlay, deployed AI assets), the OpenAI-compatible endpoint contract (Architectural Law 5), and where the canonical files live.
-# AI-related: mios-dev, mios-bootstrap, Get-MiOS.ps1, build-mios.sh, install.sh, install.ps1, etc/mios/profile.toml, usr/share/mios/ai/system.md, MIOS_AI_ENDPOINT
+<!-- AI-hint: Machine-readable repository index (llms.txt) for mios-bootstrap — the user-facing installer + AI/knowledge layer of MiOS. Orients an LLM/agent to what MiOS IS (an immutable bootc/OCI Fedora workstation that is also a local, self-replicating agentic AI OS), what this repo contributes to that whole (Phase 0..4 installer, three-layer profile overlay, deployed AI assets), the OpenAI-compatible endpoint contract (Architectural Law 5), and where the canonical files live.
+     AI-related: mios-dev, mios-bootstrap, Get-MiOS.ps1, build-mios.sh, install.sh, install.ps1, etc/mios/profile.toml, usr/share/mios/ai/system.md, MIOS_AI_ENDPOINT -->
 # mios-dev/mios-bootstrap
 
-> Machine-readable index for `mios-bootstrap` v0.3.0 — the **interactive
-> installer and user-editable layer** of MiOS. User-facing entry point.
-> The system layer (Containerfile, FHS overlay, build automation, systemd
-> units, Quadlets, kernel args) lives in https://github.com/mios-dev/mios.git
-> Both repos overlay onto the same deployed system root.
+> Machine-readable index for `mios-bootstrap` v0.3.0 — the **interactive installer and user-editable layer** of MiOS. User-facing entry point. The system layer (Containerfile, FHS overlay, build automation, systemd units, Quadlets, kernel args) lives in https://github.com/mios-dev/mios.git — both repos overlay onto the same deployed system root.
 
-## What MiOS is (so this index makes sense)
-
+**What MiOS is (so this index makes sense).**
 'MiOS' (pronounced *MyOS*) is one thing built two ways at once: an
 **immutable, bootc-native Fedora workstation** delivered as a single OCI
 image — boot it, `bootc upgrade` it like a `git pull`, `bootc rollback` it
@@ -30,8 +25,7 @@ overlays the user-editable layer on top. The load-bearing premise of both
 repos: **the repo root IS the deployed system root** — editing a file here
 is editing the OS.
 
-## Purpose of this repo
-
+**Purpose of this repo.**
 `mios-bootstrap.git` is the **user-facing entry surface**. It turns a bare
 Windows or Fedora-bootc host into a MiOS host: preflight, three-layer
 profile capture, Total Root Merge of `mios.git` into `/`, build/`bootc
@@ -40,24 +34,7 @@ deployed agent plane serves and the user profile templates seeded into every
 account; the other AI files (system prompt, model catalog, MCP registry,
 `usr/share/mios/ai/`) are owned by `mios.git`.
 
-## Key files
-
-- `Get-MiOS.ps1`     -- Windows canonical entry (`irm | iex`, one paste, no follow-up prompts)
-- `build-mios.sh`    -- Linux/Fedora-bootc canonical entry (`curl | bash`)
-- `install.ps1` / `install.sh` -- Phase-0..4 orchestrators (identity capture, Total Root Merge, build, services, reboot)
-- `bootstrap.{sh,ps1}`         -- lower-level bootstrap primitives
-- `seed-merge.{sh,ps1}`        -- Total Root Merge primitive (Phase-1)
-- `etc/mios/profile.toml`             -- Host-layer profile overlay (identity, locale, auth, AI, desktop)
-- `etc/skel/.config/mios/`            -- Per-user templates seeded into every uid≥1000 home (owned and shipped by mios.git)
-- `usr/share/mios/ai/system.md`       -- Deployed agent system prompt (owned by mios.git, baked into the image; not tracked here)
-- `usr/share/mios/ai/models.json`     -- OpenAI `/v1/models` catalog (owned by mios.git)
-- `usr/share/mios/ai/mcp.json`        -- MCP server registry (owned by mios.git)
-- `usr/share/mios/knowledge/`         -- RAG knowledge graphs
-- `mios.toml`                         -- This repo's reference `mios.toml` (the singular SSOT)
-- `AGENTS.md`                         -- Canonical agent entry point (agents.md standard); `CLAUDE.md` / `GEMINI.md` redirect to it
-
-## Install commands
-
+**Install commands.**
 Windows (PowerShell / `WinKey+R`, no pre-setup required):
 ```powershell
 powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/mios-dev/mios-bootstrap/main/Get-MiOS.ps1 | iex"
@@ -81,8 +58,7 @@ podman machine, then **stops** — the build is operator-triggered via
 after **90 seconds** idle (`MIOS_PROMPT_TIMEOUT=0` waits forever, `1` is
 fastest unattended).
 
-## Repo split (never double-track paths)
-
+**Repo split (never double-track paths).**
 `mios.git` owns: Containerfile, build automation, FHS system overlay
 (including the AI files, `usr/share/mios/ai/`), systemd units, Quadlet
 sidecars, kernel args, tmpfiles, sysusers.
@@ -91,8 +67,7 @@ sidecars, kernel args, tmpfiles, sysusers.
 graphs, user profile templates, installer scripts. The two overlay onto the
 same `/`; no path is tracked in both.
 
-## `mios.toml` — the singular SSOT
-
+**`mios.toml` — the singular SSOT.**
 Every operator-tunable value in the entire pipeline (packages, ports, AI
 lanes, services, identity, theme, Quadlet enables) lives in `mios.toml`,
 resolved through a three-layer overlay (highest wins):
@@ -109,84 +84,122 @@ Edited as HTML in a local browser (`file://` works — no server), saved to
 non-empty values below; an empty user TOML is the vendor-default state, not
 an error. Hardcoded values that could live in `mios.toml` are bugs.
 
-## AI stack (what the AI files feed)
-
+**AI stack (what the AI files feed).**
 The deployed AI plane is the "agentic AI OS" half of MiOS. A request flows
 from a front-end (Open WebUI, the chat/Discord gateways, the `mios` CLI)
-into the **agent-pipe** orchestrator (`:8640`) — router + refine +
-council/swarm fan-out + critic/polish — which fronts **MiOS-Hermes**
-(`:8642`), the OpenAI-compatible agent gateway that owns sessions, the
-tool-loop, skills, and browser control; a **prefilter** (`:8641`) injects
-fan-out hints on decomposable prompts. Tools are called over **MCP** and
-peer agents reached over **A2A**.
+into the **agent-pipe** orchestrator (port key `agent_pipe`) — router +
+refine + council/swarm fan-out + critic/polish — which fronts
+**MiOS-Hermes** (port key `hermes`), the OpenAI-compatible agent gateway
+that owns sessions, the tool-loop, skills, and browser control; a
+**prefilter** (port key `prefilter`) injects fan-out hints on decomposable
+prompts. Tools are called over **MCP** and peer agents reached over **A2A**.
 
 Inference lanes are named by *function*, not by upstream tool:
 
-- **`mios-llm-light`** (`:11450`) — the **primary** lane: a `llama.cpp`
+- **`mios-llm-light`** (port key `llm_light`) — the **primary** lane: a `llama.cpp`
   multi-model server fronted by the `llama-swap` proxy image
   (`ghcr.io/mostlygeek/llama-swap`). Auto-swaps the everyday chat/reasoning
   models behind one endpoint, KV-pages each conversation to disk, **and**
   serves embeddings (`nomic-embed-text`, OpenAI-compat `/v1/embeddings`)
   plus the `mios-opencode` coder model. Map:
-  `usr/share/mios/llamacpp/llama-swap.yaml` (in `mios.git`).
-- **`mios-llm-heavy`** (`:11441`, served-name `mios-heavy`) — heavy GPU lane
-  (SGLang), gated off by default on VRAM grounds.
-- **`mios-llm-heavy-alt`** — alternate heavy lane (vLLM), likewise gated.
+  `usr/share/mios/llamacpp/mios-llm-light.yaml` (in `mios.git`).
+- **`mios-llm-heavy`** (port key `vllm`, served-name `mios-heavy`) — heavy GPU
+  lane (vLLM), gated off by default on VRAM grounds.
+- **`mios-llm-heavy-alt`** (port key `sglang`) — alternate heavy lane (SGLang),
+  likewise gated.
 - **`mios-llm-worker@`** — single-model swarm workers for fan-out.
 
-Agent memory is **PostgreSQL + pgvector** (the `mios-pgvector` container on
-`:5432`): agent memory, events, tool calls, sessions, skills, scratch, and a
-`knowledge` table of finished Q+A with vector recall (embeddings from
-`nomic-embed-text` on `mios-llm-light`). `web_search` is backed by a local
-**SearXNG** (`:8888`); the coder peer is served through the
-**opencode-gateway** (`:8633`).
+Agent memory is **PostgreSQL + pgvector** (the `mios-pgvector` container,
+port key `pgvector`; in-container 5432): agent memory, events, tool calls,
+sessions, skills, scratch, and a `knowledge` table of finished Q+A with
+vector recall (embeddings from `nomic-embed-text` on `mios-llm-light`).
+`web_search` is backed by a local **SearXNG** (port key `searxng`); the
+coder peer is served through the **opencode-gateway** (port key
+`opencode_gateway`).
 
 Every agent and tool resolves the single endpoint via `MIOS_AI_ENDPOINT`
 (Architectural Law 5) — any OpenAI-API-compatible editor/CLI talks to the
 same local brain, no vendor account in the loop. The lanes speak the
 OpenAI/Ollama-compatible API (a legitimate upstream API-compat reference),
-but the *engines* are `llama.cpp`/SGLang/vLLM, not a hosted service.
+but the *engines* are `llama.cpp`/vLLM/SGLang, not a hosted service.
 
-## Standards
+**Standards.**
 
 - OpenAI REST API v1 via `MIOS_AI_ENDPOINT` (no vendor-cloud endpoints, no vendor-specific agent/dev-tool product names)
 - Linux FHS 3.0 and XDG Base Directory spec
 - systemd / Podman Quadlet (unprivileged)
 - bootc / OCI image format
 
-## Architectural Laws (the contract that keeps MiOS immutable AND agentic)
+**Architectural Laws (the contract that keeps MiOS immutable AND agentic).**
+The first six of the sixteen laws; the canonical registry is `[laws]` in
+mios.git's `usr/share/mios/mios.toml`.
 
 1. **USR-OVER-ETC** — static config in `/usr/lib/<component>.d/`; `/etc/` is admin-override only.
 2. **NO-MKDIR-IN-VAR** — every `/var/` path declared via `usr/lib/tmpfiles.d/*.conf`; never written at build time.
 3. **BOUND-IMAGES** — every Quadlet image symlinked into `/usr/lib/bootc/bound-images.d/` and baked into the image (the AI containers ship *inside* the host).
 4. **BOOTC-CONTAINER-LINT** — final `RUN` of the `Containerfile`. Fail the lint, fail the build.
 5. **UNIFIED-AI-REDIRECTS** — every agent/tool targets `MIOS_AI_ENDPOINT`. No vendor-hardcoded URLs.
-6. **UNPRIVILEGED-QUADLETS** — every Quadlet declares `User=`, `Group=`, `Delegate=yes`. Documented exceptions: `mios-ceph`, `mios-k3s`, `mios-forgejo-runner` (rationale in their headers).
+6. **UNPRIVILEGED-QUADLETS** — every Quadlet declares `User=`, `Group=`, `Delegate=yes`. Root is allowed only for the units in mios.git's `[security.privileged_quadlets].root`, each with a justification.
 
 Laws 1–4 keep the image deterministic, atomic, and self-contained so bootc
 can upgrade/roll it back; Laws 5–6 keep the AI plane unified and
 least-privileged so the agent stack stays portable and sandboxed.
 
-## Status
-
+**Status.**
 MiOS is in active development at `v0.3.0`. The migration off the early
 Ollama / SurrealDB / Qdrant stack is complete: inference + embeddings now
-run on the `mios-llm-light` lane (`:11450`) with gated heavy GPU lanes
-(`mios-llm-heavy` / `mios-llm-heavy-alt`), and the unified agent datastore is
-PostgreSQL + pgvector (`mios-pgvector`). The retired `CloudWS` naming is gone
-— every shipped artifact is `mios-<component>`. Ollama survives only as an
-upstream *API-compat reference* (the lanes speak the OpenAI/Ollama-compatible
-API) and in historical migration notes — not as a live MiOS backend.
+run on the `mios-llm-light` lane (port key `llm_light`) with gated heavy GPU
+lanes (`mios-llm-heavy` / `mios-llm-heavy-alt`), and the unified agent
+datastore is PostgreSQL + pgvector (`mios-pgvector`). The retired `CloudWS`
+naming is gone — every shipped artifact is `mios-<component>`. Ollama
+survives only as an upstream *API-compat reference* (the lanes speak the
+OpenAI/Ollama-compatible API) and in historical migration notes — not as a
+live MiOS backend.
 
-## Architecture Decision Records
-
-Installer Architecture Decision Records are referenced at `field/ADR-0008.md`.
-
-## License
-
+**License.**
 Apache-2.0. Component licenses for every shipped piece are catalogued in
 `mios.git` at `usr/share/doc/mios/reference/licenses.md`.
 
 The `'MiOS'` name (capitalized) is a project mark; lowercase `mios` (used in
 file paths, package names, env-var prefixes) is the technical identifier and
 free of that constraint.
+
+## Key files
+
+- [Get-MiOS.ps1](Get-MiOS.ps1): Windows canonical entry (`irm | iex`, one paste, no follow-up prompts)
+- [build-mios.sh](build-mios.sh): Linux/Fedora-bootc canonical entry (`curl | bash`)
+- [install.ps1](install.ps1): Phase-0..4 orchestrator for Windows (identity capture, Total Root Merge, build, services, reboot)
+- [install.sh](install.sh): Phase-0..4 orchestrator for Linux (identity capture, Total Root Merge, build, services, reboot)
+- [bootstrap.sh](bootstrap.sh): lower-level bootstrap primitives (Linux)
+- [bootstrap.ps1](bootstrap.ps1): lower-level bootstrap primitives (Windows)
+- [seed-merge.sh](seed-merge.sh): Total Root Merge primitive, Phase-1 (Linux)
+- [seed-merge.ps1](seed-merge.ps1): Total Root Merge primitive, Phase-1 (Windows)
+- [etc/mios/profile.toml](etc/mios/profile.toml): host-layer profile overlay (identity, locale, auth, AI, desktop)
+- [mios.toml](mios.toml): this repo's reference `mios.toml` (the singular SSOT)
+- [system-prompt.md](system-prompt.md): host system-prompt redirector, deployed to `/etc/mios/ai/system-prompt.md`
+- [usr/share/mios/knowledge/](usr/share/mios/knowledge/): RAG knowledge graphs
+
+## Docs
+
+- [AGENTS.md](AGENTS.md): canonical agent entry point (agents.md standard); `CLAUDE.md` / `GEMINI.md` redirect to it
+- [README.md](README.md): installer overview: the bootstrap flow, the three-layer profile model, the config and RAG knowledge it seeds
+- [bootstrap_install.md](usr/share/doc/mios-bootstrap/guides/bootstrap_install.md): Day-0 entry, build phases, setup commands, file layouts and persistent paths
+- [install-architecture.md](usr/share/doc/mios-bootstrap/guides/install-architecture.md): the mios.git / mios-bootstrap.git split from the installer's side, entry points, profile resolution
+- [user-space.md](usr/share/doc/mios-bootstrap/guides/user-space.md): layered profile TOMLs and AI system prompts; identity, auth and AI endpoint/model fields
+- [ai-architecture.md](usr/share/doc/mios-bootstrap/concepts/ai-architecture.md): how this overlay's AI files layer onto the vendor defaults and resolve to `MIOS_AI_ENDPOINT`
+- [variables.md](usr/share/doc/mios-bootstrap/reference/variables.md): installer environment variables and constants, with their defaults
+- [installation/README.md](installation/README.md): `mios-install`, the dispatcher that launches MiOS from any stage for one deployment type
+- [field/ADR-0008.md](field/ADR-0008.md): installer Architecture Decision Record (unified entry point and repo minification, with the `field/` amendment)
+
+## Optional
+
+- [mios.git llms.txt](https://raw.githubusercontent.com/mios-dev/mios/main/llms.txt): the system layer's own index
+- [usr/share/mios/ai/system.md](https://raw.githubusercontent.com/mios-dev/mios/main/usr/share/mios/ai/system.md): deployed agent system prompt (owned by mios.git, baked into the image; not tracked here)
+- [usr/share/mios/ai/v1/models.json](https://raw.githubusercontent.com/mios-dev/mios/main/usr/share/mios/ai/v1/models.json): OpenAI `/v1/models` catalog (owned by mios.git)
+- [usr/share/mios/ai/v1/mcp.json](https://raw.githubusercontent.com/mios-dev/mios/main/usr/share/mios/ai/v1/mcp.json): MCP server registry (owned by mios.git)
+- [etc/skel/.config/mios/](https://github.com/mios-dev/mios/tree/main/etc/skel/.config/mios): per-user templates seeded into every uid≥1000 home (owned and shipped by mios.git)
+- [usr/share/mios/mios.toml](https://raw.githubusercontent.com/mios-dev/mios/main/usr/share/mios/mios.toml): the vendor SSOT, including `[ports]`, the `[laws]` registry and `[security.privileged_quadlets]` (mios.git)
+- [licenses.md](https://raw.githubusercontent.com/mios-dev/mios/main/usr/share/doc/mios/reference/licenses.md): component licenses for every shipped piece (mios.git)
+- [user-preferences.md](usr/share/mios/user-preferences.md): reference card for the build-identity fields of `mios.toml`
+- [installation/UNIFY.md](installation/UNIFY.md): plan to put every install path and the configurator behind one native web entry
+- [LICENSE](LICENSE): Apache-2.0
