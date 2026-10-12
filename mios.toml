@@ -405,11 +405,7 @@ stale_fallbacks = []
 # Environment=, and the [units] block that WOULD render the placeholder is inert
 # until task_267 makes mios-unit-gen faithful.
 unbound = ["chrome_cdp_worker", "ai_legacy", "field_live_chat"]
-cockpit_internal = 9090     # Cockpit internal container listening port (upstream standard 9090; host maps 8110->9090)
-crawl4ai_internal = 11235   # crawl4ai container internal listening port (upstream default 11235)
-firecrawl_internal = 3002     # firecrawl container internal listening port (upstream default 3002)
-igpu = 11436   # Windows host iGPU Vulkan inference listener port
-win_llm_light = 11450   # Windows host llama-swap light lane proxy port
+searxng = 8800     # local privacy-respecting metasearch
 [ports.lan_firewall]
 profiles = ["Private", "Domain"]
 expose   = ["forge_http", "open_webui", "hermes", "searxng", "cockpit", "llm_light", "code_server", "guacamole_web"]
