@@ -605,33 +605,92 @@ function New-MiOSLinuxLayoutCommands {
     param($Toml)
     if ((Get-Toml $Toml 'autounattend.layout.enable' 'true') -notmatch '^(true|1|yes)$') { return @() }
     $sys = '%SystemDrive%'
-    $tree = (Get-Toml $Toml 'autounattend.layout.linux_tree' 'etc usr var home opt srv tmp bin lib root').Trim()
+    $tree = (Get-Toml $Toml 'autounattend.layout.linux_tree' 'bin dev etc home lib lib64 media mnt opt proc root run sbin srv sys tmp usr var').Trim()
     $c = New-Object System.Collections.Generic.List[string]
 
     # --- STRIP defaults (SSOT-gated) --------------------------------------
     if ((Get-Toml $Toml 'autounattend.layout.strip_defaults' 'true') -match '^(true|1|yes)$') {
         # OneDrive: kill autorun (machine + default hive), setup stubs, and the shortcut.
-        $c.Add('reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v OneDriveSetup /f')
-        $c.Add('reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT"')
-        $c.Add('reg delete "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Run" /v OneDriveSetup /f')
-        $c.Add('reg unload "HKU\MiOSDefault"')
-        $c.Add('del /f /q "%SystemRoot%\System32\OneDriveSetup.exe"')
-        $c.Add('del /f /q "%SystemRoot%\SysWOW64\OneDriveSetup.exe"')
-        $c.Add('del /f /q "C:\Users\Default\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\OneDrive.lnk"')
+        $c.Add('reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v OneDriveSetup /f 2>nul')
+        $c.Add('reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT" 2>nul')
+        $c.Add('reg delete "HKU\MiOSDefault\Software\Microsoft\Windows\CurrentVersion\Run" /v OneDriveSetup /f 2>nul')
+        $c.Add('reg unload "HKU\MiOSDefault" 2>nul')
+        $c.Add('del /f /q "%SystemRoot%\System32\OneDriveSetup.exe" 2>nul')
+        $c.Add('del /f /q "%SystemRoot%\SysWOW64\OneDriveSetup.exe" 2>nul')
+        $c.Add('del /f /q "C:\Users\Default\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\OneDrive.lnk" 2>nul')
         # Premade shortcuts on Default/Public/current desktops (nothing pre-pinned).
         foreach ($dt in @('C:\Users\Default\Desktop','%PUBLIC%\Desktop','%USERPROFILE%\Desktop')) {
-            $c.Add(('del /f /q "{0}\*.lnk"' -f $dt))
+            $c.Add(('del /f /q "{0}\*.lnk" 2>nul' -f $dt))
         }
         # Redundant default-profile known folders (kept: downloads/documents which we redirect).
         $redundant = (Get-Toml $Toml 'autounattend.layout.strip_folders' '3D Objects;Contacts;Favorites;Links;Saved Games;Searches;OneDrive')
         foreach ($rf in ($redundant -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
-            $c.Add(('rmdir /s /q "C:\Users\Default\{0}"' -f $rf))
-            $c.Add(('rmdir /s /q "%USERPROFILE%\{0}"' -f $rf))
+            $c.Add(('rmdir /s /q "C:\Users\Default\{0}" 2>nul' -f $rf))
+            $c.Add(('rmdir /s /q "%USERPROFILE%\{0}" 2>nul' -f $rf))
         }
     }
 
-    # --- REBUILD the clean MiOS tree --------------------------------------
-    foreach ($d in ($tree -split '\s+' | Where-Object { $_ })) { $c.Add("mkdir $sys\$d") }
+    # --- REBUILD full Linux FHS root directories (18 dirs) -----------------
+    # Full Linux FHS root directories:
+    # bin dev etc home lib lib64 media mnt opt proc root run sbin srv sys tmp usr var
+    foreach ($d in ($tree -split '\s+' | Where-Object { $_ })) {
+        if ($d -notin @('home','mnt','var')) {
+            $c.Add("if not exist $sys\$d mkdir $sys\$d 2>nul")
+        }
+    }
+    $c.Add("if not exist $sys\mnt mkdir $sys\mnt 2>nul")
+
+    # --- STRICT ISOLATION of Windows Host Namespaces ----------------------
+    # Isolated namespaces: $Recycle.Bin, Documents and Settings, PerfLogs, Program Files,
+    # Program Files (x86), ProgramData, Recovery, Riot Games, System Volume Information,
+    # Users, Windows, XboxGames.
+    # 1) Bind filter driver (bindflt.sys) enablement
+    $c.Add('sc.exe config bindflt start= auto 2>nul')
+    $c.Add('sc.exe start bindflt 2>nul')
+    # 2) Attribute protection & decluttering for non-essential host directories
+    foreach ($hn in @('PerfLogs', 'Recovery', 'Riot Games', 'XboxGames')) {
+        $c.Add(('if exist "{0}\{1}" attrib +h "{0}\{1}" 2>nul' -f $sys, $hn))
+    }
+    # 3) Ensure system root .gitignore blocks Windows Host namespaces from git overlay
+    $gitIgnoreLines = @(
+        '# Windows Host Namespaces (Strict Level-by-Level Isolation)',
+        '/$Recycle.Bin', '/$Recycle.Bin/**',
+        '/Documents and Settings', '/Documents and Settings/**',
+        '/PerfLogs', '/PerfLogs/**',
+        '/Program Files', '/Program Files/**',
+        '/Program Files (x86)', '/Program Files (x86)/**',
+        '/ProgramData', '/ProgramData/**',
+        '/Recovery', '/Recovery/**',
+        '/Riot Games', '/Riot Games/**',
+        '/System Volume Information', '/System Volume Information/**',
+        '/Users', '/Users/**',
+        '/Windows', '/Windows/**',
+        '/XboxGames', '/XboxGames/**'
+    )
+    $giCmd = 'if not exist "' + $sys + '\.gitignore" ('
+    foreach ($gil in $gitIgnoreLines) {
+        $giCmd += ' echo ' + $gil + '>>"' + $sys + '\.gitignore" &'
+    }
+    $giCmd = $giCmd.TrimEnd('&') + ' )'
+    $c.Add($giCmd)
+
+    # --- DIRECTORY JUNCTIONS & REPARSE POINTS ------------------------------
+    # 1. /mnt/c loopback (%SystemDrive%\mnt\c -> %SystemDrive%\)
+    $c.Add(('if exist "{0}\mnt\c" rmdir "{0}\mnt\c" 2>nul' -f $sys))
+    $c.Add(('mklink /J "{0}\mnt\c" "{0}\" 2>nul' -f $sys))
+
+    # 2. %SystemDrive%\home -> M:\home (if M: dedicated data volume) or %USERPROFILE%
+    $c.Add('if exist "M:\" if not exist "M:\home" mkdir "M:\home" 2>nul')
+    $c.Add(('if exist "{0}\home" ( dir "{0}\home" >nul 2>&1 || rmdir "{0}\home" 2>nul )' -f $sys))
+    $c.Add(('if exist "M:\home" ( if not exist "{0}\home" mklink /J "{0}\home" "M:\home" 2>nul ) else ( if not exist "{0}\home" mklink /J "{0}\home" "%USERPROFILE%" 2>nul )' -f $sys))
+    $c.Add(('if not exist "{0}\home" mkdir "{0}\home" 2>nul' -f $sys))
+
+    # 3. %SystemDrive%\var -> M:\var (persistent store on dedicated storage, Invariant 1)
+    $c.Add('if exist "M:\" if not exist "M:\var" mkdir "M:\var" 2>nul')
+    $c.Add(('if exist "M:\var" ( if exist "{0}\var" ( dir "{0}\var" >nul 2>&1 || rmdir "{0}\var" 2>nul ) & if not exist "{0}\var" mklink /J "{0}\var" "M:\var" 2>nul )' -f $sys))
+    $c.Add(('if not exist "{0}\var" mkdir "{0}\var" 2>nul' -f $sys))
+
+    # --- LOWERCASE user folders -------------------------------------------
     if ((Get-Toml $Toml 'autounattend.layout.lowercase_userfolders' 'true') -match '^(true|1|yes)$') {
         $map = [ordered]@{
             '{374DE290-123F-4565-9164-39C4925E467B}' = 'downloads'
@@ -641,19 +700,19 @@ function New-MiOSLinuxLayoutCommands {
             'My Music'                               = 'music'
             'My Video'                               = 'videos'
         }
-        foreach ($lc in ($map.Values | Select-Object -Unique)) { $c.Add("mkdir %USERPROFILE%\$lc") }
+        foreach ($lc in ($map.Values | Select-Object -Unique)) { $c.Add("if not exist %USERPROFILE%\$lc mkdir %USERPROFILE%\$lc 2>nul") }
         foreach ($hive in @('HKCU','HKU\MiOSDefault')) {
             $usf = "$hive\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
             $needLoad = ($hive -eq 'HKU\MiOSDefault')
-            if ($needLoad) { $c.Add('reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT"') }
-            foreach ($k in $map.Keys) { $c.Add(('reg add "{0}" /v "{1}" /t REG_EXPAND_SZ /d "%USERPROFILE%\{2}" /f' -f $usf,$k,$map[$k])) }
-            if ($needLoad) { $c.Add('reg unload "HKU\MiOSDefault"') }
+            if ($needLoad) { $c.Add('reg load "HKU\MiOSDefault" "C:\Users\Default\NTUSER.DAT" 2>nul') }
+            foreach ($k in $map.Keys) { $c.Add(('reg add "{0}" /v "{1}" /t REG_EXPAND_SZ /d "%USERPROFILE%\{2}" /f 2>nul' -f $usf,$k,$map[$k])) }
+            if ($needLoad) { $c.Add('reg unload "HKU\MiOSDefault" 2>nul') }
         }
     }
     $stripGuids = (Get-Toml $Toml 'autounattend.layout.strip_thispc' '{0DB7E03F-FC29-4DC6-9020-FF41B59E513A}').Trim()
     foreach ($g in ($stripGuids -split '\s+' | Where-Object { $_ })) {
-        $c.Add("reg delete `"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\$g`" /f")
-        $c.Add("reg delete `"HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\$g`" /f")
+        $c.Add("reg delete `"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\$g`" /f 2>nul")
+        $c.Add("reg delete `"HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\$g`" /f 2>nul")
     }
     return $c
 }
